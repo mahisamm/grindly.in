@@ -1,0 +1,131 @@
+// Intern-Agent SaaS data model. Owned by Prisma; Python agent reads/writes
+// the same SQLite file via sqlite3 using the @@map / @map names below.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  passwordHash  String?  @map("password_hash")
+  createdAt     DateTime @default(now()) @map("created_at")
+  // billing (stubbed, real-ready)
+  paid          Boolean  @default(false)
+  plan          String   @default("free") // free | starter | pro
+  // slack (stubbed, real-ready)
+  slackUserId   String?  @map("slack_user_id")
+  slackChannel  String?  @map("slack_channel")
+  slackConnected Boolean @default(false) @map("slack_connected")
+  // internshala session (persistent browser profile) ready?
+  internshalaConnected Boolean @default(false) @map("internshala_connected")
+  // lifecycle: registered -> onboarding -> active -> paused
+  status        String   @default("registered")
+
+  profile      Profile?
+  applications Application[]
+  reports      Report[]
+  integrations UserIntegration[]
+
+  @@map("users")
+}
+
+model UserIntegration {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform    String    // linkedin | internshala | naukri | unstop | indeed
+  status      String    @default("disconnected") // connected | disconnected | needs_login
+  connectedAt DateTime? @map("connected_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@unique([userId, platform])
+  @@map("user_integrations")
+}
+
+model Profile {
+  id        String   @id @default(cuid())
+  userId    String   @unique @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  resumeText String? @map("resume_text")
+  resumeName String? @map("resume_name")
+  skills     String  @default("[]") // JSON array of skills (agent-extracted)
+  education  String?
+  experienceLevel String? @map("experience_level") // student | fresher | 1-2yr
+
+  // proff (preference/profile) answers + firewall constraints
+  preferredDomains   String @default("[]") @map("preferred_domains")   // JSON array
+  preferredLocations String @default("[]") @map("preferred_locations") // JSON array
+  workMode           String @default("any") @map("work_mode")          // remote | onsite | any
+  stipendMin         Int    @default(0)     @map("stipend_min")
+  maxPerDay          Int    @default(10)    @map("max_per_day")
+  minMatchScore      Int    @default(55)    @map("min_match_score")     // 0-100 firewall threshold
+  excludedCompanies  String @default("[]")  @map("excluded_companies")  // JSON array
+  autoApply          Boolean @default(true) @map("auto_apply")
+
+  planJson   String?  @map("plan_json")   // agent-generated plan
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("profiles")
+}
+
+model Job {
+  id         String   @id @default(cuid())
+  source     String   @default("internshala")
+  externalId String   @map("external_id")
+  title      String
+  company    String
+  location   String?
+  stipend    String?
+  duration   String?
+  skills     String   @default("[]") // JSON array
+  url        String
+  scrapedAt  DateTime @default(now()) @map("scraped_at")
+
+  applications Application[]
+
+  @@unique([source, externalId])
+  @@map("jobs")
+}
+
+model Application {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId      String?  @map("job_id")
+  job        Job?     @relation(fields: [jobId], references: [id])
+
+  jobTitle   String   @map("job_title")
+  company    String
+  url        String?
+  matchScore Int      @default(0) @map("match_score")
+  // matched | applied | skipped | failed
+  status     String   @default("matched")
+  reason     String?  // why matched / why skipped / failure detail
+  appliedAt  DateTime? @map("applied_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("applications")
+}
+
+model Report {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date         String   // YYYY-MM-DD
+  matchedCount Int      @default(0) @map("matched_count")
+  appliedCount Int      @default(0) @map("applied_count")
+  failedCount  Int      @default(0) @map("failed_count")
+  summary      String   @default("")
+  delivered    Boolean  @default(false) // sent to slack?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("reports")
+}

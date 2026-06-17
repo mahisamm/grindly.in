@@ -1,0 +1,4 @@
+# InternPilot agent worker deps. Uses local Ollama via REST (no python client needed).
+pdfminer.six>=20231228   # resume PDF text extraction
+python-docx>=1.1.0       # resume DOCX text extraction
+playwright>=1.44.0       # live Internshala scraping + apply (mode=live only)

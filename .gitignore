@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# NexPath runtime data (resumes, db, logs, slack outbox, browser session)
+/data/
+/prisma/dev.db
+/prisma/dev.db-journal
+/agent/browser_profile/
+/agent/__pycache__/
+*.pyc
