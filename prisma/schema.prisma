@@ -7,7 +7,10 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  // Config out of code: defaults to the local sqlite file when DATABASE_URL is
+  // unset. To move to Postgres, change provider to "postgresql" and point
+  // DATABASE_URL at the server (see prisma/MIGRATE_POSTGRES.md).
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -15,6 +18,8 @@ model User {
   email         String   @unique
   name          String?
   passwordHash  String?  @map("password_hash")
+  phone         String?  @unique
+  phoneVerified Boolean  @default(false) @map("phone_verified")
   createdAt     DateTime @default(now()) @map("created_at")
   // billing (stubbed, real-ready)
   paid          Boolean  @default(false)
@@ -28,10 +33,15 @@ model User {
   // lifecycle: registered -> onboarding -> active -> paused
   status        String   @default("registered")
 
-  profile      Profile?
-  applications Application[]
-  reports      Report[]
-  integrations UserIntegration[]
+  profile        Profile?
+  applications   Application[]
+  reports        Report[]
+  integrations   UserIntegration[]
+  resumeVersions ResumeVersion[]
+  auditLogs      AuditLog[]
+  notifications  Notification[]
+  agentRuns      AgentRun[]
+  credentials    PlatformCredential[]
 
   @@map("users")
 }
@@ -59,6 +69,8 @@ model Profile {
   skills     String  @default("[]") // JSON array of skills (agent-extracted)
   education  String?
   experienceLevel String? @map("experience_level") // student | fresher | 1-2yr
+  phone      String? // for form fill (LinkedIn phone field)
+  gpa        Float?  @default(8.0)  // GPA for form fill
 
   // proff (preference/profile) answers + firewall constraints
   preferredDomains   String @default("[]") @map("preferred_domains")   // JSON array
@@ -69,6 +81,17 @@ model Profile {
   minMatchScore      Int    @default(55)    @map("min_match_score")     // 0-100 firewall threshold
   excludedCompanies  String @default("[]")  @map("excluded_companies")  // JSON array
   autoApply          Boolean @default(true) @map("auto_apply")
+
+  resumeScore       Int?     @map("resume_score")       // 0-100 quality score
+  resumeSuggestions String?  @map("resume_suggestions")  // JSON analysis from resume_ai
+
+  // beta: one-tap "are these matches good?" survey (1-5). null = not yet asked
+  matchQualityRating Int?     @map("match_quality_rating")
+  // beta: surfaced to user when resume parsing produced no skills (manual fallback)
+  resumeParseFailed  Boolean  @default(false) @map("resume_parse_failed")
+
+  // explicit consent timestamp for auto-apply (audit trail; null = never consented)
+  autoApplyConsentAt DateTime? @map("auto_apply_consent_at")
 
   planJson   String?  @map("plan_json")   // agent-generated plan
   updatedAt  DateTime @updatedAt @map("updated_at")
@@ -106,13 +129,114 @@ model Application {
   company    String
   url        String?
   matchScore Int      @default(0) @map("match_score")
-  // matched | applied | skipped | failed
+  // lifecycle: matched | approved | submitting | applied | skipped | failed | needs_review
   status     String   @default("matched")
   reason     String?  // why matched / why skipped / failure detail
+  // enumerated machine reason on failure: session_expired | selector_missing |
+  // captcha | listing_closed | upload_failed | firewall_blocked | timeout | exception
+  failureReason  String? @map("failure_reason")
+  screenshotPath String? @map("screenshot_path")  // proof image of the submit attempt
+  // immutable snapshot of the exact resume sent for this application
+  resumeVersionId String?        @map("resume_version_id")
+  resumeVersion   ResumeVersion? @relation(fields: [resumeVersionId], references: [id])
   appliedAt  DateTime? @map("applied_at")
+  // user-reported outcome — the single most important beta signal (interview rate)
+  // null (unset) | interview | offer | rejected | no_response
+  outcome    String?   @map("outcome")
+  outcomeAt  DateTime? @map("outcome_at")
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@map("applications")
+}
+
+// Immutable record of the exact resume version sent for an application.
+// Answers "which resume did the recruiter see?" — never mutated after create.
+model ResumeVersion {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label         String   // human label e.g. "Frontend Dev @ Razorpay"
+  jobTitle      String?  @map("job_title")
+  company       String?
+  text          String   // exact tailored resume text sent
+  filePath      String?  @map("file_path")      // path to the exact PDF sent
+  skillsClaimed String   @default("[]") @map("skills_claimed") // JSON: skills surfaced for this role
+  baseSkills    String   @default("[]") @map("base_skills")    // JSON: master skills at time (truthfulness ref)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  applications  Application[]
+
+  @@index([userId])
+  @@map("resume_versions")
+}
+
+// Append-only audit trail — reconstruct what the agent/auth did, for disputes.
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?  @map("user_id")
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String   // login | otp_issued | otp_throttled | apply | apply_failed | firewall_block | session_expired | consent
+  target    String?  // job url / platform / phone-mask / etc
+  detail    String?  // freeform or JSON
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// DB-backed run queue — gives retries, per-user locking, and idempotent resume
+// without needing Redis in the prototype. A worker (`worker.py --drain`) claims
+// queued rows transactionally. Swap for BullMQ/Celery later behind the same shape.
+model AgentRun {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode        String    @default("mock") // mock | live | analyze
+  status      String    @default("queued") // queued | running | done | failed | cancelled
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3) @map("max_attempts")
+  lockedBy    String?   @map("locked_by") // worker id holding the row
+  lockedAt    DateTime? @map("locked_at")
+  error       String?
+  result      String?   // JSON {applied,matched,failed}
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([userId])
+  @@map("agent_runs")
+}
+
+// Encrypted-at-rest platform credentials. Plaintext NEVER stored — ciphertext is
+// AES-256-GCM (see src/lib/crypto.ts / agent/secret_box.py). Prefer storing
+// session cookies over passwords; both go here encrypted.
+model PlatformCredential {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform   String
+  ciphertext String   // base64(nonce).base64(ciphertext+tag)
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, platform])
+  @@map("platform_credentials")
+}
+
+// Tiered notification log with delivery tracking + channel fallback.
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tier      String   @default("digest") // urgent | digest
+  channel   String   // slack | email | console
+  title     String
+  body      String
+  delivered Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("notifications")
 }
 
 model Report {
@@ -128,4 +252,16 @@ model Report {
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@map("reports")
+}
+
+model OtpToken {
+  id        String   @id @default(cuid())
+  phone     String
+  code      String
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([phone])
+  @@map("otp_tokens")
 }

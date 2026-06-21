@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
+import { PROFF_FIELDS, CONTACT_FIELDS, DEFAULTS } from "@/lib/proffQuestions";
+
+// ── Types ──────────────────────────────────────────────────────────────────
 
 type App = {
   id: string;
@@ -12,6 +15,7 @@ type App = {
   matchScore: number;
   status: string;
   reason: string | null;
+  outcome: string | null;
   appliedAt: string | null;
   createdAt: string;
 };
@@ -25,8 +29,36 @@ type Report = {
 };
 type Integration = {
   platform: string;
-  status: string; // connected | disconnected | connecting | needs_login
+  status: string;
   connectedAt: string | null;
+};
+type ResumeAnalysis = {
+  score: number;
+  grade: string;
+  strengths: string[];
+  issues: string[];
+  suggestions: string[];
+};
+
+type RawProfile = {
+  id: string;
+  skills: string;
+  maxPerDay: number;
+  minMatchScore: number;
+  autoApply: boolean;
+  preferredDomains: string;
+  preferredLocations: string;
+  workMode: string;
+  experienceLevel: string | null;
+  stipendMin: number;
+  excludedCompanies: string;
+  phone: string | null;
+  gpa: number | null;
+  resumeScore: number | null;
+  resumeSuggestions: string | null;
+  resumeName: string | null;
+  matchQualityRating: number | null;
+  resumeParseFailed: boolean;
 };
 type Me = {
   user: {
@@ -39,12 +71,37 @@ type Me = {
     slackConnected: boolean;
     internshalaConnected: boolean;
   };
-  profile: { skills: string; maxPerDay: number; minMatchScore: number; autoApply: boolean } | null;
+  profile: RawProfile | null;
   applications: App[];
   reports: Report[];
-  stats: { matched: number; applied: number; skipped: number; failed: number; avgScore: number };
+  stats: {
+    matched: number;
+    applied: number;
+    skipped: number;
+    failed: number;
+    avgScore: number;
+    interviews: number;
+    offers: number;
+    outcomeReported: number;
+    interviewRate: number | null;
+  };
   integrations: Integration[];
 };
+
+type ProfileForm = {
+  preferredDomains: string[];
+  preferredLocations: string[];
+  workMode: string;
+  experienceLevel: string;
+  stipendMin: number;
+  minMatchScore: number;
+  excludedCompanies: string[];
+  autoApply: boolean;
+  phone: string;
+  gpa: string;
+};
+
+// ── Constants ──────────────────────────────────────────────────────────────
 
 const PLATFORM_META: Record<string, { label: string; color: string; icon: string }> = {
   linkedin: { label: "LinkedIn", color: "text-[#0077B5]", icon: "in" },
@@ -55,10 +112,35 @@ const PLATFORM_META: Record<string, { label: string; color: string; icon: string
 };
 
 const STATUS_STYLE: Record<string, string> = {
-  applied: "bg-accent/15 text-accent",
-  matched: "bg-brand/15 text-brand-2",
-  skipped: "bg-surface-2 text-muted",
-  failed: "bg-danger/15 text-danger",
+  applied:  "bg-accent/15 text-accent",
+  approved: "bg-brand/15 text-brand-2",
+  matched:  "bg-surface-2 text-muted",
+  skipped:  "bg-surface-2 text-muted",
+  failed:   "bg-danger/15 text-danger",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  applied:  "applied",
+  approved: "approved ✓",
+  matched:  "awaiting",
+  skipped:  "skipped",
+  failed:   "failed",
+};
+
+// user-reported outcomes per applied job — the beta interview-rate signal
+const OUTCOME_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Outcome?" },
+  { value: "interview", label: "Got interview 🎉" },
+  { value: "offer", label: "Got offer 🏆" },
+  { value: "rejected", label: "Rejected" },
+  { value: "no_response", label: "No response" },
+];
+
+const OUTCOME_STYLE: Record<string, string> = {
+  interview: "border-accent/50 text-accent",
+  offer: "border-accent/60 text-accent",
+  rejected: "border-danger/40 text-danger",
+  no_response: "border-border text-muted",
 };
 
 function scoreColor(s: number) {
@@ -67,19 +149,116 @@ function scoreColor(s: number) {
   return "text-muted";
 }
 
+function resumeScoreColor(s: number) {
+  if (s >= 75) return "text-accent";
+  if (s >= 55) return "text-brand-2";
+  if (s >= 40) return "text-warn";
+  return "text-danger";
+}
+
+function resumeGradeBg(g: string) {
+  if (g === "A") return "bg-accent/20 text-accent border-accent/40";
+  if (g === "B") return "bg-brand/20 text-brand-2 border-brand/40";
+  if (g === "C") return "bg-warn/20 text-warn border-warn/40";
+  return "bg-danger/20 text-danger border-danger/40";
+}
+
 const PLAN_CAP: Record<string, number> = { starter: 10, pro: 30 };
+const PAGE_SIZE = 20;
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function parseJ<T>(v: string | null | undefined, fallback: T): T {
+  try { return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+}
+
+function profileToForm(p: RawProfile): ProfileForm {
+  return {
+    preferredDomains: parseJ<string[]>(p.preferredDomains, []),
+    preferredLocations: parseJ<string[]>(p.preferredLocations, []),
+    workMode: p.workMode || "any",
+    experienceLevel: p.experienceLevel || "student",
+    stipendMin: p.stipendMin ?? 0,
+    minMatchScore: p.minMatchScore ?? 55,
+    excludedCompanies: parseJ<string[]>(p.excludedCompanies, []),
+    autoApply: p.autoApply ?? true,
+    phone: p.phone || "",
+    gpa: p.gpa != null ? String(p.gpa) : "8.0",
+  };
+}
+
+// ── TagInput ───────────────────────────────────────────────────────────────
+
+function TagInput({ value, onChange, placeholder }: {
+  value: string[];
+  onChange: (v: string[]) => void;
+  placeholder?: string;
+}) {
+  const [input, setInput] = useState("");
+
+  function add(raw: string) {
+    const tags = raw.split(",").map((t) => t.trim()).filter(Boolean);
+    const next = [...value];
+    for (const t of tags) if (!next.includes(t)) next.push(t);
+    onChange(next);
+    setInput("");
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5 rounded-lg border border-border bg-surface p-2 min-h-[42px]">
+      {value.map((t) => (
+        <span key={t} className="flex items-center gap-1 rounded-md bg-brand/15 px-2 py-0.5 text-sm text-brand-2">
+          {t}
+          <button type="button" onClick={() => onChange(value.filter((x) => x !== t))} className="text-muted hover:text-danger">×</button>
+        </span>
+      ))}
+      <input
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(input); }
+          if (e.key === "Backspace" && !input && value.length) onChange(value.slice(0, -1));
+        }}
+        onBlur={() => input && add(input)}
+        placeholder={value.length === 0 ? placeholder : ""}
+        className="flex-1 min-w-[120px] bg-transparent text-sm outline-none placeholder:text-muted"
+      />
+    </div>
+  );
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
-  const [tab, setTab] = useState<"applications" | "integrations" | "reports">("applications");
+  const [tab, setTab] = useState<"profile" | "applications" | "integrations" | "reports">("applications");
   const [filter, setFilter] = useState<string>("all");
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [profileForm, setProfileForm] = useState<ProfileForm | null>(null);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [analyzingResume, setAnalyzingResume] = useState(false);
+  const [editingSkills, setEditingSkills] = useState(false);
+  const [skillsDraft, setSkillsDraft] = useState<string[]>([]);
+  const [skillsSaving, setSkillsSaving] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [surveyRating, setSurveyRating] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/me");
-    if (res.ok) setMe(await res.json());
+    if (res.ok) {
+      const data = await res.json() as Me;
+      setMe(data);
+      // Init profile form once (don't overwrite edits in progress)
+      setProfileForm((prev) => {
+        if (prev) return prev;
+        return data.profile ? profileToForm(data.profile) : null;
+      });
+    }
     setLoading(false);
   }, []);
 
@@ -88,6 +267,17 @@ export default function Dashboard() {
     const t = setInterval(load, 4000);
     return () => clearInterval(t);
   }, [load]);
+
+  // Reset page when filter changes
+  useEffect(() => { setPage(0); }, [filter, tab]);
+
+  // First-run walkthrough — show once per browser after the user is loaded
+  useEffect(() => {
+    if (!me) return;
+    try {
+      if (!localStorage.getItem("nexpath_onboarded")) setShowOnboarding(true);
+    } catch {}
+  }, [me]);
 
   async function togglePause() {
     if (!me) return;
@@ -122,7 +312,6 @@ export default function Dashboard() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ platform }),
     });
-    // Browser opens for user to log in; poll will update status
     setTimeout(() => setConnectingPlatform(null), 10000);
   }
 
@@ -133,6 +322,87 @@ export default function Dashboard() {
       body: JSON.stringify({ platform }),
     });
     load();
+  }
+
+  async function saveProfile() {
+    if (!profileForm) return;
+    setProfileSaving(true);
+    const body = {
+      ...profileForm,
+      gpa: parseFloat(profileForm.gpa) || 8.0,
+    };
+    await fetch("/api/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setProfileSaving(false);
+    setProfileSaved(true);
+    setTimeout(() => setProfileSaved(false), 3000);
+    load();
+  }
+
+  async function analyzeResume() {
+    setAnalyzingResume(true);
+    await fetch("/api/agent/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "mock", analyzeOnly: true }),
+    });
+    setTimeout(() => { setAnalyzingResume(false); load(); }, 8000);
+  }
+
+  async function approveApplication(id: string) {
+    setApprovingId(id);
+    await fetch("/api/applications/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    setApprovingId(null);
+    load();
+  }
+
+  function patchForm<K extends keyof ProfileForm>(key: K, val: ProfileForm[K]) {
+    setProfileForm((f) => f ? { ...f, [key]: val } : f);
+  }
+
+  async function setOutcome(id: string, outcome: string) {
+    // optimistic — reflect immediately, reconcile on next poll
+    setMe((m) => m ? { ...m, applications: m.applications.map((a) => a.id === id ? { ...a, outcome: outcome || null } : a) } : m);
+    await fetch("/api/applications/outcome", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, outcome: outcome || null }),
+    });
+    load();
+  }
+
+  async function saveSkills() {
+    setSkillsSaving(true);
+    await fetch("/api/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skills: skillsDraft }),
+    });
+    setSkillsSaving(false);
+    setEditingSkills(false);
+    load();
+  }
+
+  async function submitSurvey(rating: number) {
+    setSurveyRating(rating);
+    await fetch("/api/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ matchQualityRating: rating }),
+    });
+    load();
+  }
+
+  function dismissOnboarding() {
+    try { localStorage.setItem("nexpath_onboarded", "1"); } catch {}
+    setShowOnboarding(false);
   }
 
   if (loading) {
@@ -150,70 +420,77 @@ export default function Dashboard() {
           <Logo size={30} />
           <p className="mt-4 text-muted">Not logged in.</p>
           <div className="mt-5 flex justify-center gap-2">
-            <Link
-              href="/login"
-              className="inline-block rounded-lg brand-gradient px-5 py-2.5 font-medium text-white"
-            >
-              Log in
-            </Link>
-            <Link
-              href="/signup"
-              className="inline-block rounded-lg border border-border px-5 py-2.5 font-medium hover:border-brand/60 transition"
-            >
-              Sign up
-            </Link>
+            <Link href="/login" className="inline-block rounded-lg brand-gradient px-5 py-2.5 font-medium text-white">Log in</Link>
+            <Link href="/signup" className="inline-block rounded-lg border border-border px-5 py-2.5 font-medium hover:border-brand/60 transition">Sign up</Link>
           </div>
         </div>
       </main>
     );
   }
 
-  const skills: string[] = me.profile ? JSON.parse(me.profile.skills || "[]") : [];
-  const apps =
-    filter === "all" ? me.applications : me.applications.filter((a) => a.status === filter);
+  const skills: string[] = me.profile ? parseJ<string[]>(me.profile.skills, []) : [];
+  const filteredApps = filter === "all"
+    ? me.applications
+    : me.applications.filter((a) => a.status === filter);
+  const totalPages = Math.ceil(filteredApps.length / PAGE_SIZE);
+  const apps = filteredApps.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const integrations = me.integrations ?? [];
   const connectedCount = integrations.filter((i) => i.status === "connected").length;
   const cap = PLAN_CAP[me.user.plan] ?? 10;
+  const matchedCount = me.applications.filter((a) => a.status === "matched").length;
 
   return (
     <main className="min-h-screen">
+      {/* First-run walkthrough */}
+      {showOnboarding && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={dismissOnboarding}>
+          <div className="glass rounded-2xl p-6 max-w-md w-full glow" onClick={(e) => e.stopPropagation()}>
+            <Logo size={26} />
+            <h2 className="mt-4 font-display text-xl font-semibold">Welcome to NexPath</h2>
+            <p className="text-sm text-muted mt-1">Here&apos;s how the agent works — three steps:</p>
+            <ol className="mt-4 space-y-3 text-sm">
+              <li className="flex gap-3">
+                <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">1</span>
+                <span><span className="font-medium">Complete your profile.</span> Set domains, locations, and your match threshold in the Profile tab.</span>
+              </li>
+              <li className="flex gap-3">
+                <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">2</span>
+                <span><span className="font-medium">Connect a platform.</span> One click opens a browser — log in once. No password is stored.</span>
+              </li>
+              <li className="flex gap-3">
+                <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">3</span>
+                <span><span className="font-medium">Run the agent.</span> It scores and applies to matches. Then tell us the outcome on each application so we can prove it works.</span>
+              </li>
+            </ol>
+            <p className="mt-4 text-xs text-muted">Tip: try <span className="text-foreground">Run demo</span> first — it works without connecting anything.</p>
+            <button onClick={dismissOnboarding} className="mt-5 w-full rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition">
+              Got it — let&apos;s go
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* top bar */}
       <header className="sticky top-0 z-30 glass">
         <div className="mx-auto max-w-6xl px-5 h-16 flex items-center justify-between">
-          <Link href="/">
-            <Logo />
-          </Link>
+          <Link href="/"><Logo /></Link>
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-sm">
-              <span
-                className={`size-2 rounded-full ${
-                  me.user.status === "active"
-                    ? "bg-accent pulse-dot"
-                    : me.user.status === "paused"
-                      ? "bg-warn"
-                      : "bg-muted"
-                }`}
-              />
-              {me.user.status === "active"
-                ? "Agent active"
-                : me.user.status === "paused"
-                  ? "Paused"
-                  : "Setup incomplete"}
+              <span className={`size-2 rounded-full ${
+                me.user.status === "active" ? "bg-accent pulse-dot"
+                : me.user.status === "paused" ? "bg-warn"
+                : "bg-muted"
+              }`} />
+              {me.user.status === "active" ? "Agent active"
+               : me.user.status === "paused" ? "Paused"
+               : "Setup incomplete"}
             </span>
             {me.user.paid && (
-              <button
-                onClick={togglePause}
-                className="text-sm text-muted hover:text-foreground transition"
-              >
+              <button onClick={togglePause} className="text-sm text-muted hover:text-foreground transition">
                 {me.user.status === "paused" ? "Resume" : "Pause"}
               </button>
             )}
-            <Link href="/onboarding" className="text-sm text-muted hover:text-foreground">
-              Settings
-            </Link>
-            <button onClick={logout} className="text-sm text-muted hover:text-foreground transition">
-              Log out
-            </button>
+            <button onClick={logout} className="text-sm text-muted hover:text-foreground transition">Log out</button>
           </div>
         </div>
       </header>
@@ -222,24 +499,25 @@ export default function Dashboard() {
         {/* header row */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">
+            <h1 className="font-display text-3xl font-semibold tracking-tight">
               Hi {me.user.name || me.user.email.split("@")[0]}
             </h1>
             <p className="text-muted text-sm mt-1">
-              Plan:{" "}
-              <span className="capitalize text-foreground font-medium">{me.user.plan}</span>
-              {" "}· {cap}/day cap · firewall ≥{" "}
-              {me.profile?.minMatchScore ?? 55} ·{" "}
-              <span
-                className={
-                  connectedCount > 0 ? "text-accent" : "text-muted"
-                }
-              >
+              Plan: <span className="capitalize text-foreground font-medium">{me.user.plan}</span>
+              {" "}· {cap}/day cap · firewall ≥{me.profile?.minMatchScore ?? 55}
+              {" "}· <span className={connectedCount > 0 ? "text-accent" : "text-muted"}>
                 {connectedCount} platform{connectedCount !== 1 ? "s" : ""} connected
               </span>
             </p>
           </div>
           <div className="flex gap-2">
+            <Link
+              href="/applications"
+              className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium hover:border-brand/60 transition"
+              title="See the exact resume sent per application (interview call prep)"
+            >
+              Call prep ↗
+            </Link>
             <button
               onClick={() => runAgent("mock")}
               disabled={running || !me.user.paid}
@@ -262,110 +540,368 @@ export default function Dashboard() {
         {/* banners */}
         {!me.user.paid && (
           <div className="mt-5 rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
-            Payment not complete — finish{" "}
-            <Link href="/onboarding" className="underline">
-              onboarding
-            </Link>{" "}
-            to activate the agent.
+            Payment not complete — finish <Link href="/onboarding" className="underline">onboarding</Link> to activate the agent.
           </div>
         )}
-
         {me.user.paid && connectedCount === 0 && (
           <div className="mt-5 rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
             <span className="font-medium">Connect at least one platform</span>{" "}
-            <span className="text-muted">
-              so the agent can apply for real. Demo mode works without connections.
-            </span>{" "}
-            <button
-              onClick={() => setTab("integrations")}
-              className="underline text-brand-2 ml-1"
-            >
-              Set up integrations →
-            </button>
+            <span className="text-muted">so the agent can apply for real. Demo mode works without connections.</span>{" "}
+            <button onClick={() => setTab("integrations")} className="underline text-brand-2 ml-1">Set up integrations →</button>
+          </div>
+        )}
+        {me.user.paid && matchedCount > 0 && !(me.profile?.autoApply) && (
+          <div className="mt-3 rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
+            <span className="font-medium">{matchedCount} job{matchedCount !== 1 ? "s" : ""} awaiting your approval.</span>{" "}
+            <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">Review & approve →</button>
           </div>
         )}
 
         {/* reconnect warnings */}
-        {me.user.paid &&
-          integrations
-            .filter((i) => i.status === "needs_login")
-            .map((i) => (
-              <div
-                key={i.platform}
-                className="mt-3 flex items-center justify-between rounded-xl border border-warn/40 bg-warn/10 px-4 py-2.5 text-sm text-warn"
-              >
-                <span>
-                  {PLATFORM_META[i.platform]?.label ?? i.platform} session expired — reconnect to
-                  resume live applications.
-                </span>
-                <button
-                  onClick={() => connectPlatform(i.platform)}
-                  className="ml-4 shrink-0 rounded-lg border border-warn/60 px-3 py-1 text-xs hover:bg-warn/20 transition"
-                >
-                  Reconnect
-                </button>
-              </div>
-            ))}
+        {me.user.paid && integrations.filter((i) => i.status === "needs_login").map((i) => (
+          <div key={i.platform} className="mt-3 flex items-center justify-between rounded-xl border border-warn/40 bg-warn/10 px-4 py-2.5 text-sm text-warn">
+            <span>{PLATFORM_META[i.platform]?.label ?? i.platform} session expired — reconnect to resume live applications.</span>
+            <button onClick={() => connectPlatform(i.platform)} className="ml-4 shrink-0 rounded-lg border border-warn/60 px-3 py-1 text-xs hover:bg-warn/20 transition">Reconnect</button>
+          </div>
+        ))}
 
         {/* stats */}
         <div className="mt-6 grid grid-cols-2 lg:grid-cols-5 gap-3">
-          {[
+          {([
             ["Matched", me.stats.matched, "text-foreground"],
             ["Applied", me.stats.applied, "text-accent"],
             ["Skipped", me.stats.skipped, "text-muted"],
             ["Failed", me.stats.failed, "text-danger"],
             ["Avg match", me.stats.avgScore, "text-brand-2"],
-          ].map(([label, val, c]) => (
-            <div key={label as string} className="rounded-xl border border-border bg-surface p-4">
-              <div className={`text-3xl font-semibold ${c}`}>{val as number}</div>
-              <div className="text-xs text-muted mt-1">{label as string}</div>
+          ] as const).map(([label, val, c]) => (
+            <div key={label} className="rounded-2xl border-2 border-ink bg-surface p-4 shadow-[3px_3px_0_var(--ink)]">
+              <div className={`display text-4xl ${c}`}>{val}</div>
+              <div className="text-xs text-muted mt-1">{label}</div>
             </div>
           ))}
         </div>
 
-        {/* skills */}
-        {skills.length > 0 && (
-          <div className="mt-6 rounded-xl border border-border bg-surface p-4">
-            <div className="text-xs uppercase tracking-wide text-muted mb-2">
-              Skills extracted from your resume
+        {/* Interview funnel — the headline "is this working?" panel */}
+        {me.stats.applied > 0 && (
+          <div className="mt-4 rounded-xl border border-border bg-surface p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs uppercase tracking-wide text-muted">Outcomes</div>
+              {me.stats.interviewRate != null && (
+                <div className="text-sm">
+                  <span className="text-accent font-semibold">{me.stats.interviewRate}%</span>
+                  <span className="text-muted"> interview rate</span>
+                </div>
+              )}
             </div>
-            <div className="flex flex-wrap gap-2">
-              {skills.map((s) => (
-                <span key={s} className="rounded-md bg-brand/15 px-2 py-1 text-sm text-brand-2">
-                  {s}
-                </span>
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+              <span><span className="text-foreground font-medium">{me.stats.applied}</span> <span className="text-muted">applied</span></span>
+              <span className="text-muted">→</span>
+              <span><span className="text-accent font-medium">{me.stats.interviews}</span> <span className="text-muted">interview{me.stats.interviews !== 1 ? "s" : ""}</span></span>
+              <span className="text-muted">→</span>
+              <span><span className="text-accent font-medium">{me.stats.offers}</span> <span className="text-muted">offer{me.stats.offers !== 1 ? "s" : ""}</span></span>
+            </div>
+            {me.stats.outcomeReported < me.stats.applied && (
+              <p className="mt-2 text-xs text-muted">
+                Tell us what happened on your applications — set an outcome on each row in{" "}
+                <button onClick={() => { setTab("applications"); setFilter("applied"); }} className="underline text-brand-2">Applications</button>.
+                {" "}{me.stats.applied - me.stats.outcomeReported} still need an outcome.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Match-quality survey — one tap, only after enough data + not yet rated */}
+        {me.profile && me.stats.applied >= 5 && me.profile.matchQualityRating == null && surveyRating == null && (
+          <div className="mt-4 rounded-xl border border-brand/40 bg-brand/10 p-4">
+            <div className="text-sm font-medium mb-2">How good are the matches the agent is finding?</div>
+            <div className="flex items-center gap-2">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => submitSurvey(n)}
+                  className="size-9 rounded-lg border border-border bg-surface text-sm hover:border-brand/60 hover:bg-brand/10 transition"
+                  title={`${n} / 5`}
+                >
+                  {n}
+                </button>
               ))}
+              <span className="text-xs text-muted ml-2">1 = poor · 5 = spot on</span>
             </div>
+          </div>
+        )}
+        {surveyRating != null && (
+          <div className="mt-4 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 text-sm text-accent">
+            Thanks — rated {surveyRating}/5. This helps us tune the matcher.
+          </div>
+        )}
+
+        {/* Resume intelligence panel */}
+        {me.profile && (
+          <div className="mt-6 rounded-xl border border-border bg-surface p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs uppercase tracking-wide text-muted">Resume Intelligence</div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => { setSkillsDraft(skills); setEditingSkills((v) => !v); }}
+                  className="text-xs text-brand-2 hover:text-brand transition"
+                >
+                  {editingSkills ? "Cancel" : "✎ Edit skills"}
+                </button>
+                <button
+                  onClick={analyzeResume}
+                  disabled={analyzingResume || !me.profile.resumeName}
+                  title={!me.profile.resumeName ? "Upload a resume first" : "Re-analyze your resume with AI"}
+                  className="text-xs text-brand-2 hover:text-brand transition disabled:opacity-40"
+                >
+                  {analyzingResume ? "Analyzing…" : "↻ Re-analyze"}
+                </button>
+              </div>
+            </div>
+
+            {/* Parse-failure fallback — agent told us it read no skills */}
+            {me.profile.resumeParseFailed && !editingSkills && (
+              <div className="mb-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+                We couldn&apos;t read skills from your resume, so matches will be weak.{" "}
+                <button onClick={() => { setSkillsDraft(skills); setEditingSkills(true); }} className="underline font-medium">Add your skills manually →</button>
+              </div>
+            )}
+
+            {/* Manual skills editor — fallback when parsing fails or to refine */}
+            {editingSkills && (
+              <div className="mb-4 rounded-lg border border-brand/40 bg-brand/5 p-3">
+                <div className="text-xs text-muted mb-2">Add or remove skills the agent should match on. Type and press Enter.</div>
+                <TagInput value={skillsDraft} onChange={setSkillsDraft} placeholder="e.g. React, Python, SQL" />
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={saveSkills}
+                    disabled={skillsSaving}
+                    className="rounded-lg brand-gradient px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+                  >
+                    {skillsSaving ? "Saving…" : "Save skills"}
+                  </button>
+                  <button onClick={() => setEditingSkills(false)} className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted hover:text-foreground transition">Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {me.profile.resumeScore != null ? (() => {
+              const analysis: ResumeAnalysis = me.profile!.resumeSuggestions
+                ? (parseJ<ResumeAnalysis>(me.profile!.resumeSuggestions, {
+                    score: me.profile!.resumeScore ?? 0,
+                    grade: "?",
+                    strengths: [],
+                    issues: [],
+                    suggestions: [],
+                  }))
+                : { score: me.profile!.resumeScore, grade: "?", strengths: [], issues: [], suggestions: [] };
+              return (
+                <div className="space-y-3">
+                  {/* Score + grade row */}
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-baseline gap-1">
+                      <span className={`text-4xl font-bold ${resumeScoreColor(analysis.score)}`}>
+                        {analysis.score}
+                      </span>
+                      <span className="text-muted text-sm">/100</span>
+                    </div>
+                    <span className={`rounded-md border px-2.5 py-1 text-sm font-bold ${resumeGradeBg(analysis.grade)}`}>
+                      {analysis.grade}
+                    </span>
+                    {me.profile!.resumeName && (
+                      <span className="text-xs text-muted truncate max-w-[180px]">{me.profile!.resumeName}</span>
+                    )}
+                  </div>
+
+                  {/* Two-column: issues + suggestions */}
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {analysis.issues.length > 0 && (
+                      <div>
+                        <div className="text-xs font-medium text-warn mb-1">Issues found</div>
+                        <ul className="space-y-1">
+                          {analysis.issues.map((issue, i) => (
+                            <li key={i} className="text-xs text-muted flex gap-1.5">
+                              <span className="text-warn shrink-0">✗</span>{issue}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {analysis.suggestions.length > 0 && (
+                      <div>
+                        <div className="text-xs font-medium text-accent mb-1">AI suggestions</div>
+                        <ul className="space-y-1">
+                          {analysis.suggestions.map((s, i) => (
+                            <li key={i} className="text-xs text-muted flex gap-1.5">
+                              <span className="text-accent shrink-0">→</span>{s}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Skills strip */}
+                  {skills.length > 0 && (
+                    <div>
+                      <div className="text-xs text-muted mb-1.5">Extracted skills</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {skills.map((s) => (
+                          <span key={s} className="rounded-md bg-brand/15 px-2 py-0.5 text-xs text-brand-2">{s}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })() : (
+              <div className="text-sm text-muted">
+                {me.profile.resumeName
+                  ? "Analysis in progress — check back in a moment."
+                  : "Upload your resume in Onboarding to get an AI quality score and improvement suggestions."}
+                {skills.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {skills.map((s) => (
+                      <span key={s} className="rounded-md bg-brand/15 px-2 py-0.5 text-xs text-brand-2">{s}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
         {/* tabs */}
         <div className="mt-8 flex items-center gap-2 border-b border-border">
-          {(["applications", "integrations", "reports"] as const).map((t) => (
+          {(["profile", "applications", "integrations", "reports"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
               className={`px-4 py-2.5 text-sm capitalize border-b-2 -mb-px transition ${
-                tab === t
-                  ? "border-brand text-foreground"
-                  : "border-transparent text-muted hover:text-foreground"
+                tab === t ? "border-brand text-foreground" : "border-transparent text-muted hover:text-foreground"
               }`}
             >
               {t}
               {t === "integrations" && connectedCount > 0 && (
-                <span className="ml-1.5 rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] text-accent">
-                  {connectedCount}
-                </span>
+                <span className="ml-1.5 rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] text-accent">{connectedCount}</span>
+              )}
+              {t === "applications" && matchedCount > 0 && !me.profile?.autoApply && (
+                <span className="ml-1.5 rounded-full bg-warn/20 px-1.5 py-0.5 text-[10px] text-warn">{matchedCount}</span>
               )}
             </button>
           ))}
         </div>
 
+        {/* ── PROFILE ── */}
+        {tab === "profile" && profileForm && (
+          <div className="mt-6 max-w-xl space-y-6">
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-4">Targeting</h2>
+              <div className="space-y-4">
+                {PROFF_FIELDS.filter((f) => f.group === "Targeting").map((f) => (
+                  <div key={f.key}>
+                    <label className="block text-sm font-medium mb-1">{f.label}</label>
+                    <p className="text-xs text-muted mb-1.5">{f.help}</p>
+                    {f.type === "tags" && (
+                      <TagInput
+                        value={profileForm[f.key as keyof ProfileForm] as string[]}
+                        onChange={(v) => patchForm(f.key as keyof ProfileForm, v as ProfileForm[keyof ProfileForm])}
+                        placeholder={f.placeholder}
+                      />
+                    )}
+                    {f.type === "select" && (
+                      <select
+                        value={String(profileForm[f.key as keyof ProfileForm])}
+                        onChange={(e) => patchForm(f.key as keyof ProfileForm, e.target.value as ProfileForm[keyof ProfileForm])}
+                        className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none"
+                      >
+                        {f.options?.map((o) => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-4">Firewall / limits</h2>
+              <div className="space-y-4">
+                {PROFF_FIELDS.filter((f) => f.group === "Firewall / limits").map((f) => (
+                  <div key={f.key}>
+                    <label className="block text-sm font-medium mb-1">{f.label}</label>
+                    <p className="text-xs text-muted mb-1.5">{f.help}</p>
+                    {f.type === "tags" && (
+                      <TagInput
+                        value={profileForm[f.key as keyof ProfileForm] as string[]}
+                        onChange={(v) => patchForm(f.key as keyof ProfileForm, v as ProfileForm[keyof ProfileForm])}
+                        placeholder={f.placeholder}
+                      />
+                    )}
+                    {f.type === "number" && (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={0}
+                          value={String(profileForm[f.key as keyof ProfileForm])}
+                          onChange={(e) => patchForm(f.key as keyof ProfileForm, Number(e.target.value) as ProfileForm[keyof ProfileForm])}
+                          className="rounded-lg border border-border bg-surface px-3 py-2 text-sm w-32 outline-none"
+                        />
+                        {f.suffix && <span className="text-sm text-muted">{f.suffix}</span>}
+                      </div>
+                    )}
+                    {f.type === "toggle" && (
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <div
+                          onClick={() => patchForm("autoApply", !profileForm.autoApply)}
+                          className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer ${profileForm.autoApply ? "bg-accent" : "bg-surface-2 border border-border"}`}
+                        >
+                          <span className={`absolute top-1 size-4 rounded-full bg-white transition-transform ${profileForm.autoApply ? "translate-x-6" : "translate-x-1"}`} />
+                        </div>
+                        <span className="text-sm">{profileForm.autoApply ? "On — agent submits automatically" : "Off — agent shortlists, you approve"}</span>
+                      </label>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-4">Form fill</h2>
+              <p className="text-xs text-muted mb-4">These values are filled into platform application forms automatically.</p>
+              <div className="space-y-4">
+                {CONTACT_FIELDS.map((f) => (
+                  <div key={f.key}>
+                    <label className="block text-sm font-medium mb-1">{f.label}</label>
+                    <p className="text-xs text-muted mb-1.5">{f.help}</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type={f.type}
+                        value={String(profileForm[f.key as keyof ProfileForm] ?? "")}
+                        placeholder={("placeholder" in f ? f.placeholder : undefined)}
+                        onChange={(e) => patchForm(f.key as keyof ProfileForm, e.target.value as ProfileForm[keyof ProfileForm])}
+                        className="rounded-lg border border-border bg-surface px-3 py-2 text-sm w-48 outline-none"
+                      />
+                      {"suffix" in f && f.suffix && <span className="text-sm text-muted">{f.suffix}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={saveProfile}
+              disabled={profileSaving}
+              className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+            >
+              {profileSaving ? "Saving…" : profileSaved ? "Saved ✓" : "Save profile"}
+            </button>
+          </div>
+        )}
+
         {/* ── APPLICATIONS ── */}
         {tab === "applications" && (
           <div className="mt-4">
-            <div className="flex gap-2 mb-3 text-sm">
-              {["all", "applied", "matched", "skipped", "failed"].map((f) => (
+            <div className="flex flex-wrap gap-2 mb-3 text-sm">
+              {["all", "applied", "approved", "matched", "skipped", "failed"].map((f) => (
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
@@ -378,54 +914,93 @@ export default function Dashboard() {
               ))}
             </div>
 
+            <div className="text-xs text-muted mb-2">
+              {filteredApps.length} result{filteredApps.length !== 1 ? "s" : ""}
+              {totalPages > 1 && ` · page ${page + 1} of ${totalPages}`}
+            </div>
+
             {apps.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-10 text-center text-muted">
-                No applications yet. Hit{" "}
-                <span className="text-foreground">Run demo</span> to watch it work.
+                No applications yet. Hit <span className="text-foreground">Run demo</span> to watch it work.
               </div>
             ) : (
               <div className="space-y-2">
                 {apps.map((a) => (
                   <div
                     key={a.id}
-                    className="flex items-center justify-between rounded-xl border border-border bg-surface px-4 py-3 hover:border-brand/40 transition"
+                    className="flex items-start sm:items-center justify-between rounded-xl border border-border bg-surface px-4 py-3 hover:border-brand/40 transition gap-3"
                   >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium truncate">{a.jobTitle}</span>
                         {a.url && (
-                          <a
-                            href={a.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs text-brand-2 hover:underline shrink-0"
-                          >
+                          <a href={a.url} target="_blank" rel="noreferrer" className="text-xs text-brand-2 hover:underline shrink-0">
                             view ↗
                           </a>
                         )}
                       </div>
-                      <div className="text-sm text-muted truncate">
-                        {a.company}
-                        {a.reason ? ` · ${a.reason}` : ""}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 shrink-0">
-                      <div className="text-right">
-                        <div className={`font-mono text-lg ${scoreColor(a.matchScore)}`}>
-                          {a.matchScore}
+                      <div className="text-sm text-muted mt-0.5">{a.company}</div>
+                      {a.reason && (
+                        <div className="text-xs text-muted mt-1 truncate max-w-md" title={a.reason}>
+                          {a.reason}
                         </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="text-right">
+                        <div className={`font-mono text-lg ${scoreColor(a.matchScore)}`}>{a.matchScore}</div>
                         <div className="text-[10px] text-muted">match</div>
                       </div>
-                      <span
-                        className={`rounded-md px-2 py-1 text-xs ${
-                          STATUS_STYLE[a.status] || "bg-surface-2 text-muted"
-                        }`}
-                      >
-                        {a.status}
+                      <span className={`rounded-md px-2 py-1 text-xs ${STATUS_STYLE[a.status] || "bg-surface-2 text-muted"}`}>
+                        {STATUS_LABEL[a.status] ?? a.status}
                       </span>
+                      {(a.status === "applied" || a.status === "approved") && (
+                        <select
+                          value={a.outcome ?? ""}
+                          onChange={(e) => setOutcome(a.id, e.target.value)}
+                          title="Tell us what happened — this is how we measure if the agent works"
+                          className={`rounded-md border bg-surface px-2 py-1 text-xs outline-none ${OUTCOME_STYLE[a.outcome ?? ""] ?? "border-border text-muted"}`}
+                        >
+                          {OUTCOME_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      )}
+                      {a.status === "matched" && !me.profile?.autoApply && (
+                        <button
+                          onClick={() => approveApplication(a.id)}
+                          disabled={approvingId === a.id}
+                          className="rounded-md border border-brand/40 px-2.5 py-1 text-xs text-brand-2 hover:bg-brand/10 transition disabled:opacity-50"
+                        >
+                          {approvingId === a.id ? "…" : "Apply"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* pagination */}
+            {totalPages > 1 && (
+              <div className="mt-4 flex items-center justify-between text-sm">
+                <button
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  className="rounded-lg border border-border px-3 py-1.5 text-muted hover:text-foreground disabled:opacity-30 transition"
+                >
+                  ← Previous
+                </button>
+                <span className="text-muted">
+                  {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filteredApps.length)} of {filteredApps.length}
+                </span>
+                <button
+                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  disabled={page >= totalPages - 1}
+                  className="rounded-lg border border-border px-3 py-1.5 text-muted hover:text-foreground disabled:opacity-30 transition"
+                >
+                  Next →
+                </button>
               </div>
             )}
           </div>
@@ -447,86 +1022,51 @@ export default function Dashboard() {
                   icon: intg.platform.slice(0, 2).toUpperCase(),
                 };
                 const isConnected = intg.status === "connected";
-                const isConnecting =
-                  connectingPlatform === intg.platform || intg.status === "connecting";
+                const isConnecting = connectingPlatform === intg.platform || intg.status === "connecting";
                 const needsLogin = intg.status === "needs_login";
 
                 return (
                   <div
                     key={intg.platform}
                     className={`rounded-xl border p-4 transition ${
-                      isConnected
-                        ? "border-accent/40 bg-accent/5"
-                        : needsLogin
-                          ? "border-warn/40 bg-warn/5"
-                          : "border-border bg-surface"
+                      isConnected ? "border-accent/40 bg-accent/5"
+                      : needsLogin ? "border-warn/40 bg-warn/5"
+                      : "border-border bg-surface"
                     }`}
                   >
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <span
-                          className={`text-xs font-bold rounded-md px-1.5 py-0.5 border ${meta.color} border-current`}
-                        >
-                          {meta.icon}
-                        </span>
+                        <span className={`text-xs font-bold rounded-md px-1.5 py-0.5 border ${meta.color} border-current`}>{meta.icon}</span>
                         <span className="font-medium">{meta.label}</span>
                       </div>
-                      <span
-                        className={`text-xs rounded-full px-2 py-0.5 ${
-                          isConnected
-                            ? "bg-accent/20 text-accent"
-                            : needsLogin
-                              ? "bg-warn/20 text-warn"
-                              : isConnecting
-                                ? "bg-brand/20 text-brand-2"
-                                : "bg-surface-2 text-muted"
-                        }`}
-                      >
-                        {isConnected
-                          ? "Connected"
-                          : needsLogin
-                            ? "Needs login"
-                            : isConnecting
-                              ? "Connecting…"
-                              : "Not connected"}
+                      <span className={`text-xs rounded-full px-2 py-0.5 ${
+                        isConnected ? "bg-accent/20 text-accent"
+                        : needsLogin ? "bg-warn/20 text-warn"
+                        : isConnecting ? "bg-brand/20 text-brand-2"
+                        : "bg-surface-2 text-muted"
+                      }`}>
+                        {isConnected ? "Connected" : needsLogin ? "Needs login" : isConnecting ? "Connecting…" : "Not connected"}
                       </span>
                     </div>
 
                     {isConnected ? (
                       <div className="flex items-center justify-between">
-                        <span className="text-xs text-muted">
-                          Agent applies via this account
-                        </span>
-                        <button
-                          onClick={() => disconnectPlatform(intg.platform)}
-                          className="text-xs text-muted hover:text-danger transition"
-                        >
-                          Disconnect
-                        </button>
+                        <span className="text-xs text-muted">Agent applies via this account</span>
+                        <button onClick={() => disconnectPlatform(intg.platform)} className="text-xs text-muted hover:text-danger transition">Disconnect</button>
                       </div>
                     ) : (
                       <div>
                         <p className="text-xs text-muted mb-3">
-                          {needsLogin
-                            ? "Session expired — log in again to resume."
-                            : "A browser window will open. Log in once and close it."}
+                          {needsLogin ? "Session expired — log in again to resume." : "A browser window will open. Log in once and close it."}
                         </p>
                         <button
                           onClick={() => connectPlatform(intg.platform)}
                           disabled={!me.user.paid || isConnecting}
                           className="w-full rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
                         >
-                          {isConnecting
-                            ? "Browser opening…"
-                            : needsLogin
-                              ? `Reconnect ${meta.label}`
-                              : `Connect ${meta.label}`}
+                          {isConnecting ? "Browser opening…" : needsLogin ? `Reconnect ${meta.label}` : `Connect ${meta.label}`}
                         </button>
-                        {!me.user.paid && (
-                          <p className="mt-1.5 text-xs text-muted text-center">
-                            Activate a plan first
-                          </p>
-                        )}
+                        {!me.user.paid && <p className="mt-1.5 text-xs text-muted text-center">Activate a plan first</p>}
                       </div>
                     )}
                   </div>
@@ -560,8 +1100,7 @@ export default function Dashboard() {
                   <div className="flex items-center justify-between">
                     <div className="font-medium">{r.date}</div>
                     <div className="text-sm text-muted">
-                      <span className="text-accent">{r.appliedCount} applied</span> ·{" "}
-                      {r.matchedCount} matched · {r.failedCount} failed
+                      <span className="text-accent">{r.appliedCount} applied</span> · {r.matchedCount} matched · {r.failedCount} failed
                     </div>
                   </div>
                   <p className="mt-2 text-sm text-muted whitespace-pre-line">{r.summary}</p>

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
+import { audit } from "@/lib/audit";
 
 export async function GET() {
   const uid = await getUid();
@@ -16,13 +17,14 @@ const ARRAY_FIELDS = new Set([
   "excludedCompanies",
   "skills",
 ]);
-const NUM_FIELDS = new Set(["stipendMin", "minMatchScore", "maxPerDay"]);
+const NUM_FIELDS = new Set(["stipendMin", "minMatchScore", "maxPerDay", "gpa", "matchQualityRating"]);
 const STR_FIELDS = new Set([
   "workMode",
   "experienceLevel",
   "resumeText",
   "resumeName",
   "education",
+  "phone",
 ]);
 const BOOL_FIELDS = new Set(["autoApply"]);
 
@@ -38,6 +40,14 @@ export async function POST(req: Request) {
     else if (NUM_FIELDS.has(k)) data[k] = Math.max(0, Math.round(Number(v) || 0));
     else if (BOOL_FIELDS.has(k)) data[k] = Boolean(v);
     else if (STR_FIELDS.has(k)) data[k] = String(v ?? "");
+  }
+
+  // Record explicit consent the moment the user enables auto-apply (audit trail
+  // for "the agent applied on my behalf"). We stamp it on enable and never
+  // silently clear it.
+  if (data.autoApply === true) {
+    data.autoApplyConsentAt = new Date();
+    await audit("consent", { userId: uid, detail: "auto_apply enabled" });
   }
 
   const profile = await prisma.profile.update({ where: { userId: uid }, data });

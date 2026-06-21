@@ -42,8 +42,26 @@ def conn():
 
 # ---------- reads ----------
 
+def _ensure_profile_columns(c):
+    """Add missing profile columns if Prisma migration hasn't run yet."""
+    cols = {row[1] for row in c.execute("PRAGMA table_info(profiles)").fetchall()}
+    if "phone" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN phone TEXT")
+    if "gpa" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN gpa REAL DEFAULT 8.0")
+    if "resume_score" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN resume_score INTEGER")
+    if "resume_suggestions" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN resume_suggestions TEXT")
+    if "match_quality_rating" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN match_quality_rating INTEGER")
+    if "resume_parse_failed" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN resume_parse_failed INTEGER DEFAULT 0")
+
+
 def get_user(uid: str) -> dict | None:
     with conn() as c:
+        _ensure_profile_columns(c)
         u = c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
         if not u:
             return None
@@ -209,38 +227,177 @@ def upsert_job(job: dict) -> str:
         if existing:
             return existing["id"]
         jid = cuid()
-        c.execute(
-            "INSERT INTO jobs (id, source, external_id, title, company, location, "
-            "stipend, duration, skills, url, scraped_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                jid,
-                job["source"],
-                job["external_id"],
-                job["title"],
-                job["company"],
-                job.get("location"),
-                job.get("stipend"),
-                job.get("duration"),
-                json.dumps(job.get("skills", [])),
-                job["url"],
-                now_ms(),
-            ),
-        )
+        try:
+            c.execute(
+                "INSERT INTO jobs (id, source, external_id, title, company, location, "
+                "stipend, duration, skills, url, scraped_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    jid,
+                    job["source"],
+                    job["external_id"],
+                    job["title"],
+                    job["company"],
+                    job.get("location"),
+                    job.get("stipend"),
+                    job.get("duration"),
+                    json.dumps(job.get("skills", [])),
+                    job["url"],
+                    now_ms(),
+                ),
+            )
+        except sqlite3.IntegrityError:
+            # concurrent worker inserted same job between our SELECT and INSERT
+            row = c.execute(
+                "SELECT id FROM jobs WHERE source=? AND external_id=?",
+                (job["source"], job["external_id"]),
+            ).fetchone()
+            return row["id"] if row else jid
         return jid
+
+
+def _ensure_app_columns(c):
+    """Add columns Prisma may not have migrated yet (resilience if db push skipped)."""
+    cols = {row[1] for row in c.execute("PRAGMA table_info(applications)").fetchall()}
+    if "failure_reason" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN failure_reason TEXT")
+    if "screenshot_path" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN screenshot_path TEXT")
+    if "resume_version_id" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN resume_version_id TEXT")
+    if "outcome" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN outcome TEXT")
+    if "outcome_at" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN outcome_at INTEGER")
 
 
 def add_application(uid: str, *, job_id: str | None, title: str, company: str,
                     url: str | None, score: int, status: str, reason: str,
-                    applied: bool):
+                    applied: bool, resume_version_id: str | None = None,
+                    failure_reason: str | None = None, screenshot_path: str | None = None):
     with conn() as c:
+        _ensure_app_columns(c)
         c.execute(
             "INSERT INTO applications (id, user_id, job_id, job_title, company, url, "
-            "match_score, status, reason, applied_at, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "match_score, status, reason, failure_reason, screenshot_path, "
+            "resume_version_id, applied_at, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 cuid(), uid, job_id, title, company, url, int(score), status, reason,
+                failure_reason, screenshot_path, resume_version_id,
                 now_ms() if applied else None, now_ms(),
             ),
+        )
+
+
+def _ensure_resume_versions_table(c):
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS resume_versions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            label TEXT NOT NULL,
+            job_title TEXT,
+            company TEXT,
+            text TEXT NOT NULL,
+            file_path TEXT,
+            skills_claimed TEXT NOT NULL DEFAULT '[]',
+            base_skills TEXT NOT NULL DEFAULT '[]',
+            created_at INTEGER NOT NULL
+        )
+    """)
+
+
+def add_resume_version(uid: str, *, label: str, job_title: str, company: str,
+                       text: str, file_path: str | None,
+                       skills_claimed: list[str], base_skills: list[str]) -> str:
+    """Immutable snapshot of the exact resume sent. Returns the version id to
+    link onto the application row, so the user can later see (and download) the
+    precise resume a recruiter received."""
+    vid = cuid()
+    with conn() as c:
+        _ensure_resume_versions_table(c)
+        c.execute(
+            "INSERT INTO resume_versions (id, user_id, label, job_title, company, "
+            "text, file_path, skills_claimed, base_skills, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (vid, uid, label, job_title, company, (text or "")[:40000], file_path,
+             json.dumps(skills_claimed), json.dumps(base_skills), now_ms()),
+        )
+    return vid
+
+
+def _ensure_audit_table(c):
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id TEXT PRIMARY KEY,
+            user_id TEXT,
+            action TEXT NOT NULL,
+            target TEXT,
+            detail TEXT,
+            created_at INTEGER NOT NULL
+        )
+    """)
+
+
+def add_audit(action: str, *, user_id: str | None = None,
+              target: str | None = None, detail: str | None = None):
+    with conn() as c:
+        _ensure_audit_table(c)
+        c.execute(
+            "INSERT INTO audit_logs (id, user_id, action, target, detail, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (cuid(), user_id, action, target, detail, now_ms()),
+        )
+
+
+def get_approved_applications(uid: str) -> list[dict]:
+    """Return applications with status='approved' for this user, joined with job source."""
+    with conn() as c:
+        rows = c.execute("""
+            SELECT a.id, a.job_title, a.company, a.url, a.match_score,
+                   COALESCE(j.source, '') AS source,
+                   COALESCE(j.skills, '[]') AS skills,
+                   COALESCE(j.external_id, '') AS external_id
+            FROM applications a
+            LEFT JOIN jobs j ON j.id = a.job_id
+            WHERE a.user_id=? AND a.status='approved'
+        """, (uid,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_application_status(app_id: str, status: str, reason: str,
+                              resume_version_id: str | None = None,
+                              failure_reason: str | None = None,
+                              screenshot_path: str | None = None):
+    with conn() as c:
+        _ensure_app_columns(c)
+        applied_at = now_ms() if status == "applied" else None
+        c.execute(
+            "UPDATE applications SET status=?, reason=?, failure_reason=?, "
+            "screenshot_path=?, resume_version_id=COALESCE(?, resume_version_id), "
+            "applied_at=? WHERE id=?",
+            (status, reason, failure_reason, screenshot_path, resume_version_id,
+             applied_at, app_id),
+        )
+
+
+def set_resume_analysis(uid: str, score: int, suggestions_json: str):
+    """Save resume quality score and full analysis JSON to the user's profile."""
+    with conn() as c:
+        _ensure_profile_columns(c)
+        c.execute(
+            "UPDATE profiles SET resume_score=?, resume_suggestions=?, updated_at=? WHERE user_id=?",
+            (score, suggestions_json, now_ms(), uid),
+        )
+
+
+def set_resume_parse_failed(uid: str, failed: bool):
+    """Flag whether resume parsing yielded no usable skills, so the dashboard can
+    prompt the user to fill skills manually instead of silently scoring nothing."""
+    with conn() as c:
+        _ensure_profile_columns(c)
+        c.execute(
+            "UPDATE profiles SET resume_parse_failed=?, updated_at=? WHERE user_id=?",
+            (1 if failed else 0, now_ms(), uid),
         )
 
 

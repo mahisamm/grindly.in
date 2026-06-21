@@ -33,14 +33,24 @@ export async function GET() {
   }));
 
   const apps = user.applications;
+  const appliedApps = apps.filter((a) => a.status === "applied");
+  // beta funnel: interview rate is the headline product-works signal
+  const interviews = appliedApps.filter((a) => a.outcome === "interview" || a.outcome === "offer").length;
+  const offers = appliedApps.filter((a) => a.outcome === "offer").length;
+  const outcomeReported = appliedApps.filter((a) => a.outcome).length;
   const stats = {
     matched: apps.length,
-    applied: apps.filter((a) => a.status === "applied").length,
+    applied: appliedApps.length,
     skipped: apps.filter((a) => a.status === "skipped").length,
     failed: apps.filter((a) => a.status === "failed").length,
     avgScore: apps.length
       ? Math.round(apps.reduce((s, a) => s + a.matchScore, 0) / apps.length)
       : 0,
+    interviews,
+    offers,
+    outcomeReported,
+    // % of applications (with a reported outcome) that led to an interview/offer
+    interviewRate: outcomeReported ? Math.round((interviews / outcomeReported) * 100) : null,
   };
 
   return NextResponse.json({
