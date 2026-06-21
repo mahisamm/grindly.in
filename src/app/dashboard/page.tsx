@@ -69,6 +69,7 @@ type Me = {
     plan: string;
     status: string;
     slackConnected: boolean;
+    slackUserId: string | null;
     internshalaConnected: boolean;
   };
   profile: RawProfile | null;
@@ -254,6 +255,8 @@ export default function Dashboard() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [surveyRating, setSurveyRating] = useState<number | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "err" | "info"; text: string } | null>(null);
+  const [slackIdDraft, setSlackIdDraft] = useState("");
+  const [slackBusy, setSlackBusy] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/me");
@@ -455,6 +458,46 @@ export default function Dashboard() {
   function dismissOnboarding() {
     try { localStorage.setItem("nexpath_onboarded", "1"); } catch {}
     setShowOnboarding(false);
+  }
+
+  async function connectSlack() {
+    const id = slackIdDraft.trim();
+    if (!id) return;
+    setSlackBusy(true);
+    setNotice(null);
+    const res = await fetch("/api/slack/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slackUserId: id }),
+    });
+    setSlackBusy(false);
+    if (!res.ok) { setNotice({ kind: "err", text: "Couldn't save Slack ID. Use your member ID (U…)." }); return; }
+    setSlackIdDraft("");
+    setNotice({ kind: "ok", text: "Slack connected. Hit 'Send test' to confirm it lands." });
+    load();
+  }
+
+  async function testSlack() {
+    setSlackBusy(true);
+    setNotice(null);
+    const res = await fetch("/api/slack/test", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    setSlackBusy(false);
+    if (!res.ok) { setNotice({ kind: "err", text: data.error || "Test failed." }); return; }
+    setNotice(data.stub
+      ? { kind: "info", text: "Sent to local outbox (stub). Set SLACK_BOT_TOKEN in .env for real Slack DMs." }
+      : { kind: "ok", text: "Test message sent — check your Slack DMs." });
+  }
+
+  async function disconnectSlack() {
+    setSlackBusy(true);
+    await fetch("/api/slack/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slackUserId: "", disconnect: true }),
+    }).catch(() => {});
+    setSlackBusy(false);
+    load();
   }
 
   if (loading) {
@@ -1136,6 +1179,42 @@ export default function Dashboard() {
                   </div>
                 );
               })}
+            </div>
+
+            {/* Slack daily reports */}
+            <div className="mt-5 rounded-xl border border-border bg-surface p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold rounded-md px-1.5 py-0.5 border text-[#4A154B] border-current">Sl</span>
+                  <span className="font-medium">Slack reports</span>
+                </div>
+                <span className={`text-xs rounded-full px-2 py-0.5 ${me.user.slackConnected ? "bg-accent/20 text-accent" : "bg-surface-2 text-muted"}`}>
+                  {me.user.slackConnected ? "Connected" : "Not connected"}
+                </span>
+              </div>
+              <p className="text-xs text-muted mb-3">
+                Get the daily run report and session-expiry alerts as a Slack DM. Paste your Slack
+                member ID (Slack → your profile → ⋮ → Copy member ID). Needs <code className="text-foreground">SLACK_BOT_TOKEN</code> in <code className="text-foreground">.env</code> for real delivery.
+              </p>
+              {me.user.slackConnected ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-muted">Sending to <span className="text-foreground font-mono">{me.user.slackUserId}</span></span>
+                  <button onClick={testSlack} disabled={slackBusy} className="rounded-lg border border-border px-3 py-1.5 text-xs hover:border-brand/60 transition disabled:opacity-50">Send test</button>
+                  <button onClick={disconnectSlack} disabled={slackBusy} className="text-xs text-muted hover:text-danger transition">Disconnect</button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    value={slackIdDraft}
+                    onChange={(e) => setSlackIdDraft(e.target.value)}
+                    placeholder="U0XXXXXXX"
+                    className="rounded-lg border border-border bg-surface px-3 py-2 text-sm w-44 outline-none font-mono"
+                  />
+                  <button onClick={connectSlack} disabled={slackBusy || !slackIdDraft.trim()} className="rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50">
+                    {slackBusy ? "…" : "Connect Slack"}
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="mt-5 rounded-xl border border-border bg-surface p-4 text-sm text-muted">

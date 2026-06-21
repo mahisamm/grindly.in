@@ -9,8 +9,9 @@ import { sendMessage } from "@/lib/adapters/slack";
  * Real version would run OAuth and store the bot token per-workspace.
  */
 const schema = z.object({
-  slackUserId: z.string().min(2).max(60),
+  slackUserId: z.string().max(60),
   workspace: z.string().max(80).optional(),
+  disconnect: z.boolean().optional(),
 });
 
 export async function POST(req: Request) {
@@ -18,6 +19,18 @@ export async function POST(req: Request) {
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "invalid" }, { status: 400 });
+
+  if (parsed.data.disconnect) {
+    await prisma.user.update({
+      where: { id: uid },
+      data: { slackUserId: null, slackChannel: null, slackConnected: false },
+    });
+    return NextResponse.json({ ok: true, disconnected: true });
+  }
+
+  if (parsed.data.slackUserId.trim().length < 2) {
+    return NextResponse.json({ error: "Enter your Slack member ID (U…)." }, { status: 400 });
+  }
 
   const user = await prisma.user.update({
     where: { id: uid },
