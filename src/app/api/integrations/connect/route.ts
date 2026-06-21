@@ -49,11 +49,20 @@ export async function POST(req: Request) {
   }
 
   const py = process.env.PYTHON_BIN || "python";
-  const child = spawn(
-    py,
-    [script, "--user", uid, "--platform", platform, "--timeout", "300"],
-    { cwd: root, detached: true, stdio: ["ignore", out, out] },
-  );
+  let child;
+  try {
+    child = spawn(
+      py,
+      [script, "--user", uid, "--platform", platform, "--timeout", "300"],
+      { cwd: root, detached: true, stdio: ["ignore", out, out] },
+    );
+  } catch {
+    return NextResponse.json(
+      { error: `could not open the login browser (PYTHON_BIN="${py}"). Is Python + Playwright installed? Run \`npm run setup\`.` },
+      { status: 500 },
+    );
+  }
+  child.on("error", () => {});
   child.unref();
 
   return NextResponse.json({ ok: true, platform, pid: child.pid });

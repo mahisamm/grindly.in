@@ -47,3 +47,5 @@ next-env.d.ts
 /agent/browser_profile/
 /agent/__pycache__/
 *.pyc
+.gstack/
+devserver.log

@@ -214,9 +214,15 @@ function TagInput({ value, onChange, placeholder }: {
       ))}
       <input
         value={input}
-        onChange={(e) => setInput(e.target.value)}
+        onChange={(e) => {
+          // Commit on comma (typed or pasted) here rather than in onKeyDown —
+          // keydown reads stale `input` state under fast typing and drops tags.
+          const v = e.target.value;
+          if (v.includes(",")) add(v);
+          else setInput(v);
+        }}
         onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(input); }
+          if (e.key === "Enter") { e.preventDefault(); add(input); }
           if (e.key === "Backspace" && !input && value.length) onChange(value.slice(0, -1));
         }}
         onBlur={() => input && add(input)}
@@ -247,6 +253,7 @@ export default function Dashboard() {
   const [skillsSaving, setSkillsSaving] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [surveyRating, setSurveyRating] = useState<number | null>(null);
+  const [notice, setNotice] = useState<{ kind: "ok" | "err" | "info"; text: string } | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/me");
@@ -297,21 +304,66 @@ export default function Dashboard() {
 
   async function runAgent(mode: "mock" | "live") {
     setRunning(true);
-    await fetch("/api/agent/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode }),
-    });
-    setTimeout(() => setRunning(false), 6000);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/agent/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setNotice({ kind: "err", text: data.error || "Couldn't start the agent." });
+        setRunning(false);
+        return;
+      }
+      const runId: string | null = data.runId ?? null;
+      if (!runId) { setTimeout(() => setRunning(false), 4000); return; }
+
+      const started = Date.now();
+      const poll = async () => {
+        try {
+          const r = await fetch(`/api/agent/run?id=${runId}`);
+          const s = await r.json();
+          if (s.status === "done") {
+            const x = s.result || {};
+            setNotice({ kind: "ok", text: `Agent finished — applied ${x.applied ?? 0}, matched ${x.matched ?? 0}, failed ${x.failed ?? 0}.` });
+            setRunning(false); load(); return;
+          }
+          if (s.status === "failed") {
+            setNotice({ kind: "err", text: `Agent run failed: ${s.error || "unknown error"}` });
+            setRunning(false); return;
+          }
+          if (Date.now() - started > 120000) {
+            setNotice({ kind: "info", text: "Agent still running — results will appear shortly." });
+            setRunning(false); load(); return;
+          }
+          setTimeout(poll, 2000);
+        } catch {
+          setRunning(false);
+        }
+      };
+      setTimeout(poll, 2000);
+    } catch {
+      setNotice({ kind: "err", text: "Network error starting the agent." });
+      setRunning(false);
+    }
   }
 
   async function connectPlatform(platform: string) {
     setConnectingPlatform(platform);
-    await fetch("/api/integrations/connect", {
+    setNotice(null);
+    const res = await fetch("/api/integrations/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ platform }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setNotice({ kind: "err", text: data.error || "Couldn't open the login browser." });
+      setConnectingPlatform(null);
+      return;
+    }
     setTimeout(() => setConnectingPlatform(null), 10000);
   }
 
@@ -536,6 +588,18 @@ export default function Dashboard() {
             </button>
           </div>
         </div>
+
+        {/* run / connect result notice */}
+        {notice && (
+          <div className={`mt-5 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${
+            notice.kind === "ok" ? "border-accent/40 bg-accent/10 text-accent"
+            : notice.kind === "err" ? "border-danger/40 bg-danger/10 text-danger"
+            : "border-brand/40 bg-brand/10 text-brand-2"
+          }`}>
+            <span>{notice.text}</span>
+            <button onClick={() => setNotice(null)} className="shrink-0 text-muted hover:text-foreground transition">×</button>
+          </div>
+        )}
 
         {/* banners */}
         {!me.user.paid && (
