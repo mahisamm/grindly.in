@@ -120,7 +120,8 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     return jobs
 
 
-def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
+def apply(job: dict, cover_letter: str, uid: str = "",
+          profile: dict | None = None, resume_path: str | None = None) -> tuple[str, str]:
     page = _context(uid).new_page()
     try:
         page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
@@ -144,6 +145,19 @@ def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
             return "failed", "apply button not found on Unstop"
         btn.click()
         page.wait_for_timeout(2500)
+
+        # Upload tailored resume if available
+        if resume_path and os.path.isfile(resume_path):
+            file_inp = _qsel(page, [
+                "input[type='file'][accept*='pdf']",
+                "input[type='file']",
+            ])
+            if file_inp:
+                try:
+                    file_inp.set_input_files(resume_path)
+                    page.wait_for_timeout(800)
+                except Exception:  # noqa: BLE001
+                    pass
 
         for ta in page.query_selector_all("textarea"):
             try:

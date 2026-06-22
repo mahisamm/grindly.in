@@ -151,11 +151,11 @@ export default function OnboardingPage() {
           ))}
         </div>
 
-        <div className="glass rounded-2xl p-7 glow animate-in">
+        <div className="sticker rounded-3xl bg-surface p-7 animate-in">
           {/* STEP 0 — Resume */}
           {step === 0 && (
             <div>
-              <h2 className="text-xl font-semibold">Upload your resume</h2>
+              <h2 className="font-display text-2xl font-semibold">Upload your resume</h2>
               <p className="mt-1 text-sm text-muted">
                 The agent extracts your skills from this to score every internship.
               </p>
@@ -212,7 +212,7 @@ export default function OnboardingPage() {
           {/* STEP 1 — Proff questions */}
           {step === 1 && (
             <div>
-              <h2 className="text-xl font-semibold">A few proff questions</h2>
+              <h2 className="font-display text-2xl font-semibold">A few proff questions</h2>
               <p className="mt-1 text-sm text-muted">
                 These set the agent&apos;s firewall — the boundaries it plans and applies inside.
               </p>
@@ -298,7 +298,7 @@ export default function OnboardingPage() {
           {/* STEP 2 — Slack */}
           {step === 2 && (
             <div>
-              <h2 className="text-xl font-semibold">Connect Slack</h2>
+              <h2 className="font-display text-2xl font-semibold">Connect Slack</h2>
               <p className="mt-1 text-sm text-muted">
                 Right after payment the bot DMs you here to confirm details, then sends a
                 progress report every day.
@@ -355,7 +355,7 @@ export default function OnboardingPage() {
           {/* STEP 3 — Activate */}
           {step === 3 && (
             <div>
-              <h2 className="text-xl font-semibold">Choose your plan</h2>
+              <h2 className="font-display text-2xl font-semibold">Choose your plan</h2>
               <p className="mt-1 text-sm text-muted">
                 Pick a daily cap. Click Activate — agent starts immediately, no payment needed.
               </p>

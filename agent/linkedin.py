@@ -1,6 +1,6 @@
 """LinkedIn internship driver (Playwright, persistent browser profile per user).
 
-fetch()  -> scrape internship listings from linkedin.com/jobs
+fetch()  -> scrape internship listings from linkedin.com/jobs (all domains)
 apply()  -> submit via LinkedIn Easy Apply (requires login session)
 close()  -> release browser context
 
@@ -9,11 +9,14 @@ Returns (status, reason) where status in {applied, login_required, skipped, fail
 LinkedIn has the most aggressive bot detection of all sources. Mitigations:
   - Persistent profile reuses real cookie session (no re-login every run)
   - Realistic user agent
-  - Human-paced delays between actions
+  - navigator.webdriver patched via CDP init script
+  - Randomized human-paced delays between actions
+  - Hover before click to mimic real mouse movement
   - Skips listings with no Easy Apply button (external apply = skip, not fail)
 """
 from __future__ import annotations
 import os
+import random
 import re
 import time
 import urllib.parse
@@ -38,7 +41,11 @@ def _context(uid: str = ""):
     ctx = pw.chromium.launch_persistent_context(
         profile,
         headless=os.environ.get("INTERNPILOT_HEADLESS", "0") == "1",
-        args=["--disable-blink-features=AutomationControlled"],
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--disable-infobars",
+            "--no-sandbox",
+        ],
         user_agent=(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -46,7 +53,15 @@ def _context(uid: str = ""):
         ),
         viewport={"width": 1280, "height": 900},
         locale="en-US",
+        color_scheme="light",
     )
+    # Patch navigator.webdriver and other automation fingerprints
+    ctx.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        window.chrome = { runtime: {} };
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+    """)
     _contexts[key] = ctx
     return ctx
 
@@ -61,9 +76,22 @@ def close(uid: str = ""):
             pass
 
 
-def _search_url(domains: list[str]) -> str:
-    kw = urllib.parse.quote(f"{domains[0]} internship" if domains else "internship")
-    # f_E=1 = internship experience level filter; f_JT=I = internship job type
+def _rand_delay(page, lo: float = 0.8, hi: float = 2.5):
+    page.wait_for_timeout(int(random.uniform(lo, hi) * 1000))
+
+
+def _safe_click(element, page):
+    """Hover then click — more human-like than direct click."""
+    try:
+        element.hover()
+        page.wait_for_timeout(int(random.uniform(150, 400)))
+        element.click()
+    except Exception:  # noqa: BLE001
+        element.click()
+
+
+def _search_url(keyword: str) -> str:
+    kw = urllib.parse.quote(f"{keyword} internship")
     return (
         f"{BASE}/jobs/search/"
         f"?keywords={kw}"
@@ -74,12 +102,12 @@ def _search_url(domains: list[str]) -> str:
     )
 
 
-def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
-    page = _context(uid).new_page()
+def _fetch_one_domain(page, keyword: str, limit: int) -> list[dict]:
+    """Scrape job cards for a single domain keyword."""
     jobs: list[dict] = []
     try:
-        page.goto(_search_url(domains), wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(3500)
+        page.goto(_search_url(keyword), wait_until="domcontentloaded", timeout=45000)
+        _rand_delay(page, 2.5, 4.5)
 
         if _is_logged_out(page):
             return []
@@ -142,19 +170,49 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                 })
             except Exception:  # noqa: BLE001
                 continue
+    except Exception:  # noqa: BLE001
+        pass
+    return jobs
+
+
+def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
+    """Fetch across all domains, deduplicated by external_id."""
+    page = _context(uid).new_page()
+    all_jobs: list[dict] = []
+    seen_ids: set[str] = set()
+
+    keywords = domains[:4] if domains else ["software development"]
+    per_kw = max(5, (limit + len(keywords) - 1) // len(keywords))
+
+    try:
+        for kw in keywords:
+            if len(all_jobs) >= limit:
+                break
+            jobs = _fetch_one_domain(page, kw, per_kw)
+            for job in jobs:
+                eid = job["external_id"]
+                if eid and eid not in seen_ids:
+                    seen_ids.add(eid)
+                    all_jobs.append(job)
     finally:
         try:
             page.close()
         except Exception:  # noqa: BLE001
             pass
-    return jobs
+
+    return all_jobs[:limit]
 
 
-def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
+def apply(job: dict, cover_letter: str, uid: str = "",
+          profile: dict | None = None, resume_path: str | None = None) -> tuple[str, str]:
+    """Submit via LinkedIn Easy Apply. Reads phone/GPA from profile if provided."""
+    phone = (profile or {}).get("phone") or "9000000000"
+    gpa = str((profile or {}).get("gpa") or "8.0")
+
     page = _context(uid).new_page()
     try:
         page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(3000)
+        _rand_delay(page, 2.5, 4.0)
 
         if _is_logged_out(page):
             return "login_required", "not signed in to LinkedIn — reconnect in the Integrations tab"
@@ -173,20 +231,35 @@ def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
         ])
         if not btn:
             return "skipped", "no LinkedIn Easy Apply button (external application)"
-        btn.click()
-        page.wait_for_timeout(2500)
+        _safe_click(btn, page)
+        _rand_delay(page, 2.0, 3.5)
 
         # LinkedIn Easy Apply multi-step modal
         for step in range(8):
-            # Fill in cover letter / message fields
+            # Upload tailored resume if a file input appears
+            if resume_path and os.path.isfile(resume_path):
+                file_inp = _qsel(page, [
+                    "input[type='file'][accept*='pdf']",
+                    "input[type='file']",
+                ])
+                if file_inp:
+                    try:
+                        file_inp.set_input_files(resume_path)
+                        _rand_delay(page, 0.5, 1.0)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            # Fill cover letter / message fields
             for ta in page.query_selector_all("textarea"):
                 try:
                     if not ta.input_value() and ta.is_visible():
+                        ta.click()
+                        _rand_delay(page, 0.3, 0.7)
                         ta.fill(cover_letter[:2000])
                 except Exception:  # noqa: BLE001
                     pass
 
-            # Fill required text inputs (phone, years of experience etc.)
+            # Fill required text inputs (phone, experience, GPA etc.)
             for inp in page.query_selector_all(
                 "input[type='text']:visible, input[type='number']:visible, input[type='tel']:visible"
             ):
@@ -195,12 +268,18 @@ def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
                     if val:
                         continue
                     label = (inp.get_attribute("aria-label") or "").lower()
-                    if "phone" in label or "mobile" in label:
-                        inp.fill("9000000000")
-                    elif "year" in label or "experience" in label:
+                    placeholder = (inp.get_attribute("placeholder") or "").lower()
+                    hint = label + " " + placeholder
+                    inp.click()
+                    _rand_delay(page, 0.2, 0.5)
+                    if "phone" in hint or "mobile" in hint:
+                        inp.fill(str(phone))
+                    elif "year" in hint or "experience" in hint:
                         inp.fill("0")
-                    elif "cgpa" in label or "gpa" in label:
-                        inp.fill("8.0")
+                    elif "cgpa" in hint or "gpa" in hint:
+                        inp.fill(gpa)
+                    else:
+                        inp.fill("0")
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -215,16 +294,21 @@ def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
                 except Exception:  # noqa: BLE001
                     pass
 
-            # Handle select dropdowns
+            # Handle select dropdowns — use select_option(), not opts[1].click()
             for sel in page.query_selector_all("select:visible"):
                 try:
                     if not sel.input_value():
                         opts = sel.query_selector_all("option")
                         if len(opts) > 1:
-                            opts[1].click()
+                            val = opts[1].get_attribute("value") or ""
+                            if val:
+                                sel.select_option(value=val)
+                            else:
+                                sel.select_option(index=1)
                 except Exception:  # noqa: BLE001
                     pass
 
+            _rand_delay(page, 0.5, 1.2)
             next_btn = _qsel(page, [
                 "button:has-text('Submit application')",
                 "button:has-text('Review')",
@@ -235,10 +319,10 @@ def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
             if not next_btn:
                 break
             label = (next_btn.inner_text() or "").lower()
-            next_btn.click()
-            page.wait_for_timeout(1500)
+            _safe_click(next_btn, page)
+            _rand_delay(page, 1.2, 2.5)
             if "submit" in label:
-                page.wait_for_timeout(2000)
+                _rand_delay(page, 1.5, 2.5)
                 return "applied", "submitted via LinkedIn Easy Apply"
 
         if page.query_selector(":text('Application submitted'), :text('application was sent')"):

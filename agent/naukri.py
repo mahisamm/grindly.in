@@ -110,7 +110,9 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     return jobs
 
 
-def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
+def apply(job: dict, cover_letter: str, uid: str = "",
+          profile: dict | None = None, resume_path: str | None = None) -> tuple[str, str]:
+    phone = (profile or {}).get("phone") or ""
     page = _context(uid).new_page()
     try:
         page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
@@ -135,6 +137,19 @@ def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
         btn.click()
         page.wait_for_timeout(2000)
 
+        # Upload tailored resume if available and there's a file input
+        if resume_path and os.path.isfile(resume_path):
+            file_inp = _qsel(page, [
+                "input[type='file'][accept*='pdf']",
+                "input[type='file']",
+            ])
+            if file_inp:
+                try:
+                    file_inp.set_input_files(resume_path)
+                    page.wait_for_timeout(1000)
+                except Exception:  # noqa: BLE001
+                    pass
+
         cl = _qsel(page, [
             "textarea[name*='cover']",
             "textarea[placeholder*='cover']",
@@ -155,6 +170,16 @@ def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
                     )
             except Exception:  # noqa: BLE001
                 pass
+
+        # Fill phone if asked
+        if phone:
+            for inp in page.query_selector_all("input[type='tel'], input[type='text']"):
+                try:
+                    lbl = (inp.get_attribute("placeholder") or inp.get_attribute("aria-label") or "").lower()
+                    if ("phone" in lbl or "mobile" in lbl) and not inp.input_value():
+                        inp.fill(phone)
+                except Exception:  # noqa: BLE001
+                    pass
 
         submit = _qsel(page, [
             "button:has-text('Submit')",

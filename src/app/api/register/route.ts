@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { setUid } from "@/lib/session";
 import { hashPassword } from "@/lib/auth";
+import { issueOtp, normalizePhone, maskPhone, isValidPhone, OtpRateLimitError } from "@/lib/otp";
 import { DEFAULTS } from "@/lib/proffQuestions";
 
 const schema = z.object({
   email: z.string().email(),
   name: z.string().min(1).max(80).optional(),
   password: z.string().min(6, "Password must be at least 6 characters").max(200),
+  phone: z.string().min(10, "Phone number required").max(16),
 });
 
 export async function POST(req: Request) {
@@ -20,7 +21,11 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-  const { email, name, password } = parsed.data;
+  const { email, name, password, phone: rawPhone } = parsed.data;
+  if (!isValidPhone(rawPhone)) {
+    return NextResponse.json({ error: "Enter a valid phone number" }, { status: 400 });
+  }
+  const phone = normalizePhone(rawPhone);
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
@@ -30,13 +35,23 @@ export async function POST(req: Request) {
     );
   }
 
+  const phoneExists = await prisma.user.findUnique({ where: { phone } });
+  if (phoneExists) {
+    return NextResponse.json(
+      { error: "A phone number already registered. Log in instead." },
+      { status: 409 }
+    );
+  }
+
   const passwordHash = await hashPassword(password);
 
-  const user = await prisma.user.create({
+  await prisma.user.create({
     data: {
       email,
       name,
       passwordHash,
+      phone,
+      phoneVerified: false,
       status: "onboarding",
       profile: {
         create: {
@@ -55,6 +70,13 @@ export async function POST(req: Request) {
     },
   });
 
-  await setUid(user.id);
-  return NextResponse.json({ ok: true, userId: user.id, status: user.status });
+  try {
+    await issueOtp(phone);
+  } catch (e) {
+    if (e instanceof OtpRateLimitError) {
+      return NextResponse.json({ error: e.message }, { status: 429 });
+    }
+    throw e;
+  }
+  return NextResponse.json({ ok: true, step: "otp", maskedPhone: maskPhone(phone) });
 }

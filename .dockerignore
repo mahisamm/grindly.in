@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+data
+*.log
+devserver.log
+prisma/dev.db
+prisma/dev.db-journal
+.env
+.env.local
+**/__pycache__
+.venv

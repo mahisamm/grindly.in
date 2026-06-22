@@ -33,6 +33,7 @@ export async function createCheckout(opts: {
       success_url: `${opts.origin}/api/pay/confirm?uid=${opts.userId}&plan=${opts.plan}`,
       cancel_url: `${opts.origin}/onboarding?step=pay`,
       "metadata[userId]": opts.userId,
+      "metadata[plan]": opts.plan,
     });
     const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",

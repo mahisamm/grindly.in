@@ -1,4 +1,6 @@
 # InternPilot agent worker deps. Uses local Ollama via REST (no python client needed).
 pdfminer.six>=20231228   # resume PDF text extraction
 python-docx>=1.1.0       # resume DOCX text extraction
-playwright>=1.44.0       # live Internshala scraping + apply (mode=live only)
+playwright>=1.44.0       # live platform scraping + apply (mode=live only)
+fpdf2>=2.7.0             # generate tailored resume PDFs per application
+cryptography>=42.0.0     # AES-256-GCM credential encryption (agent/secret_box.py)

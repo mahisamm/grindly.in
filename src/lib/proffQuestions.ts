@@ -17,6 +17,11 @@ export type ProffField = {
   group: "Targeting" | "Firewall / limits";
 };
 
+export const CONTACT_FIELDS = [
+  { key: "phone", label: "Phone number", help: "Used to fill phone fields in application forms.", type: "text" as const, placeholder: "e.g. 9876543210" },
+  { key: "gpa", label: "GPA / CGPA", help: "Used to fill GPA fields in application forms (0–10).", type: "number" as const, suffix: "/10" },
+] as const;
+
 export const PROFF_FIELDS: ProffField[] = [
   {
     key: "preferredDomains",

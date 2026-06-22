@@ -1,0 +1,9 @@
+# Python agent worker — bundles Playwright + browsers for live apply.
+FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
+WORKDIR /app
+COPY agent/requirements.txt ./agent/requirements.txt
+RUN pip install --no-cache-dir -r agent/requirements.txt
+COPY agent ./agent
+COPY prisma ./prisma
+# Drain the DB-backed run queue in a loop (one container = one worker).
+CMD ["python", "agent/worker.py", "--serve"]

@@ -105,7 +105,8 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     return jobs
 
 
-def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
+def apply(job: dict, cover_letter: str, uid: str = "",
+          profile: dict | None = None, resume_path: str | None = None) -> tuple[str, str]:
     """Return (status, reason). status in {applied, login_required, skipped, failed}."""
     page = _context(uid).new_page()
     try:
@@ -122,6 +123,19 @@ def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
             return "failed", "apply button not found"
         btn.click()
         page.wait_for_timeout(1500)
+
+        # Upload tailored resume if available
+        if resume_path and os.path.isfile(resume_path):
+            file_inp = _attr_el(page, [
+                "input[type='file'][accept*='pdf']",
+                "input[type='file']",
+            ])
+            if file_inp:
+                try:
+                    file_inp.set_input_files(resume_path)
+                    page.wait_for_timeout(800)
+                except Exception:  # noqa: BLE001
+                    pass
 
         # cover letter
         cl = _first(page, ["#cover_letter_box", "textarea[name='cover_letter']", "div[contenteditable='true']"])
@@ -187,6 +201,17 @@ def _first(page, selectors):
     for s in selectors:
         try:
             el = page.query_selector(s)
+            if el:
+                return el
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _attr_el(scope, selectors):
+    for s in selectors:
+        try:
+            el = scope.query_selector(s)
             if el:
                 return el
         except Exception:  # noqa: BLE001

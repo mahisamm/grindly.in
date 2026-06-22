@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 
@@ -19,10 +21,10 @@ export async function POST(req: Request) {
   }
 
   const ext = (path.extname(file.name) || ".pdf").toLowerCase();
-  if (!fs.existsSync(RESUME_DIR)) fs.mkdirSync(RESUME_DIR, { recursive: true });
+  await fsp.mkdir(RESUME_DIR, { recursive: true });
   const dest = path.join(RESUME_DIR, `${uid}${ext}`);
   const buf = Buffer.from(await file.arrayBuffer());
-  fs.writeFileSync(dest, buf);
+  await fsp.writeFile(dest, buf);
 
   let resumeText: string | undefined;
   if (ext === ".txt") resumeText = buf.toString("utf8").slice(0, 20000);
@@ -31,6 +33,24 @@ export async function POST(req: Request) {
     where: { userId: uid },
     data: { resumeName: file.name, ...(resumeText ? { resumeText } : {}) },
   });
+
+  // Spawn Python to parse + analyze the resume asynchronously
+  const worker = path.join(process.cwd(), "agent", "worker.py");
+  try {
+    await fsp.access(worker);
+    const logDir = path.join(process.cwd(), "data", "logs");
+    await fsp.mkdir(logDir, { recursive: true });
+    const out = fs.openSync(path.join(logDir, `${uid}.log`), "a");
+    const py = process.env.PYTHON_BIN || "python";
+    const child = spawn(py, [worker, "--user", uid, "--analyze"], {
+      cwd: process.cwd(),
+      detached: true,
+      stdio: ["ignore", out, out],
+    });
+    child.unref();
+  } catch {
+    // worker not installed — skip analysis spawn
+  }
 
   return NextResponse.json({ ok: true, resumeName: file.name, parsed: Boolean(resumeText) });
 }

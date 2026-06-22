@@ -124,7 +124,9 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     return jobs
 
 
-def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
+def apply(job: dict, cover_letter: str, uid: str = "",
+          profile: dict | None = None, resume_path: str | None = None) -> tuple[str, str]:
+    phone = (profile or {}).get("phone") or ""
     page = _context(uid).new_page()
     try:
         page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
@@ -149,13 +151,21 @@ def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
         btn.click()
         page.wait_for_timeout(2500)
 
-        # Indeed Easy Apply opens a modal/iframe
-        # Fill questions step by step
-        for _ in range(5):
-            ta = _qsel(page, [
-                "textarea[name*='cover']",
-                "textarea",
+        # Upload tailored resume if Indeed shows a file input
+        if resume_path and os.path.isfile(resume_path):
+            file_inp = _qsel(page, [
+                "input[type='file'][accept*='pdf']",
+                "input[type='file']",
             ])
+            if file_inp:
+                try:
+                    file_inp.set_input_files(resume_path)
+                    page.wait_for_timeout(1000)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        for _ in range(5):
+            ta = _qsel(page, ["textarea[name*='cover']", "textarea"])
             if ta:
                 try:
                     if not ta.input_value():
@@ -163,14 +173,18 @@ def apply(job: dict, cover_letter: str, uid: str = "") -> tuple[str, str]:
                 except Exception:  # noqa: BLE001
                     pass
 
-            for inp in page.query_selector_all("input[type='text'], input[type='number']"):
+            for inp in page.query_selector_all("input[type='text'], input[type='number'], input[type='tel']"):
                 try:
                     if not inp.input_value() and inp.is_visible():
-                        ph = inp.get_attribute("placeholder") or ""
-                        if "year" in ph.lower() or "experience" in ph.lower():
+                        ph = (inp.get_attribute("placeholder") or "").lower()
+                        lbl = (inp.get_attribute("aria-label") or "").lower()
+                        hint = ph + " " + lbl
+                        if "year" in hint or "experience" in hint:
                             inp.fill("0")
-                        elif "name" in ph.lower():
-                            pass  # skip name fields
+                        elif "phone" in hint or "mobile" in hint:
+                            inp.fill(phone or "9000000000")
+                        elif "name" in hint:
+                            pass
                         else:
                             inp.fill("0")
                 except Exception:  # noqa: BLE001

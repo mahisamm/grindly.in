@@ -1,0 +1,55 @@
+# Production-shaped stack: web + worker fleet + Postgres + Redis.
+# Postgres replaces the prototype SQLite (set provider=postgresql in
+# prisma/schema.prisma first — see prisma/MIGRATE_POSTGRES.md).
+# Redis is provisioned for when the queue moves off the DB to BullMQ/Celery.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nexpath
+      POSTGRES_PASSWORD: nexpath
+      POSTGRES_DB: nexpath
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexpath"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://nexpath:nexpath@postgres:5432/nexpath
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      INTERNPILOT_DB: ""  # unset for sqlite path; use DATABASE_URL on Postgres
+      DATABASE_URL: postgresql://nexpath:nexpath@postgres:5432/nexpath
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
+    deploy:
+      replicas: 2  # horizontal browser-worker fleet; per-user lock prevents double-apply
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

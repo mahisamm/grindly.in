@@ -1,17 +1,26 @@
 @import "tailwindcss";
 
+/* ───────────────────────────────────────────────────────────
+   NexPath design system — "editorial doodle"
+   Paper canvas · electric-blue + orange + mint · bold serif
+   ─────────────────────────────────────────────────────────── */
+
 :root {
-  --background: #07080d;
-  --surface: #0e1018;
-  --surface-2: #151826;
-  --border: #232838;
-  --foreground: #e9ecf5;
-  --muted: #8a90a6;
-  --brand: #6d5efc;
-  --brand-2: #22d3ee;
-  --accent: #34d399;
-  --danger: #f87171;
-  --warn: #fbbf24;
+  --background: #f5f3ea;   /* warm paper */
+  --surface: #ffffff;      /* cards */
+  --surface-2: #efece0;    /* sunken / subtle fills */
+  --border: #e3ddcc;       /* hairline */
+  --ink: #16150f;          /* near-black ink */
+  --foreground: #16150f;
+  --muted: #6c6a5c;
+
+  --brand: #2a28f0;        /* electric blue (hero, links, brand) */
+  --brand-2: #4946f5;      /* lighter blue for gradients/scores */
+  --cta: #ff7a1a;          /* orange — primary action */
+  --cta-2: #ff5a00;        /* orange gradient end */
+  --accent: #0fae7e;       /* mint/teal — success */
+  --danger: #e5484d;
+  --warn: #b5740a;
 }
 
 @theme inline {
@@ -20,14 +29,17 @@
   --color-surface-2: var(--surface-2);
   --color-border: var(--border);
   --color-foreground: var(--foreground);
+  --color-ink: var(--ink);
   --color-muted: var(--muted);
   --color-brand: var(--brand);
   --color-brand-2: var(--brand-2);
+  --color-cta: var(--cta);
   --color-accent: var(--accent);
   --color-danger: var(--danger);
   --color-warn: var(--warn);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-fraunces);
 }
 
 html, body {
@@ -40,46 +52,110 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-::selection { background: color-mix(in srgb, var(--brand) 40%, transparent); }
+::selection { background: color-mix(in srgb, var(--brand) 22%, transparent); }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background: #2e3650; }
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; border: 3px solid var(--background); }
+::-webkit-scrollbar-thumb:hover { background: #cfc8b4; }
 
-/* utility helpers */
+/* ── Display type ──────────────────────────────────────────── */
+.font-display { font-family: var(--font-fraunces), Georgia, serif; font-optical-sizing: auto; }
+.display {
+  font-family: var(--font-fraunces), Georgia, serif;
+  font-optical-sizing: auto;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 0.95;
+}
+
+/* ── Helper classes (names kept so all pages cascade) ─────────── */
+
+/* sticky nav / floating panels */
 .glass {
-  background: color-mix(in srgb, var(--surface) 80%, transparent);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 72%, transparent);
+  backdrop-filter: blur(12px) saturate(1.2);
+  border-bottom: 1px solid var(--border);
 }
+
+/* primary buttons — orange, the loud action color */
 .brand-gradient {
-  background: linear-gradient(135deg, var(--brand) 0%, var(--brand-2) 100%);
+  background: linear-gradient(180deg, var(--cta) 0%, var(--cta-2) 100%);
+  color: #fff;
 }
-.brand-text {
-  background: linear-gradient(135deg, #a78bfa 0%, var(--brand-2) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
+
+/* brand-colored text (links, logo accent) */
+.brand-text { color: var(--brand); }
+
+/* editorial soft shadow */
 .glow {
-  box-shadow: 0 0 0 1px var(--border), 0 20px 60px -20px color-mix(in srgb, var(--brand) 45%, transparent);
+  box-shadow:
+    0 1px 0 rgba(20, 19, 15, 0.04),
+    0 28px 50px -28px rgba(20, 19, 15, 0.28);
 }
+
+/* paper canvas with faint dot grid + soft blue bloom */
 .grid-bg {
+  background-color: var(--background);
   background-image:
-    radial-gradient(60% 50% at 50% 0%, color-mix(in srgb, var(--brand) 18%, transparent), transparent 70%),
-    linear-gradient(to right, color-mix(in srgb, var(--border) 50%, transparent) 1px, transparent 1px),
-    linear-gradient(to bottom, color-mix(in srgb, var(--border) 50%, transparent) 1px, transparent 1px);
-  background-size: 100% 100%, 44px 44px, 44px 44px;
+    radial-gradient(70% 55% at 50% -8%, color-mix(in srgb, var(--brand) 10%, transparent), transparent 60%),
+    radial-gradient(circle at center, color-mix(in srgb, var(--ink) 14%, transparent) 1px, transparent 1.4px);
+  background-size: 100% 100%, 22px 22px;
 }
+
+/* sticker / hand-cut card — ink outline + hard offset shadow */
+.sticker {
+  border: 2px solid var(--ink);
+  box-shadow: 5px 5px 0 var(--ink);
+  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sticker:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 7px 7px 0 var(--ink);
+}
+.sticker-sm { border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); }
+
+/* hand-drawn squiggle underline */
+.squiggle {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='12' viewBox='0 0 80 12'%3E%3Cpath d='M2 7 Q 12 0 22 7 T 42 7 T 62 7 T 82 7' fill='none' stroke='%23ff7a1a' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: repeat-x;
+  background-position: 0 100%;
+  background-size: 80px 10px;
+  padding-bottom: 0.18em;
+}
+
+/* electric-blue marquee band */
+.marquee-track {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: marquee 26s linear infinite;
+}
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* doodle stroke helper */
+.ink-stroke { stroke: var(--ink); }
 
 @keyframes float-up {
-  from { opacity: 0; transform: translateY(12px); }
+  from { opacity: 0; transform: translateY(14px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.animate-in { animation: float-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-in { animation: float-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both; }
 
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+  50% { opacity: 0.3; }
 }
 .pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+
+@keyframes wobble {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(3deg); }
+}
+.wobble { animation: wobble 4s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in, .pulse-dot, .marquee-track, .wobble { animation: none; }
+}
