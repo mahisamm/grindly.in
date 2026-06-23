@@ -1,20 +1,24 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, Fraunces } from "next/font/google";
+import { Orbitron, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Body — warm humanist grotesque (replaces the default Geist)
+const bodySans = Hanken_Grotesk({
+  variable: "--ff-sans",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+// Code / data — replaces Geist Mono
+const codeMono = JetBrains_Mono({
+  variable: "--ff-mono",
   subsets: ["latin"],
+  display: "swap",
 });
 
-// Editorial display serif — used for headlines + wordmark
-const fraunces = Fraunces({
-  variable: "--font-fraunces",
+// Display — robotic/sci-fi geometric for headlines + wordmark (agent does the work)
+const displayFont = Orbitron({
+  variable: "--ff-display",
   subsets: ["latin"],
   display: "swap",
 });
@@ -33,7 +37,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${fraunces.variable} h-full antialiased`}
+      className={`${bodySans.variable} ${codeMono.variable} ${displayFont.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

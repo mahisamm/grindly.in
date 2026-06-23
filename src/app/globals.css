@@ -12,7 +12,7 @@
   --border: #e3ddcc;       /* hairline */
   --ink: #16150f;          /* near-black ink */
   --foreground: #16150f;
-  --muted: #6c6a5c;
+  --muted: #5a5849;       /* darkened for WCAG AA on paper (was #6c6a5c) */
 
   --brand: #2a28f0;        /* electric blue (hero, links, brand) */
   --brand-2: #4946f5;      /* lighter blue for gradients/scores */
@@ -37,9 +37,9 @@
   --color-accent: var(--accent);
   --color-danger: var(--danger);
   --color-warn: var(--warn);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-display: var(--font-fraunces);
+  --font-sans: var(--ff-sans);
+  --font-mono: var(--ff-mono);
+  --font-display: var(--ff-display);
 }
 
 html, body {
@@ -47,9 +47,21 @@ html, body {
   color: var(--foreground);
 }
 
+/* Prevent horizontal page scroll from wide children (marquee, mesh, tilt).
+   `clip` (not `hidden`) doesn't create a scroll container — keeps the
+   sticky nav working. */
+html {
+  overflow-x: clip;
+}
 body {
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  overflow-x: clip;
+  max-width: 100%;
+}
+
+body {
+  font-family: var(--ff-sans), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.006em;
 }
 
 ::selection { background: color-mix(in srgb, var(--brand) 22%, transparent); }
@@ -59,13 +71,16 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #cfc8b4; }
 
 /* ── Display type ──────────────────────────────────────────── */
-.font-display { font-family: var(--font-fraunces), Georgia, serif; font-optical-sizing: auto; }
+.font-display {
+  font-family: var(--ff-display), "Segoe UI", system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.005em;
+}
 .display {
-  font-family: var(--font-fraunces), Georgia, serif;
-  font-optical-sizing: auto;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 0.95;
+  font-family: var(--ff-display), "Segoe UI", system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  line-height: 1.02;
 }
 
 /* ── Helper classes (names kept so all pages cascade) ─────────── */
@@ -156,6 +171,102 @@ body {
 }
 .wobble { animation: wobble 4s ease-in-out infinite; }
 
+/* ── Scroll reveal — JS adds .is-visible via IntersectionObserver ──── */
+.reveal {
+  opacity: 0;
+  transform: translateY(22px);
+  transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── Tactile press — pair with .sticker / buttons ─────────────────── */
+.press { transition: transform 0.08s ease; }
+.press:active { transform: translateY(2px) scale(0.985); }
+
+/* sticker buttons should sink into their shadow on press */
+.sticker:active, .sticker-sm:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--ink);
+}
+
+/* ── Accessible focus ring (keyboard nav) ─────────────────────────── */
+.focus-ring:focus-visible,
+a:focus-visible, button:focus-visible,
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--brand) 55%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ── Film grain overlay — subtle paper texture, sits above bg ─────── */
+.grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
+}
+
+/* ── Soft radial glow behind a section (depth without clutter) ─────── */
+.glow-blue {
+  position: relative;
+}
+.glow-blue::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  width: 50rem; height: 50rem;
+  top: -20rem; left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  background: radial-gradient(circle, color-mix(in srgb, var(--brand) 16%, transparent), transparent 62%);
+  filter: blur(8px);
+}
+
+/* ── Hover tilt for interactive cards ─────────────────────────────── */
+.tilt { transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.tilt:hover { transform: perspective(800px) rotateX(2deg) rotateY(-2deg) translateY(-3px); }
+
+/* ── Reverse-direction marquee band ───────────────────────────────── */
+.marquee-track-rev {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: marquee-rev 30s linear infinite;
+}
+@keyframes marquee-rev {
+  from { transform: translateX(-50%); }
+  to { transform: translateX(0); }
+}
+
+/* ── Animated gradient mesh (hero backdrop) ───────────────────────── */
+@keyframes mesh-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%      { transform: translate(3%, -2%) scale(1.05); }
+  66%      { transform: translate(-2%, 3%) scale(0.97); }
+}
+.mesh {
+  position: absolute;
+  inset: -20%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(34% 34% at 18% 22%, color-mix(in srgb, var(--brand) 22%, transparent), transparent 60%),
+    radial-gradient(30% 30% at 82% 18%, color-mix(in srgb, var(--cta) 16%, transparent), transparent 60%),
+    radial-gradient(40% 40% at 70% 80%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 62%);
+  animation: mesh-drift 22s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .animate-in, .pulse-dot, .marquee-track, .wobble { animation: none; }
+  .animate-in, .pulse-dot, .marquee-track, .marquee-track-rev,
+  .wobble, .mesh { animation: none; }
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .tilt:hover { transform: none; }
 }

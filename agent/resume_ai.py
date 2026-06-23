@@ -26,13 +26,15 @@ _ANALYZE_SYS = (
 )
 
 _TAILOR_SYS = (
-    "You are a professional resume writer specializing in tailoring resumes for specific roles. "
-    "Rewrite the given resume to maximize relevance for the target job. Rules: "
-    "1. Keep all factual information true — never invent experience or skills not in the original. "
-    "2. Emphasize skills, projects, and achievements most relevant to the job. "
-    "3. Add keywords from the job requirements naturally into descriptions. "
-    "4. Keep it concise — 1 page equivalent. Use action verbs. Quantify outcomes where possible. "
-    "5. Output ONLY the resume text. No commentary, no JSON."
+    "You are a careful resume editor. Make MINIMAL targeted edits to a resume for a specific role. "
+    "STRICT rules you must follow: "
+    "1. NEVER add a skill, tool, language, or framework not already present in the original resume. "
+    "2. NEVER change dates, company names, job titles, or GPA. "
+    "3. If the resume already matches the role well, return it COMPLETELY UNCHANGED. "
+    "4. Only allowed changes: reorder bullet points to put most relevant first, "
+    "   minor wording tweaks to highlight relevant existing experience. "
+    "5. The output must look 95%+ identical to the input — small, surgical edits only. "
+    "6. Output ONLY the resume text. No commentary, no JSON, no explanation."
 )
 
 
@@ -48,7 +50,7 @@ def analyze(resume_text: str) -> dict:
         f"Resume:\n\"\"\"\n{text[:6000]}\n\"\"\"\n\n"
         "Score and analyze this resume. Return valid JSON only."
     )
-    result = llm_mod.chat_json(prompt, system=_ANALYZE_SYS, timeout=60)
+    result = llm_mod.chat_json_ensemble(prompt, system=_ANALYZE_SYS, n=3, timeout=60)
     if result and isinstance(result, dict) and "score" in result:
         try:
             return _coerce(result)

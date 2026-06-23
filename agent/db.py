@@ -8,6 +8,33 @@ Prisma quirks we must honor so the Next.js dashboard can read our rows:
 from __future__ import annotations
 import os
 import sqlite3
+
+
+def _load_dotenv() -> None:
+    """Load project root .env into os.environ (no-op if already set or file missing).
+    No external deps — pure stdlib. Must run before any os.environ.get() calls.
+    """
+    root = os.path.join(os.path.dirname(__file__), "..")
+    for name in (".env.local", ".env"):
+        path = os.path.normpath(os.path.join(root, name))
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, val = line.partition("=")
+                    key = key.strip()
+                    val = val.strip().strip('"').strip("'")
+                    if key and key not in os.environ:
+                        os.environ[key] = val
+        except Exception as e:
+            print(f"[db] dotenv load failed ({path}): {e}")
+
+
+_load_dotenv()
 import time
 import secrets
 import json

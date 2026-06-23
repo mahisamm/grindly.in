@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
-import { PROFF_FIELDS, CONTACT_FIELDS, DEFAULTS } from "@/lib/proffQuestions";
+import { CountUp } from "@/components/Motion";
+import { PROFF_FIELDS, CONTACT_FIELDS } from "@/lib/proffQuestions";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -68,6 +69,7 @@ type Me = {
     paid: boolean;
     plan: string;
     status: string;
+    role?: string;
     slackConnected: boolean;
     slackUserId: string | null;
     internshalaConnected: boolean;
@@ -111,6 +113,10 @@ const PLATFORM_META: Record<string, { label: string; color: string; icon: string
   unstop: { label: "Unstop", color: "text-[#6C63FF]", icon: "UN" },
   indeed: { label: "Indeed", color: "text-[#2557A7]", icon: "ID" },
 };
+
+// Platforms surfaced in the UI right now. Code/adapters for the others stay
+// intact — add their key here to re-enable them in the dashboard later.
+const VISIBLE_PLATFORMS = ["internshala"];
 
 const STATUS_STYLE: Record<string, string> = {
   applied:  "bg-accent/15 text-accent",
@@ -273,18 +279,21 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- polling: load on mount + every 4s
     load();
     const t = setInterval(load, 4000);
     return () => clearInterval(t);
   }, [load]);
 
   // Reset page when filter changes
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination on filter/tab change
   useEffect(() => { setPage(0); }, [filter, tab]);
 
   // First-run walkthrough — show once per browser after the user is loaded
   useEffect(() => {
     if (!me) return;
     try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- react to async user load
       if (!localStorage.getItem("nexpath_onboarded")) setShowOnboarding(true);
     } catch {}
   }, [me]);
@@ -515,7 +524,7 @@ export default function Dashboard() {
           <Logo size={30} />
           <p className="mt-4 text-muted">Not logged in.</p>
           <div className="mt-5 flex justify-center gap-2">
-            <Link href="/login" className="inline-block rounded-lg brand-gradient px-5 py-2.5 font-medium text-white">Log in</Link>
+            <Link href="/login" className="inline-block press rounded-lg brand-gradient px-5 py-2.5 font-medium text-white">Log in</Link>
             <Link href="/signup" className="inline-block rounded-lg border border-border px-5 py-2.5 font-medium hover:border-brand/60 transition">Sign up</Link>
           </div>
         </div>
@@ -529,13 +538,13 @@ export default function Dashboard() {
     : me.applications.filter((a) => a.status === filter);
   const totalPages = Math.ceil(filteredApps.length / PAGE_SIZE);
   const apps = filteredApps.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-  const integrations = me.integrations ?? [];
+  const integrations = (me.integrations ?? []).filter((i) => VISIBLE_PLATFORMS.includes(i.platform));
   const connectedCount = integrations.filter((i) => i.status === "connected").length;
   const cap = PLAN_CAP[me.user.plan] ?? 10;
   const matchedCount = me.applications.filter((a) => a.status === "matched").length;
 
   return (
-    <main className="min-h-screen">
+    <main className="grid-bg min-h-screen">
       {/* First-run walkthrough */}
       {showOnboarding && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={dismissOnboarding}>
@@ -558,7 +567,7 @@ export default function Dashboard() {
               </li>
             </ol>
             <p className="mt-4 text-xs text-muted">Tip: try <span className="text-foreground">Run demo</span> first — it works without connecting anything.</p>
-            <button onClick={dismissOnboarding} className="mt-5 w-full rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition">
+            <button onClick={dismissOnboarding} className="mt-5 w-full press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition">
               Got it — let&apos;s go
             </button>
           </div>
@@ -584,6 +593,11 @@ export default function Dashboard() {
               <button onClick={togglePause} className="text-sm text-muted hover:text-foreground transition">
                 {me.user.status === "paused" ? "Resume" : "Pause"}
               </button>
+            )}
+            {me.user.role === "admin" && (
+              <Link href="/admin" className="rounded-full border border-ink bg-ink px-3 py-1.5 text-sm font-semibold text-[#f5f3ea] transition hover:opacity-80">
+                Admin
+              </Link>
             )}
             <button onClick={logout} className="text-sm text-muted hover:text-foreground transition">Log out</button>
           </div>
@@ -617,7 +631,7 @@ export default function Dashboard() {
               onClick={() => runAgent("mock")}
               disabled={running || !me.user.paid}
               title={!me.user.paid ? "Complete payment to run" : ""}
-              className="rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+              className="press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
             >
               {running ? "Agent running…" : "Run demo"}
             </button>
@@ -681,8 +695,8 @@ export default function Dashboard() {
             ["Failed", me.stats.failed, "text-danger"],
             ["Avg match", me.stats.avgScore, "text-brand-2"],
           ] as const).map(([label, val, c]) => (
-            <div key={label} className="rounded-2xl border-2 border-ink bg-surface p-4 shadow-[3px_3px_0_var(--ink)]">
-              <div className={`display text-4xl ${c}`}>{val}</div>
+            <div key={label} className="sticker tilt rounded-2xl bg-surface p-4">
+              <div className={`display text-4xl ${c}`}><CountUp value={val} /></div>
               <div className="text-xs text-muted mt-1">{label}</div>
             </div>
           ))}
@@ -782,7 +796,7 @@ export default function Dashboard() {
                   <button
                     onClick={saveSkills}
                     disabled={skillsSaving}
-                    className="rounded-lg brand-gradient px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+                    className="press rounded-lg brand-gradient px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition disabled:opacity-50"
                   >
                     {skillsSaving ? "Saving…" : "Save skills"}
                   </button>
@@ -997,7 +1011,7 @@ export default function Dashboard() {
             <button
               onClick={saveProfile}
               disabled={profileSaving}
-              className="rounded-lg brand-gradient px-5 py-2.5 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+              className="press rounded-lg brand-gradient px-5 py-2.5 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
             >
               {profileSaving ? "Saving…" : profileSaved ? "Saved ✓" : "Save profile"}
             </button>
@@ -1169,7 +1183,7 @@ export default function Dashboard() {
                         <button
                           onClick={() => connectPlatform(intg.platform)}
                           disabled={!me.user.paid || isConnecting}
-                          className="w-full rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+                          className="w-full press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
                         >
                           {isConnecting ? "Browser opening…" : needsLogin ? `Reconnect ${meta.label}` : `Connect ${meta.label}`}
                         </button>
@@ -1210,7 +1224,7 @@ export default function Dashboard() {
                     placeholder="U0XXXXXXX"
                     className="rounded-lg border border-border bg-surface px-3 py-2 text-sm w-44 outline-none font-mono"
                   />
-                  <button onClick={connectSlack} disabled={slackBusy || !slackIdDraft.trim()} className="rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50">
+                  <button onClick={connectSlack} disabled={slackBusy || !slackIdDraft.trim()} className="press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50">
                     {slackBusy ? "…" : "Connect Slack"}
                   </button>
                 </div>
@@ -1224,7 +1238,7 @@ export default function Dashboard() {
                 <li>Log into that platform normally (2FA is fine).</li>
                 <li>Close the window when prompted — session cookie is saved locally.</li>
                 <li>Click <strong>Run live</strong> on this dashboard to start applying.</li>
-                <li>The agent applies up to <strong>{cap}</strong> internships/day across all connected platforms.</li>
+                <li>The agent applies up to <strong>{cap}</strong> internships/day on Internshala.</li>
               </ol>
             </div>
           </div>

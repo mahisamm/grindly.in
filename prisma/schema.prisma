@@ -18,6 +18,7 @@ model User {
   email         String   @unique
   name          String?
   passwordHash  String?  @map("password_hash")
+  googleId      String?  @unique @map("google_id")
   phone         String?  @unique
   phoneVerified Boolean  @default(false) @map("phone_verified")
   createdAt     DateTime @default(now()) @map("created_at")
@@ -32,6 +33,9 @@ model User {
   internshalaConnected Boolean @default(false) @map("internshala_connected")
   // lifecycle: registered -> onboarding -> active -> paused
   status        String   @default("registered")
+  // access role: "user" (default) | "admin". Admin-only dashboard gates on this
+  // column server-side — never on email or a client flag.
+  role          String   @default("user")
 
   profile        Profile?
   applications   Application[]

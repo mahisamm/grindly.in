@@ -68,15 +68,16 @@ def extract_skills(resume_text: str) -> list[str]:
     if not text:
         return []
 
-    from llm import chat_json
+    from llm import chat_json_ensemble
 
     system = (
-        "You extract a candidate's concrete, hireable skills from their resume. "
-        "Return ONLY a JSON array of short skill strings (max 20), lowercase, "
-        "no soft skills, no sentences."
+        "You extract a candidate's concrete, hireable technical skills from their resume. "
+        "Return ONLY a JSON array of short skill strings (max 25), lowercase, "
+        "no soft skills, no buzzwords, no sentences. "
+        "Examples: [\"python\", \"react\", \"sql\", \"docker\", \"machine learning\"]"
     )
-    prompt = f"Resume:\n\"\"\"\n{text[:6000]}\n\"\"\"\n\nReturn the JSON array of skills."
-    out = chat_json(prompt, system)
+    prompt = f"Resume:\n\"\"\"\n{text[:6000]}\n\"\"\"\n\nReturn the JSON array of skills only."
+    out = chat_json_ensemble(prompt, system, n=3)
     if isinstance(out, list) and out:
         skills = []
         for s in out:

@@ -73,8 +73,8 @@ SOURCE_PRIORITY = ["linkedin", "internshala", "naukri", "unstop", "indeed"]
 # code change. 0 disables a cap.
 #   NEXPATH_CAP_PER_PLATFORM — max applies to one platform in a single run (5)
 #   NEXPATH_CAP_PER_RUN      — max applies total in a single run (0 = use plan cap)
-SAFETY_CAP_PER_PLATFORM = int(os.environ.get("NEXPATH_CAP_PER_PLATFORM", "5"))
-SAFETY_CAP_PER_RUN = int(os.environ.get("NEXPATH_CAP_PER_RUN", "5"))
+SAFETY_CAP_PER_PLATFORM = int(os.environ.get("NEXPATH_CAP_PER_PLATFORM", "15"))
+SAFETY_CAP_PER_RUN = int(os.environ.get("NEXPATH_CAP_PER_RUN", "0"))
 
 # Directory for per-job tailored resume PDFs
 _AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -558,7 +558,7 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
 
 
 def main():
-    import queue as run_queue
+    import run_queue
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--user")

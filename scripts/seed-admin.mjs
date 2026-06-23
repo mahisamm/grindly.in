@@ -38,6 +38,7 @@ async function main() {
       phone: null,
       phoneVerified: true,
       status: "active",
+      role: "admin", // seeded account is the admin — unlocks /admin dashboard
       paid: true,
       plan: "pro",
       profile: { create: {} }, // all profile fields use schema defaults
