@@ -1,4 +1,4 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+﻿# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
 /node_modules
@@ -40,7 +40,12 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# NexPath runtime data (resumes, db, logs, slack outbox, browser session)
+# Android signing keystore — never commit this
+android-keystore.jks
+*.jks
+*.p12
+
+# Grindly runtime data (resumes, db, logs, slack outbox, browser session)
 /data/
 /prisma/dev.db
 /prisma/dev.db-journal

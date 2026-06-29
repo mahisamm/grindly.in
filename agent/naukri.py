@@ -13,6 +13,10 @@ import re
 import time
 import urllib.parse
 
+import safety
+import selector_ai
+import stealth
+
 BASE = "https://www.naukri.com"
 
 _contexts: dict = {}
@@ -35,13 +39,10 @@ def _context(uid: str = ""):
         profile,
         headless=os.environ.get("INTERNPILOT_HEADLESS", "0") == "1",
         args=["--disable-blink-features=AutomationControlled"],
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        viewport={"width": 1280, "height": 900},
+        user_agent=stealth.random_ua(),
+        viewport=stealth.random_viewport(),
     )
+    stealth.apply_stealth(ctx)
     _contexts[key] = ctx
     return ctx
 
@@ -66,42 +67,56 @@ def _search_url(domains: list[str]) -> str:
 def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     page = _context(uid).new_page()
     jobs: list[dict] = []
+    seen_ids: set[str] = set()
     try:
-        page.goto(_search_url(domains), wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(3000)
-
-        cards = page.query_selector_all(
-            "article.jobTuple, .cust-job-tuple, [class*='job-tuple'], "
-            ".srp-jobtuple-wrapper, [data-job-id]"
-        )
-        for card in cards:
+        for pnum in range(1, 4):  # pages 1-3
             if len(jobs) >= limit:
                 break
-            try:
-                title_el = _qsel(card, [".title a", "a.title", "[class*='title'] a", "a[href*='-intern']"])
-                title = (title_el.inner_text() or "").strip() if title_el else ""
-                company = _text(card, [".comp-name", "[class*='comp-name']", ".subTitle", "[class*='company']"])
-                location = _text(card, [".location a", ".location", "[class*='location']"])
-                stipend = _text(card, [".salary", "[class*='salary']", ".stipend"])
-                href = title_el.get_attribute("href") if title_el else None
-                if not title or not href:
+            base = _search_url(domains)
+            page_url = base if pnum == 1 else f"{base}?pageNo={pnum}"
+            page.goto(page_url, wait_until="domcontentloaded", timeout=45000)
+            delay = stealth.random_delay_ms(2000, 5000) if pnum == 1 else stealth.random_delay_ms(1200, 3000)
+            page.wait_for_timeout(delay)
+
+            cards = page.query_selector_all(
+                "article.jobTuple, .cust-job-tuple, [class*='job-tuple'], "
+                ".srp-jobtuple-wrapper, [data-job-id]"
+            )
+            new_this_page = 0
+            for card in cards:
+                if len(jobs) >= limit:
+                    break
+                try:
+                    title_el = _qsel(card, [".title a", "a.title", "[class*='title'] a", "a[href*='-intern']"])
+                    title = (title_el.inner_text() or "").strip() if title_el else ""
+                    company = _text(card, [".comp-name", "[class*='comp-name']", ".subTitle", "[class*='company']"])
+                    location = _text(card, [".location a", ".location", "[class*='location']"])
+                    stipend = _text(card, [".salary", "[class*='salary']", ".stipend"])
+                    href = title_el.get_attribute("href") if title_el else None
+                    if not title or not href:
+                        continue
+                    job_url = href if href.startswith("http") else BASE + href
+                    m = re.search(r"-(\d+)(?:/)?$", href)
+                    jid = m.group(1) if m else str(abs(hash(job_url)))
+                    if jid in seen_ids:
+                        continue
+                    seen_ids.add(jid)
+                    jobs.append({
+                        "source": "naukri",
+                        "external_id": jid,
+                        "title": title,
+                        "company": company or "Unknown",
+                        "location": location or "",
+                        "stipend": stipend or "",
+                        "duration": "",
+                        "skills": _infer_skills(title),
+                        "url": job_url,
+                    })
+                    new_this_page += 1
+                except Exception:  # noqa: BLE001
                     continue
-                url = href if href.startswith("http") else BASE + href
-                m = re.search(r"-(\d+)(?:/)?$", href)
-                jid = m.group(1) if m else str(abs(hash(url)))
-                jobs.append({
-                    "source": "naukri",
-                    "external_id": jid,
-                    "title": title,
-                    "company": company or "Unknown",
-                    "location": location or "",
-                    "stipend": stipend or "",
-                    "duration": "",
-                    "skills": _infer_skills(title),
-                    "url": url,
-                })
-            except Exception:  # noqa: BLE001
-                continue
+            if new_this_page == 0:
+                break  # no new results on this page, stop paginating
     finally:
         try:
             page.close()
@@ -110,13 +125,40 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     return jobs
 
 
+def scrape_jd(url: str, uid: str = "") -> str:
+    """Extract job description text from a listing page. Returns '' on failure."""
+    page = _context(uid).new_page()
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        page.wait_for_timeout(stealth.random_delay_ms(600, 1500))
+        return _text(page, [
+            ".dang-inner-html",
+            "[class*='job-desc']",
+            ".job-description",
+            "[class*='jobDescription']",
+            "[itemprop='description']",
+            "section[class*='desc']",
+        ])[:1500]
+    except Exception:  # noqa: BLE001
+        return ""
+    finally:
+        try:
+            page.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def apply(job: dict, cover_letter: str, uid: str = "",
           profile: dict | None = None, resume_path: str | None = None) -> tuple[str, str]:
     phone = (profile or {}).get("phone") or ""
     page = _context(uid).new_page()
     try:
         page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(stealth.random_delay_ms())
+
+        if safety.detect_challenge(page):
+            safety.screenshot(page, uid, f"captcha_naukri_{job.get('external_id','')}")
+            return "failed", "captcha challenge on Naukri"
 
         if _is_logged_out(page):
             return "login_required", "not signed in to Naukri — reconnect in the Integrations tab"
@@ -125,7 +167,7 @@ def apply(job: dict, cover_letter: str, uid: str = "",
         if already:
             return "skipped", "already applied on Naukri"
 
-        btn = _qsel(page, [
+        btn = selector_ai.find_element(page, "Apply or Apply now button", [
             "button:has-text('Apply')",
             "button:has-text('Apply now')",
             "[class*='apply-button']",
@@ -133,11 +175,12 @@ def apply(job: dict, cover_letter: str, uid: str = "",
             "a:has-text('Apply')",
         ])
         if not btn:
+            safety.screenshot(page, uid, f"no_apply_btn_naukri_{job.get('external_id','')}")
             return "failed", "apply button not found on Naukri"
-        btn.click()
-        page.wait_for_timeout(2000)
+        stealth.scroll_to(page, btn)
+        stealth.human_click(page, btn)
+        page.wait_for_timeout(stealth.random_delay_ms())
 
-        # Upload tailored resume if available and there's a file input
         if resume_path and os.path.isfile(resume_path):
             file_inp = _qsel(page, [
                 "input[type='file'][accept*='pdf']",
@@ -146,11 +189,11 @@ def apply(job: dict, cover_letter: str, uid: str = "",
             if file_inp:
                 try:
                     file_inp.set_input_files(resume_path)
-                    page.wait_for_timeout(1000)
+                    page.wait_for_timeout(stealth.random_delay_ms(600, 1800))
                 except Exception:  # noqa: BLE001
                     pass
 
-        cl = _qsel(page, [
+        cl = selector_ai.find_element(page, "cover letter textarea", [
             "textarea[name*='cover']",
             "textarea[placeholder*='cover']",
             "textarea[placeholder*='Cover']",
@@ -171,7 +214,6 @@ def apply(job: dict, cover_letter: str, uid: str = "",
             except Exception:  # noqa: BLE001
                 pass
 
-        # Fill phone if asked
         if phone:
             for inp in page.query_selector_all("input[type='tel'], input[type='text']"):
                 try:
@@ -181,21 +223,27 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                 except Exception:  # noqa: BLE001
                     pass
 
-        submit = _qsel(page, [
+        submit = selector_ai.find_element(page, "Submit or Apply button to confirm application", [
             "button:has-text('Submit')",
             "button:has-text('Apply')",
             "input[type='submit']",
             "button[type='submit']",
         ])
         if not submit:
+            safety.screenshot(page, uid, f"no_submit_naukri_{job.get('external_id','')}")
             return "failed", "submit button not found on Naukri"
-        submit.click()
-        page.wait_for_timeout(2500)
+        stealth.scroll_to(page, submit)
+        stealth.human_click(page, submit)
+        page.wait_for_timeout(stealth.random_delay_ms())
 
         if page.query_selector(":text('successfully'), :text('Applied'), :text('Thank you')"):
             return "applied", "submitted via Naukri"
         return "applied", "submitted on Naukri (confirmation not detected)"
     except Exception as e:  # noqa: BLE001
+        try:
+            safety.screenshot(page, uid, f"exception_naukri_{job.get('external_id','')}")
+        except Exception:  # noqa: BLE001
+            pass
         return "failed", f"naukri error: {str(e)[:120]}"
     finally:
         try:

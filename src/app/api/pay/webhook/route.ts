@@ -1,58 +1,116 @@
-import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { audit } from "@/lib/audit";
+import { PLANS, type Plan, verifyWebhookSignature } from "@/lib/adapters/payment";
 
-/**
- * Stripe webhook — the trustworthy source of "payment succeeded". Verifies the
- * `Stripe-Signature` HMAC against STRIPE_WEBHOOK_SECRET before acting, so a
- * forged request can't flip a user to paid. On checkout.session.completed it
- * marks the user paid + active with the purchased plan.
- */
-function verifySignature(payload: string, header: string, secret: string): boolean {
-  const parts = Object.fromEntries(
-    header.split(",").map((kv) => kv.split("=") as [string, string])
-  );
-  const t = parts["t"];
-  const v1 = parts["v1"];
-  if (!t || !v1) return false;
-  const expected = crypto.createHmac("sha256", secret).update(`${t}.${payload}`).digest("hex");
-  const a = Buffer.from(expected);
-  const b = Buffer.from(v1);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+type RzpPaymentEntity = {
+  id?: string;
+  email?: string;
+  notes?: { userId?: string; plan?: string };
+};
+
+type RzpEvent = {
+  event?: string;
+  payload?: {
+    payment?: { entity?: RzpPaymentEntity };
+    refund?: { entity?: { id?: string; payment_id?: string } };
+  };
+};
+
+async function grantPlan(uid: string, plan: Plan, paymentId: string) {
+  const perDay = PLANS[plan].perDay;
+
+  // Idempotency: skip if already on same plan (webhook may fire after confirm)
+  const existing = await prisma.user.findUnique({
+    where: { id: uid },
+    select: { paid: true, plan: true },
+  });
+  if (existing?.paid && existing.plan === plan) return;
+
+  await prisma.user.update({
+    where: { id: uid },
+    data: { paid: true, status: "active", plan },
+  });
+  await prisma.profile.upsert({
+    where: { userId: uid },
+    update: { maxPerDay: perDay },
+    create: {
+      userId: uid,
+      maxPerDay: perDay,
+      skills: "[]",
+      preferredDomains: "[]",
+      preferredLocations: "[]",
+      excludedCompanies: "[]",
+    },
+  });
+  await audit("payment", { userId: uid, target: paymentId, detail: plan });
+}
+
+async function revokePlan(uid: string, refundId: string) {
+  await prisma.user.update({
+    where: { id: uid },
+    data: { paid: false, status: "paused", plan: "starter" },
+  });
+  await prisma.profile.updateMany({
+    where: { userId: uid },
+    data: { maxPerDay: 0 },
+  });
+  await audit("payment_refunded", { userId: uid, target: refundId, detail: "refunded" });
 }
 
 export async function POST(req: Request) {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
-  if (!secret) {
+  if (!process.env.RAZORPAY_WEBHOOK_SECRET) {
     return NextResponse.json({ error: "webhook not configured" }, { status: 503 });
   }
-  const sig = req.headers.get("stripe-signature") || "";
+
+  const sig = req.headers.get("x-razorpay-signature") || "";
   const raw = await req.text();
 
-  if (!verifySignature(raw, sig, secret)) {
+  if (!verifyWebhookSignature(raw, sig)) {
     return NextResponse.json({ error: "invalid signature" }, { status: 400 });
   }
 
-  let event: { type?: string; data?: { object?: Record<string, unknown> } };
+  let event: RzpEvent;
   try {
     event = JSON.parse(raw);
   } catch {
     return NextResponse.json({ error: "bad payload" }, { status: 400 });
   }
 
-  if (event.type === "checkout.session.completed") {
-    const obj = event.data?.object ?? {};
-    const meta = (obj.metadata ?? {}) as { userId?: string; plan?: string };
-    const uid = meta.userId;
-    const plan = meta.plan === "starter" ? "starter" : "pro";
+  // ── Payment captured ────────────────────────────────────────────────────
+  if (event.event === "payment.captured") {
+    const payment = event.payload?.payment?.entity ?? {};
+    const uid  = payment.notes?.userId;
+    const plan: Plan = payment.notes?.plan === "starter" ? "starter" : "pro";
+    if (uid) await grantPlan(uid, plan, String(payment.id ?? ""));
+  }
+
+  // ── Refund created — downgrade + pause ─────────────────────────────────
+  if (event.event === "refund.created") {
+    const payment = event.payload?.payment?.entity ?? {};
+    const refund  = event.payload?.refund?.entity  ?? {};
+    const uid = payment.notes?.userId;
+
     if (uid) {
-      await prisma.user.update({
-        where: { id: uid },
-        data: { paid: true, status: "active", plan },
+      await revokePlan(uid, String(refund.id ?? ""));
+    } else if (payment.email) {
+      // Fallback: look up by email if notes lacked userId
+      const user = await prisma.user.findUnique({
+        where: { email: payment.email },
+        select: { id: true },
       });
-      await audit("payment", { userId: uid, target: String(obj.id ?? ""), detail: plan });
+      if (user) await revokePlan(user.id, String(refund.id ?? ""));
+    } else {
+      console.error("[payment:refund] no userId or email in payload", refund.id);
+      await audit("payment_refunded", { target: String(refund.id ?? ""), detail: "no_uid_manual_review" });
     }
+  }
+
+  // ── Payment failed ──────────────────────────────────────────────────────
+  if (event.event === "payment.failed") {
+    const payment = event.payload?.payment?.entity ?? {};
+    console.error(`[payment:failed] id=${payment.id}`);
+    await audit("payment_failed", { target: String(payment.id ?? ""), detail: "payment_failed" });
   }
 
   return NextResponse.json({ received: true });

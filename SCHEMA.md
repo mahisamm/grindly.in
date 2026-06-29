@@ -1,4 +1,4 @@
-# NexPath Database Schema
+﻿# Grindly Database Schema
 
 ## ER Diagram
 

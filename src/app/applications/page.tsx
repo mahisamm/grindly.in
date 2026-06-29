@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Nav } from "@/components/Brand";
 import { humanFailure } from "@/lib/applyState";
@@ -26,6 +27,7 @@ type Application = {
   appliedAt: string | null;
   createdAt: string;
   resumeVersion: ResumeVersion | null;
+  outcome: string | null;
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -47,23 +49,57 @@ function chips(json: string): string[] {
   }
 }
 
+const OUTCOME_LABELS: Record<string, string> = {
+  interview:   "Got interview",
+  offer:       "Got offer",
+  rejected:    "Rejected",
+  no_response: "No response",
+};
+
 export default function ApplicationsPage() {
+  const router = useRouter();
   const [apps, setApps] = useState<Application[] | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [err, setErr] = useState("");
+  const [outcomes, setOutcomes] = useState<Record<string, string>>({});
+  const [markingId, setMarkingId] = useState<string | null>(null);
+
+  async function markOutcome(id: string, outcome: string | null) {
+    setMarkingId(id);
+    try {
+      const r = await fetch("/api/applications/outcome", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, outcome }),
+      });
+      if (r.ok) {
+        setOutcomes((prev) => {
+          const next = { ...prev };
+          if (outcome === null) delete next[id]; else next[id] = outcome;
+          return next;
+        });
+        setApps((prev) => prev?.map((a) => a.id === id ? { ...a, outcome } : a) ?? prev);
+      }
+    } finally {
+      setMarkingId(null);
+    }
+  }
 
   useEffect(() => {
     fetch("/api/applications")
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+      .then((r) => {
+        if (r.status === 401) { router.replace("/login"); return Promise.reject(null); }
+        return r.ok ? r.json() : Promise.reject(r);
+      })
       .then((j) => setApps(j.applications))
-      .catch(() => setErr("Couldn't load applications. Are you logged in?"));
-  }, []);
+      .catch((e) => { if (e !== null) setErr("Couldn't load applications."); });
+  }, [router]);
 
   return (
     <>
       <Nav />
       <main className="mx-auto max-w-4xl px-5 py-12">
-        <div className="flex items-end justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
             <h1 className="display text-4xl sm:text-5xl">Your applications</h1>
             <p className="mt-2 text-muted">
@@ -71,7 +107,7 @@ export default function ApplicationsPage() {
               Open one before an interview call to see what you presented.
             </p>
           </div>
-          <Link href="/dashboard" className="rounded-xl border-2 border-ink bg-surface px-4 py-2 font-semibold transition hover:bg-surface-2">
+          <Link href="/dashboard" className="self-start sm:self-auto rounded-xl border-2 border-ink bg-surface px-4 py-2 font-semibold transition hover:bg-surface-2">
             ← Dashboard
           </Link>
         </div>
@@ -117,6 +153,46 @@ export default function ApplicationsPage() {
                     {a.failureReason && (
                       <p className="mt-1 text-danger">⚠ {humanFailure(a.failureReason)}</p>
                     )}
+
+                    {a.status === "applied" && (() => {
+                      const current = outcomes[a.id] ?? a.outcome;
+                      return (
+                        <div className="mt-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted mb-1.5">
+                            What happened?
+                          </p>
+                          {current ? (
+                            <div className="flex items-center gap-2">
+                              <span className="rounded-md border border-accent bg-accent/10 px-2 py-0.5 text-xs font-semibold text-accent">
+                                {OUTCOME_LABELS[current] ?? current}
+                              </span>
+                              <button
+                                onClick={() => markOutcome(a.id, null)}
+                                className="text-xs text-muted hover:text-ink"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap gap-2">
+                              {(["interview","offer","rejected","no_response"] as const).map((o) => (
+                                <button
+                                  key={o}
+                                  disabled={markingId === a.id}
+                                  onClick={() => markOutcome(a.id, o)}
+                                  className="rounded-lg border-2 border-border bg-surface px-3 py-1 text-xs font-semibold transition hover:border-ink hover:bg-surface-2 disabled:opacity-50"
+                                >
+                                  {o === "interview" ? "Got interview 🎉"
+                                    : o === "offer" ? "Got offer 🏆"
+                                    : o === "rejected" ? "Rejected"
+                                    : "No response"}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {a.resumeVersion ? (
                       <div className="mt-4 rounded-xl border-2 border-border bg-surface-2 p-4">

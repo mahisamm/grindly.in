@@ -18,13 +18,15 @@ const ARRAY_FIELDS = new Set([
   "skills",
 ]);
 const NUM_FIELDS = new Set(["stipendMin", "minMatchScore", "maxPerDay", "gpa", "matchQualityRating"]);
+// NOTE: `phone` is deliberately NOT here. Phone changes must go through the OTP
+// verify flow (which sets phoneVerified) — letting profile overwrite it would
+// keep a "verified" flag on an unverified number and reroute login OTPs.
 const STR_FIELDS = new Set([
   "workMode",
   "experienceLevel",
   "resumeText",
   "resumeName",
   "education",
-  "phone",
 ]);
 const BOOL_FIELDS = new Set(["autoApply"]);
 

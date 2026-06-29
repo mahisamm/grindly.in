@@ -34,7 +34,7 @@ export async function sendEmail(msg: Email): Promise<{ ok: boolean; stub: boolea
   if (smtpConfigured()) {
     try {
       await getTransport().sendMail({
-        from: process.env.EMAIL_FROM || "NexPath <no-reply@nexpath.local>",
+        from: process.env.EMAIL_FROM || "Grindly <no-reply@grindly.app>",
         to: msg.to,
         subject: msg.subject,
         text: msg.body,

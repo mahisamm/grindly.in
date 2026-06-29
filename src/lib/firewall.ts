@@ -44,11 +44,24 @@ function fuzzyCompanyMatch(company: string, excluded: string): boolean {
   return !!cw[0] && !!ew[0] && cw[0] === ew[0];
 }
 
+// Parse a free-text stipend into a rupee number.
+//  - "unpaid"/"none" → 0 (explicit zero, so a >0 floor blocks it).
+//  - units: "10k" → 10000, "6 LPA"/"6 lakh" → 600000.
+//  - returns null only when genuinely no figure is present (unknown → not gated).
+// Mirrors agent/matcher.py:_parse_stipend so TS and Python gate identically.
 function parseStipend(s?: string | null): number | null {
   if (!s) return null;
-  const nums = String(s).match(/\d[\d,]*/g);
-  if (!nums) return null;
-  const vals = nums.map((n) => parseInt(n.replace(/,/g, ""), 10)).filter((n) => !isNaN(n));
+  const str = String(s).toLowerCase();
+  if (/\b(unpaid|none|no stipend|nil)\b/.test(str)) return 0;
+  const vals: number[] = [];
+  for (const m of str.matchAll(/(\d[\d,]*\.?\d*)\s*(k|l|lpa|lakh|lac)?/g)) {
+    let v = parseFloat(m[1].replace(/,/g, ""));
+    if (isNaN(v)) continue;
+    const u = m[2];
+    if (u === "k") v *= 1_000;
+    else if (u === "l" || u === "lpa" || u === "lakh" || u === "lac") v *= 100_000;
+    vals.push(Math.round(v));
+  }
   return vals.length ? Math.min(...vals) : null;
 }
 

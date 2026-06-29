@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
 import { TagInput } from "@/components/TagInput";
@@ -10,10 +9,9 @@ import { PLANS, type Plan } from "@/lib/adapters/payment";
 
 type Form = Record<string, unknown>;
 
-const STEPS = ["Resume", "Proff questions", "Slack", "Activate"];
+const STEPS = ["Resume", "Profile questions", "Notifications", "Activate"];
 
 export default function OnboardingPage() {
-  const router = useRouter();
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<Form>({ ...DEFAULTS });
   const [resumeName, setResumeName] = useState<string | null>(null);
@@ -21,8 +19,10 @@ export default function OnboardingPage() {
   const [uploading, setUploading] = useState(false);
   const [slackId, setSlackId] = useState("");
   const [slackDone, setSlackDone] = useState(false);
+  const [notifChannel, setNotifChannel] = useState<"slack" | "email">("email");
   const [plan, setPlan] = useState<Plan>("starter");
   const [busy, setBusy] = useState(false);
+  const [tosAck, setTosAck] = useState(false);
   const [msg, setMsg] = useState("");
 
   // hydrate from existing profile (if user comes back)
@@ -106,21 +106,88 @@ export default function OnboardingPage() {
     }
   }
 
+  function loadRazorpay(): Promise<void> {
+    return new Promise((resolve) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((window as any).Razorpay) { resolve(); return; }
+      const s = document.createElement("script");
+      s.src = "https://checkout.razorpay.com/v1/checkout.js";
+      s.onload = () => resolve();
+      document.body.appendChild(s);
+    });
+  }
+
   async function pay() {
     setBusy(true);
     setMsg("");
+    // Stamp auto-apply consent at explicit ToS acknowledgement
+    await fetch("/api/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoApply: Boolean(form.autoApply ?? true) }),
+    }).catch(() => {});
+
     const res = await fetch("/api/pay", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ plan }),
     });
-    const j = await res.json();
-    if (j.ok) {
-      router.push("/dashboard?paid=1");
-    } else {
-      setBusy(false);
-      setMsg("Could not activate. Try again.");
+    const order = await res.json();
+
+    // Stub mode (no Razorpay key configured) — confirm directly
+    if (order.stub) {
+      const r = await fetch("/api/pay/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan, stub: true }),
+      });
+      if (r.ok) {
+        window.location.href = "/dashboard?paid=1";
+      } else {
+        setBusy(false);
+        setMsg("Could not activate. Try again.");
+      }
+      return;
     }
+
+    // Real Razorpay — open checkout modal
+    await loadRazorpay();
+
+    const options = {
+      key: order.keyId,
+      amount: order.amount,
+      currency: order.currency,
+      name: "Grindly",
+      description: `${PLANS[plan].name} Plan`,
+      order_id: order.orderId,
+      handler: async (response: {
+        razorpay_payment_id: string;
+        razorpay_order_id: string;
+        razorpay_signature: string;
+      }) => {
+        const r = await fetch("/api/pay/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...response, plan }),
+        });
+        if (r.ok) {
+          window.location.href = "/dashboard?paid=1";
+        } else {
+          setBusy(false);
+          setMsg("Payment received but activation failed — contact support.");
+        }
+      },
+      modal: { ondismiss: () => setBusy(false) },
+      theme: { color: "#6C63FF" },
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rzp = new (window as any).Razorpay(options);
+    rzp.on("payment.failed", () => {
+      setBusy(false);
+      setMsg("Payment failed. Please try again.");
+    });
+    rzp.open();
   }
 
   return (
@@ -209,10 +276,10 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          {/* STEP 1 — Proff questions */}
+          {/* STEP 1 — Profile questions */}
           {step === 1 && (
             <div>
-              <h2 className="font-display text-2xl font-semibold">A few proff questions</h2>
+              <h2 className="font-display text-2xl font-semibold">A few profile questions</h2>
               <p className="mt-1 text-sm text-muted">
                 These set the agent&apos;s firewall — the boundaries it plans and applies inside.
               </p>
@@ -295,58 +362,100 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          {/* STEP 2 — Slack */}
+          {/* STEP 2 — Notifications (Slack or Email) */}
           {step === 2 && (
             <div>
-              <h2 className="font-display text-2xl font-semibold">Connect Slack</h2>
+              <h2 className="font-display text-2xl font-semibold">Stay updated</h2>
               <p className="mt-1 text-sm text-muted">
-                Right after payment the bot DMs you here to confirm details, then sends a
-                progress report every day.
+                The agent sends you a daily progress report. Choose how you want to receive it.
               </p>
 
-              <div className="mt-5 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
-                <p className="font-medium text-foreground">How to find your Slack member ID</p>
-                <ol className="mt-2 list-decimal pl-5 space-y-1">
-                  <li>Open Slack → click your profile photo → <em>Profile</em>.</li>
-                  <li>Click the <em>⋮ More</em> button → <em>Copy member ID</em>.</li>
-                  <li>Paste it below (looks like <code className="text-brand-2">U08AB12CD</code>).</li>
-                </ol>
-                <p className="mt-2 text-xs">
-                  Local build: this is stubbed — messages are logged to{" "}
-                  <code>data/slack-outbox.jsonl</code> so you can see exactly what the bot would send.
-                </p>
+              {/* Channel picker */}
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setNotifChannel("slack")}
+                  className={`rounded-xl border-2 p-4 text-left transition ${notifChannel === "slack" ? "border-brand bg-brand/5" : "border-border hover:border-brand/40"}`}
+                >
+                  <div className="text-xl mb-1">💬</div>
+                  <div className="font-semibold text-sm">Slack DM</div>
+                  <div className="text-xs text-muted mt-0.5">Real-time DMs to your Slack account</div>
+                </button>
+                <button
+                  onClick={() => setNotifChannel("email")}
+                  className={`rounded-xl border-2 p-4 text-left transition ${notifChannel === "email" ? "border-brand bg-brand/5" : "border-border hover:border-brand/40"}`}
+                >
+                  <div className="text-xl mb-1">📧</div>
+                  <div className="font-semibold text-sm">Email</div>
+                  <div className="text-xs text-muted mt-0.5">Reports sent to your registered email</div>
+                </button>
               </div>
 
-              <input
-                value={slackId}
-                onChange={(e) => setSlackId(e.target.value)}
-                placeholder="U08AB12CD"
-                className="mt-4 w-full rounded-lg border border-border bg-surface px-3 py-2.5 outline-none focus:border-brand transition font-mono"
-              />
-              {slackDone && <p className="mt-2 text-sm text-accent">✓ Slack connected.</p>}
+              {/* Slack setup */}
+              {notifChannel === "slack" && (
+                <div className="mt-5">
+                  <div className="rounded-xl border border-border bg-surface p-4 text-sm text-muted">
+                    <p className="font-medium text-foreground">How to find your Slack member ID</p>
+                    <ol className="mt-2 list-decimal pl-5 space-y-1">
+                      <li>Open Slack → click your profile photo → <em>Profile</em>.</li>
+                      <li>Click the <em>⋮ More</em> button → <em>Copy member ID</em>.</li>
+                      <li>Paste it below (looks like <code className="text-brand-2">U08AB12CD</code>).</li>
+                    </ol>
+                  </div>
+                  <input
+                    value={slackId}
+                    onChange={(e) => setSlackId(e.target.value)}
+                    placeholder="U08AB12CD"
+                    className="mt-4 w-full rounded-lg border border-border bg-surface px-3 py-2.5 outline-none focus:border-brand transition font-mono"
+                  />
+                  {slackDone && <p className="mt-2 text-sm text-accent">✓ Slack connected.</p>}
+                </div>
+              )}
+
+              {/* Email — no setup needed */}
+              {notifChannel === "email" && (
+                <div className="mt-5 rounded-xl border border-accent/30 bg-accent/5 p-4 text-sm">
+                  <p className="font-medium text-accent">✓ No setup needed</p>
+                  <p className="mt-1 text-muted">
+                    Daily reports + interview alerts go to your registered email automatically.
+                    You can connect Slack later from the dashboard if you change your mind.
+                  </p>
+                </div>
+              )}
+
               {msg && <p className="mt-2 text-sm text-danger">{msg}</p>}
 
-              <div className="mt-6 flex justify-between">
+              <div className="mt-6 flex flex-wrap justify-between gap-3">
                 <button
                   onClick={() => setStep(1)}
                   className="rounded-lg border border-border px-5 py-2.5 hover:border-brand/60 transition"
                 >
                   Back
                 </button>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setStep(3)}
-                    className="rounded-lg border border-border px-5 py-2.5 text-muted hover:text-foreground transition"
-                  >
-                    Skip for now
-                  </button>
-                  <button
-                    disabled={busy || !slackId.trim()}
-                    onClick={connectSlack}
-                    className="rounded-lg brand-gradient px-5 py-2.5 font-medium text-white hover:opacity-90 transition disabled:opacity-50"
-                  >
-                    {busy ? "Connecting…" : "Connect"}
-                  </button>
+                <div className="flex flex-wrap gap-2">
+                  {notifChannel === "slack" ? (
+                    <>
+                      <button
+                        onClick={() => setStep(3)}
+                        className="rounded-lg border border-border px-5 py-2.5 text-muted hover:text-foreground transition"
+                      >
+                        Skip for now
+                      </button>
+                      <button
+                        disabled={busy || !slackId.trim()}
+                        onClick={connectSlack}
+                        className="rounded-lg brand-gradient px-5 py-2.5 font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+                      >
+                        {busy ? "Connecting…" : "Connect Slack"}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => setStep(3)}
+                      className="rounded-lg brand-gradient px-5 py-2.5 font-medium text-white hover:opacity-90 transition"
+                    >
+                      Continue with Email →
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -386,6 +495,25 @@ export default function OnboardingPage() {
                 ))}
               </div>
 
+              {/* Platform ToS risk acknowledgement — required before auto-apply activates */}
+              <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                <input
+                  type="checkbox"
+                  checked={tosAck}
+                  onChange={(e) => setTosAck(e.target.checked)}
+                  className="mt-0.5 size-4 accent-brand"
+                />
+                <span className="text-sm leading-relaxed text-muted">
+                  I understand that automated job applications may violate the Terms of Service of
+                  some platforms (notably LinkedIn and Indeed). I accept this risk and take full
+                  responsibility for my connected accounts. I have read the{" "}
+                  <a href="/terms" target="_blank" className="text-brand-2 underline">
+                    Terms of Service
+                  </a>
+                  .
+                </span>
+              </label>
+
               {msg && <p className="mt-3 text-sm text-danger">{msg}</p>}
 
               <div className="mt-6 flex justify-between">
@@ -396,7 +524,7 @@ export default function OnboardingPage() {
                   Back
                 </button>
                 <button
-                  disabled={busy}
+                  disabled={busy || !tosAck}
                   onClick={pay}
                   className="rounded-lg brand-gradient px-6 py-2.5 font-medium text-white hover:opacity-90 transition disabled:opacity-60"
                 >

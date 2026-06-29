@@ -1,4 +1,4 @@
-# NexPath — Risk Remediation Report
+﻿# Grindly — Risk Remediation Report
 
 > **Phase 2 (this pass): the previously-deferred infra items are now implemented**
 > as real, build/test-verified code behind env seams + infra-as-code. See

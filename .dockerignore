@@ -8,5 +8,10 @@ prisma/dev.db
 prisma/dev.db-journal
 .env
 .env.local
+.env.example
 **/__pycache__
 .venv
+# Never ship the signing keystore — it contains the private key
+android-keystore.jks
+*.jks
+*.p12

@@ -7,6 +7,8 @@ import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 
 const RESUME_DIR = path.join(process.cwd(), "data", "resumes");
+const ALLOWED_EXT = new Set([".pdf", ".docx", ".txt"]);
+const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 
 /** Accepts a resume file (pdf/docx/txt). Saves to disk for the Python agent to
  *  parse, and stores plain text immediately when the upload is .txt. */
@@ -21,9 +23,19 @@ export async function POST(req: Request) {
   }
 
   const ext = (path.extname(file.name) || ".pdf").toLowerCase();
+  if (!ALLOWED_EXT.has(ext)) {
+    return NextResponse.json({ error: "Unsupported file type. Upload a PDF, DOCX, or TXT." }, { status: 400 });
+  }
+  // Reject oversized uploads before buffering the whole file into memory.
+  if (file.size > MAX_BYTES) {
+    return NextResponse.json({ error: "File too large (max 5 MB)." }, { status: 413 });
+  }
   await fsp.mkdir(RESUME_DIR, { recursive: true });
   const dest = path.join(RESUME_DIR, `${uid}${ext}`);
   const buf = Buffer.from(await file.arrayBuffer());
+  if (buf.byteLength > MAX_BYTES) {
+    return NextResponse.json({ error: "File too large (max 5 MB)." }, { status: 413 });
+  }
   await fsp.writeFile(dest, buf);
 
   let resumeText: string | undefined;
@@ -34,7 +46,11 @@ export async function POST(req: Request) {
     data: { resumeName: file.name, ...(resumeText ? { resumeText } : {}) },
   });
 
-  // Spawn Python to parse + analyze the resume asynchronously
+  // Queue a resume-analysis job; the worker fleet drains it, so the web app
+  // needs no Python. The spawn below is a best-effort local "kick" so a dev box
+  // without a running worker analyzes immediately (no-ops in the slim prod image).
+  await prisma.agentRun.create({ data: { userId: uid, mode: "analyze" } });
+
   const worker = path.join(process.cwd(), "agent", "worker.py");
   try {
     await fsp.access(worker);
@@ -42,14 +58,15 @@ export async function POST(req: Request) {
     await fsp.mkdir(logDir, { recursive: true });
     const out = fs.openSync(path.join(logDir, `${uid}.log`), "a");
     const py = process.env.PYTHON_BIN || "python";
-    const child = spawn(py, [worker, "--user", uid, "--analyze"], {
+    const child = spawn(py, [worker, "--drain"], {
       cwd: process.cwd(),
       detached: true,
       stdio: ["ignore", out, out],
     });
+    child.on("error", () => {});
     child.unref();
   } catch {
-    // worker not installed — skip analysis spawn
+    // No Python here — the worker drains the queued analyze job.
   }
 
   return NextResponse.json({ ok: true, resumeName: file.name, parsed: Boolean(resumeText) });

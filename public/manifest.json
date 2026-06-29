@@ -1,0 +1,26 @@
+{
+  "name": "Grindly — AI Internship Agent",
+  "short_name": "Grindly",
+  "description": "Your AI applies to internships while you sleep. Upload your resume, set preferences, and let the agent auto-apply to matching internships daily.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f3ea",
+  "theme_color": "#2a28f0",
+  "categories": ["productivity", "education", "utilities"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "prefer_related_applications": false
+}

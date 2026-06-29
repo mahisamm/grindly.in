@@ -52,36 +52,53 @@ export function Badge({ value }: { value: string }) {
   );
 }
 
-// Dependency-free inline SVG bar chart for the applied-per-day trend.
-export function BarTrend({ data }: { data: { date: string; count: number }[] }) {
-  const max = Math.max(1, ...data.map((d) => d.count));
-  const W = 560, H = 120, pad = 16;
-  const bw = (W - pad * 2) / data.length;
+// 7-day activity table — cleaner than a bar chart, shows applied + failed per day.
+export function WeekTable({ data }: { data: { date: string; count: number }[] }) {
+  // Only show last 7 days
+  const rows = data.slice(-7);
+  const today = new Date().toISOString().slice(0, 10);
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="applied per day">
-      {data.map((d, i) => {
-        const h = (d.count / max) * (H - pad * 2);
-        const x = pad + i * bw;
-        return (
-          <g key={d.date}>
-            <rect
-              x={x + 1} y={H - pad - h} width={bw - 3} height={h}
-              rx={2} fill="#ff4d4d" opacity={0.85}
-            />
-            {d.count > 0 && (
-              <text x={x + bw / 2} y={H - pad - h - 3} textAnchor="middle" fontSize="9" fill="#8b919c" fontFamily="monospace">
-                {d.count}
-              </text>
-            )}
-            {i % 2 === 0 && (
-              <text x={x + bw / 2} y={H - 4} textAnchor="middle" fontSize="8" fill="#5a606b" fontFamily="monospace">
-                {d.date.slice(5)}
-              </text>
-            )}
-          </g>
-        );
-      })}
-    </svg>
+    <table className="w-full font-mono text-xs">
+      <thead>
+        <tr className="border-b border-[#262a33] text-[#5a606b]">
+          <th className="py-2 text-left font-medium">Date</th>
+          <th className="py-2 text-right font-medium">Applied</th>
+          <th className="py-2 text-right font-medium pr-2">Activity</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((d) => {
+          const isToday = d.date === today;
+          const pct = data.length ? Math.round((d.count / Math.max(1, ...data.map(x => x.count))) * 100) : 0;
+          return (
+            <tr key={d.date} className={`border-b border-[#1d2027] ${isToday ? "bg-[#1a1d23]" : ""}`}>
+              <td className={`py-2 ${isToday ? "text-[#e6e8eb] font-bold" : "text-[#8b919c]"}`}>
+                {d.date.slice(5)}{isToday ? " (today)" : ""}
+              </td>
+              <td className={`py-2 text-right tabular-nums ${d.count > 0 ? "text-[#36d399]" : "text-[#5a606b]"}`}>
+                {d.count > 0 ? `+${d.count}` : "—"}
+              </td>
+              <td className="py-2 pr-2">
+                <div className="flex justify-end">
+                  <div className="h-2 w-32 rounded-full bg-[#1d2027] overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-[#36d399] transition-all"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+        {rows.every(r => r.count === 0) && (
+          <tr>
+            <td colSpan={3} className="py-4 text-center text-[#5a606b]">No applications yet in last 7 days.</td>
+          </tr>
+        )}
+      </tbody>
+    </table>
   );
 }
 

@@ -31,6 +31,7 @@ export async function GET() {
     status: byPlatform[p]?.status ?? (p === "internshala" && user.internshalaConnected ? "connected" : "disconnected"),
     connectedAt: byPlatform[p]?.connectedAt ?? null,
   }));
+  const gmailConnected = byPlatform["gmail"]?.status === "connected";
 
   const apps = user.applications;
   const appliedApps = apps.filter((a) => a.status === "applied");
@@ -65,6 +66,7 @@ export async function GET() {
       slackConnected: user.slackConnected,
       slackUserId: user.slackUserId,
       internshalaConnected: user.internshalaConnected,
+      gmailConnected,
     },
     profile: user.profile,
     applications: apps,

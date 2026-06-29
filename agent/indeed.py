@@ -12,6 +12,10 @@ import os
 import re
 import urllib.parse
 
+import safety
+import selector_ai
+import stealth
+
 BASE = "https://in.indeed.com"
 
 _contexts: dict = {}
@@ -32,18 +36,12 @@ def _context(uid: str = ""):
     ctx = pw.chromium.launch_persistent_context(
         profile,
         headless=os.environ.get("INTERNPILOT_HEADLESS", "0") == "1",
-        args=[
-            "--disable-blink-features=AutomationControlled",
-            "--disable-web-security",
-        ],
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        viewport={"width": 1280, "height": 900},
+        args=["--disable-blink-features=AutomationControlled"],
+        user_agent=stealth.random_ua(),
+        viewport=stealth.random_viewport(),
         locale="en-IN",
     )
+    stealth.apply_stealth(ctx)
     _contexts[key] = ctx
     return ctx
 
@@ -58,64 +56,75 @@ def close(uid: str = ""):
             pass
 
 
-def _search_url(domains: list[str]) -> str:
+def _search_url(domains: list[str], start: int = 0) -> str:
     kw = urllib.parse.quote(f"{domains[0]} internship" if domains else "internship")
-    return f"{BASE}/jobs?q={kw}&l=India&sc=0kf%3Aattr%28DSQF7%29%3B"
+    base = f"{BASE}/jobs?q={kw}&l=India&sc=0kf%3Aattr%28DSQF7%29%3B"
+    return base + (f"&start={start}" if start > 0 else "")
 
 
 def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     page = _context(uid).new_page()
     jobs: list[dict] = []
+    seen_jks: set[str] = set()
     try:
-        page.goto(_search_url(domains), wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(3500)
-
-        cards = page.query_selector_all(".job_seen_beacon, [data-jk], .resultContent")
-        for card in cards:
+        for pnum in range(1, 4):  # pages 1-3 (Indeed paginates by 25)
             if len(jobs) >= limit:
                 break
-            try:
-                title_el = _qsel(card, [
-                    "h2.jobTitle span[title]",
-                    "h2 a[data-jk]",
-                    "h2 span:not([class*='sr'])",
-                    ".jobTitle",
-                ])
-                title = (title_el.get_attribute("title") or title_el.inner_text() or "").strip() \
-                    if title_el else ""
-                company = _text(card, [
-                    ".companyName",
-                    "[data-testid='company-name']",
-                    "span.companyName",
-                ])
-                location = _text(card, [
-                    ".companyLocation",
-                    "[data-testid='text-location']",
-                ])
-                salary = _text(card, [".salary-snippet-container", ".metadata.salary-snippet"])
-                jk = card.get_attribute("data-jk")
-                if not jk:
-                    link = _qsel(card, ["h2 a", "a.jcs-JobTitle"])
-                    if link:
-                        href = link.get_attribute("href") or ""
-                        m = re.search(r"jk=([a-z0-9]+)", href)
-                        jk = m.group(1) if m else ""
-                if not title or not jk:
+            page_url = _search_url(domains, start=(pnum - 1) * 25)
+            page.goto(page_url, wait_until="domcontentloaded", timeout=45000)
+            delay = stealth.random_delay_ms(2000, 5500) if pnum == 1 else stealth.random_delay_ms(1500, 4000)
+            page.wait_for_timeout(delay)
+
+            cards = page.query_selector_all(".job_seen_beacon, [data-jk], .resultContent")
+            new_this_page = 0
+            for card in cards:
+                if len(jobs) >= limit:
+                    break
+                try:
+                    title_el = _qsel(card, [
+                        "h2.jobTitle span[title]",
+                        "h2 a[data-jk]",
+                        "h2 span:not([class*='sr'])",
+                        ".jobTitle",
+                    ])
+                    title = (title_el.get_attribute("title") or title_el.inner_text() or "").strip() \
+                        if title_el else ""
+                    company = _text(card, [
+                        ".companyName",
+                        "[data-testid='company-name']",
+                        "span.companyName",
+                    ])
+                    location = _text(card, [
+                        ".companyLocation",
+                        "[data-testid='text-location']",
+                    ])
+                    salary = _text(card, [".salary-snippet-container", ".metadata.salary-snippet"])
+                    jk = card.get_attribute("data-jk")
+                    if not jk:
+                        link = _qsel(card, ["h2 a", "a.jcs-JobTitle"])
+                        if link:
+                            href = link.get_attribute("href") or ""
+                            m = re.search(r"jk=([a-z0-9]+)", href)
+                            jk = m.group(1) if m else ""
+                    if not title or not jk or jk in seen_jks:
+                        continue
+                    seen_jks.add(jk)
+                    jobs.append({
+                        "source": "indeed",
+                        "external_id": jk,
+                        "title": title,
+                        "company": company or "Unknown",
+                        "location": location or "",
+                        "stipend": salary or "",
+                        "duration": "",
+                        "skills": _infer_skills(title),
+                        "url": f"{BASE}/viewjob?jk={jk}",
+                    })
+                    new_this_page += 1
+                except Exception:  # noqa: BLE001
                     continue
-                url = f"{BASE}/viewjob?jk={jk}"
-                jobs.append({
-                    "source": "indeed",
-                    "external_id": jk,
-                    "title": title,
-                    "company": company or "Unknown",
-                    "location": location or "",
-                    "stipend": salary or "",
-                    "duration": "",
-                    "skills": _infer_skills(title),
-                    "url": url,
-                })
-            except Exception:  # noqa: BLE001
-                continue
+            if new_this_page == 0:
+                break  # no new results, stop paginating
     finally:
         try:
             page.close()
@@ -124,13 +133,39 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     return jobs
 
 
+def scrape_jd(url: str, uid: str = "") -> str:
+    """Extract job description text from a listing page. Returns '' on failure."""
+    page = _context(uid).new_page()
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        page.wait_for_timeout(stealth.random_delay_ms(600, 1500))
+        return _text(page, [
+            "#jobDescriptionText",
+            ".jobsearch-jobDescriptionText",
+            "[class*='jobDescription']",
+            "[class*='job-description']",
+            ".jobDescription",
+        ])[:1500]
+    except Exception:  # noqa: BLE001
+        return ""
+    finally:
+        try:
+            page.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def apply(job: dict, cover_letter: str, uid: str = "",
           profile: dict | None = None, resume_path: str | None = None) -> tuple[str, str]:
     phone = (profile or {}).get("phone") or ""
     page = _context(uid).new_page()
     try:
         page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(stealth.random_delay_ms())
+
+        if safety.detect_challenge(page):
+            safety.screenshot(page, uid, f"captcha_indeed_{job.get('external_id','')}")
+            return "failed", "captcha challenge on Indeed"
 
         if _is_logged_out(page):
             return "login_required", "not signed in to Indeed — reconnect in the Integrations tab"
@@ -139,7 +174,7 @@ def apply(job: dict, cover_letter: str, uid: str = "",
         if already:
             return "skipped", "already applied on Indeed"
 
-        btn = _qsel(page, [
+        btn = selector_ai.find_element(page, "Easily apply, Apply now, or Apply button", [
             "button:has-text('Easily apply')",
             "button:has-text('Apply now')",
             "button:has-text('Apply')",
@@ -148,10 +183,10 @@ def apply(job: dict, cover_letter: str, uid: str = "",
         ])
         if not btn:
             return "skipped", "no Indeed Easy Apply button (external application link)"
-        btn.click()
-        page.wait_for_timeout(2500)
+        stealth.scroll_to(page, btn)
+        stealth.human_click(page, btn)
+        page.wait_for_timeout(stealth.random_delay_ms())
 
-        # Upload tailored resume if Indeed shows a file input
         if resume_path and os.path.isfile(resume_path):
             file_inp = _qsel(page, [
                 "input[type='file'][accept*='pdf']",
@@ -160,7 +195,7 @@ def apply(job: dict, cover_letter: str, uid: str = "",
             if file_inp:
                 try:
                     file_inp.set_input_files(resume_path)
-                    page.wait_for_timeout(1000)
+                    page.wait_for_timeout(stealth.random_delay_ms(600, 1800))
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -190,18 +225,23 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                 except Exception:  # noqa: BLE001
                     pass
 
-            next_btn = _qsel(page, [
-                "button:has-text('Continue')",
-                "button:has-text('Next')",
-                "button:has-text('Review')",
-                "button:has-text('Submit')",
-                "button[type='submit']",
-            ])
+            next_btn = selector_ai.find_element(
+                page,
+                "Continue, Next, Review or Submit button in application flow",
+                [
+                    "button:has-text('Continue')",
+                    "button:has-text('Next')",
+                    "button:has-text('Review')",
+                    "button:has-text('Submit')",
+                    "button[type='submit']",
+                ],
+            )
             if not next_btn:
                 break
             label = (next_btn.inner_text() or "").lower()
-            next_btn.click()
-            page.wait_for_timeout(1500)
+            stealth.scroll_to(page, next_btn)
+            stealth.human_click(page, next_btn)
+            page.wait_for_timeout(stealth.random_delay_ms(1000, 2800))
             if "submit" in label:
                 break
 
@@ -209,6 +249,10 @@ def apply(job: dict, cover_letter: str, uid: str = "",
             return "applied", "submitted via Indeed Easy Apply"
         return "applied", "submitted on Indeed (confirmation not detected)"
     except Exception as e:  # noqa: BLE001
+        try:
+            safety.screenshot(page, uid, f"exception_indeed_{job.get('external_id','')}")
+        except Exception:  # noqa: BLE001
+            pass
         return "failed", f"indeed error: {str(e)[:120]}"
     finally:
         try:

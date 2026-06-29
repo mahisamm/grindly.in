@@ -5,10 +5,9 @@ import { requireAdmin } from "@/lib/admin";
 export const dynamic = "force-dynamic";
 
 function dayKey(d: Date): string {
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+  return d.toISOString().slice(0, 10);
 }
 
-// Fleet overview: KPIs, 14-day applied trend, recent failures, integration health.
 export async function GET() {
   const g = await requireAdmin();
   if ("error" in g) return g.error;
@@ -16,12 +15,13 @@ export async function GET() {
   const since14 = new Date(Date.now() - 14 * 86400_000);
   const todayKey = dayKey(new Date());
 
-  const [users, apps, integrations, recentFailures] = await Promise.all([
+  const [users, apps14, allApps, integrations, recentFailures, lastRun, platformApps] = await Promise.all([
     prisma.user.findMany({ select: { paid: true, plan: true, status: true, role: true } }),
     prisma.application.findMany({
       where: { createdAt: { gte: since14 } },
       select: { status: true, createdAt: true, appliedAt: true },
     }),
+    prisma.application.count(),
     prisma.userIntegration.findMany({ select: { status: true } }).catch(() => []),
     prisma.application.findMany({
       where: { status: "failed" },
@@ -31,6 +31,14 @@ export async function GET() {
         id: true, jobTitle: true, company: true, failureReason: true, reason: true,
         createdAt: true, user: { select: { id: true, email: true } },
       },
+    }),
+    prisma.agentRun.findFirst({
+      orderBy: { updatedAt: "desc" },
+      select: { status: true, updatedAt: true, createdAt: true, mode: true, error: true },
+    }).catch(() => null),
+    prisma.application.findMany({
+      where: { createdAt: { gte: since14 } },
+      select: { status: true, failureReason: true, job: { select: { source: true } } },
     }),
   ]);
 
@@ -49,19 +57,19 @@ export async function GET() {
     },
   };
 
-  // ── Run KPIs (14-day window)
-  const applied = apps.filter((a) => a.status === "applied").length;
-  const failed = apps.filter((a) => a.status === "failed").length;
-  const matched = apps.length;
-  const failRate = applied + failed ? Math.round((failed / (applied + failed)) * 100) : 0;
-  const appliedToday = apps.filter(
+  // ── Run KPIs
+  const applied14 = apps14.filter((a) => a.status === "applied").length;
+  const failed14 = apps14.filter((a) => a.status === "failed").length;
+  const matched14 = apps14.length;
+  const failRate = applied14 + failed14 ? Math.round((failed14 / (applied14 + failed14)) * 100) : 0;
+  const appliedToday = apps14.filter(
     (a) => dayKey(a.appliedAt ?? a.createdAt) === todayKey && a.status === "applied"
   ).length;
 
-  // ── 14-day applied-per-day trend (oldest → newest)
+  // ── 14-day trend
   const buckets = new Map<string, number>();
   for (let i = 13; i >= 0; i--) buckets.set(dayKey(new Date(Date.now() - i * 86400_000)), 0);
-  for (const a of apps) {
+  for (const a of apps14) {
     if (a.status !== "applied") continue;
     const k = dayKey(a.appliedAt ?? a.createdAt);
     if (buckets.has(k)) buckets.set(k, (buckets.get(k) ?? 0) + 1);
@@ -76,11 +84,32 @@ export async function GET() {
     connecting: integrations.filter((i) => i.status === "connecting").length,
   };
 
+  // ── Per-platform fail rates (14d)
+  const platforms = ["internshala", "linkedin", "naukri", "unstop", "indeed"];
+  const platformStats = platforms.map((p) => {
+    const pApps = platformApps.filter((a) => a.job?.source === p || (!a.job && p === "internshala"));
+    const pApplied = pApps.filter((a) => a.status === "applied").length;
+    const pFailed = pApps.filter((a) => a.status === "failed").length;
+    const pRate = pApplied + pFailed ? Math.round((pFailed / (pApplied + pFailed)) * 100) : 0;
+    return { platform: p, applied: pApplied, failed: pFailed, failRate: pRate };
+  }).filter((p) => p.applied + p.failed > 0);
+
+  // ── Cron / last agent run health
+  const cronHealth = lastRun ? {
+    lastRunAt: lastRun.updatedAt,
+    status: lastRun.status,
+    mode: lastRun.mode,
+    error: lastRun.error ?? null,
+    staleHours: Math.round((Date.now() - new Date(lastRun.updatedAt).getTime()) / 3_600_000),
+  } : null;
+
   return NextResponse.json({
     users: userKpis,
-    runs: { matched, applied, failed, failRate, appliedToday, windowDays: 14 },
+    runs: { matched: matched14, applied: applied14, failed: failed14, failRate, appliedToday, windowDays: 14, allTimeApplied: allApps },
     trend,
     integrationHealth,
+    platformStats,
+    cronHealth,
     recentFailures: recentFailures.map((f) => ({
       id: f.id,
       userId: f.user?.id ?? null,

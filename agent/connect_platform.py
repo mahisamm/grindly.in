@@ -1,4 +1,4 @@
-"""Generic platform connector: opens a headed browser so the user logs in ONCE.
+﻿"""Generic platform connector: opens a headed browser so the user logs in ONCE.
 Session saved in a persistent per-user per-platform profile directory.
 
 Flow:
@@ -156,7 +156,7 @@ def connect(uid: str, platform: str, timeout: int = 300) -> bool:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--user", required=True, help="NexPath user id")
+    ap.add_argument("--user", required=True, help="Grindly user id")
     ap.add_argument(
         "--platform",
         required=True,

@@ -49,7 +49,7 @@ export async function notify(input: NotifyInput): Promise<{ delivered: boolean }
   const wantEmail = email && (tier === "urgent" || !slackOk);
   if (wantEmail) {
     try {
-      const r = await sendEmail({ to: email!, subject: `NexPath: ${title}`, body });
+      const r = await sendEmail({ to: email!, subject: `Grindly: ${title}`, body });
       emailOk = r.ok;
     } catch (e) {
       console.error("[notify] email failed:", (e as Error).message);

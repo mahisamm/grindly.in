@@ -1,0 +1,6 @@
+# Auto-HTTPS (Let's Encrypt) for the public domain → reverse-proxy to the web
+# container. APP_DOMAIN comes from the .env that docker-compose passes through.
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:3000
+}

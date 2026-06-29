@@ -43,7 +43,7 @@ export async function POST(req: Request) {
 
   await sendMessage({
     channel: user.slackChannel || user.slackUserId!,
-    text: `:link: Slack connected to InternPilot for *${user.name || user.email}*. Finish payment and I'll start applying.`,
+    text: `:link: Slack connected to Grindly for *${user.name || user.email}*. Finish payment and I'll start applying.`,
   });
 
   return NextResponse.json({ ok: true });

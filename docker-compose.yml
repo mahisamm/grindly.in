@@ -1,55 +1,140 @@
-# Production-shaped stack: web + worker fleet + Postgres + Redis.
-# Postgres replaces the prototype SQLite (set provider=postgresql in
-# prisma/schema.prisma first — see prisma/MIGRATE_POSTGRES.md).
+# Production stack: caddy (TLS) → web + worker fleet + postgres + redis.
+# A one-shot `migrate` service creates the Postgres schema + seeds the admin
+# before web/worker start. See PHASE3_DEPLOY_REPORT.md for the deploy runbook.
 # Redis is provisioned for when the queue moves off the DB to BullMQ/Celery.
 
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: nexpath
-      POSTGRES_PASSWORD: nexpath
-      POSTGRES_DB: nexpath
+      POSTGRES_USER: grindly
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: grindly
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nexpath"]
+      test: ["CMD-SHELL", "pg_isready -U grindly"]
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
+
+  # One-shot: create/refresh the schema (prisma db push) + seed the admin, then
+  # exit. web + worker wait for this to complete successfully.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: grindly-web
+    command: sh -c "npx prisma db push --skip-generate && node scripts/seed-admin.mjs"
+    environment:
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   web:
     build:
       context: .
       dockerfile: Dockerfile
+    image: grindly-web
     environment:
-      DATABASE_URL: postgresql://nexpath:nexpath@postgres:5432/nexpath
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
-    ports:
-      - "3000:3000"
+      TRUST_PROXY: "1"              # behind Caddy — trust x-forwarded-for for rate limiting
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+    expose:
+      - "3000"
+    volumes:
+      # Shared with the worker: resume uploads + apply screenshots live here.
+      - appdata:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
   worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
     environment:
-      INTERNPILOT_DB: ""  # unset for sqlite path; use DATABASE_URL on Postgres
-      DATABASE_URL: postgresql://nexpath:nexpath@postgres:5432/nexpath
+      INTERNPILOT_DB: ""            # unset → db.py uses the Postgres DATABASE_URL
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
+      INTERNPILOT_HEADLESS: "1"     # headless — there's no display on a server
+      GRINDLY_SPREAD_APPLIES: "1"   # human-pacing: 5-15 min gap between applies
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      SENTRY_DSN: ${SENTRY_DSN:-}
     deploy:
       replicas: 2  # horizontal browser-worker fleet; per-user lock prevents double-apply
+    volumes:
+      - appdata:/app/data
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # TLS terminator + reverse proxy. Auto-provisions Let's Encrypt certs for
+  # $APP_DOMAIN. Public entrypoint — web is not exposed to the host directly.
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - web
+    restart: unless-stopped
+
+  # Daily pg_dump → /backup, 7-day retention. Mount a host dir or named volume.
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    entrypoint: []
+    command:
+      - "sh"
+      - "-c"
+      - "while true; do sleep 86400 && pg_dump -h postgres -U grindly grindly | gzip > /backup/grindly_$(date +%Y%m%d_%H%M%S).sql.gz && find /backup -name '*.sql.gz' -mtime +7 -delete && echo '[backup] daily dump done'; done"
+    volumes:
+      - pgbackup:/backup
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pgdata:
+  appdata:
+  pgbackup:
+  caddydata:
+  caddyconfig:

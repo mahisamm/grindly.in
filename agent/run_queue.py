@@ -9,14 +9,19 @@ a running job, so two drain workers never double-apply for the same user.
 """
 from __future__ import annotations
 import json
+import logging
 import time
 
 import db
+
+log = logging.getLogger("grindly.queue")
 
 STALE_LOCK_MS = 30 * 60 * 1000  # a job locked longer than this is presumed crashed
 
 
 def _ensure_table(c):
+    if db.PG:
+        return  # schema owned by Prisma migrations on Postgres
     c.execute("""
         CREATE TABLE IF NOT EXISTS agent_runs (
             id TEXT PRIMARY KEY,
@@ -47,7 +52,7 @@ def enqueue(uid: str, mode: str = "mock") -> str:
         if existing:
             return existing["id"]
         rid = db.cuid()
-        ts = db.now_ms()
+        ts = db.now_db()
         c.execute(
             "INSERT INTO agent_runs (id, user_id, mode, status, attempts, max_attempts, "
             "created_at, updated_at) VALUES (?,?,?,'queued',0,3,?,?)",
@@ -58,29 +63,39 @@ def enqueue(uid: str, mode: str = "mock") -> str:
 
 def reclaim_stale(now_ms: int | None = None):
     """Requeue jobs whose worker died mid-run (lock older than STALE_LOCK_MS)."""
-    cutoff = (now_ms or db.now_ms()) - STALE_LOCK_MS
+    cutoff = db.time_ago_db(STALE_LOCK_MS)
     with db.conn() as c:
         _ensure_table(c)
         c.execute(
             "UPDATE agent_runs SET status='queued', locked_by=NULL, locked_at=NULL, updated_at=? "
             "WHERE status='running' AND locked_at IS NOT NULL AND locked_at < ?",
-            (db.now_ms(), cutoff),
+            (db.now_db(), cutoff),
         )
 
 
 def claim_next(worker_id: str) -> dict | None:
-    """Atomically claim the oldest queued job whose user has nothing running."""
+    """Atomically claim the oldest queued job whose user has nothing running.
+    Postgres uses row-level locking (FOR UPDATE SKIP LOCKED); SQLite uses an
+    immediate transaction. Either way two workers never grab the same row, and
+    a user with a running job is skipped so we never double-apply."""
     with db.conn() as c:
         _ensure_table(c)
-        c.execute("BEGIN IMMEDIATE")
-        row = c.execute(
-            "SELECT * FROM agent_runs WHERE status='queued' "
-            "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
-            "ORDER BY created_at ASC LIMIT 1"
-        ).fetchone()
+        if db.PG:
+            row = c.execute(
+                "SELECT * FROM agent_runs WHERE status='queued' "
+                "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
+                "ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED"
+            ).fetchone()
+        else:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                "SELECT * FROM agent_runs WHERE status='queued' "
+                "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
+                "ORDER BY created_at ASC LIMIT 1"
+            ).fetchone()
         if not row:
             return None
-        ts = db.now_ms()
+        ts = db.now_db()
         c.execute(
             "UPDATE agent_runs SET status='running', locked_by=?, locked_at=?, "
             "attempts=attempts+1, updated_at=? WHERE id=?",
@@ -88,6 +103,8 @@ def claim_next(worker_id: str) -> dict | None:
         )
         d = dict(row)
         d["attempts"] += 1
+        d["status"] = "running"
+        d["locked_by"] = worker_id
         return d
 
 
@@ -96,7 +113,7 @@ def mark_done(run_id: str, result: dict):
         _ensure_table(c)
         c.execute(
             "UPDATE agent_runs SET status='done', result=?, locked_by=NULL, updated_at=? WHERE id=?",
-            (json.dumps(result), db.now_ms(), run_id),
+            (json.dumps(result), db.now_db(), run_id),
         )
 
 
@@ -107,7 +124,7 @@ def mark_failed(run_id: str, error: str):
         row = c.execute(
             "SELECT attempts, max_attempts FROM agent_runs WHERE id=?", (run_id,)
         ).fetchone()
-        ts = db.now_ms()
+        ts = db.now_db()
         if row and row["attempts"] < row["max_attempts"]:
             c.execute(
                 "UPDATE agent_runs SET status='queued', error=?, locked_by=NULL, "
@@ -135,16 +152,16 @@ def drain(worker_id: str, run_fn) -> int:
             result = run_fn(job["user_id"], job["mode"])
             mark_done(job["id"], result if isinstance(result, dict) else {"result": str(result)})
         except Exception as e:  # noqa: BLE001
-            print(f"[queue] job {job['id']} failed (attempt {job['attempts']}): {e}")
+            log.error("job %s failed (attempt %d): %s", job["id"], job["attempts"], e)
             mark_failed(job["id"], str(e))
     return processed
 
 
 def serve(worker_id: str, run_fn, interval: int = 10):
     """Drain in a loop forever (simple service mode)."""
-    print(f"[queue] serve loop as {worker_id}, poll {interval}s")
+    log.info("serve loop as %s, poll %ds", worker_id, interval)
     while True:
         n = drain(worker_id, run_fn)
         if n:
-            print(f"[queue] drained {n} job(s)")
+            log.info("drained %d job(s)", n)
         time.sleep(interval)

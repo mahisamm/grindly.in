@@ -15,13 +15,13 @@ const STEPS = [
   },
   {
     n: "02",
-    title: "Answer a few proff questions",
+    title: "Answer a few profile questions",
     body: "Domains, locations, stipend, daily limits. These become the agent's firewall — what it may and may not apply to.",
   },
   {
     n: "03",
-    title: "Pay & connect Slack",
-    body: "After checkout, the bot DMs you on Slack to confirm preferences and say it's starting.",
+    title: "Activate & choose updates",
+    body: "Complete checkout, then pick how you want reports — email (no setup) or Slack DM. Connect Gmail to auto-detect interview calls.",
   },
   {
     n: "04",
@@ -31,7 +31,7 @@ const STEPS = [
   {
     n: "05",
     title: "Daily progress reports",
-    body: "Every day it pings you on Slack: who it applied to, match scores, and what it skipped (and why).",
+    body: "Every day you get a report: who it applied to, match scores, and what it skipped (and why). Update outcomes to track your interview rate.",
   },
 ];
 
@@ -40,7 +40,7 @@ const FEATURES = [
   ["You set the firewall", "Min match score, max/day, excluded companies, stipend floor — hard constraints the agent can't cross.", Bolt],
   ["Real applications", "Drives the platform like a human: opens the listing, fills the form, submits. Not just a list of links.", Doc],
   ["Runs on your terms", "Auto-submit, or shortlist-and-ask. Pause anytime from the dashboard.", Clock],
-  ["Slack-native updates", "Onboarding questions and daily reports come to you in Slack — no new app to babysit.", Slack],
+  ["Daily reports your way", "Get progress reports via Slack DM or email — whichever you prefer. Connect Gmail to auto-detect interview calls.", Slack],
   ["Private brain", "Resume analysis runs on a local LLM. Your resume isn't shipped to a third-party model.", Sparkle],
 ] as const;
 
@@ -56,7 +56,6 @@ export default function Home() {
         {/* floating doodles */}
         <PaperPlane className="absolute left-[6%] top-[18%] z-[1] hidden text-ink/70 lg:block wobble" />
         <Magnifier className="absolute right-[7%] top-[12%] z-[1] hidden text-ink/80 lg:block" />
-        <Sparkle className="absolute left-[14%] bottom-[14%] z-[1] hidden text-brand md:block" size={30} />
 
         <div className="relative z-[2] mx-auto grid max-w-6xl items-center gap-12 px-5 pb-20 pt-16 lg:grid-cols-[1.05fr_0.95fr] lg:pt-20">
           {/* copy */}
@@ -77,14 +76,14 @@ export default function Home() {
             </h1>
 
             <p className="mt-7 max-w-md text-lg text-muted">
-              NexPath reads your resume, finds internships that actually match your
+              Grindly reads your resume, finds internships that actually match your
               skills, and applies for you — every day, inside the limits you set.
-              You just read the Slack report.
+              You get a daily report via email or Slack.
             </p>
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
-                href="/signup"
+                href="/login"
                 className="rounded-2xl brand-gradient sticker press px-7 py-3.5 text-base font-semibold"
               >
                 Get started now
@@ -97,7 +96,20 @@ export default function Home() {
               </a>
             </div>
 
-            <div className="mt-7 flex items-center gap-3 text-sm text-muted">
+            {/* Android — coming soon badge */}
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <span className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl border-2 border-ink bg-surface-2 px-5 py-2.5 text-sm font-semibold text-muted opacity-60">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path d="M17.523 15.341 14 11.818V4.5a.5.5 0 0 0-1 0v7.318l-3.523 3.523a.5.5 0 0 0 .707.707L12 14.232l1.816 1.816a.5.5 0 0 0 .707-.707z" fill="currentColor"/>
+                  <path d="M2.5 14.75A.75.75 0 0 1 3.25 14h.5a.75.75 0 0 1 0 1.5h-.5a.75.75 0 0 1-.75-.75zM20.25 14a.75.75 0 0 0 0 1.5h.5a.75.75 0 0 0 0-1.5h-.5z" fill="currentColor" opacity=".4"/>
+                  <path d="M12 20.5c-4.694 0-8.5-3.806-8.5-8.5a.75.75 0 0 0-1.5 0c0 5.523 4.477 10 10 10s10-4.477 10-10a.75.75 0 0 0-1.5 0c0 4.694-3.806 8.5-8.5 8.5z" fill="currentColor"/>
+                </svg>
+                Android App
+              </span>
+              <span className="text-xs text-muted">Coming to Play Store soon</span>
+            </div>
+
+            <div className="mt-5 flex items-center gap-3 text-sm text-muted">
               <span className="flex text-[#ff7a1a]">
                 {[0, 1, 2, 3, 4].map((i) => <Star key={i} size={16} />)}
               </span>
@@ -245,7 +257,7 @@ export default function Home() {
       <section id="pricing" className="glow-blue relative mx-auto max-w-5xl px-5 py-20">
         <Reveal className="relative z-[1] text-center">
           <h2 className="display text-4xl sm:text-5xl">Simple pricing</h2>
-          <p className="mt-3 text-muted">Cancel anytime. Test-mode billing while local.</p>
+          <p className="mt-3 text-muted">Cancel anytime.</p>
         </Reveal>
         <div className="relative z-[1] mt-12 grid gap-6 sm:grid-cols-2">
           {(Object.entries(PLANS) as [keyof typeof PLANS, (typeof PLANS)[keyof typeof PLANS]][]).map(
@@ -271,7 +283,7 @@ export default function Home() {
                     `${p.perDay} applications / day`,
                     "Resume-aware matching",
                     "Daily Slack reports",
-                    key === "pro" ? "Priority match queue" : "Email support",
+                    key === "pro" ? "Dedicated email support" : "Community support",
                   ].map((f) => (
                     <li key={f} className={`flex items-center gap-2 ${key === "pro" ? "text-white/90" : "text-muted"}`}>
                       <span className={key === "pro" ? "text-[#ffd9b8]" : "text-accent"}>✓</span> {f}
@@ -279,7 +291,7 @@ export default function Home() {
                   ))}
                 </ul>
                 <Link
-                  href="/signup"
+                  href="/login"
                   className={`press mt-7 block rounded-2xl px-4 py-3 text-center font-semibold transition ${
                     key === "pro"
                       ? "border-2 border-ink bg-white text-brand hover:bg-white/90"
@@ -296,7 +308,7 @@ export default function Home() {
 
       {/* ───── CTA ───── */}
       <section className="mx-auto max-w-5xl px-5 pb-24">
-        <div className="sticker relative overflow-hidden rounded-[2rem] bg-brand p-12 text-center text-white">
+        <div className="sticker relative overflow-hidden rounded-[2rem] bg-brand p-8 sm:p-12 text-center text-white">
           <Sparkle className="absolute left-8 top-8 text-white/40" size={34} />
           <PaperPlane className="absolute right-8 bottom-6 hidden text-white/40 sm:block" size={70} />
           <h2 className="display text-4xl sm:text-5xl">
@@ -308,7 +320,7 @@ export default function Home() {
             Let the agent grind the applications. You focus on the interviews.
           </p>
           <Link
-            href="/signup"
+            href="/login"
             className="press mt-8 inline-block rounded-2xl border-2 border-ink bg-[#ff7a1a] px-8 py-3.5 font-semibold text-white shadow-[5px_5px_0_#16150f] transition hover:translate-y-[-2px]"
           >
             Get started free →
@@ -319,7 +331,7 @@ export default function Home() {
       <footer className="border-t-2 border-ink bg-surface">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-5 py-8 text-sm text-muted sm:flex-row">
           <Logo size={24} />
-          <div>© {new Date().getFullYear()} NexPath · Built for the intern grind.</div>
+          <div>© {new Date().getFullYear()} Grindly · Built for the intern grind.</div>
         </div>
       </footer>
     </>

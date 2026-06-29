@@ -22,7 +22,7 @@ export async function POST() {
 
   const { ok, stub } = await sendMessage({
     channel,
-    text: `:satellite: Test from NexPath — Slack is wired up for *${user.name || user.email}*. Daily reports will land here.`,
+    text: `:satellite: Test from Grindly — Slack is wired up for *${user.name || user.email}*. Daily reports will land here.`,
   });
 
   if (!ok) {

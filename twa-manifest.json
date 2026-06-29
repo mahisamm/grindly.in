@@ -1,0 +1,38 @@
+{
+  "packageId": "com.grindly.app",
+  "host": "grindly.vercel.app",
+  "name": "Grindly",
+  "launcherName": "Grindly",
+  "display": "standalone",
+  "themeColor": "#2a28f0",
+  "navigationColor": "#f5f3ea",
+  "navigationColorDark": "#15171c",
+  "navigationDividerColor": "#e3ddcc",
+  "navigationDividerColorDark": "#262a33",
+  "backgroundColor": "#f5f3ea",
+  "startUrl": "/dashboard",
+  "iconUrl": "https://grindly.vercel.app/icon-512.png",
+  "maskableIconUrl": "https://grindly.vercel.app/icon-512.png",
+  "monochromIconUrl": "https://grindly.vercel.app/icon-192.png",
+  "appVersion": "1",
+  "appVersionCode": 1,
+  "signingKey": {
+    "path": "./android-keystore.jks",
+    "alias": "grindly"
+  },
+  "splashScreenFadeOutDuration": 300,
+  "enableNotifications": false,
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://grindly.vercel.app/",
+  "minSdkVersion": 21,
+  "orientation": "portrait",
+  "shortcuts": [],
+  "webManifestUrl": "https://grindly.vercel.app/manifest.json",
+  "generatorApp": "bubblewrap-cli"
+}

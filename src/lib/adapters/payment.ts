@@ -1,55 +1,74 @@
 /**
- * Payment adapter — stubbed, real-ready.
+ * Payment adapter — Razorpay, stub-ready.
  *
- * Local/dev: `createCheckout` returns an internal success URL immediately so the
- * flow completes without real money. `verify` always succeeds.
+ * Dev/local (no RAZORPAY_KEY_ID): createOrder returns { stub: true }.
+ * Frontend skips modal and calls /api/pay/confirm directly.
  *
- * Production: set STRIPE_SECRET_KEY to swap in a real Stripe Checkout Session.
- * The rest of the app only depends on { url } / { paid } here.
+ * Production: set RAZORPAY_KEY_ID + RAZORPAY_KEY_SECRET.
+ * Signature verification uses HMAC-SHA256(orderId|paymentId, keySecret).
  */
+import crypto from "node:crypto";
 
 export type Plan = "starter" | "pro";
 
 export const PLANS: Record<Plan, { name: string; price: number; perDay: number; blurb: string }> = {
   starter: { name: "Starter", price: 499, perDay: 10, blurb: "Up to 10 applications/day" },
-  pro: { name: "Pro", price: 999, perDay: 30, blurb: "Up to 30 applications/day + priority matching" },
+  pro:     { name: "Pro",     price: 999, perDay: 30, blurb: "Up to 30 applications/day + dedicated support" },
 };
 
-export async function createCheckout(opts: {
-  userId: string;
-  plan: Plan;
-  origin: string;
-}): Promise<{ url: string; stub: boolean }> {
-  const key = process.env.STRIPE_SECRET_KEY;
+export type OrderResult =
+  | { stub: false; orderId: string; keyId: string; amount: number; currency: string; plan: Plan }
+  | { stub: true; plan: Plan };
 
-  if (key) {
-    // ---- real Stripe path (test or live depending on key) ----
-    const body = new URLSearchParams({
-      mode: "payment",
-      "line_items[0][price_data][currency]": "inr",
-      "line_items[0][price_data][product_data][name]": `InternPilot ${PLANS[opts.plan].name}`,
-      "line_items[0][price_data][unit_amount]": String(PLANS[opts.plan].price * 100),
-      "line_items[0][quantity]": "1",
-      success_url: `${opts.origin}/api/pay/confirm?uid=${opts.userId}&plan=${opts.plan}`,
-      cancel_url: `${opts.origin}/onboarding?step=pay`,
-      "metadata[userId]": opts.userId,
-      "metadata[plan]": opts.plan,
-    });
-    const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+export async function createOrder(opts: { userId: string; plan: Plan }): Promise<OrderResult> {
+  const keyId     = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+  if (keyId && keySecret) {
+    const amount = PLANS[opts.plan].price * 100; // ₹ → paise
+    const res = await fetch("https://api.razorpay.com/v1/orders", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
+        "Content-Type": "application/json",
       },
-      body,
+      body: JSON.stringify({
+        amount,
+        currency: "INR",
+        receipt: `order_${opts.userId}_${opts.plan}`,
+        notes: { userId: opts.userId, plan: opts.plan },
+      }),
     });
-    const data = (await res.json()) as { url: string };
-    return { url: data.url, stub: false };
+    const data = (await res.json()) as { id: string };
+    return { stub: false, orderId: data.id, keyId, amount, currency: "INR", plan: opts.plan };
   }
 
-  // ---- stub: jump straight to confirm endpoint ----
-  return {
-    url: `${opts.origin}/api/pay/confirm?uid=${opts.userId}&plan=${opts.plan}&stub=1`,
-    stub: true,
-  };
+  return { stub: true, plan: opts.plan };
+}
+
+/** Verify payment signature returned by Razorpay checkout modal. */
+export function verifyPaymentSignature(opts: {
+  orderId: string;
+  paymentId: string;
+  signature: string;
+}): boolean {
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keySecret) return false;
+  const expected = crypto
+    .createHmac("sha256", keySecret)
+    .update(`${opts.orderId}|${opts.paymentId}`)
+    .digest("hex");
+  const a = Buffer.from(expected);
+  const b = Buffer.from(opts.signature);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+/** Verify Razorpay webhook signature (X-Razorpay-Signature header). */
+export function verifyWebhookSignature(rawBody: string, signature: string): boolean {
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  if (!secret) return false;
+  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+  const a = Buffer.from(expected);
+  const b = Buffer.from(signature);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }

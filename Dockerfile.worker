@@ -2,8 +2,19 @@
 FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
 WORKDIR /app
 COPY agent/requirements.txt ./agent/requirements.txt
-RUN pip install --no-cache-dir -r agent/requirements.txt
+# psycopg2-binary (in requirements) gives the Postgres driver agent/db.py uses.
+# Re-run `playwright install` in case pip pulled a newer Playwright than the
+# base image's bundled browsers.
+RUN pip install --no-cache-dir -r agent/requirements.txt \
+    && python -m playwright install chromium
+# Xvfb: run Chromium headed inside a virtual framebuffer — eliminates the
+# entire class of headless-mode JS probes (navigator.webdriver leaks, missing
+# GPU renderer, zero outerWidth, etc.). Much harder to detect than headless.
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
+    && rm -rf /var/lib/apt/lists/*
 COPY agent ./agent
 COPY prisma ./prisma
-# Drain the DB-backed run queue in a loop (one container = one worker).
-CMD ["python", "agent/worker.py", "--serve"]
+ENV PYTHONUNBUFFERED=1
+# Start Xvfb on :99, set DISPLAY, then run the worker (headed mode).
+# INTERNPILOT_HEADLESS is intentionally NOT set here — default is "0" (headed).
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1366x768x24 -ac +extension GLX +render -noreset & sleep 1 && DISPLAY=:99 python agent/worker.py --serve"]

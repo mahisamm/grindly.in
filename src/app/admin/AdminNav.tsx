@@ -5,9 +5,12 @@ import { usePathname } from "next/navigation";
 
 const LINKS = [
   ["/admin", "Overview"],
+  ["/admin/agent-health", "Agent health"],
+  ["/admin/applications", "Applications"],
   ["/admin/users", "Users"],
   ["/admin/integrations", "Integrations"],
   ["/admin/audit", "Audit log"],
+  ["/admin/settings", "Settings"],
 ];
 
 export function AdminNav({ email }: { email: string }) {
@@ -20,7 +23,7 @@ export function AdminNav({ email }: { email: string }) {
       <Link href="/admin" className="mb-6 flex items-center gap-2">
         <span className="grid size-7 place-items-center rounded bg-[#ff4d4d] text-sm font-bold text-black">N</span>
         <span className="font-mono text-sm font-bold tracking-tight text-[#e6e8eb]">
-          NexPath <span className="text-[#ff4d4d]">ADMIN</span>
+          Grindly <span className="text-[#ff4d4d]">ADMIN</span>
         </span>
       </Link>
 

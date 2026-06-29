@@ -1,8 +1,8 @@
-# NexPath — Internship Agent UI Design Brief
+﻿# Grindly — Internship Agent UI Design Brief
 
 ## Project Overview
 
-**NexPath** is an AI-powered internship agent that automates job applications across 5 platforms. Users pay for a plan, connect their accounts once, and the agent runs daily to search, score, and apply to matching internships.
+**Grindly** is an AI-powered internship agent that automates job applications across 5 platforms. Users pay for a plan, connect their accounts once, and the agent runs daily to search, score, and apply to matching internships.
 
 **User Journey:**
 1. Register → Auth
@@ -104,7 +104,7 @@ Main tabs: **Profile** | **Integrations** | **Applications** | **Reports**
 - Breakdown by platform for that day
 
 ### 3. **Header/Nav**
-- Logo + branding (NexPath)
+- Logo + branding (Grindly)
 - Current plan badge (Starter | Pro)
 - User profile icon (email, logout)
 
@@ -127,7 +127,7 @@ Main tabs: **Profile** | **Integrations** | **Applications** | **Reports**
 ### 3. **Connection Flow (No Password Storage)**
 - User clicks "Connect [Platform]" → browser window pops (headed Playwright)
 - User logs in naturally, agent watches for success indicator
-- No password ever touches NexPath backend
+- No password ever touches Grindly backend
 - Status polls every 2 sec for 5 min timeout
 - UX note: show spinner + "Waiting for you to log in..." during connecting state
 

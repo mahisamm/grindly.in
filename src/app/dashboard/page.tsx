@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
 import { CountUp } from "@/components/Motion";
@@ -73,6 +74,7 @@ type Me = {
     slackConnected: boolean;
     slackUserId: string | null;
     internshalaConnected: boolean;
+    gmailConnected: boolean;
   };
   profile: RawProfile | null;
   applications: App[];
@@ -243,6 +245,7 @@ function TagInput({ value, onChange, placeholder }: {
 // ── Main ───────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
+  const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -266,6 +269,10 @@ export default function Dashboard() {
 
   const load = useCallback(async () => {
     const res = await fetch("/api/me");
+    if (res.status === 401) {
+      router.replace("/login");
+      return;
+    }
     if (res.ok) {
       const data = await res.json() as Me;
       setMe(data);
@@ -276,7 +283,7 @@ export default function Dashboard() {
       });
     }
     setLoading(false);
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- polling: load on mount + every 4s
@@ -294,9 +301,26 @@ export default function Dashboard() {
     if (!me) return;
     try {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- react to async user load
-      if (!localStorage.getItem("nexpath_onboarded")) setShowOnboarding(true);
+      if (!localStorage.getItem("grindly_onboarded")) setShowOnboarding(true);
     } catch {}
   }, [me]);
+
+  // Handle OAuth callback query params (Gmail connect / error)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    let next: { kind: "ok" | "err" | "info"; text: string } | null = null;
+    if (params.get("gmailConnected") === "1") {
+      next = { kind: "ok", text: "Gmail connected. The agent will now auto-detect interview emails." };
+    } else if (params.get("gmailError")) {
+      next = { kind: "err", text: "Gmail connection failed. Please try again." };
+    }
+    if (next) {
+      window.history.replaceState({}, "", "/dashboard");
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time URL→toast after history cleanup
+      setNotice(next);
+    }
+  }, []);
 
   async function togglePause() {
     if (!me) return;
@@ -376,7 +400,20 @@ export default function Dashboard() {
       setConnectingPlatform(null);
       return;
     }
-    setTimeout(() => setConnectingPlatform(null), 10000);
+    // Poll integration status until connected (or 60s timeout).
+    // eslint-disable-next-line react-hooks/purity -- runs at click time (event handler), not during render
+    const deadline = Date.now() + 60_000;
+    const pollConnect = async () => {
+      if (Date.now() > deadline) { setConnectingPlatform(null); return; }
+      const r = await fetch("/api/integrations").catch(() => null);
+      if (r?.ok) {
+        const d = await r.json().catch(() => ({}));
+        const row = (d.integrations as Integration[] ?? []).find(i => i.platform === platform);
+        if (row?.status === "connected") { setConnectingPlatform(null); load(); return; }
+      }
+      setTimeout(pollConnect, 2000);
+    };
+    setTimeout(pollConnect, 2000);
   }
 
   async function disconnectPlatform(platform: string) {
@@ -395,25 +432,49 @@ export default function Dashboard() {
       ...profileForm,
       gpa: parseFloat(profileForm.gpa) || 8.0,
     };
-    await fetch("/api/profile", {
+    const res = await fetch("/api/profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     setProfileSaving(false);
-    setProfileSaved(true);
-    setTimeout(() => setProfileSaved(false), 3000);
-    load();
+    if (res.ok) {
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 3000);
+      load();
+    } else {
+      setNotice({ kind: "err", text: "Failed to save profile. Please try again." });
+    }
   }
 
   async function analyzeResume() {
     setAnalyzingResume(true);
-    await fetch("/api/agent/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "mock", analyzeOnly: true }),
-    });
-    setTimeout(() => { setAnalyzingResume(false); load(); }, 8000);
+    try {
+      const res = await fetch("/api/agent/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "mock", analyzeOnly: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setAnalyzingResume(false); return; }
+
+      const runId: string | null = data.runId ?? null;
+      if (!runId) { setTimeout(() => { setAnalyzingResume(false); load(); }, 4000); return; }
+
+      const started = Date.now();
+      const poll = async () => {
+        try {
+          const r = await fetch(`/api/agent/run?id=${runId}`);
+          const s = await r.json();
+          if (s.status === "done" || s.status === "failed") {
+            setAnalyzingResume(false); load(); return;
+          }
+          if (Date.now() - started > 60_000) { setAnalyzingResume(false); load(); return; }
+          setTimeout(poll, 2000);
+        } catch { setAnalyzingResume(false); }
+      };
+      setTimeout(poll, 2000);
+    } catch { setAnalyzingResume(false); }
   }
 
   async function approveApplication(id: string) {
@@ -444,14 +505,18 @@ export default function Dashboard() {
 
   async function saveSkills() {
     setSkillsSaving(true);
-    await fetch("/api/profile", {
+    const res = await fetch("/api/profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ skills: skillsDraft }),
     });
     setSkillsSaving(false);
-    setEditingSkills(false);
-    load();
+    if (res.ok) {
+      setEditingSkills(false);
+      load();
+    } else {
+      setNotice({ kind: "err", text: "Failed to save skills. Please try again." });
+    }
   }
 
   async function submitSurvey(rating: number) {
@@ -465,7 +530,7 @@ export default function Dashboard() {
   }
 
   function dismissOnboarding() {
-    try { localStorage.setItem("nexpath_onboarded", "1"); } catch {}
+    try { localStorage.setItem("grindly_onboarded", "1"); } catch {}
     setShowOnboarding(false);
   }
 
@@ -525,7 +590,6 @@ export default function Dashboard() {
           <p className="mt-4 text-muted">Not logged in.</p>
           <div className="mt-5 flex justify-center gap-2">
             <Link href="/login" className="inline-block press rounded-lg brand-gradient px-5 py-2.5 font-medium text-white">Log in</Link>
-            <Link href="/signup" className="inline-block rounded-lg border border-border px-5 py-2.5 font-medium hover:border-brand/60 transition">Sign up</Link>
           </div>
         </div>
       </main>
@@ -550,7 +614,7 @@ export default function Dashboard() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={dismissOnboarding}>
           <div className="glass rounded-2xl p-6 max-w-md w-full glow" onClick={(e) => e.stopPropagation()}>
             <Logo size={26} />
-            <h2 className="mt-4 font-display text-xl font-semibold">Welcome to NexPath</h2>
+            <h2 className="mt-4 font-display text-xl font-semibold">Welcome to Grindly</h2>
             <p className="text-sm text-muted mt-1">Here&apos;s how the agent works — three steps:</p>
             <ol className="mt-4 space-y-3 text-sm">
               <li className="flex gap-3">
@@ -585,9 +649,11 @@ export default function Dashboard() {
                 : me.user.status === "paused" ? "bg-warn"
                 : "bg-muted"
               }`} />
-              {me.user.status === "active" ? "Agent active"
-               : me.user.status === "paused" ? "Paused"
-               : "Setup incomplete"}
+              <span className="hidden sm:inline">
+                {me.user.status === "active" ? "Agent active"
+                 : me.user.status === "paused" ? "Paused"
+                 : "Setup incomplete"}
+              </span>
             </span>
             {me.user.paid && (
               <button onClick={togglePause} className="text-sm text-muted hover:text-foreground transition">
@@ -619,7 +685,7 @@ export default function Dashboard() {
               </span>
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Link
               href="/applications"
               className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium hover:border-brand/60 transition"
@@ -687,7 +753,7 @@ export default function Dashboard() {
         ))}
 
         {/* stats */}
-        <div className="mt-6 grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="mt-6 grid grid-cols-3 sm:grid-cols-5 gap-3">
           {([
             ["Matched", me.stats.matched, "text-foreground"],
             ["Applied", me.stats.applied, "text-accent"],
@@ -695,9 +761,9 @@ export default function Dashboard() {
             ["Failed", me.stats.failed, "text-danger"],
             ["Avg match", me.stats.avgScore, "text-brand-2"],
           ] as const).map(([label, val, c]) => (
-            <div key={label} className="sticker tilt rounded-2xl bg-surface p-4">
-              <div className={`display text-4xl ${c}`}><CountUp value={val} /></div>
-              <div className="text-xs text-muted mt-1">{label}</div>
+            <div key={label} className="sticker tilt rounded-2xl bg-surface p-4" role="region" aria-label={`${label}: ${val}`}>
+              <div className={`display text-4xl ${c}`} aria-hidden="true"><CountUp value={val} /></div>
+              <div className="text-xs text-muted mt-1" aria-hidden="true">{label}</div>
             </div>
           ))}
         </div>
@@ -892,12 +958,12 @@ export default function Dashboard() {
         )}
 
         {/* tabs */}
-        <div className="mt-8 flex items-center gap-2 border-b border-border">
+        <div className="mt-8 flex items-center gap-2 border-b border-border overflow-x-auto scrollbar-none">
           {(["profile", "applications", "integrations", "reports"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`px-4 py-2.5 text-sm capitalize border-b-2 -mb-px transition ${
+              className={`shrink-0 px-4 py-2.5 text-sm capitalize border-b-2 -mb-px transition ${
                 tab === t ? "border-brand text-foreground" : "border-transparent text-muted hover:text-foreground"
               }`}
             >
@@ -920,7 +986,7 @@ export default function Dashboard() {
               <div className="space-y-4">
                 {PROFF_FIELDS.filter((f) => f.group === "Targeting").map((f) => (
                   <div key={f.key}>
-                    <label className="block text-sm font-medium mb-1">{f.label}</label>
+                    <label htmlFor={`field-${f.key}`} className="block text-sm font-medium mb-1">{f.label}</label>
                     <p className="text-xs text-muted mb-1.5">{f.help}</p>
                     {f.type === "tags" && (
                       <TagInput
@@ -931,6 +997,7 @@ export default function Dashboard() {
                     )}
                     {f.type === "select" && (
                       <select
+                        id={`field-${f.key}`}
                         value={String(profileForm[f.key as keyof ProfileForm])}
                         onChange={(e) => patchForm(f.key as keyof ProfileForm, e.target.value as ProfileForm[keyof ProfileForm])}
                         className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none"
@@ -948,7 +1015,7 @@ export default function Dashboard() {
               <div className="space-y-4">
                 {PROFF_FIELDS.filter((f) => f.group === "Firewall / limits").map((f) => (
                   <div key={f.key}>
-                    <label className="block text-sm font-medium mb-1">{f.label}</label>
+                    <label htmlFor={`field-${f.key}`} className="block text-sm font-medium mb-1">{f.label}</label>
                     <p className="text-xs text-muted mb-1.5">{f.help}</p>
                     {f.type === "tags" && (
                       <TagInput
@@ -960,6 +1027,7 @@ export default function Dashboard() {
                     {f.type === "number" && (
                       <div className="flex items-center gap-2">
                         <input
+                          id={`field-${f.key}`}
                           type="number"
                           min={0}
                           value={String(profileForm[f.key as keyof ProfileForm])}
@@ -971,12 +1039,15 @@ export default function Dashboard() {
                     )}
                     {f.type === "toggle" && (
                       <label className="flex items-center gap-3 cursor-pointer">
-                        <div
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={profileForm.autoApply}
                           onClick={() => patchForm("autoApply", !profileForm.autoApply)}
-                          className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer ${profileForm.autoApply ? "bg-accent" : "bg-surface-2 border border-border"}`}
+                          className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-brand ${profileForm.autoApply ? "bg-accent" : "bg-surface-2 border border-border"}`}
                         >
                           <span className={`absolute top-1 size-4 rounded-full bg-white transition-transform ${profileForm.autoApply ? "translate-x-6" : "translate-x-1"}`} />
-                        </div>
+                        </button>
                         <span className="text-sm">{profileForm.autoApply ? "On — agent submits automatically" : "Off — agent shortlists, you approve"}</span>
                       </label>
                     )}
@@ -991,10 +1062,11 @@ export default function Dashboard() {
               <div className="space-y-4">
                 {CONTACT_FIELDS.map((f) => (
                   <div key={f.key}>
-                    <label className="block text-sm font-medium mb-1">{f.label}</label>
+                    <label htmlFor={`field-${f.key}`} className="block text-sm font-medium mb-1">{f.label}</label>
                     <p className="text-xs text-muted mb-1.5">{f.help}</p>
                     <div className="flex items-center gap-2">
                       <input
+                        id={`field-${f.key}`}
                         type={f.type}
                         value={String(profileForm[f.key as keyof ProfileForm] ?? "")}
                         placeholder={("placeholder" in f ? f.placeholder : undefined)}
@@ -1026,6 +1098,7 @@ export default function Dashboard() {
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
+                  aria-pressed={filter === f}
                   className={`rounded-md px-2.5 py-1 capitalize transition ${
                     filter === f ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground"
                   }`}
@@ -1231,6 +1304,62 @@ export default function Dashboard() {
               )}
             </div>
 
+            {/* Gmail email scanning */}
+            <div className="mt-5 rounded-xl border border-border bg-surface p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">📧</span>
+                  <span className="font-medium">Gmail — interview tracker</span>
+                </div>
+                <span className={`text-xs rounded-full px-2 py-0.5 ${me.user.gmailConnected ? "bg-accent/20 text-accent" : "bg-surface-2 text-muted"}`}>
+                  {me.user.gmailConnected ? "Connected" : "Not connected"}
+                </span>
+              </div>
+              <p className="text-xs text-muted mb-3">
+                Connect Gmail (read-only) so the agent automatically detects interview calls, offers, and
+                rejections from companies you applied to — and notifies you via Slack or email without you
+                having to manually update each application.
+              </p>
+              {me.user.gmailConnected ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-accent">✓ Gmail scanning active</span>
+                  <button
+                    onClick={async () => {
+                      const r = await fetch("/api/gmail/scan", { method: "POST" });
+                      const j = await r.json().catch(() => ({}));
+                      if (r.ok) setNotice({ kind: "ok", text: `Scanned ${j.scanned ?? 0} emails · ${j.detected?.length ?? 0} new outcomes detected.` });
+                      else setNotice({ kind: "err", text: j.error ?? "Scan failed." });
+                    }}
+                    className="rounded-lg border border-border px-3 py-1.5 text-xs hover:border-brand/60 transition"
+                  >
+                    Scan now
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await fetch("/api/gmail/status", { method: "DELETE" });
+                      load();
+                    }}
+                    className="text-xs text-muted hover:text-danger transition"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <a
+                  href="/api/auth/gmail"
+                  className="press inline-flex items-center gap-2 rounded-lg border-2 border-ink bg-surface sticker-sm px-4 py-2 text-sm font-medium hover:bg-surface-2 transition"
+                >
+                  <svg width="16" height="16" viewBox="0 0 48 48" fill="none">
+                    <path d="M47.532 24.552c0-1.636-.132-3.2-.388-4.704H24.48v8.896h12.956c-.568 2.952-2.22 5.456-4.692 7.132v5.912h7.572c4.432-4.072 6.988-10.072 6.988-17.236z" fill="#4285F4"/>
+                    <path d="M24.48 48c6.48 0 11.916-2.148 15.888-5.812l-7.572-5.912c-2.148 1.44-4.896 2.288-8.316 2.288-6.396 0-11.82-4.32-13.748-10.128H2.9v6.1C6.856 42.86 15.088 48 24.48 48z" fill="#34A853"/>
+                    <path d="M10.732 28.436A14.4 14.4 0 0 1 9.9 24c0-1.54.264-3.036.732-4.436v-6.1H2.9A23.952 23.952 0 0 0 .48 24c0 3.864.924 7.524 2.42 10.536l8.332-6.1z" fill="#FBBC05"/>
+                    <path d="M24.48 9.552c3.604 0 6.836 1.24 9.38 3.672l6.972-6.972C36.388 2.352 30.96 0 24.48 0 15.088 0 6.856 5.14 2.9 13.464l7.832 6.1C12.66 13.872 18.084 9.552 24.48 9.552z" fill="#EA4335"/>
+                  </svg>
+                  Connect Gmail (read-only)
+                </a>
+              )}
+            </div>
+
             <div className="mt-5 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
               <p className="font-medium text-foreground mb-1">How live applications work</p>
               <ol className="list-decimal pl-5 space-y-1 text-sm">
@@ -1254,7 +1383,7 @@ export default function Dashboard() {
             ) : (
               me.reports.map((r) => (
                 <div key={r.id} className="rounded-xl border border-border bg-surface p-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                     <div className="font-medium">{r.date}</div>
                     <div className="text-sm text-muted">
                       <span className="text-accent">{r.appliedCount} applied</span> · {r.matchedCount} matched · {r.failedCount} failed

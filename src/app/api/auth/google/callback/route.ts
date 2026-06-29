@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { setUid } from "@/lib/session";
 import { audit } from "@/lib/audit";
+import { baseUrl } from "@/lib/baseUrl";
 import { DEFAULTS } from "@/lib/proffQuestions";
 
 interface GoogleTokenResponse {
@@ -13,16 +16,33 @@ interface GoogleUserInfo {
   sub: string;
   email: string;
   name?: string;
+  email_verified?: boolean | string;
+}
+
+function statesMatch(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const base = url.origin;
+  const base = baseUrl(url.origin);
   const code = url.searchParams.get("code");
   const error = url.searchParams.get("error");
+  const returnedState = url.searchParams.get("state");
 
   if (error || !code) {
     return NextResponse.redirect(`${base}/login?error=google_denied`);
+  }
+
+  // CSRF: the state echoed by Google must match the cookie we set in the
+  // initiator. Consume the cookie either way so it can't be replayed.
+  const c = await cookies();
+  const savedState = c.get("g_oauth_state")?.value;
+  c.delete("g_oauth_state");
+  if (!returnedState || !savedState || !statesMatch(returnedState, savedState)) {
+    return NextResponse.redirect(`${base}/login?error=google_state`);
   }
 
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -56,14 +76,23 @@ export async function GET(req: Request) {
     return NextResponse.redirect(`${base}/login?error=google_userinfo`);
   }
 
-  const { sub: googleId, email, name } = await infoRes.json() as GoogleUserInfo;
+  const { sub: googleId, email, name, email_verified } = await infoRes.json() as GoogleUserInfo;
   if (!email) {
     return NextResponse.redirect(`${base}/login?error=google_no_email`);
   }
+  const verified = email_verified === true || email_verified === "true";
 
   let user = await prisma.user.findFirst({
     where: { OR: [{ googleId }, { email }] },
   });
+
+  // Require a Google-verified email before creating an account OR linking this
+  // Google identity to a pre-existing (e.g. password) account by email —
+  // otherwise an unverified Google email could take over a matching account.
+  const needsVerifiedEmail = !user || user.googleId !== googleId;
+  if (needsVerifiedEmail && !verified) {
+    return NextResponse.redirect(`${base}/login?error=google_unverified`);
+  }
 
   if (!user) {
     user = await prisma.user.create({

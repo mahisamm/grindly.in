@@ -1,7 +1,7 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
 /* ───────────────────────────────────────────────────────────
-   NexPath design system — "editorial doodle"
+   Grindly design system — "editorial doodle"
    Paper canvas · electric-blue + orange + mint · bold serif
    ─────────────────────────────────────────────────────────── */
 
@@ -63,6 +63,9 @@ body {
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.006em;
 }
+
+/* Prevent long strings (emails, URLs, hashes) from breaking mobile layouts */
+* { overflow-wrap: break-word; }
 
 ::selection { background: color-mix(in srgb, var(--brand) 22%, transparent); }
 
@@ -183,6 +186,10 @@ body {
   opacity: 1;
   transform: translateY(0);
 }
+/* Prevent blank sections if JS fails (TWA / slow connection) */
+@media (scripting: none) {
+  .reveal { opacity: 1; transform: none; }
+}
 
 /* ── Tactile press — pair with .sticker / buttons ─────────────────── */
 .press { transition: transform 0.08s ease; }
@@ -264,9 +271,43 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   animation: mesh-drift 22s ease-in-out infinite;
 }
 
+/* Hide scrollbar while keeping scroll functionality */
+.scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }
+
 @media (prefers-reduced-motion: reduce) {
   .animate-in, .pulse-dot, .marquee-track, .marquee-track-rev,
   .wobble, .mesh { animation: none; }
   .reveal { opacity: 1; transform: none; transition: none; }
   .tilt:hover { transform: none; }
 }
+
+/* ── Mobile / touch improvements ──────────────────────────── */
+@media (max-width: 640px) {
+  /* Larger tap targets on mobile */
+  button, a, select, input[type="checkbox"], input[type="radio"] {
+    min-height: 44px;
+  }
+  input[type="text"], input[type="email"], input[type="password"],
+  input[type="number"], textarea {
+    font-size: 16px; /* prevents iOS zoom on focus */
+    min-height: 44px;
+  }
+  /* Tighter hero on small screens */
+  .display { letter-spacing: -0.01em; }
+}
+
+/* Prevent text size adjustment on orientation change (iOS) */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Smooth momentum scroll on iOS */
+.overflow-y-auto, .overflow-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Safe area insets for iPhone notch / home bar */
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-top { padding-top: env(safe-area-inset-top); }

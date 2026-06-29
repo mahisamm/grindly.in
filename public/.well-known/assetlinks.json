@@ -1,0 +1,10 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.grindly.app",
+    "sha256_cert_fingerprints": [
+      "48:6E:B9:E9:71:02:05:81:AA:31:67:EE:97:F8:28:DD:4E:D2:97:97:E8:C5:FC:8A:50:D4:12:0C:68:48:02:A9"
+    ]
+  }
+}]

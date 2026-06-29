@@ -6,6 +6,20 @@ import json
 import re
 
 
+def _tfidf_score(text_a: str, text_b: str) -> float:
+    """TF-IDF cosine similarity between two text blobs. 0.0-1.0. Requires scikit-learn."""
+    if not text_a or not text_b:
+        return 0.0
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity as _cos
+        vect = TfidfVectorizer(stop_words="english", max_features=500)
+        mat = vect.fit_transform([text_a[:1200], text_b[:1200]])
+        return float(_cos(mat[0:1], mat[1:2])[0][0])
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 # normalize skill spellings so equivalents match (node.js == nodejs == node)
 _ALIAS = {
     "node.js": "node", "nodejs": "node", "node js": "node",
@@ -53,13 +67,16 @@ def score_job(
     skills: list[str],
     domains: list[str],
     exp_level: str | None = None,
+    jd_text: str = "",
 ) -> tuple[int, str]:
-    """Return (0-100, human reason)."""
+    """Return (0-100, human reason). jd_text enriches scoring when available."""
     skills = [_alias(s) for s in skills]
     job_skills = [_alias(s) for s in (job.get("skills") or [])]
     haystack = " ".join(
         [_norm(job.get("title", "")), job.get("company", ""), " ".join(job_skills)]
     ).lower()
+    if jd_text:
+        haystack += " " + _norm(jd_text[:800])
     hay_tokens = _tokens(haystack)
 
     if not skills:
@@ -85,6 +102,12 @@ def score_job(
 
     # 4) experience level adjustment
     base += _experience_penalty(job.get("title", ""), exp_level)
+
+    # 5) semantic blend — TF-IDF cosine(skills, JD text) when JD available
+    if jd_text:
+        semantic = _tfidf_score(" ".join(skills), jd_text)
+        if semantic > 0:
+            base = 0.70 * base + 0.30 * semantic
 
     score = int(round(min(1.0, max(0.0, base)) * 100))
 
@@ -158,10 +181,24 @@ def _json_list(v) -> list[str]:
 
 
 def _parse_stipend(s) -> int | None:
+    # Mirrors src/lib/firewall.ts:parseStipend — keep the two in sync.
+    #  - "unpaid"/"none" -> 0 (explicit zero, so a >0 floor blocks it)
+    #  - units: "10k" -> 10000, "6 LPA"/"6 lakh" -> 600000
+    #  - returns None only when no figure is present (unknown -> not gated)
     if not s:
         return None
-    nums = re.findall(r"\d[\d,]*", str(s))
-    if not nums:
-        return None
-    vals = [int(n.replace(",", "")) for n in nums]
+    st = str(s).lower()
+    if re.search(r"\b(unpaid|none|no stipend|nil)\b", st):
+        return 0
+    vals = []
+    for num, unit in re.findall(r"(\d[\d,]*\.?\d*)\s*(k|l|lpa|lakh|lac)?", st):
+        try:
+            v = float(num.replace(",", ""))
+        except ValueError:
+            continue
+        if unit == "k":
+            v *= 1_000
+        elif unit in ("l", "lpa", "lakh", "lac"):
+            v *= 100_000
+        vals.append(int(round(v)))
     return min(vals) if vals else None

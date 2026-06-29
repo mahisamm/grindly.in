@@ -27,6 +27,17 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
   if (!user.paid) return NextResponse.json({ error: "payment required" }, { status: 402 });
 
+  // Live platform-connect drives a HEADED browser the user logs into — only
+  // possible on the user's own machine. A hosted server has no display, so this
+  // is disabled in production until the remote-browser flow lands (Phase 4).
+  // Mock agent runs still work without connecting a platform.
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json(
+      { error: "Connecting job platforms isn't available in the hosted beta yet — live auto-apply is coming soon." },
+      { status: 503 },
+    );
+  }
+
   const root = process.cwd();
   const script = path.join(root, "agent", "connect_platform.py");
   if (!fs.existsSync(script)) {

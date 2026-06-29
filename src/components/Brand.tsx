@@ -34,7 +34,7 @@ export function Logo({
       </span>
       {withWordmark && (
         <span className={`font-display text-[1.2rem] font-semibold tracking-tight ${light ? "text-white" : ""}`}>
-          Nex<span className={light ? "text-white" : "brand-text"}>Path</span>
+          Grind<span className={light ? "text-white" : "brand-text"}>ly</span>
         </span>
       )}
     </span>
@@ -49,7 +49,7 @@ export function Nav() {
           <Logo />
         </Link>
         <nav className="flex items-center gap-1 text-sm font-medium">
-          <Link href="/#how" className="px-3 py-2 text-muted hover:text-foreground transition">
+          <Link href="/#how" className="hidden sm:block px-3 py-2 text-muted hover:text-foreground transition">
             How it works
           </Link>
           <Link href="/#pricing" className="px-3 py-2 text-muted hover:text-foreground transition hidden sm:block">
@@ -62,7 +62,7 @@ export function Nav() {
             Log in
           </Link>
           <Link
-            href="/signup"
+            href="/login"
             className="ml-2 rounded-xl brand-gradient sticker-sm px-4 py-2 font-semibold transition hover:translate-y-[-1px]"
           >
             Get started

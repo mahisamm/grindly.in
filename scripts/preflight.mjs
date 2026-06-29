@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Preflight — fail fast with a human message if the machine isn't ready to run
- * NexPath. Run by `npm run preflight` and automatically before `npm run dev`.
+ * Grindly. Run by `npm run preflight` and automatically before `npm run dev`.
  *
  * Checks: .env present, APP_ENCRYPTION_KEY valid, DATABASE_URL set, Python
  * available, Playwright + chromium installed, agent deps importable.
@@ -31,7 +31,7 @@ function readEnv() {
   return { ...out, ...process.env };
 }
 
-console.log("\nNexPath preflight\n");
+console.log("\nGrindly preflight\n");
 
 const envFile = fs.existsSync(path.join(root, ".env"));
 if (envFile) ok(".env present"); else bad(".env missing — run: cp .env.example .env  (then `npm run setup`)");
@@ -45,6 +45,30 @@ const key = env.APP_ENCRYPTION_KEY || "";
 if (!/^[0-9a-fA-F]{64}$/.test(key)) {
   bad("APP_ENCRYPTION_KEY missing or not 64 hex chars — connecting platforms will fail. Run `npm run setup`.");
 } else ok("APP_ENCRYPTION_KEY valid (64 hex)");
+
+// ---- Phase 2 external service keys ----
+// Beta auth is Google-only, so Google OAuth is REQUIRED in prod; SMS + SMTP are
+// optional (no phone OTP; Google users have no password to reset).
+const isProd = (env.NODE_ENV || "") === "production";
+
+if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) ok("Google OAuth configured (login method)");
+else {
+  const m = "No Google OAuth (GOOGLE_CLIENT_ID/SECRET) — the ONLY login method is down";
+  if (isProd) bad(m); else warn(m);
+}
+
+const smsKind = env.FAST2SMS_API_KEY ? "fast2sms"
+  : (env.MSG91_AUTH_KEY && env.MSG91_TEMPLATE_ID && env.MSG91_SENDER_ID) ? "msg91"
+  : (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_NUMBER) ? "twilio"
+  : null;
+if (smsKind) ok(`SMS provider: ${smsKind}`);
+else warn("No SMS provider — fine for Google-only beta (phone OTP login disabled)");
+
+if (env.EMAIL_SMTP_HOST && env.EMAIL_SMTP_USER) ok("SMTP email configured");
+else warn("No SMTP — fine for Google-only beta (no password-reset emails)");
+
+const hasLlm = env.GROQ_API_KEY || env.GEMINI_API_KEY || env.CEREBRAS_API_KEY || env.MISTRAL_API_KEY;
+if (hasLlm) ok("LLM key present"); else warn("No LLM key — agent falls back to weak heuristic matching");
 
 const py = env.PYTHON_BIN || "python";
 let pyOk = false;

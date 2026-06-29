@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { setUid } from "@/lib/session";
-import { verifyOtp } from "@/lib/otp";
+import { verifyOtp, OtpLockedError } from "@/lib/otp";
 
 const schema = z.object({
   email: z.string().email(),
@@ -20,7 +20,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
-  const valid = await verifyOtp(user.phone, code);
+  let valid: boolean;
+  try {
+    valid = await verifyOtp(user.phone, code);
+  } catch (e) {
+    if (e instanceof OtpLockedError) {
+      return NextResponse.json({ error: e.message }, { status: 429 });
+    }
+    throw e;
+  }
   if (!valid) return NextResponse.json({ error: "Invalid or expired OTP" }, { status: 401 });
 
   if (!user.phoneVerified) {

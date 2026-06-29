@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { setUid } from "@/lib/session";
 import { verifyPassword } from "@/lib/auth";
 import { issueOtp, maskPhone, OtpRateLimitError } from "@/lib/otp";
 import { audit } from "@/lib/audit";
+import { isRateLimited, getIp } from "@/lib/rateLimit";
 
 const schema = z.object({
   email: z.string().email(),
@@ -12,6 +12,15 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
+  // 10 attempts per IP per 15 minutes
+  const ip = getIp(req);
+  if (await isRateLimited(`login:${ip}`, 10, 15 * 60 * 1000)) {
+    return NextResponse.json(
+      { error: "Too many login attempts. Try again in 15 minutes." },
+      { status: 429 }
+    );
+  }
+
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
@@ -24,13 +33,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Wrong email or password" }, { status: 401 });
   }
 
-  // Accounts without a phone: grant session directly (no OTP).
-  // NOTE: prototype convenience only — in production every account should have a
-  // verified phone and go through OTP. See report (dev-bypass hardening).
-  if (!user.phone) {
-    await setUid(user.id);
-    await audit("login", { userId: user.id, detail: "no-phone direct session" });
-    return NextResponse.json({ ok: true, userId: user.id, status: user.status });
+  // Accounts without a verified phone cannot log in — they must complete
+  // registration (add + verify phone) before accessing the app.
+  if (!user.phone || !user.phoneVerified) {
+    await audit("login_fail", { target: email, detail: "phone not verified" });
+    return NextResponse.json(
+      { error: "Phone verification required. Please complete your registration." },
+      { status: 403 }
+    );
   }
 
   try {

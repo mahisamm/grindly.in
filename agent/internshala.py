@@ -20,26 +20,15 @@ import re
 import time
 import urllib.parse
 
+import safety
+import selector_ai
+import stealth
+
 BASE = "https://internshala.com"
 
 PROFILE_DIR = os.path.join(os.path.dirname(__file__), "browser_profile", "shared", "internshala")
 
 _contexts: dict = {}
-
-# Realistic desktop viewports — rotated randomly per session
-_VIEWPORTS = [
-    {"width": 1280, "height": 800},
-    {"width": 1366, "height": 768},
-    {"width": 1440, "height": 900},
-    {"width": 1536, "height": 864},
-]
-
-# Realistic Chrome UA — update when Chrome major version advances
-_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/125.0.0.0 Safari/537.36"
-)
 
 
 def _profile_dir(uid: str) -> str:
@@ -65,16 +54,10 @@ def _context(uid: str = ""):
             "--no-first-run",
             "--disable-dev-shm-usage",
         ],
-        viewport=random.choice(_VIEWPORTS),
-        user_agent=_USER_AGENT,
+        viewport=stealth.random_viewport(),
+        user_agent=stealth.random_ua(),
     )
-    # Mask the webdriver flag that sites check for automation
-    try:
-        ctx.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-        )
-    except Exception:
-        pass
+    stealth.apply_stealth(ctx)
     _contexts[key] = ctx
     return ctx
 
@@ -171,44 +154,84 @@ def _search_url(domains: list[str]) -> str:
     return f"{BASE}/internships"
 
 
+def _search_url_paged(domains: list[str], page_num: int = 1) -> str:
+    base = _search_url(domains)
+    return base if page_num <= 1 else f"{base}?page_number={page_num}"
+
+
 def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     page = _context(uid).new_page()
     jobs: list[dict] = []
+    seen_ids: set[str] = set()
     try:
-        page.goto(_search_url(domains), wait_until="domcontentloaded", timeout=45000)
-        _read_pause(page, 1500, 3000)
-        _scroll_down(page, 400)
-        cards = page.query_selector_all(".individual_internship")
-        for c in cards:
+        for pnum in range(1, 4):  # pages 1-3
             if len(jobs) >= limit:
                 break
-            try:
-                title    = _text(c, [".job-internship-name", ".profile", "h3"])
-                company  = _text(c, [".company-name", ".company_name", "p.company-name"])
-                location = _text(c, [".locations", ".location_link", ".row-1-item.locations"])
-                stipend  = _text(c, [".stipend", ".desktop-stipend"])
-                duration = _text(c, [".ic-16-calendar + span", ".item_body"])
-                href     = c.get_attribute("data-href") or _attr(c, ["a.job-title-href", "a"], "href")
-                jid      = c.get_attribute("internshipid") or (href or str(len(jobs)))
-                if not title or not href:
+            page.goto(_search_url_paged(domains, pnum), wait_until="domcontentloaded", timeout=45000)
+            _read_pause(page, 1500, 3000) if pnum == 1 else _read_pause(page, 800, 2000)
+            _scroll_down(page, 400)
+
+            cards = page.query_selector_all(".individual_internship")
+            new_this_page = 0
+            for c in cards:
+                if len(jobs) >= limit:
+                    break
+                try:
+                    title    = _text(c, [".job-internship-name", ".profile", "h3"])
+                    company  = _text(c, [".company-name", ".company_name", "p.company-name"])
+                    location = _text(c, [".locations", ".location_link", ".row-1-item.locations"])
+                    stipend  = _text(c, [".stipend", ".desktop-stipend"])
+                    duration = _text(c, [".ic-16-calendar + span", ".item_body"])
+                    href     = c.get_attribute("data-href") or _attr(c, ["a.job-title-href", "a"], "href")
+                    jid      = c.get_attribute("internshipid") or (href or str(len(jobs)))
+                    if not title or not href:
+                        continue
+                    if str(jid) in seen_ids:
+                        continue
+                    seen_ids.add(str(jid))
+                    url = href if href.startswith("http") else BASE + href
+                    jobs.append({
+                        "source":      "internshala",
+                        "external_id": str(jid),
+                        "title":       title,
+                        "company":     company or "Unknown",
+                        "location":    location or "",
+                        "stipend":     stipend or "",
+                        "duration":    duration or "",
+                        "skills":      _infer_skills(title),
+                        "url":         url,
+                    })
+                    new_this_page += 1
+                except Exception:
                     continue
-                url = href if href.startswith("http") else BASE + href
-                jobs.append({
-                    "source":      "internshala",
-                    "external_id": str(jid),
-                    "title":       title,
-                    "company":     company or "Unknown",
-                    "location":    location or "",
-                    "stipend":     stipend or "",
-                    "duration":    duration or "",
-                    "skills":      _infer_skills(title),
-                    "url":         url,
-                })
-            except Exception:
-                continue
+            if new_this_page == 0:
+                break
     finally:
         page.close()
     return jobs
+
+
+def scrape_jd(url: str, uid: str = "") -> str:
+    """Extract job description text from a listing page. Returns '' on failure."""
+    page = _context(uid).new_page()
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        _read_pause(page, 600, 1400)
+        return _text(page, [
+            "#internship_details",
+            ".internship-details-section",
+            "[class*='about-internship']",
+            ".about-internship",
+            ".details-container",
+            "[class*='description']",
+        ])[:1500]
+    except Exception:
+        return ""
+    finally:
+        try:
+            page.close()
+        except Exception:
+            pass
 
 
 # ── apply ─────────────────────────────────────────────────────────
@@ -224,25 +247,44 @@ def apply(
 
     status ∈ {applied, login_required, skipped, failed}
 
-    Bot-evasion: every form interaction goes through _human_type/_human_click
-    so keystroke intervals, hover timing, and scroll behaviour all look organic.
-    If any step can't proceed, we return 'failed' and the worker moves to the
-    next highest-scoring listing automatically.
+    Reliability layers:
+    - CSS selector list tried first; AI fallback (LLM) used if all fail.
+    - Captcha detected and surfaced as distinct failure reason.
+    - Screenshot saved on any non-trivial failure for debugging.
+    - Timeout retried once before giving up.
     """
     page = _context(uid).new_page()
     try:
-        page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
-        _read_pause(page, 1500, 3500)  # simulate reading the job description
+        try:
+            page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
+        except Exception as e:
+            if "timeout" in str(e).lower():
+                # retry once on timeout — transient network blip
+                print(f"[internshala] timeout on first load, retrying: {e}")
+                try:
+                    page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
+                except Exception as e2:
+                    safety.screenshot(page, uid, f"timeout_{job.get('external_id','')}")
+                    return "failed", f"timeout after retry: {str(e2)[:100]}"
+            else:
+                raise
+
+        _read_pause(page, 1500, 3500)
+
+        # Check for captcha before doing anything else
+        captcha_reason = safety.detect_challenge(page)
+        if captcha_reason:
+            safety.screenshot(page, uid, f"captcha_{job.get('external_id','')}")
+            return "failed", "captcha challenge detected — cannot proceed headlessly"
 
         if _is_logged_out(page):
             return "login_required", "not signed in to Internshala (log in once in the agent browser)"
 
-        # Scroll down to read description before clicking Apply
         _scroll_down(page, random.randint(250, 500))
         _read_pause(page, 800, 1800)
 
-        # Find the apply / continue button
-        btn = _first(page, [
+        # Apply button — try CSS selectors, then AI
+        btn = selector_ai.find_element(page, "apply now button or continue button", [
             "#continue_button",
             "#apply_now_button",
             "button:has-text('Apply now')",
@@ -252,10 +294,17 @@ def apply(
             if (page.query_selector(":text('Application sent')")
                     or page.query_selector(":text('Already applied')")):
                 return "skipped", "already applied"
-            return "failed", "apply button not found"
+            safety.screenshot(page, uid, f"no_apply_btn_{job.get('external_id','')}")
+            return "failed", "apply button not found (selector_missing)"
 
         _human_click(page, btn)
         _read_pause(page, 1000, 2200)
+
+        # Check for captcha after clicking apply (sometimes deferred)
+        captcha_reason = safety.detect_challenge(page)
+        if captcha_reason:
+            safety.screenshot(page, uid, f"captcha_post_click_{job.get('external_id','')}")
+            return "failed", "captcha after apply click"
 
         # Upload tailored resume if available (PDF)
         if resume_path and os.path.isfile(resume_path):
@@ -270,8 +319,8 @@ def apply(
                 except Exception as e:
                     print(f"[internshala] resume upload failed: {e}")
 
-        # Cover letter — human typing, capped at 1500 chars
-        cl = _first(page, [
+        # Cover letter — AI fallback if default selectors miss it
+        cl = selector_ai.find_element(page, "cover letter textarea or rich text editor", [
             "#cover_letter_box",
             "textarea[name='cover_letter']",
             "div[contenteditable='true']",
@@ -280,7 +329,7 @@ def apply(
             _human_type(page, cl, cover_letter[:1500])
             _read_pause(page, 400, 900)
 
-        # Fill any required assessment textarea fields
+        # Fill required assessment textareas
         for ta in page.query_selector_all("textarea"):
             try:
                 if not ta.input_value():
@@ -294,7 +343,7 @@ def apply(
             except Exception:
                 pass
 
-        # Fill any required single-line inputs that are blank (e.g. availability, phone)
+        # Fill required single-line inputs (availability, phone, CGPA)
         for inp in page.query_selector_all("input[required]"):
             try:
                 itype = (inp.get_attribute("type") or "text").lower()
@@ -314,17 +363,18 @@ def apply(
             except Exception:
                 pass
 
-        # One last review pause before submitting
         _read_pause(page, 600, 1400)
 
-        submit = _first(page, [
+        # Submit button — AI fallback
+        submit = selector_ai.find_element(page, "submit application button", [
             "#submit",
             "button:has-text('Submit application')",
             "input[type='submit']",
             "button[type='submit']",
         ])
         if not submit:
-            return "failed", "submit button not found (form may need extra fields)"
+            safety.screenshot(page, uid, f"no_submit_btn_{job.get('external_id','')}")
+            return "failed", "submit button not found (selector_missing)"
 
         _human_click(page, submit)
         page.wait_for_timeout(random.randint(2000, 3500))
@@ -336,7 +386,12 @@ def apply(
         return "applied", "submitted (confirmation not detected)"
 
     except Exception as e:
-        return "failed", f"error: {str(e)[:120]}"
+        err = str(e)
+        try:
+            safety.screenshot(page, uid, f"exception_{job.get('external_id','')}")
+        except Exception:
+            pass
+        return "failed", f"error: {err[:120]}"
     finally:
         page.close()
 

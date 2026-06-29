@@ -1,13 +1,19 @@
-"""SQLite access to the same dev.db Prisma owns.
+"""Database access for the Python agent — works against BOTH backends:
 
-Prisma quirks we must honor so the Next.js dashboard can read our rows:
-  * DateTime columns are stored as INTEGER epoch-milliseconds.
-  * Boolean columns are stored as INTEGER 0/1.
-  * id columns are plain TEXT (cuid in the app; any unique string is fine here).
+  * SQLite (local/dev/tests)  — the same dev.db Prisma owns. DateTime columns are
+    stored as INTEGER epoch-milliseconds, Booleans as INTEGER 0/1, ids as TEXT.
+  * PostgreSQL (production)   — selected automatically when DATABASE_URL is a
+    postgres URL (and INTERNPILOT_DB is unset). Here Prisma stores DateTime as a
+    real `timestamp(3)` and Boolean as `boolean`, so we pass datetimes/bools
+    natively. The schema is owned by Prisma migrations — the `_ensure_*` helpers
+    are no-ops on Postgres.
+
+Call sites are backend-agnostic: write SQL with `?` placeholders (rewritten to
+`%s` on Postgres) and use `now_db()` / `time_ago_db()` / `_start_of_day_db()`
+for any DateTime value so the right type is sent to each backend.
 """
 from __future__ import annotations
 import os
-import sqlite3
 
 
 def _load_dotenv() -> None:
@@ -38,16 +44,51 @@ _load_dotenv()
 import time
 import secrets
 import json
+import datetime
+import sqlite3
 from contextlib import contextmanager
 
-DB_PATH = os.environ.get(
-    "INTERNPILOT_DB",
-    os.path.join(os.path.dirname(__file__), "..", "prisma", "dev.db"),
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+# INTERNPILOT_DB forces the SQLite path (used by tests / local). docker-compose
+# sets it to "" for the worker so the Postgres DATABASE_URL takes over.
+_SQLITE_OVERRIDE = os.environ.get("INTERNPILOT_DB", "")
+
+
+def _is_postgres(url: str) -> bool:
+    return url.startswith("postgres://") or url.startswith("postgresql://")
+
+
+PG = _is_postgres(DATABASE_URL) and not _SQLITE_OVERRIDE
+
+if PG:
+    import psycopg2
+    import psycopg2.extras
+    import psycopg2.errors
+
+DB_PATH = _SQLITE_OVERRIDE or os.path.join(
+    os.path.dirname(__file__), "..", "prisma", "dev.db"
 )
 
 
+# ---------- time / id helpers ----------
+
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _utcnow() -> datetime.datetime:
+    # Naive UTC — matches how Prisma stores DateTime in Postgres `timestamp(3)`.
+    return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+
+def now_db():
+    """A value suitable for a Prisma DateTime column on the active backend."""
+    return _utcnow() if PG else now_ms()
+
+
+def time_ago_db(ms: int):
+    """`now - ms` as the right type for a DateTime comparison on this backend."""
+    return (_utcnow() - datetime.timedelta(milliseconds=ms)) if PG else (now_ms() - ms)
 
 
 def cuid() -> str:
@@ -55,22 +96,70 @@ def cuid() -> str:
     return "c" + secrets.token_hex(12)
 
 
+def _start_of_day_ms() -> int:
+    t = time.localtime()
+    midnight = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1))
+    return int(midnight * 1000)
+
+
+def _start_of_day_db():
+    if PG:
+        return _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    return _start_of_day_ms()
+
+
+# ---------- connection ----------
+
+class _PgConn:
+    """Adapts a psycopg2 connection to the sqlite3 `connection.execute(...)` API
+    the rest of this module is written against: one reusable dict cursor, and
+    `?` placeholders rewritten to `%s`."""
+
+    def __init__(self, raw):
+        self._raw = raw
+        self._cur = raw.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    def execute(self, sql, params=()):
+        self._cur.execute(sql.replace("?", "%s"), params)
+        return self._cur
+
+    def cursor(self):
+        return self._cur
+
+    def commit(self):
+        self._raw.commit()
+
+
 @contextmanager
 def conn():
-    c = sqlite3.connect(DB_PATH, timeout=15)
-    c.row_factory = sqlite3.Row
-    try:
-        c.execute("PRAGMA busy_timeout = 8000")
-        yield c
-        c.commit()
-    finally:
-        c.close()
+    if PG:
+        raw = psycopg2.connect(DATABASE_URL)
+        try:
+            yield _PgConn(raw)
+            raw.commit()
+        except Exception:
+            raw.rollback()
+            raise
+        finally:
+            raw.close()
+    else:
+        c = sqlite3.connect(DB_PATH, timeout=15)
+        c.row_factory = sqlite3.Row
+        try:
+            c.execute("PRAGMA busy_timeout = 8000")
+            yield c
+            c.commit()
+        finally:
+            c.close()
 
 
 # ---------- reads ----------
 
 def _ensure_profile_columns(c):
-    """Add missing profile columns if Prisma migration hasn't run yet."""
+    """Add missing profile columns if Prisma migration hasn't run yet (SQLite
+    only — on Postgres the schema is owned by Prisma migrations)."""
+    if PG:
+        return
     cols = {row[1] for row in c.execute("PRAGMA table_info(profiles)").fetchall()}
     if "phone" not in cols:
         c.execute("ALTER TABLE profiles ADD COLUMN phone TEXT")
@@ -101,7 +190,7 @@ def get_user(uid: str) -> dict | None:
 def active_users() -> list[dict]:
     with conn() as c:
         rows = c.execute(
-            "SELECT id FROM users WHERE paid=1 AND status='active'"
+            "SELECT id FROM users WHERE paid=? AND status='active'", (True,)
         ).fetchall()
         return [r["id"] for r in rows]
 
@@ -116,7 +205,7 @@ def applied_external_ids(uid: str) -> set[str]:
 
 
 def todays_applied_count(uid: str) -> int:
-    start = _start_of_day_ms()
+    start = _start_of_day_db()
     with conn() as c:
         r = c.execute(
             "SELECT COUNT(*) n FROM applications "
@@ -124,12 +213,6 @@ def todays_applied_count(uid: str) -> int:
             (uid, start),
         ).fetchone()
         return r["n"]
-
-
-def _start_of_day_ms() -> int:
-    t = time.localtime()
-    midnight = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1))
-    return int(midnight * 1000)
 
 
 # ---------- writes ----------
@@ -141,7 +224,7 @@ def update_skills(uid: str, skills: list[str], plan_json: dict | None = None):
             (
                 json.dumps(skills),
                 json.dumps(plan_json) if plan_json is not None else None,
-                now_ms(),
+                now_db(),
                 uid,
             ),
         )
@@ -151,13 +234,15 @@ def set_internshala_connected(uid: str, connected: bool):
     with conn() as c:
         c.execute(
             "UPDATE users SET internshala_connected=? WHERE id=?",
-            (1 if connected else 0, uid),
+            (bool(connected), uid),
         )
 
 
 # ---------- multi-platform integrations ----------
 
 def _ensure_integrations_table(c):
+    if PG:
+        return
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_integrations (
             id TEXT PRIMARY KEY,
@@ -201,7 +286,7 @@ def get_connected_platforms(uid: str) -> list[str]:
 def set_integration_status(uid: str, platform: str, status: str):
     with conn() as c:
         _ensure_integrations_table(c)
-        ts = now_ms()
+        ts = now_db()
         existing = c.execute(
             "SELECT id FROM user_integrations WHERE user_id=? AND platform=?",
             (uid, platform),
@@ -224,7 +309,7 @@ def set_integration_status(uid: str, platform: str, status: str):
         if platform == "internshala":
             c.execute(
                 "UPDATE users SET internshala_connected=? WHERE id=?",
-                (1 if status == "connected" else 0, uid),
+                (status == "connected", uid),
             )
 
 
@@ -240,13 +325,31 @@ def set_resume_text(uid: str, text: str):
     with conn() as c:
         c.execute(
             "UPDATE profiles SET resume_text=?, updated_at=? WHERE user_id=?",
-            (text[:20000], now_ms(), uid),
+            (text[:20000], now_db(), uid),
         )
 
 
 def upsert_job(job: dict) -> str:
     """job: {source, external_id, title, company, location, stipend, duration, skills(list), url}"""
     with conn() as c:
+        if PG:
+            # Single round-trip, race-safe: insert-or-ignore then read back the id.
+            c.execute(
+                "INSERT INTO jobs (id, source, external_id, title, company, location, "
+                "stipend, duration, skills, url, scraped_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT (source, external_id) DO NOTHING",
+                (
+                    cuid(), job["source"], job["external_id"], job["title"], job["company"],
+                    job.get("location"), job.get("stipend"), job.get("duration"),
+                    json.dumps(job.get("skills", [])), job["url"], now_db(),
+                ),
+            )
+            row = c.execute(
+                "SELECT id FROM jobs WHERE source=? AND external_id=?",
+                (job["source"], job["external_id"]),
+            ).fetchone()
+            return row["id"]
+
         existing = c.execute(
             "SELECT id FROM jobs WHERE source=? AND external_id=?",
             (job["source"], job["external_id"]),
@@ -269,7 +372,7 @@ def upsert_job(job: dict) -> str:
                     job.get("duration"),
                     json.dumps(job.get("skills", [])),
                     job["url"],
-                    now_ms(),
+                    now_db(),
                 ),
             )
         except sqlite3.IntegrityError:
@@ -283,7 +386,9 @@ def upsert_job(job: dict) -> str:
 
 
 def _ensure_app_columns(c):
-    """Add columns Prisma may not have migrated yet (resilience if db push skipped)."""
+    """Add columns Prisma may not have migrated yet (SQLite resilience)."""
+    if PG:
+        return
     cols = {row[1] for row in c.execute("PRAGMA table_info(applications)").fetchall()}
     if "failure_reason" not in cols:
         c.execute("ALTER TABLE applications ADD COLUMN failure_reason TEXT")
@@ -311,12 +416,14 @@ def add_application(uid: str, *, job_id: str | None, title: str, company: str,
             (
                 cuid(), uid, job_id, title, company, url, int(score), status, reason,
                 failure_reason, screenshot_path, resume_version_id,
-                now_ms() if applied else None, now_ms(),
+                now_db() if applied else None, now_db(),
             ),
         )
 
 
 def _ensure_resume_versions_table(c):
+    if PG:
+        return
     c.execute("""
         CREATE TABLE IF NOT EXISTS resume_versions (
             id TEXT PRIMARY KEY,
@@ -347,12 +454,14 @@ def add_resume_version(uid: str, *, label: str, job_title: str, company: str,
             "text, file_path, skills_claimed, base_skills, created_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (vid, uid, label, job_title, company, (text or "")[:40000], file_path,
-             json.dumps(skills_claimed), json.dumps(base_skills), now_ms()),
+             json.dumps(skills_claimed), json.dumps(base_skills), now_db()),
         )
     return vid
 
 
 def _ensure_audit_table(c):
+    if PG:
+        return
     c.execute("""
         CREATE TABLE IF NOT EXISTS audit_logs (
             id TEXT PRIMARY KEY,
@@ -372,7 +481,7 @@ def add_audit(action: str, *, user_id: str | None = None,
         c.execute(
             "INSERT INTO audit_logs (id, user_id, action, target, detail, created_at) "
             "VALUES (?,?,?,?,?,?)",
-            (cuid(), user_id, action, target, detail, now_ms()),
+            (cuid(), user_id, action, target, detail, now_db()),
         )
 
 
@@ -397,7 +506,7 @@ def update_application_status(app_id: str, status: str, reason: str,
                               screenshot_path: str | None = None):
     with conn() as c:
         _ensure_app_columns(c)
-        applied_at = now_ms() if status == "applied" else None
+        applied_at = now_db() if status == "applied" else None
         c.execute(
             "UPDATE applications SET status=?, reason=?, failure_reason=?, "
             "screenshot_path=?, resume_version_id=COALESCE(?, resume_version_id), "
@@ -413,7 +522,7 @@ def set_resume_analysis(uid: str, score: int, suggestions_json: str):
         _ensure_profile_columns(c)
         c.execute(
             "UPDATE profiles SET resume_score=?, resume_suggestions=?, updated_at=? WHERE user_id=?",
-            (score, suggestions_json, now_ms(), uid),
+            (score, suggestions_json, now_db(), uid),
         )
 
 
@@ -424,8 +533,39 @@ def set_resume_parse_failed(uid: str, failed: bool):
         _ensure_profile_columns(c)
         c.execute(
             "UPDATE profiles SET resume_parse_failed=?, updated_at=? WHERE user_id=?",
-            (1 if failed else 0, now_ms(), uid),
+            (bool(failed), now_db(), uid),
         )
+
+
+def get_outcome_stats(uid: str) -> dict:
+    """Return outcome stats for adaptive min_match_score adjustment.
+
+    {total, interviews, rejected, rejection_rate, response_rate}
+    rejection_rate = rejected / responded (excludes no_response)
+    response_rate  = (interview+offer+rejected) / total
+    Only counts applications where user has explicitly reported an outcome.
+    """
+    with conn() as c:
+        _ensure_app_columns(c)
+        rows = c.execute(
+            "SELECT outcome FROM applications WHERE user_id=? AND status='applied' AND outcome IS NOT NULL",
+            (uid,),
+        ).fetchall()
+    total = len(rows)
+    if total == 0:
+        return {"total": 0, "interviews": 0, "rejected": 0,
+                "rejection_rate": 0.0, "response_rate": 0.0}
+    interviews = sum(1 for r in rows if r["outcome"] in ("interview", "offer"))
+    rejected   = sum(1 for r in rows if r["outcome"] == "rejected")
+    no_resp    = sum(1 for r in rows if r["outcome"] == "no_response")
+    responded  = total - no_resp
+    return {
+        "total":          total,
+        "interviews":     interviews,
+        "rejected":       rejected,
+        "rejection_rate": rejected / responded if responded > 0 else 0.0,
+        "response_rate":  responded / total,
+    }
 
 
 def add_report(uid: str, *, date: str, matched: int, applied: int, failed: int,
@@ -435,5 +575,5 @@ def add_report(uid: str, *, date: str, matched: int, applied: int, failed: int,
             "INSERT INTO reports (id, user_id, date, matched_count, applied_count, "
             "failed_count, summary, delivered, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
             (cuid(), uid, date, matched, applied, failed, summary,
-             1 if delivered else 0, now_ms()),
+             bool(delivered), now_db()),
         )

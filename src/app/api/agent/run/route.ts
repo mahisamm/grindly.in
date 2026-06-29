@@ -33,39 +33,33 @@ export async function POST(req: Request) {
 
   const logDir = path.join(root, "data", "logs");
   await fsp.mkdir(logDir, { recursive: true });
-  const out = fs.openSync(path.join(logDir, `${uid}.log`), "a");
-
   const py = process.env.PYTHON_BIN || "python";
 
-  let runId: string | null = null;
-  let args: string[];
+  // Enqueue in the DB-backed run queue (idempotent: reuse any queued/running job
+  // for this user). The worker fleet (worker.py --serve) drains it — so the web
+  // app does NOT need Python. The spawn below is only a best-effort local "kick"
+  // so a dev box without a running worker processes immediately; in prod (slim
+  // web image) it no-ops and the worker drains the queue.
+  let run;
   if (analyzeOnly) {
-    args = [worker, "--user", uid, "--analyze"];
+    run = await prisma.agentRun.create({ data: { userId: uid, mode: "analyze" } });
   } else {
-    // Enqueue a run (idempotent: reuse any queued/running job for this user),
-    // then drain the queue. Gives retries + per-user locking + crash recovery.
     const existing = await prisma.agentRun.findFirst({
       where: { userId: uid, status: { in: ["queued", "running"] } },
     });
-    const run = existing ?? (await prisma.agentRun.create({ data: { userId: uid, mode: runMode } }));
-    runId = run.id;
-    args = [worker, "--drain"];
+    run = existing ?? (await prisma.agentRun.create({ data: { userId: uid, mode: runMode } }));
   }
 
-  let child;
   try {
-    child = spawn(py, args, { cwd: root, detached: true, stdio: ["ignore", out, out] });
+    const out = fs.openSync(path.join(logDir, `${uid}.log`), "a");
+    const child = spawn(py, [worker, "--drain"], { cwd: root, detached: true, stdio: ["ignore", out, out] });
+    child.on("error", () => {}); // bad executable surfaces async — ignore; worker drains
+    child.unref();
   } catch {
-    return NextResponse.json(
-      { error: `could not start the agent (PYTHON_BIN="${py}"). Is Python installed?` },
-      { status: 500 },
-    );
+    // No Python here (e.g. slim prod web image) — not an error; the worker drains it.
   }
-  // spawn() reports a bad executable asynchronously via 'error'
-  child.on("error", () => {});
-  child.unref();
 
-  return NextResponse.json({ ok: true, mode: analyzeOnly ? "analyze" : runMode, runId, pid: child.pid });
+  return NextResponse.json({ ok: true, mode: analyzeOnly ? "analyze" : runMode, runId: run.id });
 }
 
 /**

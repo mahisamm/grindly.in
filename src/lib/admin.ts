@@ -15,6 +15,11 @@ import { audit } from "./audit";
 
 export type AdminUser = { id: string; email: string; name: string | null; role: string };
 
+// Owner gate — role column AND email must both match.
+// Even if another account gets role="admin" via a bug, they can't enter.
+// Set ADMIN_EMAIL in env (defaults to the bootstrap seed email).
+const OWNER_EMAIL = process.env.ADMIN_EMAIL || "mahendharsammeta21@gmail.com";
+
 async function loadAdmin(): Promise<AdminUser | null> {
   const uid = await getUid();
   if (!uid) return null;
@@ -22,7 +27,7 @@ async function loadAdmin(): Promise<AdminUser | null> {
     where: { id: uid },
     select: { id: true, email: true, name: true, role: true },
   });
-  if (!user || user.role !== "admin") return null;
+  if (!user || user.role !== "admin" || user.email !== OWNER_EMAIL) return null;
   return user;
 }
 

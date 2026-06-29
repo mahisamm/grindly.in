@@ -11,6 +11,10 @@ import os
 import re
 import time
 
+import safety
+import selector_ai
+import stealth
+
 BASE = "https://unstop.com"
 
 _contexts: dict = {}
@@ -32,13 +36,10 @@ def _context(uid: str = ""):
         profile,
         headless=os.environ.get("INTERNPILOT_HEADLESS", "0") == "1",
         args=["--disable-blink-features=AutomationControlled"],
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        viewport={"width": 1280, "height": 900},
+        user_agent=stealth.random_ua(),
+        viewport=stealth.random_viewport(),
     )
+    stealth.apply_stealth(ctx)
     _contexts[key] = ctx
     return ctx
 
@@ -60,58 +61,86 @@ def _search_url(domains: list[str]) -> str:
     return f"{BASE}/internships"
 
 
+def _extract_cards(page, limit: int, seen_ids: set, jobs: list) -> int:
+    """Parse opportunity cards from current page state into jobs list. Returns count added."""
+    cards = page.query_selector_all(
+        ".opportunity-card-new, .opportunity-card, "
+        "[class*='opportunityCard'], [class*='opportunity-card'], "
+        "app-opportunity-card"
+    )
+    added = 0
+    for card in cards:
+        if len(jobs) >= limit:
+            break
+        try:
+            title = _text(card, [
+                ".opportunity-title",
+                "[class*='title']",
+                "h3", "h4",
+            ])
+            company = _text(card, [
+                ".org-name",
+                "[class*='org-name']",
+                "[class*='company']",
+                ".company-name",
+            ])
+            stipend = _text(card, [
+                "[class*='stipend']",
+                "[class*='salary']",
+                ".salary",
+            ])
+            href = _attr(card, ["a[href*='/p/']", "a[href*='/internship']", "a"], "href")
+            if not title or not href:
+                continue
+            url = href if href.startswith("http") else BASE + href
+            jid_m = re.search(r"/p/([^/]+)", href)
+            jid = jid_m.group(1) if jid_m else str(abs(hash(url)))
+            if jid in seen_ids:
+                continue
+            seen_ids.add(jid)
+            jobs.append({
+                "source": "unstop",
+                "external_id": jid,
+                "title": title,
+                "company": company or "Unknown",
+                "location": "Remote/Onsite",
+                "stipend": stipend or "",
+                "duration": "",
+                "skills": _infer_skills(title),
+                "url": url,
+            })
+            added += 1
+        except Exception:  # noqa: BLE001
+            continue
+    return added
+
+
 def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     page = _context(uid).new_page()
     jobs: list[dict] = []
+    seen_ids: set[str] = set()
     try:
         page.goto(_search_url(domains), wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(4000)
+        page.wait_for_timeout(stealth.random_delay_ms(2500, 5500))
 
-        # Unstop is a React SPA; wait for cards to hydrate
-        cards = page.query_selector_all(
-            ".opportunity-card-new, .opportunity-card, "
-            "[class*='opportunityCard'], [class*='opportunity-card'], "
-            "app-opportunity-card"
-        )
-        for card in cards:
-            if len(jobs) >= limit:
-                break
-            try:
-                title = _text(card, [
-                    ".opportunity-title",
-                    "[class*='title']",
-                    "h3", "h4",
-                ])
-                company = _text(card, [
-                    ".org-name",
-                    "[class*='org-name']",
-                    "[class*='company']",
-                    ".company-name",
-                ])
-                stipend = _text(card, [
-                    "[class*='stipend']",
-                    "[class*='salary']",
-                    ".salary",
-                ])
-                href = _attr(card, ["a[href*='/p/']", "a[href*='/internship']", "a"], "href")
-                if not title or not href:
-                    continue
-                url = href if href.startswith("http") else BASE + href
-                jid = re.search(r"/p/([^/]+)", href)
-                jid = jid.group(1) if jid else str(abs(hash(url)))
-                jobs.append({
-                    "source": "unstop",
-                    "external_id": jid,
-                    "title": title,
-                    "company": company or "Unknown",
-                    "location": "Remote/Onsite",
-                    "stipend": stipend or "",
-                    "duration": "",
-                    "skills": _infer_skills(title),
-                    "url": url,
-                })
-            except Exception:  # noqa: BLE001
-                continue
+        # Unstop is a React SPA — wait for cards to hydrate, then try load-more
+        _extract_cards(page, limit, seen_ids, jobs)
+
+        if len(jobs) < limit:
+            load_more = _qsel(page, [
+                "button:has-text('Load more')",
+                "button:has-text('Show more')",
+                "button:has-text('View more')",
+                "[class*='load-more']",
+                "[class*='loadMore']",
+            ])
+            if load_more:
+                try:
+                    load_more.click()
+                    page.wait_for_timeout(stealth.random_delay_ms(1500, 3000))
+                    _extract_cards(page, limit, seen_ids, jobs)
+                except Exception:  # noqa: BLE001
+                    pass
     finally:
         try:
             page.close()
@@ -120,12 +149,38 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     return jobs
 
 
+def scrape_jd(url: str, uid: str = "") -> str:
+    """Extract job description text from a listing page. Returns '' on failure."""
+    page = _context(uid).new_page()
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        page.wait_for_timeout(stealth.random_delay_ms(1000, 2500))  # SPA needs hydration
+        return _text(page, [
+            "[class*='description']",
+            "[class*='about-opportunity']",
+            ".opportunity-description",
+            "[class*='job-desc']",
+            "[class*='jobDesc']",
+        ])[:1500]
+    except Exception:  # noqa: BLE001
+        return ""
+    finally:
+        try:
+            page.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def apply(job: dict, cover_letter: str, uid: str = "",
           profile: dict | None = None, resume_path: str | None = None) -> tuple[str, str]:
     page = _context(uid).new_page()
     try:
         page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(stealth.random_delay_ms())
+
+        if safety.detect_challenge(page):
+            safety.screenshot(page, uid, f"captcha_unstop_{job.get('external_id','')}")
+            return "failed", "captcha challenge on Unstop"
 
         if _is_logged_out(page):
             return "login_required", "not signed in to Unstop — reconnect in the Integrations tab"
@@ -134,7 +189,7 @@ def apply(job: dict, cover_letter: str, uid: str = "",
         if already:
             return "skipped", "already applied on Unstop"
 
-        btn = _qsel(page, [
+        btn = selector_ai.find_element(page, "Apply, Register or Apply now button", [
             "button:has-text('Apply')",
             "button:has-text('Register')",
             "button:has-text('Apply now')",
@@ -142,11 +197,12 @@ def apply(job: dict, cover_letter: str, uid: str = "",
             "[class*='register-btn']",
         ])
         if not btn:
+            safety.screenshot(page, uid, f"no_apply_btn_unstop_{job.get('external_id','')}")
             return "failed", "apply button not found on Unstop"
-        btn.click()
-        page.wait_for_timeout(2500)
+        stealth.scroll_to(page, btn)
+        stealth.human_click(page, btn)
+        page.wait_for_timeout(stealth.random_delay_ms())
 
-        # Upload tailored resume if available
         if resume_path and os.path.isfile(resume_path):
             file_inp = _qsel(page, [
                 "input[type='file'][accept*='pdf']",
@@ -155,7 +211,7 @@ def apply(job: dict, cover_letter: str, uid: str = "",
             if file_inp:
                 try:
                     file_inp.set_input_files(resume_path)
-                    page.wait_for_timeout(800)
+                    page.wait_for_timeout(stealth.random_delay_ms(600, 1800))
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -167,21 +223,27 @@ def apply(job: dict, cover_letter: str, uid: str = "",
             except Exception:  # noqa: BLE001
                 pass
 
-        submit = _qsel(page, [
+        submit = selector_ai.find_element(page, "Submit, Apply or Register confirmation button", [
             "button:has-text('Submit')",
             "button:has-text('Apply')",
             "button:has-text('Register')",
             "button[type='submit']",
         ])
         if not submit:
+            safety.screenshot(page, uid, f"no_submit_unstop_{job.get('external_id','')}")
             return "failed", "submit button not found on Unstop"
-        submit.click()
-        page.wait_for_timeout(2500)
+        stealth.scroll_to(page, submit)
+        stealth.human_click(page, submit)
+        page.wait_for_timeout(stealth.random_delay_ms())
 
         if page.query_selector(":text('successfully'), :text('Applied'), :text('Registered')"):
             return "applied", "submitted via Unstop"
         return "applied", "submitted on Unstop (confirmation not detected)"
     except Exception as e:  # noqa: BLE001
+        try:
+            safety.screenshot(page, uid, f"exception_unstop_{job.get('external_id','')}")
+        except Exception:  # noqa: BLE001
+            pass
         return "failed", f"unstop error: {str(e)[:120]}"
     finally:
         try:

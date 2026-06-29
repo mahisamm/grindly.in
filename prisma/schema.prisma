@@ -1,15 +1,16 @@
-// Intern-Agent SaaS data model. Owned by Prisma; Python agent reads/writes
-// the same SQLite file via sqlite3 using the @@map / @map names below.
+// Intern-Agent SaaS data model. Owned by Prisma; the Python agent reads/writes
+// the same database (SQLite locally, Postgres in prod) via agent/db.py, which
+// auto-detects the backend from DATABASE_URL.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  // Config out of code: defaults to the local sqlite file when DATABASE_URL is
-  // unset. To move to Postgres, change provider to "postgresql" and point
-  // DATABASE_URL at the server (see prisma/MIGRATE_POSTGRES.md).
+  // Production backend. DATABASE_URL points at the Postgres server (see
+  // docker-compose.yml / prisma/MIGRATE_POSTGRES.md). For a quick local SQLite
+  // run, set provider = "sqlite" and DATABASE_URL="file:./dev.db".
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -268,4 +269,45 @@ model OtpToken {
 
   @@index([phone])
   @@map("otp_tokens")
+}
+
+// DB-backed OTP brute-force counter. Replaces in-process Map in otp.ts.
+// Survives multi-instance / serverless restarts.
+model OtpAttempt {
+  id         String   @id @default(cuid())
+  phone      String   @unique
+  attempts   Int      @default(0)
+  windowEnd  DateTime @map("window_end")
+  lockedUntil DateTime? @map("locked_until")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([phone])
+  @@map("otp_attempts")
+}
+
+// DB-backed password reset tokens. 15-minute TTL, single-use.
+// Replaces the in-process Map in passwordReset.ts.
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash") // SHA-256 of the raw token
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// DB-backed rate-limit counters. Replaces in-process Map in rateLimit.ts.
+// key = "forgot:<ip>" | "otp:<phone>" | etc.
+model RateLimitEntry {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  count     Int      @default(0)
+  windowEnd DateTime @map("window_end")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([key])
+  @@map("rate_limit_entries")
 }

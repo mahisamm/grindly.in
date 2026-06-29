@@ -21,6 +21,10 @@ import re
 import time
 import urllib.parse
 
+import safety
+import selector_ai
+import stealth
+
 BASE = "https://www.linkedin.com"
 
 _contexts: dict = {}
@@ -46,22 +50,12 @@ def _context(uid: str = ""):
             "--disable-infobars",
             "--no-sandbox",
         ],
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        viewport={"width": 1280, "height": 900},
+        user_agent=stealth.random_ua(),
+        viewport=stealth.random_viewport(),
         locale="en-US",
         color_scheme="light",
     )
-    # Patch navigator.webdriver and other automation fingerprints
-    ctx.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        window.chrome = { runtime: {} };
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-    """)
+    stealth.apply_stealth(ctx)
     _contexts[key] = ctx
     return ctx
 
@@ -214,6 +208,10 @@ def apply(job: dict, cover_letter: str, uid: str = "",
         page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)
         _rand_delay(page, 2.5, 4.0)
 
+        if safety.detect_challenge(page):
+            safety.screenshot(page, uid, f"captcha_li_{job.get('external_id','')}")
+            return "failed", "captcha challenge on LinkedIn"
+
         if _is_logged_out(page):
             return "login_required", "not signed in to LinkedIn — reconnect in the Integrations tab"
 
@@ -223,7 +221,7 @@ def apply(job: dict, cover_letter: str, uid: str = "",
         if already:
             return "skipped", "already applied on LinkedIn"
 
-        btn = _qsel(page, [
+        btn = selector_ai.find_element(page, "Easy Apply button or Apply button", [
             ".jobs-apply-button--top-card",
             "button.jobs-apply-button",
             "button:has-text('Easy Apply')",
@@ -236,7 +234,6 @@ def apply(job: dict, cover_letter: str, uid: str = "",
 
         # LinkedIn Easy Apply multi-step modal
         for step in range(8):
-            # Upload tailored resume if a file input appears
             if resume_path and os.path.isfile(resume_path):
                 file_inp = _qsel(page, [
                     "input[type='file'][accept*='pdf']",
@@ -249,7 +246,6 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                     except Exception:  # noqa: BLE001
                         pass
 
-            # Fill cover letter / message fields
             for ta in page.query_selector_all("textarea"):
                 try:
                     if not ta.input_value() and ta.is_visible():
@@ -259,7 +255,6 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                 except Exception:  # noqa: BLE001
                     pass
 
-            # Fill required text inputs (phone, experience, GPA etc.)
             for inp in page.query_selector_all(
                 "input[type='text']:visible, input[type='number']:visible, input[type='tel']:visible"
             ):
@@ -283,10 +278,7 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                 except Exception:  # noqa: BLE001
                     pass
 
-            # Handle radio buttons (select first option)
-            for radio_group in page.query_selector_all(
-                "fieldset:has(input[type='radio'])"
-            ):
+            for radio_group in page.query_selector_all("fieldset:has(input[type='radio'])"):
                 try:
                     first = radio_group.query_selector("input[type='radio']")
                     if first and not first.is_checked():
@@ -294,7 +286,6 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                 except Exception:  # noqa: BLE001
                     pass
 
-            # Handle select dropdowns — use select_option(), not opts[1].click()
             for sel in page.query_selector_all("select:visible"):
                 try:
                     if not sel.input_value():
@@ -309,13 +300,17 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                     pass
 
             _rand_delay(page, 0.5, 1.2)
-            next_btn = _qsel(page, [
-                "button:has-text('Submit application')",
-                "button:has-text('Review')",
-                "button:has-text('Next')",
-                "button[aria-label='Submit application']",
-                "button[aria-label='Review your application']",
-            ])
+            next_btn = selector_ai.find_element(
+                page,
+                "Submit application, Review, or Next button in Easy Apply modal",
+                [
+                    "button:has-text('Submit application')",
+                    "button:has-text('Review')",
+                    "button:has-text('Next')",
+                    "button[aria-label='Submit application']",
+                    "button[aria-label='Review your application']",
+                ],
+            )
             if not next_btn:
                 break
             label = (next_btn.inner_text() or "").lower()
@@ -329,6 +324,10 @@ def apply(job: dict, cover_letter: str, uid: str = "",
             return "applied", "submitted via LinkedIn Easy Apply"
         return "applied", "submitted on LinkedIn (confirmation not detected)"
     except Exception as e:  # noqa: BLE001
+        try:
+            safety.screenshot(page, uid, f"exception_li_{job.get('external_id','')}")
+        except Exception:  # noqa: BLE001
+            pass
         return "failed", f"linkedin error: {str(e)[:120]}"
     finally:
         try:
