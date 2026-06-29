@@ -56,15 +56,21 @@ export default function OnboardingPage() {
   async function uploadResume(file: File) {
     setUploading(true);
     setMsg("");
-    const fd = new FormData();
-    fd.append("file", file);
-    const res = await fetch("/api/resume", { method: "POST", body: fd });
-    setUploading(false);
-    if (res.ok) {
-      const j = await res.json();
-      setResumeName(j.resumeName);
-    } else {
-      setMsg("Upload failed — try a PDF, DOCX or TXT.");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/resume", { method: "POST", body: fd });
+      if (res.ok) {
+        const j = await res.json();
+        setResumeName(j.resumeName);
+      } else {
+        const j = await res.json().catch(() => ({}));
+        setMsg(j.error || "Upload failed — try a PDF, DOCX or TXT.");
+      }
+    } catch {
+      setMsg("Upload failed — check your connection and try again.");
+    } finally {
+      setUploading(false);
     }
   }
 

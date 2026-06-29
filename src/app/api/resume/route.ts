@@ -41,9 +41,10 @@ export async function POST(req: Request) {
   let resumeText: string | undefined;
   if (ext === ".txt") resumeText = buf.toString("utf8").slice(0, 20000);
 
-  await prisma.profile.update({
+  await prisma.profile.upsert({
     where: { userId: uid },
-    data: { resumeName: file.name, ...(resumeText ? { resumeText } : {}) },
+    update: { resumeName: file.name, ...(resumeText ? { resumeText } : {}) },
+    create: { userId: uid, resumeName: file.name, ...(resumeText ? { resumeText } : {}) },
   });
 
   // Queue a resume-analysis job; the worker fleet drains it, so the web app
