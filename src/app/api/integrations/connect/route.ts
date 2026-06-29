@@ -25,7 +25,6 @@ export async function POST(req: Request) {
 
   const user = await prisma.user.findUnique({ where: { id: uid } });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
-  if (!user.paid) return NextResponse.json({ error: "payment required" }, { status: 402 });
 
   // Live platform-connect drives a HEADED browser the user logs into — only
   // possible on the user's own machine. A hosted server has no display, so this

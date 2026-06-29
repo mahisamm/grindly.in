@@ -173,6 +173,8 @@ def _ensure_profile_columns(c):
         c.execute("ALTER TABLE profiles ADD COLUMN match_quality_rating INTEGER")
     if "resume_parse_failed" not in cols:
         c.execute("ALTER TABLE profiles ADD COLUMN resume_parse_failed INTEGER DEFAULT 0")
+    if "auto_apply_consent_at" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN auto_apply_consent_at TEXT")
 
 
 def get_user(uid: str) -> dict | None:
@@ -190,7 +192,7 @@ def get_user(uid: str) -> dict | None:
 def active_users() -> list[dict]:
     with conn() as c:
         rows = c.execute(
-            "SELECT id FROM users WHERE paid=? AND status='active'", (True,)
+            "SELECT id FROM users WHERE status='active'"
         ).fetchall()
         return [r["id"] for r in rows]
 

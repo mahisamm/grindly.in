@@ -44,6 +44,8 @@ export async function POST(req: Request) {
     else if (STR_FIELDS.has(k)) data[k] = String(v ?? "");
   }
 
+  if (Object.keys(data).length === 0) return NextResponse.json({ ok: true });
+
   // Record explicit consent the moment the user enables auto-apply (audit trail
   // for "the agent applied on my behalf"). We stamp it on enable and never
   // silently clear it.
@@ -52,6 +54,10 @@ export async function POST(req: Request) {
     await audit("consent", { userId: uid, detail: "auto_apply enabled" });
   }
 
-  const profile = await prisma.profile.update({ where: { userId: uid }, data });
+  const profile = await prisma.profile.upsert({
+    where: { userId: uid },
+    update: data,
+    create: { userId: uid, ...data },
+  });
   return NextResponse.json({ ok: true, profile });
 }

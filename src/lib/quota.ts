@@ -10,7 +10,7 @@ export function planCap(plan?: string | null): number {
     case "starter":
       return 10;
     default:
-      return 0; // free / unknown plan cannot auto-apply
+      return 10; // beta: all users get 10/day
   }
 }
 

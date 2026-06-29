@@ -106,88 +106,26 @@ export default function OnboardingPage() {
     }
   }
 
-  function loadRazorpay(): Promise<void> {
-    return new Promise((resolve) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if ((window as any).Razorpay) { resolve(); return; }
-      const s = document.createElement("script");
-      s.src = "https://checkout.razorpay.com/v1/checkout.js";
-      s.onload = () => resolve();
-      document.body.appendChild(s);
-    });
-  }
-
   async function pay() {
     setBusy(true);
     setMsg("");
-    // Stamp auto-apply consent at explicit ToS acknowledgement
     await fetch("/api/profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ autoApply: Boolean(form.autoApply ?? true) }),
     }).catch(() => {});
 
-    const res = await fetch("/api/pay", {
+    const r = await fetch("/api/pay/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan }),
+      body: JSON.stringify({ plan, stub: true }),
     });
-    const order = await res.json();
-
-    // Stub mode (no Razorpay key configured) — confirm directly
-    if (order.stub) {
-      const r = await fetch("/api/pay/confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan, stub: true }),
-      });
-      if (r.ok) {
-        window.location.href = "/dashboard?paid=1";
-      } else {
-        setBusy(false);
-        setMsg("Could not activate. Try again.");
-      }
-      return;
-    }
-
-    // Real Razorpay — open checkout modal
-    await loadRazorpay();
-
-    const options = {
-      key: order.keyId,
-      amount: order.amount,
-      currency: order.currency,
-      name: "Grindly",
-      description: `${PLANS[plan].name} Plan`,
-      order_id: order.orderId,
-      handler: async (response: {
-        razorpay_payment_id: string;
-        razorpay_order_id: string;
-        razorpay_signature: string;
-      }) => {
-        const r = await fetch("/api/pay/confirm", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...response, plan }),
-        });
-        if (r.ok) {
-          window.location.href = "/dashboard?paid=1";
-        } else {
-          setBusy(false);
-          setMsg("Payment received but activation failed — contact support.");
-        }
-      },
-      modal: { ondismiss: () => setBusy(false) },
-      theme: { color: "#6C63FF" },
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rzp = new (window as any).Razorpay(options);
-    rzp.on("payment.failed", () => {
+    if (r.ok) {
+      window.location.href = "/dashboard";
+    } else {
       setBusy(false);
-      setMsg("Payment failed. Please try again.");
-    });
-    rzp.open();
+      setMsg("Could not activate. Try again.");
+    }
   }
 
   return (

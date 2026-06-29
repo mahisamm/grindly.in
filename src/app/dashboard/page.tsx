@@ -655,11 +655,9 @@ export default function Dashboard() {
                  : "Setup incomplete"}
               </span>
             </span>
-            {me.user.paid && (
-              <button onClick={togglePause} className="text-sm text-muted hover:text-foreground transition">
-                {me.user.status === "paused" ? "Resume" : "Pause"}
-              </button>
-            )}
+            <button onClick={togglePause} className="text-sm text-muted hover:text-foreground transition">
+              {me.user.status === "paused" ? "Resume" : "Pause"}
+            </button>
             {me.user.role === "admin" && (
               <Link href="/admin" className="rounded-full border border-ink bg-ink px-3 py-1.5 text-sm font-semibold text-[#f5f3ea] transition hover:opacity-80">
                 Admin
@@ -695,15 +693,14 @@ export default function Dashboard() {
             </Link>
             <button
               onClick={() => runAgent("mock")}
-              disabled={running || !me.user.paid}
-              title={!me.user.paid ? "Complete payment to run" : ""}
+              disabled={running}
               className="press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
             >
               {running ? "Agent running…" : "Run demo"}
             </button>
             <button
               onClick={() => runAgent("live")}
-              disabled={running || !me.user.paid || connectedCount === 0}
+              disabled={running || connectedCount === 0}
               title={connectedCount === 0 ? "Connect at least one platform first" : ""}
               className="rounded-lg border border-border px-4 py-2.5 text-sm hover:border-brand/60 transition disabled:opacity-50"
             >
@@ -725,19 +722,14 @@ export default function Dashboard() {
         )}
 
         {/* banners */}
-        {!me.user.paid && (
-          <div className="mt-5 rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
-            Payment not complete — finish <Link href="/onboarding" className="underline">onboarding</Link> to activate the agent.
-          </div>
-        )}
-        {me.user.paid && connectedCount === 0 && (
+        {connectedCount === 0 && (
           <div className="mt-5 rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
             <span className="font-medium">Connect at least one platform</span>{" "}
             <span className="text-muted">so the agent can apply for real. Demo mode works without connections.</span>{" "}
             <button onClick={() => setTab("integrations")} className="underline text-brand-2 ml-1">Set up integrations →</button>
           </div>
         )}
-        {me.user.paid && matchedCount > 0 && !(me.profile?.autoApply) && (
+        {matchedCount > 0 && !(me.profile?.autoApply) && (
           <div className="mt-3 rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
             <span className="font-medium">{matchedCount} job{matchedCount !== 1 ? "s" : ""} awaiting your approval.</span>{" "}
             <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">Review & approve →</button>
@@ -745,7 +737,7 @@ export default function Dashboard() {
         )}
 
         {/* reconnect warnings */}
-        {me.user.paid && integrations.filter((i) => i.status === "needs_login").map((i) => (
+        {integrations.filter((i) => i.status === "needs_login").map((i) => (
           <div key={i.platform} className="mt-3 flex items-center justify-between rounded-xl border border-warn/40 bg-warn/10 px-4 py-2.5 text-sm text-warn">
             <span>{PLATFORM_META[i.platform]?.label ?? i.platform} session expired — reconnect to resume live applications.</span>
             <button onClick={() => connectPlatform(i.platform)} className="ml-4 shrink-0 rounded-lg border border-warn/60 px-3 py-1 text-xs hover:bg-warn/20 transition">Reconnect</button>
@@ -1255,12 +1247,11 @@ export default function Dashboard() {
                         </p>
                         <button
                           onClick={() => connectPlatform(intg.platform)}
-                          disabled={!me.user.paid || isConnecting}
+                          disabled={isConnecting}
                           className="w-full press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
                         >
                           {isConnecting ? "Browser opening…" : needsLogin ? `Reconnect ${meta.label}` : `Connect ${meta.label}`}
                         </button>
-                        {!me.user.paid && <p className="mt-1.5 text-xs text-muted text-center">Activate a plan first</p>}
                       </div>
                     )}
                   </div>

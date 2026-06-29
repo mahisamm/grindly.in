@@ -23,7 +23,6 @@ export async function POST(req: Request) {
 
   const user = await prisma.user.findUnique({ where: { id: uid } });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
-  if (!user.paid) return NextResponse.json({ error: "payment required" }, { status: 402 });
 
   const root = process.cwd();
   const worker = path.join(root, "agent", "worker.py");
