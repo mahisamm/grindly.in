@@ -16,7 +16,13 @@ export async function POST(req: Request) {
   const uid = await getUid();
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
 
-  const form = await req.formData();
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch (e) {
+    console.error("[resume] formData parse failed:", e);
+    return NextResponse.json({ error: "Could not read the uploaded file. Try again." }, { status: 400 });
+  }
   const file = form.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "no file" }, { status: 400 });
@@ -30,27 +36,45 @@ export async function POST(req: Request) {
   if (file.size > MAX_BYTES) {
     return NextResponse.json({ error: "File too large (max 5 MB)." }, { status: 413 });
   }
-  await fsp.mkdir(RESUME_DIR, { recursive: true });
-  const dest = path.join(RESUME_DIR, `${uid}${ext}`);
   const buf = Buffer.from(await file.arrayBuffer());
   if (buf.byteLength > MAX_BYTES) {
     return NextResponse.json({ error: "File too large (max 5 MB)." }, { status: 413 });
   }
-  await fsp.writeFile(dest, buf);
+  try {
+    await fsp.mkdir(RESUME_DIR, { recursive: true });
+  } catch (e) {
+    console.error("[resume] mkdir failed:", e);
+    return NextResponse.json({ error: "Server storage error — please try again later." }, { status: 500 });
+  }
+  const dest = path.join(RESUME_DIR, `${uid}${ext}`);
+  try {
+    await fsp.writeFile(dest, buf);
+  } catch (e) {
+    console.error("[resume] writeFile failed:", e);
+    return NextResponse.json({ error: "Server storage error — please try again later." }, { status: 500 });
+  }
 
   let resumeText: string | undefined;
   if (ext === ".txt") resumeText = buf.toString("utf8").slice(0, 20000);
 
-  await prisma.profile.upsert({
-    where: { userId: uid },
-    update: { resumeName: file.name, ...(resumeText ? { resumeText } : {}) },
-    create: { userId: uid, resumeName: file.name, ...(resumeText ? { resumeText } : {}) },
-  });
+  // The file is on disk; persist metadata + queue analysis. If the DB is briefly
+  // unavailable, return a clean error instead of an unhandled 500 stack — the
+  // user retries and the on-disk file is simply overwritten.
+  try {
+    await prisma.profile.upsert({
+      where: { userId: uid },
+      update: { resumeName: file.name, ...(resumeText ? { resumeText } : {}) },
+      create: { userId: uid, resumeName: file.name, ...(resumeText ? { resumeText } : {}) },
+    });
 
-  // Queue a resume-analysis job; the worker fleet drains it, so the web app
-  // needs no Python. The spawn below is a best-effort local "kick" so a dev box
-  // without a running worker analyzes immediately (no-ops in the slim prod image).
-  await prisma.agentRun.create({ data: { userId: uid, mode: "analyze" } });
+    // Queue a resume-analysis job; the worker fleet drains it, so the web app
+    // needs no Python. The spawn below is a best-effort local "kick" so a dev box
+    // without a running worker analyzes immediately (no-ops in the slim prod image).
+    await prisma.agentRun.create({ data: { userId: uid, mode: "analyze" } });
+  } catch (e) {
+    console.error("[resume] db write failed:", e);
+    return NextResponse.json({ error: "Could not save your resume — please try again." }, { status: 500 });
+  }
 
   const worker = path.join(process.cwd(), "agent", "worker.py");
   try {
