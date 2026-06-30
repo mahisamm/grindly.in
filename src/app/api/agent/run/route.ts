@@ -52,6 +52,7 @@ export async function POST(req: Request) {
   try {
     const out = fs.openSync(path.join(logDir, `${uid}.log`), "a");
     const child = spawn(py, [worker, "--drain"], { cwd: root, detached: true, stdio: ["ignore", out, out] });
+    fs.closeSync(out);
     child.on("error", () => {}); // bad executable surfaces async — ignore; worker drains
     child.unref();
   } catch {

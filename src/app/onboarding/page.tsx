@@ -56,10 +56,12 @@ export default function OnboardingPage() {
   async function uploadResume(file: File) {
     setUploading(true);
     setMsg("");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60_000);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch("/api/resume", { method: "POST", body: fd });
+      const res = await fetch("/api/resume", { method: "POST", body: fd, signal: controller.signal });
       if (res.ok) {
         const j = await res.json();
         setResumeName(j.resumeName);
@@ -67,9 +69,14 @@ export default function OnboardingPage() {
         const j = await res.json().catch(() => ({}));
         setMsg(j.error || "Upload failed — try a PDF, DOCX or TXT.");
       }
-    } catch {
-      setMsg("Upload failed — check your connection and try again.");
+    } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") {
+        setMsg("Upload timed out — server took too long. Try again.");
+      } else {
+        setMsg("Upload failed — check your connection and try again.");
+      }
     } finally {
+      clearTimeout(timer);
       setUploading(false);
     }
   }

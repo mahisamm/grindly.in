@@ -64,6 +64,7 @@ export async function POST(req: Request) {
       detached: true,
       stdio: ["ignore", out, out],
     });
+    fs.closeSync(out);
     child.on("error", () => {});
     child.unref();
   } catch {
