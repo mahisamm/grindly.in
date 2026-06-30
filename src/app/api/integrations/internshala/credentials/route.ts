@@ -6,12 +6,14 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { encryptSecret } from "@/lib/crypto";
+import { internshalaLoginEnabled } from "@/lib/featureFlags";
 
 const PLATFORM = "internshala";
 
 const Body = z.object({
   email: z.string().trim().email("Enter a valid email."),
   password: z.string().min(1, "Password is required.").max(200),
+  consent: z.literal(true, { message: "Please authorize Grindly to apply on your behalf." }),
 });
 
 /**
@@ -38,6 +40,21 @@ export async function POST(req: Request) {
 
   const user = await prisma.user.findUnique({ where: { id: uid } });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  // Staged rollout gate — enforced server-side, not just hidden in the UI.
+  if (!internshalaLoginEnabled(user)) {
+    return NextResponse.json(
+      { error: "Internshala auto-apply is rolling out — your account isn't enabled yet." },
+      { status: 403 },
+    );
+  }
+
+  // Record the auto-apply consent timestamp (also unblocks the worker, which
+  // refuses to submit applications without an explicit consent on record).
+  await prisma.profile.updateMany({
+    where: { userId: uid },
+    data: { autoApplyConsentAt: new Date() },
+  });
 
   // Encrypt the credential bundle. Decrypted only inside the worker at login time.
   const ciphertext = encryptSecret(JSON.stringify({ email, password }));

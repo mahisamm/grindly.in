@@ -57,6 +57,9 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       GROQ_API_KEY: ${GROQ_API_KEY}
+      # Staged rollout of Internshala credential login (see .env.example)
+      INTERNSHALA_BETA_EMAILS: ${INTERNSHALA_BETA_EMAILS:-}
+      INTERNSHALA_BETA_OPEN: ${INTERNSHALA_BETA_OPEN:-}
     expose:
       - "3000"
     volumes:

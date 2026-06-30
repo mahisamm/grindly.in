@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
+import { internshalaLoginEnabled } from "@/lib/featureFlags";
 
 const PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"] as const;
+
+// No-hang watchdog: a login that's been "connecting" longer than this with no
+// progress is treated as timed out (worker down/slow) so the UI never spins
+// forever. OTP gets a longer grace window since the user must fetch a code.
+const CONNECTING_TIMEOUT_MS = 120_000;
+const OTP_TIMEOUT_MS = 360_000;
 
 export async function GET() {
   const uid = await getUid();
@@ -21,13 +28,37 @@ export async function GET() {
   // Load integrations (graceful if table not yet migrated)
   let integrationRows: {
     platform: string; status: string; connectedAt: Date | null;
-    otpRequired?: boolean; lastError?: string | null;
+    otpRequired?: boolean; lastError?: string | null; updatedAt?: Date | null;
   }[] = [];
   try {
     integrationRows = await prisma.userIntegration.findMany({ where: { userId: uid } });
   } catch {
     // Ignore — prisma db push not yet run
   }
+
+  // Watchdog: downgrade a stuck "connecting"/"otp_required" row so the dashboard
+  // shows a retry instead of an endless spinner if the worker never resolves it.
+  for (const r of integrationRows) {
+    const age = r.updatedAt ? Date.now() - new Date(r.updatedAt).getTime() : 0;
+    const stuckConnecting = r.status === "connecting" && age > CONNECTING_TIMEOUT_MS;
+    const stuckOtp = r.status === "otp_required" && age > OTP_TIMEOUT_MS;
+    if (stuckConnecting || stuckOtp) {
+      r.status = "needs_login";
+      r.otpRequired = false;
+      r.lastError = stuckOtp
+        ? "Login timed out waiting for the code — please try again."
+        : "Login is taking too long — please try again.";
+      try {
+        await prisma.userIntegration.update({
+          where: { userId_platform: { userId: uid, platform: r.platform } },
+          data: { status: "needs_login", otpRequired: false, otpCode: null, lastError: r.lastError },
+        });
+      } catch {
+        // best-effort — the UI already reflects the downgrade
+      }
+    }
+  }
+
   const byPlatform = Object.fromEntries(integrationRows.map((r) => [r.platform, r]));
   const integrations = PLATFORMS.map((p) => ({
     platform: p,
@@ -72,6 +103,7 @@ export async function GET() {
       slackUserId: user.slackUserId,
       internshalaConnected: user.internshalaConnected,
       gmailConnected,
+      internshalaLoginEnabled: internshalaLoginEnabled(user),
     },
     profile: user.profile,
     applications: apps,

@@ -77,6 +77,7 @@ type Me = {
     slackUserId: string | null;
     internshalaConnected: boolean;
     gmailConnected: boolean;
+    internshalaLoginEnabled: boolean;
   };
   profile: RawProfile | null;
   applications: App[];
@@ -270,6 +271,7 @@ export default function Dashboard() {
   const [internEmail, setInternEmail] = useState("");
   const [internPassword, setInternPassword] = useState("");
   const [internBusy, setInternBusy] = useState(false);
+  const [internConsent, setInternConsent] = useState(false);
   const [otpDraft, setOtpDraft] = useState("");
 
   const load = useCallback(async () => {
@@ -394,13 +396,13 @@ export default function Dashboard() {
   // ── Internshala credential login (hosted: server-side headless login) ──
   async function submitInternshalaCredentials() {
     const email = internEmail.trim();
-    if (!email || !internPassword) return;
+    if (!email || !internPassword || !internConsent) return;
     setInternBusy(true);
     setNotice(null);
     const res = await fetch("/api/integrations/internshala/credentials", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password: internPassword }),
+      body: JSON.stringify({ email, password: internPassword, consent: internConsent }),
     });
     setInternBusy(false);
     const data = await res.json().catch(() => ({}));
@@ -731,10 +733,10 @@ export default function Dashboard() {
         )}
 
         {/* banners */}
-        {connectedCount === 0 && (
+        {connectedCount === 0 && me.user.internshalaLoginEnabled && (
           <div className="mt-5 rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
-            <span className="font-medium">Connect at least one platform</span>{" "}
-            <span className="text-muted">so the agent can apply for real. Demo mode works without connections.</span>{" "}
+            <span className="font-medium">Connect Internshala</span>{" "}
+            <span className="text-muted">so the agent can find and apply to matches for you.</span>{" "}
             <button onClick={() => setTab("integrations")} className="underline text-brand-2 ml-1">Set up integrations →</button>
           </div>
         )}
@@ -1283,6 +1285,12 @@ export default function Dashboard() {
                       <span className="text-xs text-brand-2">Logging into Internshala on the server…</span>
                       <button onClick={disconnectInternshala} disabled={internBusy} className="text-xs text-muted hover:text-danger transition disabled:opacity-50">Cancel</button>
                     </div>
+                  ) : !me.user.internshalaLoginEnabled ? (
+                    <div className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-2.5 text-xs text-muted">
+                      <span className="font-medium text-brand-2">Rolling out.</span>{" "}
+                      Internshala auto-apply is being enabled for accounts in waves — yours isn&apos;t live yet.
+                      We&apos;ll switch it on for you soon. Nothing to do here for now.
+                    </div>
                   ) : (
                     <div className="space-y-2">
                       <p className="text-xs text-muted">
@@ -1305,14 +1313,28 @@ export default function Dashboard() {
                         onKeyDown={(e) => { if (e.key === "Enter") submitInternshalaCredentials(); }}
                         className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none"
                       />
+                      <label className="flex items-start gap-2 text-[11px] text-muted cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={internConsent}
+                          onChange={(e) => setInternConsent(e.target.checked)}
+                          className="mt-0.5 shrink-0 accent-brand"
+                        />
+                        <span>
+                          I authorize Grindly to log into Internshala and apply to internships on my behalf.
+                          My password is encrypted and used only for this. See our{" "}
+                          <Link href="/privacy" className="underline text-brand-2">Privacy</Link> &{" "}
+                          <Link href="/terms" className="underline text-brand-2">Terms</Link>.
+                        </span>
+                      </label>
                       <button
                         onClick={submitInternshalaCredentials}
-                        disabled={internBusy || !internEmail.trim() || !internPassword}
+                        disabled={internBusy || !internEmail.trim() || !internPassword || !internConsent}
                         className="w-full press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
                       >
                         {internBusy ? "Starting…" : needsLogin ? "Reconnect Internshala" : "Connect Internshala"}
                       </button>
-                      <p className="text-[11px] text-muted">🔒 Encrypted at rest. Used only to apply on your behalf.</p>
+                      <p className="text-[11px] text-muted">🔒 Encrypted at rest (AES-256). Used only to apply on your behalf.</p>
                     </div>
                   )}
                 </div>

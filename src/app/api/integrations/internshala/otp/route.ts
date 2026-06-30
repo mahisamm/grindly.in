@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
+import { internshalaLoginEnabled } from "@/lib/featureFlags";
 
 const PLATFORM = "internshala";
 
@@ -26,6 +27,11 @@ export async function POST(req: Request) {
       { error: parsed.error.issues[0]?.message ?? "Invalid code." },
       { status: 400 },
     );
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: uid } });
+  if (!user || !internshalaLoginEnabled(user)) {
+    return NextResponse.json({ error: "Not enabled." }, { status: 403 });
   }
 
   const row = await prisma.userIntegration.findUnique({
