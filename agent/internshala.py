@@ -26,7 +26,22 @@ import stealth
 
 BASE = "https://internshala.com"
 
-PROFILE_DIR = os.path.join(os.path.dirname(__file__), "browser_profile", "shared", "internshala")
+
+def _profile_base() -> str:
+    """Root dir holding per-user persistent browser profiles.
+
+    Must live on a volume SHARED between the web app (which kicks off connect)
+    and every worker replica that applies — otherwise a session saved by one
+    container is invisible to the next. Defaults to <root>/data/browser_profile
+    (the appdata volume in docker-compose); override with GRINDLY_PROFILE_BASE.
+    """
+    env = os.environ.get("GRINDLY_PROFILE_BASE")
+    if env:
+        return env
+    return os.path.join(os.path.dirname(__file__), "..", "data", "browser_profile")
+
+
+PROFILE_DIR = os.path.join(_profile_base(), "shared", "internshala")
 
 _contexts: dict = {}
 
@@ -34,7 +49,7 @@ _contexts: dict = {}
 def _profile_dir(uid: str) -> str:
     if not uid:
         return PROFILE_DIR
-    return os.path.join(os.path.dirname(__file__), "browser_profile", uid, "internshala")
+    return os.path.join(_profile_base(), uid, "internshala")
 
 
 def _context(uid: str = ""):

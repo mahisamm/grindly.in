@@ -82,7 +82,10 @@ services:
       INTERNPILOT_DB: ""            # unset → db.py uses the Postgres DATABASE_URL
       DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
-      INTERNPILOT_HEADLESS: "1"     # headless — there's no display on a server
+      INTERNPILOT_HEADLESS: "0"     # headed inside Xvfb (Dockerfile.worker) — far harder to bot-detect than headless
+      # Persistent login sessions live here, on the shared appdata volume, so the
+      # web app, the login worker, and every apply worker replica see the same profile.
+      GRINDLY_PROFILE_BASE: /app/data/browser_profile
       GRINDLY_SPREAD_APPLIES: "1"   # human-pacing: 5-15 min gap between applies
       GROQ_API_KEY: ${GROQ_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}

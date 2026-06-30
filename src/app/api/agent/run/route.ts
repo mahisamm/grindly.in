@@ -11,18 +11,21 @@ import { getUid } from "@/lib/session";
  * report). Spawns the Python worker detached so the request returns instantly;
  * the worker writes results back to the same SQLite DB the dashboard polls.
  *
- * `mode=mock` (default) runs against the bundled mock board — safe to demo.
- * `mode=live` drives real Internshala via Playwright.
+ * Always runs live against the user's connected platform (Internshala) via
+ * Playwright. `analyzeOnly` runs resume analysis without touching any board.
  */
 export async function POST(req: Request) {
   const uid = await getUid();
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
 
-  const { mode, analyzeOnly } = (await req.json().catch(() => ({}))) as { mode?: string; analyzeOnly?: boolean };
-  const runMode = mode === "live" ? "live" : "mock";
+  const { analyzeOnly } = (await req.json().catch(() => ({}))) as { analyzeOnly?: boolean };
 
   const user = await prisma.user.findUnique({ where: { id: uid } });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  // Live only — there is no mock/demo mode. The agent applies to real listings
+  // via the user's connected platform, so nothing fabricated reaches the UI.
+  const runMode = "live";
 
   const root = process.cwd();
   const worker = path.join(root, "agent", "worker.py");

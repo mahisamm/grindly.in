@@ -26,7 +26,7 @@ def _ensure_table(c):
         CREATE TABLE IF NOT EXISTS agent_runs (
             id TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
-            mode TEXT NOT NULL DEFAULT 'mock',
+            mode TEXT NOT NULL DEFAULT 'live',
             status TEXT NOT NULL DEFAULT 'queued',
             attempts INTEGER NOT NULL DEFAULT 0,
             max_attempts INTEGER NOT NULL DEFAULT 3,
@@ -40,7 +40,7 @@ def _ensure_table(c):
     """)
 
 
-def enqueue(uid: str, mode: str = "mock") -> str:
+def enqueue(uid: str, mode: str = "live") -> str:
     """Add a run. Idempotent: if the user already has a queued/running job,
     return that one instead of stacking duplicates."""
     with db.conn() as c:

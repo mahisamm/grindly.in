@@ -19,7 +19,10 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   // Load integrations (graceful if table not yet migrated)
-  let integrationRows: { platform: string; status: string; connectedAt: Date | null }[] = [];
+  let integrationRows: {
+    platform: string; status: string; connectedAt: Date | null;
+    otpRequired?: boolean; lastError?: string | null;
+  }[] = [];
   try {
     integrationRows = await prisma.userIntegration.findMany({ where: { userId: uid } });
   } catch {
@@ -30,6 +33,8 @@ export async function GET() {
     platform: p,
     status: byPlatform[p]?.status ?? (p === "internshala" && user.internshalaConnected ? "connected" : "disconnected"),
     connectedAt: byPlatform[p]?.connectedAt ?? null,
+    otpRequired: byPlatform[p]?.otpRequired ?? false,
+    lastError: byPlatform[p]?.lastError ?? null,
   }));
   const gmailConnected = byPlatform["gmail"]?.status === "connected";
 

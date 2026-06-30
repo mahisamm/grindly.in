@@ -54,13 +54,13 @@ def clean_table():
 # ─── enqueue ──────────────────────────────────────────────────────────────
 
 def test_enqueue_creates_queued_row():
-    rid = run_queue.enqueue("user_1", mode="mock")
+    rid = run_queue.enqueue("user_1", mode="live")
     c = _get_conn()
     row = c.execute("SELECT * FROM agent_runs WHERE id=?", (rid,)).fetchone()
     assert row is not None
     assert row["status"] == "queued"
     assert row["user_id"] == "user_1"
-    assert row["mode"] == "mock"
+    assert row["mode"] == "live"
 
 
 def test_enqueue_idempotent_returns_existing_id():

@@ -56,8 +56,14 @@ model UserIntegration {
   userId      String    @map("user_id")
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   platform    String    // linkedin | internshala | naukri | unstop | indeed
-  status      String    @default("disconnected") // connected | disconnected | needs_login
+  status      String    @default("disconnected") // connected | disconnected | connecting | needs_login | otp_required
   connectedAt DateTime? @map("connected_at")
+  // Credential-login relay (hosted): the worker logs in headless on the server.
+  // When the platform demands a one-time code, it flips otpRequired and waits for
+  // the user to post the code into otpCode; lastError surfaces a failure to the UI.
+  otpRequired Boolean   @default(false) @map("otp_required")
+  otpCode     String?   @map("otp_code")
+  lastError   String?   @map("last_error")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
   @@unique([userId, platform])
@@ -197,7 +203,7 @@ model AgentRun {
   id          String    @id @default(cuid())
   userId      String    @map("user_id")
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mode        String    @default("mock") // mock | live | analyze
+  mode        String    @default("live") // live | analyze | connect_internshala
   status      String    @default("queued") // queued | running | done | failed | cancelled
   attempts    Int       @default(0)
   maxAttempts Int       @default(3) @map("max_attempts")

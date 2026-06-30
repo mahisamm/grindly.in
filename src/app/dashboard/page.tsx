@@ -33,6 +33,8 @@ type Integration = {
   platform: string;
   status: string;
   connectedAt: string | null;
+  otpRequired?: boolean;
+  lastError?: string | null;
 };
 type ResumeAnalysis = {
   score: number;
@@ -251,7 +253,6 @@ export default function Dashboard() {
   const [running, setRunning] = useState(false);
   const [tab, setTab] = useState<"profile" | "applications" | "integrations" | "reports">("applications");
   const [filter, setFilter] = useState<string>("all");
-  const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [profileForm, setProfileForm] = useState<ProfileForm | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
@@ -266,6 +267,10 @@ export default function Dashboard() {
   const [notice, setNotice] = useState<{ kind: "ok" | "err" | "info"; text: string } | null>(null);
   const [slackIdDraft, setSlackIdDraft] = useState("");
   const [slackBusy, setSlackBusy] = useState(false);
+  const [internEmail, setInternEmail] = useState("");
+  const [internPassword, setInternPassword] = useState("");
+  const [internBusy, setInternBusy] = useState(false);
+  const [otpDraft, setOtpDraft] = useState("");
 
   const load = useCallback(async () => {
     const res = await fetch("/api/me");
@@ -338,14 +343,14 @@ export default function Dashboard() {
     window.location.href = "/login";
   }
 
-  async function runAgent(mode: "mock" | "live") {
+  async function runAgent() {
     setRunning(true);
     setNotice(null);
     try {
       const res = await fetch("/api/agent/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({}),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -386,42 +391,53 @@ export default function Dashboard() {
     }
   }
 
-  async function connectPlatform(platform: string) {
-    setConnectingPlatform(platform);
+  // ── Internshala credential login (hosted: server-side headless login) ──
+  async function submitInternshalaCredentials() {
+    const email = internEmail.trim();
+    if (!email || !internPassword) return;
+    setInternBusy(true);
     setNotice(null);
-    const res = await fetch("/api/integrations/connect", {
+    const res = await fetch("/api/integrations/internshala/credentials", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ platform }),
+      body: JSON.stringify({ email, password: internPassword }),
     });
+    setInternBusy(false);
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setNotice({ kind: "err", text: data.error || "Couldn't open the login browser." });
-      setConnectingPlatform(null);
+      setNotice({ kind: "err", text: data.error || "Couldn't start Internshala login." });
       return;
     }
-    // Poll integration status until connected (or 60s timeout).
-    // eslint-disable-next-line react-hooks/purity -- runs at click time (event handler), not during render
-    const deadline = Date.now() + 60_000;
-    const pollConnect = async () => {
-      if (Date.now() > deadline) { setConnectingPlatform(null); return; }
-      const r = await fetch("/api/integrations").catch(() => null);
-      if (r?.ok) {
-        const d = await r.json().catch(() => ({}));
-        const row = (d.integrations as Integration[] ?? []).find(i => i.platform === platform);
-        if (row?.status === "connected") { setConnectingPlatform(null); load(); return; }
-      }
-      setTimeout(pollConnect, 2000);
-    };
-    setTimeout(pollConnect, 2000);
+    setInternPassword("");
+    setNotice({ kind: "info", text: "Logging into Internshala on the server — this takes a few seconds." });
+    load();
   }
 
-  async function disconnectPlatform(platform: string) {
-    await fetch("/api/integrations/disconnect", {
+  async function submitInternshalaOtp() {
+    const code = otpDraft.trim();
+    if (!code) return;
+    setInternBusy(true);
+    setNotice(null);
+    const res = await fetch("/api/integrations/internshala/otp", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ platform }),
+      body: JSON.stringify({ code }),
     });
+    setInternBusy(false);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setNotice({ kind: "err", text: data.error || "Couldn't submit the code." });
+      return;
+    }
+    setOtpDraft("");
+    setNotice({ kind: "info", text: "Code submitted — finishing login…" });
+    load();
+  }
+
+  async function disconnectInternshala() {
+    setInternBusy(true);
+    await fetch("/api/integrations/internshala/credentials", { method: "DELETE" }).catch(() => {});
+    setInternBusy(false);
     load();
   }
 
@@ -453,7 +469,7 @@ export default function Dashboard() {
       const res = await fetch("/api/agent/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "mock", analyzeOnly: true }),
+        body: JSON.stringify({ analyzeOnly: true }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setAnalyzingResume(false); return; }
@@ -623,14 +639,14 @@ export default function Dashboard() {
               </li>
               <li className="flex gap-3">
                 <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">2</span>
-                <span><span className="font-medium">Connect a platform.</span> One click opens a browser — log in once. No password is stored.</span>
+                <span><span className="font-medium">Connect Internshala.</span> Enter your Internshala login in Integrations — it&apos;s encrypted, and the agent applies on your behalf.</span>
               </li>
               <li className="flex gap-3">
                 <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">3</span>
                 <span><span className="font-medium">Run the agent.</span> It scores and applies to matches. Then tell us the outcome on each application so we can prove it works.</span>
               </li>
             </ol>
-            <p className="mt-4 text-xs text-muted">Tip: try <span className="text-foreground">Run demo</span> first — it works without connecting anything.</p>
+            <p className="mt-4 text-xs text-muted">Tip: connect Internshala first — <span className="text-foreground">Run agent</span> unlocks once a platform is linked.</p>
             <button onClick={dismissOnboarding} className="mt-5 w-full press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition">
               Got it — let&apos;s go
             </button>
@@ -692,19 +708,12 @@ export default function Dashboard() {
               Call prep ↗
             </Link>
             <button
-              onClick={() => runAgent("mock")}
-              disabled={running}
+              onClick={() => runAgent()}
+              disabled={running || connectedCount === 0}
+              title={connectedCount === 0 ? "Connect Internshala first" : "Find + apply to live matches"}
               className="press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
             >
-              {running ? "Agent running…" : "Run demo"}
-            </button>
-            <button
-              onClick={() => runAgent("live")}
-              disabled={running || connectedCount === 0}
-              title={connectedCount === 0 ? "Connect at least one platform first" : ""}
-              className="rounded-lg border border-border px-4 py-2.5 text-sm hover:border-brand/60 transition disabled:opacity-50"
-            >
-              Run live
+              {running ? "Agent running…" : "Run agent"}
             </button>
           </div>
         </div>
@@ -739,8 +748,8 @@ export default function Dashboard() {
         {/* reconnect warnings */}
         {integrations.filter((i) => i.status === "needs_login").map((i) => (
           <div key={i.platform} className="mt-3 flex items-center justify-between rounded-xl border border-warn/40 bg-warn/10 px-4 py-2.5 text-sm text-warn">
-            <span>{PLATFORM_META[i.platform]?.label ?? i.platform} session expired — reconnect to resume live applications.</span>
-            <button onClick={() => connectPlatform(i.platform)} className="ml-4 shrink-0 rounded-lg border border-warn/60 px-3 py-1 text-xs hover:bg-warn/20 transition">Reconnect</button>
+            <span>{PLATFORM_META[i.platform]?.label ?? i.platform} login expired — reconnect to resume live applications.</span>
+            <button onClick={() => setTab("integrations")} className="ml-4 shrink-0 rounded-lg border border-warn/60 px-3 py-1 text-xs hover:bg-warn/20 transition">Reconnect</button>
           </div>
         ))}
 
@@ -1107,7 +1116,7 @@ export default function Dashboard() {
 
             {apps.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-10 text-center text-muted">
-                No applications yet. Hit <span className="text-foreground">Run demo</span> to watch it work.
+                No applications yet. Connect Internshala, then hit <span className="text-foreground">Run agent</span> to start applying.
               </div>
             ) : (
               <div className="space-y-2">
@@ -1196,68 +1205,119 @@ export default function Dashboard() {
         {tab === "integrations" && (
           <div className="mt-4">
             <p className="text-sm text-muted mb-4">
-              Connect your accounts once. The agent reuses the session to apply on your behalf.
-              Your credentials never leave your machine — we save a browser session cookie, not your password.
+              Connect Internshala so the agent can apply for you. Your password is encrypted
+              (AES-256) and only ever decrypted on the server at login time — we never show it again.
             </p>
 
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {integrations.map((intg) => {
-                const meta = PLATFORM_META[intg.platform] ?? {
-                  label: intg.platform,
-                  color: "text-foreground",
-                  icon: intg.platform.slice(0, 2).toUpperCase(),
-                };
-                const isConnected = intg.status === "connected";
-                const isConnecting = connectingPlatform === intg.platform || intg.status === "connecting";
-                const needsLogin = intg.status === "needs_login";
+            {(() => {
+              const intern = integrations.find((i) => i.platform === "internshala")
+                ?? { platform: "internshala", status: "disconnected", connectedAt: null, otpRequired: false, lastError: null };
+              const isConnected = intern.status === "connected";
+              const isConnecting = intern.status === "connecting";
+              const otpRequired = intern.status === "otp_required" || intern.otpRequired;
+              const needsLogin = intern.status === "needs_login";
 
-                return (
-                  <div
-                    key={intg.platform}
-                    className={`rounded-xl border p-4 transition ${
-                      isConnected ? "border-accent/40 bg-accent/5"
-                      : needsLogin ? "border-warn/40 bg-warn/5"
-                      : "border-border bg-surface"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-xs font-bold rounded-md px-1.5 py-0.5 border ${meta.color} border-current`}>{meta.icon}</span>
-                        <span className="font-medium">{meta.label}</span>
-                      </div>
-                      <span className={`text-xs rounded-full px-2 py-0.5 ${
-                        isConnected ? "bg-accent/20 text-accent"
-                        : needsLogin ? "bg-warn/20 text-warn"
-                        : isConnecting ? "bg-brand/20 text-brand-2"
-                        : "bg-surface-2 text-muted"
-                      }`}>
-                        {isConnected ? "Connected" : needsLogin ? "Needs login" : isConnecting ? "Connecting…" : "Not connected"}
-                      </span>
+              return (
+                <div className={`rounded-xl border p-4 transition ${
+                  isConnected ? "border-accent/40 bg-accent/5"
+                  : needsLogin ? "border-warn/40 bg-warn/5"
+                  : otpRequired ? "border-brand/40 bg-brand/5"
+                  : "border-border bg-surface"
+                }`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold rounded-md px-1.5 py-0.5 border text-[#00aaff] border-current">IS</span>
+                      <span className="font-medium">Internshala</span>
                     </div>
-
-                    {isConnected ? (
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-muted">Agent applies via this account</span>
-                        <button onClick={() => disconnectPlatform(intg.platform)} className="text-xs text-muted hover:text-danger transition">Disconnect</button>
-                      </div>
-                    ) : (
-                      <div>
-                        <p className="text-xs text-muted mb-3">
-                          {needsLogin ? "Session expired — log in again to resume." : "A browser window will open. Log in once and close it."}
-                        </p>
-                        <button
-                          onClick={() => connectPlatform(intg.platform)}
-                          disabled={isConnecting}
-                          className="w-full press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
-                        >
-                          {isConnecting ? "Browser opening…" : needsLogin ? `Reconnect ${meta.label}` : `Connect ${meta.label}`}
-                        </button>
-                      </div>
-                    )}
+                    <span className={`text-xs rounded-full px-2 py-0.5 ${
+                      isConnected ? "bg-accent/20 text-accent"
+                      : needsLogin ? "bg-warn/20 text-warn"
+                      : (isConnecting || otpRequired) ? "bg-brand/20 text-brand-2"
+                      : "bg-surface-2 text-muted"
+                    }`}>
+                      {isConnected ? "Connected"
+                       : needsLogin ? "Needs login"
+                       : otpRequired ? "Enter code"
+                       : isConnecting ? "Logging in…"
+                       : "Not connected"}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
+
+                  {/* last error from the worker login attempt */}
+                  {intern.lastError && !isConnected && !otpRequired && (
+                    <div className="mb-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                      {intern.lastError}
+                    </div>
+                  )}
+
+                  {isConnected ? (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted">Logged in — the agent applies via your account.</span>
+                      <button onClick={disconnectInternshala} disabled={internBusy} className="text-xs text-muted hover:text-danger transition disabled:opacity-50">Disconnect</button>
+                    </div>
+                  ) : otpRequired ? (
+                    <div>
+                      <p className="text-xs text-muted mb-2">
+                        Internshala sent you a one-time code (check your email/SMS). Enter it to finish logging in.
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          value={otpDraft}
+                          onChange={(e) => setOtpDraft(e.target.value)}
+                          placeholder="Code"
+                          inputMode="numeric"
+                          className="rounded-lg border border-border bg-surface px-3 py-2 text-sm w-32 outline-none font-mono"
+                        />
+                        <button
+                          onClick={submitInternshalaOtp}
+                          disabled={internBusy || !otpDraft.trim()}
+                          className="press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+                        >
+                          {internBusy ? "…" : "Submit code"}
+                        </button>
+                        <button onClick={disconnectInternshala} disabled={internBusy} className="text-xs text-muted hover:text-danger transition disabled:opacity-50">Cancel</button>
+                      </div>
+                    </div>
+                  ) : isConnecting ? (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-brand-2">Logging into Internshala on the server…</span>
+                      <button onClick={disconnectInternshala} disabled={internBusy} className="text-xs text-muted hover:text-danger transition disabled:opacity-50">Cancel</button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted">
+                        {needsLogin ? "Login expired or failed — re-enter your Internshala credentials." : "Enter your Internshala student login."}
+                      </p>
+                      <input
+                        value={internEmail}
+                        onChange={(e) => setInternEmail(e.target.value)}
+                        placeholder="Internshala email"
+                        type="email"
+                        autoComplete="off"
+                        className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none"
+                      />
+                      <input
+                        value={internPassword}
+                        onChange={(e) => setInternPassword(e.target.value)}
+                        placeholder="Internshala password"
+                        type="password"
+                        autoComplete="off"
+                        onKeyDown={(e) => { if (e.key === "Enter") submitInternshalaCredentials(); }}
+                        className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none"
+                      />
+                      <button
+                        onClick={submitInternshalaCredentials}
+                        disabled={internBusy || !internEmail.trim() || !internPassword}
+                        className="w-full press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+                      >
+                        {internBusy ? "Starting…" : needsLogin ? "Reconnect Internshala" : "Connect Internshala"}
+                      </button>
+                      <p className="text-[11px] text-muted">🔒 Encrypted at rest. Used only to apply on your behalf.</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Slack daily reports */}
             <div className="mt-5 rounded-xl border border-border bg-surface p-4">
@@ -1354,10 +1414,10 @@ export default function Dashboard() {
             <div className="mt-5 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
               <p className="font-medium text-foreground mb-1">How live applications work</p>
               <ol className="list-decimal pl-5 space-y-1 text-sm">
-                <li>Click <strong>Connect</strong> — a real browser opens on your machine.</li>
-                <li>Log into that platform normally (2FA is fine).</li>
-                <li>Close the window when prompted — session cookie is saved locally.</li>
-                <li>Click <strong>Run live</strong> on this dashboard to start applying.</li>
+                <li>Enter your <strong>Internshala email + password</strong> above — encrypted at rest.</li>
+                <li>The agent logs into Internshala for you on our server.</li>
+                <li>If Internshala asks for a one-time code, enter it here to finish.</li>
+                <li>Click <strong>Run agent</strong> on this dashboard to start applying.</li>
                 <li>The agent applies up to <strong>{cap}</strong> internships/day on Internshala.</li>
               </ol>
             </div>

@@ -252,6 +252,32 @@ def _ensure_integrations_table(c):
             platform TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'disconnected',
             connected_at INTEGER,
+            otp_required INTEGER DEFAULT 0,
+            otp_code TEXT,
+            last_error TEXT,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(user_id, platform)
+        )
+    """)
+    # Older SQLite DBs predate the OTP-relay columns — add them in place.
+    cols = {row[1] for row in c.execute("PRAGMA table_info(user_integrations)").fetchall()}
+    if "otp_required" not in cols:
+        c.execute("ALTER TABLE user_integrations ADD COLUMN otp_required INTEGER DEFAULT 0")
+    if "otp_code" not in cols:
+        c.execute("ALTER TABLE user_integrations ADD COLUMN otp_code TEXT")
+    if "last_error" not in cols:
+        c.execute("ALTER TABLE user_integrations ADD COLUMN last_error TEXT")
+
+
+def _ensure_credentials_table(c):
+    if PG:
+        return
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS platform_credentials (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            ciphertext TEXT NOT NULL,
             updated_at INTEGER NOT NULL,
             UNIQUE(user_id, platform)
         )
@@ -285,7 +311,10 @@ def get_connected_platforms(uid: str) -> list[str]:
     return [r["platform"] for r in rows]
 
 
-def set_integration_status(uid: str, platform: str, status: str):
+def set_integration_status(uid: str, platform: str, status: str, error: str | None = None):
+    """Set the connection status. Always clears the OTP-required flag (a status
+    transition resolves any pending OTP wait); pass `error` to surface a failure
+    reason to the dashboard, or None to clear it."""
     with conn() as c:
         _ensure_integrations_table(c)
         ts = now_db()
@@ -294,18 +323,21 @@ def set_integration_status(uid: str, platform: str, status: str):
             (uid, platform),
         ).fetchone()
         connected_at = ts if status == "connected" else None
+        err = (error or "")[:300] if error else None
         if existing:
             c.execute(
-                "UPDATE user_integrations SET status=?, connected_at=?, updated_at=? "
+                "UPDATE user_integrations SET status=?, connected_at=?, "
+                "otp_required=0, otp_code=NULL, last_error=?, updated_at=? "
                 "WHERE user_id=? AND platform=?",
-                (status, connected_at, ts, uid, platform),
+                (status, connected_at, err, ts, uid, platform),
             )
         else:
             c.execute(
                 "INSERT INTO user_integrations "
-                "(id, user_id, platform, status, connected_at, updated_at) "
-                "VALUES (?,?,?,?,?,?)",
-                (cuid(), uid, platform, status, connected_at, ts),
+                "(id, user_id, platform, status, connected_at, otp_required, "
+                "otp_code, last_error, updated_at) "
+                "VALUES (?,?,?,?,?,0,NULL,?,?)",
+                (cuid(), uid, platform, status, connected_at, err, ts),
             )
         # keep legacy internshala_connected column in sync
         if platform == "internshala":
@@ -313,6 +345,48 @@ def set_integration_status(uid: str, platform: str, status: str):
                 "UPDATE users SET internshala_connected=? WHERE id=?",
                 (status == "connected", uid),
             )
+
+
+def set_integration_otp_required(uid: str, platform: str):
+    """Mark that the login hit an OTP gate — the worker now polls for the code the
+    user posts from the dashboard. Clears any stale code first."""
+    with conn() as c:
+        _ensure_integrations_table(c)
+        ts = now_db()
+        c.execute(
+            "UPDATE user_integrations SET status='otp_required', otp_required=1, "
+            "otp_code=NULL, last_error=NULL, updated_at=? WHERE user_id=? AND platform=?",
+            (ts, uid, platform),
+        )
+
+
+def take_integration_otp(uid: str, platform: str) -> str | None:
+    """Atomically read-and-clear the OTP code the user submitted, if any."""
+    with conn() as c:
+        _ensure_integrations_table(c)
+        row = c.execute(
+            "SELECT otp_code FROM user_integrations WHERE user_id=? AND platform=?",
+            (uid, platform),
+        ).fetchone()
+        code = row["otp_code"] if row else None
+        if code:
+            c.execute(
+                "UPDATE user_integrations SET otp_code=NULL, updated_at=? "
+                "WHERE user_id=? AND platform=?",
+                (now_db(), uid, platform),
+            )
+        return code
+
+
+def get_platform_credential(uid: str, platform: str) -> str | None:
+    """Return the encrypted credential blob (ciphertext) for a platform, or None."""
+    with conn() as c:
+        _ensure_credentials_table(c)
+        row = c.execute(
+            "SELECT ciphertext FROM platform_credentials WHERE user_id=? AND platform=?",
+            (uid, platform),
+        ).fetchone()
+        return row["ciphertext"] if row else None
 
 
 def get_plan_cap(uid: str) -> int:

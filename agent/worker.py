@@ -371,51 +371,45 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     if not (8 <= ist_h < 20):
         log.info("outside IST business hours (%dh) — apply delays will be longer", ist_h)
 
-    # 3. fetch listings
+    # 3. fetch listings — live platforms only (no mock/demo path)
     all_jobs: list[dict] = []
     source_modules: dict = {}
 
-    if mode == "live":
-        connected = db.get_connected_platforms(uid)
-        active_sources = [s for s in SOURCE_PRIORITY if s in connected]
+    connected = db.get_connected_platforms(uid)
+    active_sources = [s for s in SOURCE_PRIORITY if s in connected]
 
-        if not active_sources:
-            msg = (
-                "no platforms connected. "
-                "Connect at least one platform in the Integrations tab before running live mode."
-            )
-            log.warning(msg)
-            return {"error": "no_platforms_connected", "message": msg}
+    if not active_sources:
+        msg = (
+            "no platforms connected. "
+            "Connect Internshala in the Integrations tab before running the agent."
+        )
+        log.warning(msg)
+        return {"error": "no_platforms_connected", "message": msg}
 
-        kw_sets = _expand_search_keywords(plan["domains"], skills)
-        per_kw = max(8, (cap + 5) // max(1, len(active_sources) * len(kw_sets)))
+    kw_sets = _expand_search_keywords(plan["domains"], skills)
+    per_kw = max(8, (cap + 5) // max(1, len(active_sources) * len(kw_sets)))
 
-        # Load modules serially (importlib side-effects must stay single-threaded)
-        loaded: dict[str, object] = {}
-        for src in active_sources:
-            mod = _load_module(src)
-            if mod is not None:
-                loaded[src] = mod
+    # Load modules serially (importlib side-effects must stay single-threaded)
+    loaded: dict[str, object] = {}
+    for src in active_sources:
+        mod = _load_module(src)
+        if mod is not None:
+            loaded[src] = mod
 
-        # Fetch all platforms in parallel — each has isolated browser context per uid
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(loaded))) as ex:
-            futs = {
-                ex.submit(_fetch_source_all_kw, src, mod, kw_sets, per_kw, uid): src
-                for src, mod in loaded.items()
-            }
-            for fut in concurrent.futures.as_completed(futs):
-                src_done = futs[fut]
-                try:
-                    _, src_jobs = fut.result()
-                    all_jobs.extend(src_jobs)
-                    source_modules[src_done] = loaded[src_done]
-                except Exception as e:  # noqa: BLE001
-                    log.error("%s parallel fetch error: %s", src_done, e)
-    else:
-        # Explicit mock mode — safe for demo/testing
-        import mockboard
-        all_jobs = mockboard.fetch(plan["domains"], limit=cap + 10,
-                                   seed=int(time.time()) // 86400)
+    # Fetch all platforms in parallel — each has isolated browser context per uid
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(loaded))) as ex:
+        futs = {
+            ex.submit(_fetch_source_all_kw, src, mod, kw_sets, per_kw, uid): src
+            for src, mod in loaded.items()
+        }
+        for fut in concurrent.futures.as_completed(futs):
+            src_done = futs[fut]
+            try:
+                _, src_jobs = fut.result()
+                all_jobs.extend(src_jobs)
+                source_modules[src_done] = loaded[src_done]
+            except Exception as e:  # noqa: BLE001
+                log.error("%s parallel fetch error: %s", src_done, e)
 
     log.info("total fetched: %d listings across all sources", len(all_jobs))
 
@@ -612,7 +606,9 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             except Exception as e:  # noqa: BLE001
                 status, why = "failed", f"exception: {str(e)[:100]}"
         else:
-            status, why, vid = "applied", f"{reason} — auto-applied (demo)", None
+            # No live module loaded for this listing's platform — never fabricate
+            # an apply. Shortlist it so nothing fake reaches the dashboard.
+            status, why, vid = "skipped", f"{src} unavailable this run", None
 
         if status == "applied":
             applied += 1
@@ -717,10 +713,18 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
 
 def run_job(uid: str, mode: str) -> dict:
     """Queue dispatcher so the web app can ENQUEUE work instead of spawning
-    Python itself: mode 'analyze' → resume analysis, anything else → full
-    apply pipeline. Used by both --drain and --serve."""
+    Python itself:
+      'analyze'              → resume analysis only
+      'connect_<platform>'   → credential login for that platform (hosted)
+      anything else          → full apply pipeline.
+    Used by both --drain and --serve."""
     if mode == "analyze":
         return analyze_only(uid)
+    if mode.startswith("connect"):
+        # mode is "connect_internshala" (or legacy "connect" → internshala)
+        platform = mode.split("_", 1)[1] if "_" in mode else "internshala"
+        import connect_login
+        return connect_login.login(uid, platform)
     return run_for_user(uid, mode)
 
 
@@ -729,7 +733,7 @@ def main():
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--user")
-    ap.add_argument("--mode", default="live", choices=["mock", "live"])
+    ap.add_argument("--mode", default="live", choices=["live"])
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--analyze", action="store_true", help="Resume analyze only — no job scraping")
     ap.add_argument("--loop", action="store_true")
