@@ -50,6 +50,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
       status: user.status,
       phone: user.phone ? `***${user.phone.slice(-4)}` : null,
       slackConnected: user.slackConnected,
+      internshalaBetaAccess: user.internshalaBetaAccess,
       createdAt: user.createdAt,
     },
     profile: user.profile && {

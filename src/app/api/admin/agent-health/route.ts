@@ -18,17 +18,40 @@ async function checkDb(): Promise<CheckResult> {
   }
 }
 
-function checkPython(): CheckResult {
+// Python + Playwright live in the WORKER container, not the web image that
+// serves this route. So we try locally first (covers single-process dev), and
+// when python isn't on the web box we infer worker-runtime health from recent
+// agent runs instead of flashing a false red. A run that reached running/done
+// proves the worker booted python + playwright.
+async function inferWorkerRuntime(label: string, hint: string): Promise<CheckResult> {
   try {
-    const bin = process.env.PYTHON_BIN ?? "python";
-    const out = execSync(`${bin} --version`, { timeout: 5000 }).toString().trim();
-    return { ok: true, detail: out };
+    const run = await prisma.agentRun.findFirst({
+      where: { status: { in: ["running", "done"] } },
+      orderBy: { updatedAt: "desc" },
+      select: { updatedAt: true },
+    });
+    if (!run) {
+      return { ok: true, detail: `${label} runs in the worker container — no agent run yet to verify (${hint})` };
+    }
+    const hoursAgo = Math.round((Date.now() - new Date(run.updatedAt).getTime()) / 3_600_000);
+    if (hoursAgo <= 26) return { ok: true, detail: `${label} verified in worker container (last run ${hoursAgo}h ago)` };
+    return { ok: false, detail: `${label} unverified — no worker run in ${hoursAgo}h, worker may be down` };
   } catch (e) {
-    return { ok: false, detail: `Python not found: ${String(e)}` };
+    return { ok: false, detail: `${label} check failed: ${String(e)}` };
   }
 }
 
-function checkPlaywright(): CheckResult {
+async function checkPython(): Promise<CheckResult> {
+  try {
+    const bin = process.env.PYTHON_BIN ?? "python";
+    const out = execSync(`${bin} --version`, { timeout: 5000 }).toString().trim();
+    return { ok: true, detail: `${out} (web container)` };
+  } catch {
+    return inferWorkerRuntime("Python", "expected — slim web image has no python");
+  }
+}
+
+async function checkPlaywright(): Promise<CheckResult> {
   try {
     const bin = process.env.PYTHON_BIN ?? "python";
     execSync(`${bin} -c "import playwright"`, { timeout: 5000 });
@@ -39,9 +62,9 @@ function checkPlaywright(): CheckResult {
       path.join(homePath, "AppData/Local/ms-playwright"),
     ];
     const found = chromiumPaths.some((p) => existsSync(p));
-    return { ok: found, detail: found ? "playwright + chromium present" : "playwright installed but chromium not found" };
+    return { ok: found, detail: found ? "playwright + chromium present (web container)" : "playwright installed but chromium not found" };
   } catch {
-    return { ok: false, detail: "playwright not installed (run: pip install playwright && playwright install chromium)" };
+    return inferWorkerRuntime("Playwright + Chromium", "expected — slim web image has no playwright");
   }
 }
 
@@ -95,8 +118,8 @@ export async function GET() {
 
   const [db, python, playwright, profiles, sessions, agentFiles, lastRun] = await Promise.all([
     checkDb(),
-    Promise.resolve(checkPython()),
-    Promise.resolve(checkPlaywright()),
+    checkPython(),
+    checkPlaywright(),
     checkProfiles(),
     checkSessions(),
     Promise.resolve(checkAgentFiles()),

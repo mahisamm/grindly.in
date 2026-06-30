@@ -32,6 +32,9 @@ model User {
   slackConnected Boolean @default(false) @map("slack_connected")
   // internshala session (persistent browser profile) ready?
   internshalaConnected Boolean @default(false) @map("internshala_connected")
+  // staged-rollout grant: admin can enable Internshala auto-apply for this user
+  // even when the global beta isn't open. OR'd with email/role/INTERNSHALA_BETA_OPEN.
+  internshalaBetaAccess Boolean @default(false) @map("internshala_beta_access")
   // lifecycle: registered -> onboarding -> active -> paused
   status        String   @default("registered")
   // access role: "user" (default) | "admin". Admin-only dashboard gates on this
