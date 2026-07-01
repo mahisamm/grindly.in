@@ -16,7 +16,9 @@ export default function LoginPage() {
     if (e === "google_denied") return "Google sign-in was cancelled.";
     if (e === "google_state") return "Sign-in session expired. Please try again.";
     if (e === "google_unverified") return "Your Google email isn't verified. Verify it with Google, then try again.";
-    if (e === "google_not_configured") return "Google sign-in is temporarily unavailable.";
+    if (e === "google_token") return "Google sign-in failed: could not retrieve your profile. Please try again.";
+  if (e === "google_no_email") return "Your Google account does not have a verified email address. Please use an account with a verified email.";
+  if (e === "google_not_configured") return "Google sign-in is temporarily unavailable.";
     return "Google sign-in failed. Please try again.";
   });
 

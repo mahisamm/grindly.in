@@ -69,5 +69,6 @@ export function missingProdConfig(): string[] {
   if (!encryptionKeyValid()) miss.push("APP_ENCRYPTION_KEY (64 hex) — platform connect throws");
   if (!googleOAuthConfigured()) miss.push("GOOGLE_CLIENT_ID/SECRET — the only login method");
   if (!baseUrlConfigured()) miss.push("NEXT_PUBLIC_APP_URL — OAuth redirect + email links");
+  if (!emailConfigured()) miss.push("EMAIL_SMTP_HOST/USER/PASS -- password reset links won't be delivered without this");
   return miss;
 }

@@ -12,12 +12,17 @@ type Settings = {
 
 export default function AdminSettings() {
   const [s, setS] = useState<Settings | null>(null);
+  const [emailOk, setEmailOk] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState("");
   const [newDomain, setNewDomain] = useState("");
 
   useEffect(() => {
+    fetch("/api/health")
+      .then((r) => r.ok ? r.json() : Promise.reject(r))
+      .then((j) => setEmailOk(j.services?.email ?? false))
+      .catch(() => {});
     fetch("/api/admin/settings")
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
       .then(setS)
@@ -76,6 +81,20 @@ export default function AdminSettings() {
     <>
       <div className="mb-6 flex items-center gap-4">
         <PageTitle title="Admin settings" sub="Global controls — changes take effect immediately" />
+        {emailOk === false && (
+          <div className="mt-4 flex items-start gap-3 rounded-lg border border-[#fbbd23]/40 bg-[#fbbd23]/10 p-4 text-sm">
+            <span className="text-[#fbbd23] text-lg leading-none">!</span>
+            <div>
+              <div className="font-semibold text-[#fbbd23]">Email not configured</div>
+              <div className="mt-1 text-[#8b919c]">
+                Password reset emails won&apos;t be delivered. Set{" "}
+                <code className="text-[#e6e8eb]">EMAIL_SMTP_HOST</code>,{" "}
+                <code className="text-[#e6e8eb]">EMAIL_SMTP_USER</code>, and{" "}
+                <code className="text-[#e6e8eb]">EMAIL_SMTP_PASS</code> in your environment to enable this.
+              </div>
+            </div>
+          </div>
+        )}
         {saving && <span className="font-mono text-xs text-[#fbbd23]">Saving…</span>}
         {saved && <span className="font-mono text-xs text-[#36d399]">✓ Saved</span>}
       </div>

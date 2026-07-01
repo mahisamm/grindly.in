@@ -19,8 +19,10 @@ export default function AdminOverview() {
   const [d, setD] = useState<Overview | null>(null);
   const [err, setErr] = useState("");
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [health, setHealth] = useState<Record<string, unknown> | null>(null);
 
   const load = useCallback(() => {
+    fetch("/api/health").then((r) => r.ok ? r.json() : null).then(setHealth).catch(() => {});
     fetch("/api/admin/overview")
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
       .then((data) => { setD(data); setLastRefresh(new Date()); })
@@ -175,6 +177,41 @@ export default function AdminOverview() {
             </Panel>
           )}
         </div>
+
+      {/* System status */}
+      {health && (
+        <div className="mt-6">
+          <Panel className="p-5">
+            <div className="mb-3 font-mono text-sm font-bold text-[#8b919c] uppercase tracking-wide">System status</div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {([
+                { label: "Database", ok: !!(health as {checks?: {db?: {ok: boolean}}}).checks?.db?.ok, link: null },
+                { label: "Email", ok: !!(health as {services?: {email: boolean}}).services?.email, link: "/admin/settings" },
+                { label: "LLM", ok: !!(health as {services?: {llm: boolean}}).services?.llm, link: null },
+                { label: "Google OAuth", ok: !!(health as {services?: {googleOAuth: boolean}}).services?.googleOAuth, link: null },
+              ] as { label: string; ok: boolean; link: string | null }[]).map(({ label, ok, link }) => (
+                <div key={label} className="flex items-center gap-2 rounded bg-[#0d1117]/60 px-3 py-2">
+                  <span className={`h-2 w-2 rounded-full ${ok ? "bg-[#36d399]" : "bg-[#ff4d4d]"}`} />
+                  <span className="text-xs text-[#8b919c]">{label}</span>
+                  {!ok && link && (
+                    <Link href={link} className="ml-auto text-[10px] text-[#9db4ff] hover:underline">fix</Link>
+                  )}
+                </div>
+              ))}
+            </div>
+            {((health as {missing?: string[]}).missing ?? []).length > 0 && (
+              <div className="mt-3">
+                <div className="text-[11px] uppercase tracking-wide text-[#ff4d4d] mb-1">Missing config</div>
+                <ul className="space-y-0.5">
+                  {((health as {missing?: string[]}).missing ?? []).map((m, i) => (
+                    <li key={i} className="font-mono text-xs text-[#ff4d4d]/80">{m}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </Panel>
+        </div>
+      )}
       </div>
     </>
   );

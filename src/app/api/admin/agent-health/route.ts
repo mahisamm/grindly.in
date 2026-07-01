@@ -114,5 +114,25 @@ export async function GET() {
   ];
 
   const allOk = checks.every((c) => c.ok);
-  return NextResponse.json({ checks, allOk, checkedAt: new Date().toISOString() });
+
+  // Queue depth stats
+  const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
+  const [queueDepth, runningCount, staleCount, recentFailed] = await Promise.all([
+    prisma.agentRun.count({ where: { status: "queued" } }),
+    prisma.agentRun.count({ where: { status: "running" } }),
+    prisma.agentRun.count({ where: { status: "running", lockedAt: { lt: thirtyMinAgo } } }),
+    prisma.agentRun.findMany({
+      where: { status: "failed" },
+      orderBy: { updatedAt: "desc" },
+      take: 5,
+      select: { userId: true, error: true, updatedAt: true },
+    }),
+  ]);
+
+  return NextResponse.json({
+    checks,
+    allOk,
+    checkedAt: new Date().toISOString(),
+    queue: { queueDepth, runningCount, staleCount, recentFailed },
+  });
 }

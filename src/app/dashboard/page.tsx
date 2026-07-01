@@ -709,7 +709,17 @@ export default function Dashboard() {
             >
               Call prep ↗
             </Link>
-            <button
+            {connectedCount === 0 ? (
+              <button
+                disabled
+                onClick={() => setTab("integrations")}
+                title="Connect Internshala first to run the agent"
+                className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-muted cursor-not-allowed opacity-60"
+              >
+                Connect Internshala first
+              </button>
+            ) : (
+              <button
               onClick={() => runAgent()}
               disabled={running || connectedCount === 0}
               title={connectedCount === 0 ? "Connect Internshala first" : "Find + apply to live matches"}
@@ -717,6 +727,7 @@ export default function Dashboard() {
             >
               {running ? "Agent running…" : "Run agent"}
             </button>
+            )}
           </div>
         </div>
 

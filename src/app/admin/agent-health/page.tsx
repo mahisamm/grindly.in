@@ -4,7 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import { PageTitle } from "../ui";
 
 type Check = { id: string; label: string; ok: boolean; detail: string };
-type HealthData = { checks: Check[]; allOk: boolean; checkedAt: string };
+type HealthData = {
+  queue?: {
+    queueDepth: number;
+    runningCount: number;
+    staleCount: number;
+    recentFailed: { userId: string; error: string | null; updatedAt: string }[];
+  }; checks: Check[]; allOk: boolean; checkedAt: string };
 
 const ICONS: Record<string, string> = {
   db: "🗄️",
@@ -163,7 +169,41 @@ export default function AgentHealthPage() {
         </div>
       )}
 
-      {data && data.allOk && (
+      {data?.queue && (
+      <div className="mt-6 rounded-lg border border-[#2a3a2a]/40 bg-[#1a2a1a]/30 p-4">
+        <div className="mb-2 font-mono text-sm font-bold text-[#8b919c]">Worker Queue</div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded bg-[#0d1117]/60 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-[#8b919c]">Queued</div>
+            <div className={`text-2xl font-bold font-mono ${data.queue.queueDepth > 10 ? "text-[#fbbd23]" : "text-[#e6e8eb]"}`}>{data.queue.queueDepth}</div>
+          </div>
+          <div className="rounded bg-[#0d1117]/60 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-[#8b919c]">Running</div>
+            <div className="text-2xl font-bold font-mono text-[#36d399]">{data.queue.runningCount}</div>
+          </div>
+          <div className="rounded bg-[#0d1117]/60 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-[#8b919c]">Stale (&gt;30m)</div>
+            <div className={`text-2xl font-bold font-mono ${data.queue.staleCount > 0 ? "text-[#ff4d4d]" : "text-[#e6e8eb]"}`}>{data.queue.staleCount}</div>
+          </div>
+          <div className="rounded bg-[#0d1117]/60 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-[#8b919c]">Recent failed</div>
+            <div className={`text-2xl font-bold font-mono ${data.queue.recentFailed.length > 0 ? "text-[#ff4d4d]" : "text-[#e6e8eb]"}`}>{data.queue.recentFailed.length}</div>
+          </div>
+        </div>
+        {data.queue.recentFailed.length > 0 && (
+          <div className="mt-3 space-y-1">
+            <div className="text-[11px] uppercase tracking-wide text-[#8b919c]">Recent failures</div>
+            {data.queue.recentFailed.map((r, i) => (
+              <div key={i} className="font-mono text-xs text-[#8b919c]">
+                <span className="text-[#ff4d4d]">{r.userId.slice(0, 8)}</span>{" "}{r.error ?? "unknown"}{" "}<span className="opacity-50">{new Date(r.updatedAt).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )}
+
+    {data && data.allOk && (
         <div className="mt-8 rounded-lg border border-[#36d399]/30 bg-[#36d399]/5 p-4">
           <div className="font-mono text-sm text-[#36d399]">✓ Pipeline fully operational — agent is ready to run.</div>
         </div>

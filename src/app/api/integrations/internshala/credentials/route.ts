@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
+import { openWorkerLog } from "@/lib/workerLog";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
@@ -88,7 +89,7 @@ export async function POST(req: Request) {
     if (fs.existsSync(worker)) {
       const logDir = path.join(root, "data", "logs");
       fs.mkdirSync(logDir, { recursive: true });
-      const out = fs.openSync(path.join(logDir, `${uid}-connect.log`), "a");
+      const out = openWorkerLog(logDir, `${uid}-connect`);
       const py = process.env.PYTHON_BIN || "python";
       const child = spawn(py, [worker, "--drain"], { cwd: root, detached: true, stdio: ["ignore", out, out] });
       fs.closeSync(out);

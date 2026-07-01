@@ -63,6 +63,10 @@ export default function ApplicationsPage() {
   const [err, setErr] = useState("");
   const [outcomes, setOutcomes] = useState<Record<string, string>>({});
   const [markingId, setMarkingId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   async function markOutcome(id: string, outcome: string | null) {
     setMarkingId(id);
@@ -86,14 +90,20 @@ export default function ApplicationsPage() {
   }
 
   useEffect(() => {
-    fetch("/api/applications")
+    const params = new URLSearchParams({ page: String(page), pageSize: "20" });
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    fetch(`/api/applications?${params}`)
       .then((r) => {
         if (r.status === 401) { router.replace("/login"); return Promise.reject(null); }
         return r.ok ? r.json() : Promise.reject(r);
       })
-      .then((j) => setApps(j.applications))
+      .then((j) => {
+        setApps(j.applications);
+        setTotal(j.total ?? j.applications.length);
+        setTotalPages(j.totalPages ?? 1);
+      })
       .catch((e) => { if (e !== null) setErr("Couldn't load applications."); });
-  }, [router]);
+  }, [router, page, statusFilter]);
 
   return (
     <>
@@ -112,7 +122,27 @@ export default function ApplicationsPage() {
           </Link>
         </div>
 
-        {err && <p className="mt-8 text-danger">{err}</p>}
+        {/* Status filter buttons */}
+      <div className="mt-6 flex flex-wrap gap-2">
+        {(["all", "applied", "failed", "skipped", "matched"] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => { setStatusFilter(s); setPage(1); }}
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+              statusFilter === s
+                ? "border-brand bg-brand/10 text-brand"
+                : "border-border text-muted hover:border-brand/50"
+            }`}
+          >
+            {s.charAt(0).toUpperCase() + s.slice(1)}
+          </button>
+        ))}
+        {total > 0 && (
+          <span className="ml-auto text-xs text-muted self-center">{total} total</span>
+        )}
+      </div>
+
+      {err && <p className="mt-8 text-danger">{err}</p>}
         {!apps && !err && <p className="mt-8 text-muted">Loading…</p>}
         {apps && apps.length === 0 && (
           <div className="sticker mt-8 rounded-3xl bg-surface p-8 text-center text-muted">
@@ -252,6 +282,29 @@ export default function ApplicationsPage() {
             );
           })}
         </div>
+      
+      {/* Pagination controls */}
+      {totalPages > 1 && (
+        <div className="mt-6 flex items-center justify-center gap-3 pb-6">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted hover:border-brand/50 transition disabled:opacity-40"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-muted">
+            Page {page} of {totalPages}
+          </span>
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted hover:border-brand/50 transition disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      )}
       </main>
     </>
   );
