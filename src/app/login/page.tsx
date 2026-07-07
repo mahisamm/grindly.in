@@ -95,6 +95,13 @@ export default function LoginPage() {
 
               <p className="mt-6 text-xs text-muted">
                 By continuing you agree to let Grindly apply to jobs on your behalf within the limits you set.
+                This sign-in only verifies your identity (name and email). Connecting Gmail for
+                application tracking is a separate, optional step with its own permission request later on.
+                See our{" "}
+                <Link href="/privacy" className="underline hover:text-ink">Privacy Policy</Link>{" "}
+                and{" "}
+                <Link href="/terms" className="underline hover:text-ink">Terms of Service</Link>{" "}
+                for details.
               </p>
             </div>
           </div>
