@@ -332,6 +332,10 @@ export default function Home() {
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-5 py-8 text-sm text-muted sm:flex-row">
           <Logo size={24} />
           <div>© {new Date().getFullYear()} Grindly · Built for the intern grind.</div>
+          <nav className="flex items-center gap-4">
+            <Link href="/privacy" className="hover:text-ink hover:underline">Privacy Policy</Link>
+            <Link href="/terms" className="hover:text-ink hover:underline">Terms of Service</Link>
+          </nav>
         </div>
       </footer>
     </>

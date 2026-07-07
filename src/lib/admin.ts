@@ -17,10 +17,16 @@ export type AdminUser = { id: string; email: string; name: string | null; role: 
 
 // Owner gate — role column AND email must both match.
 // Even if another account gets role="admin" via a bug, they can't enter.
-// Set ADMIN_EMAIL in env (defaults to the bootstrap seed email).
-const OWNER_EMAIL = process.env.ADMIN_EMAIL || "mahendharsammeta21@gmail.com";
+// ADMIN_EMAIL must be set in env. No hardcoded fallback identity —
+// if it's missing, admin access is disabled rather than defaulting
+// to a bootstrap owner email baked into source.
+const OWNER_EMAIL = process.env.ADMIN_EMAIL;
+if (!OWNER_EMAIL) {
+  console.warn("[admin] ADMIN_EMAIL is not set; admin access is disabled until it is configured.");
+}
 
 async function loadAdmin(): Promise<AdminUser | null> {
+  if (!OWNER_EMAIL) return null;
   const uid = await getUid();
   if (!uid) return null;
   const user = await prisma.user.findUnique({
