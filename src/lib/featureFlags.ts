@@ -15,8 +15,14 @@ function betaEmails(): Set<string> {
   );
 }
 
-export function internshalaLoginEnabled(user: { email: string; role?: string | null }): boolean {
+export function internshalaLoginEnabled(user: {
+  email: string;
+  role?: string | null;
+  internshalaBetaAccess?: boolean | null;
+}): boolean {
   if (process.env.INTERNSHALA_BETA_OPEN === "1") return true;
   if (user.role === "admin") return true;
+  // Per-user grant toggled from the admin user page — no redeploy needed.
+  if (user.internshalaBetaAccess) return true;
   return betaEmails().has((user.email || "").toLowerCase());
 }

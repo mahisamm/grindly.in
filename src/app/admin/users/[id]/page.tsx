@@ -7,7 +7,8 @@ import { PageTitle, Panel, StatCard, Badge, fmtDate } from "../../ui";
 
 type Detail = {
   user: { id: string; email: string; name: string | null; role: string; plan: string;
-    paid: boolean; status: string; phone: string | null; slackConnected: boolean; createdAt: string };
+    paid: boolean; status: string; phone: string | null; slackConnected: boolean;
+    internshalaBetaAccess: boolean; createdAt: string };
   profile: null | {
     experienceLevel: string | null; skills: string; preferredDomains: string; preferredLocations: string;
     workMode: string; minMatchScore: number; stipendMin: number; autoApply: boolean; resumeScore: number | null; updatedAt: string;
@@ -24,6 +25,7 @@ type Action =
   | { action: "set_paid"; value: boolean }
   | { action: "set_plan"; value: string }
   | { action: "set_role"; value: string }
+  | { action: "set_integration_access"; value: boolean }
   | { action: "disconnect"; platform: string };
 
 export default function AdminUserDetail() {
@@ -107,7 +109,15 @@ export default function AdminUserDetail() {
             onClick={() => act({ action: "set_role", value: u.role === "admin" ? "user" : "admin" }, `Set role=${u.role === "admin" ? "user" : "admin"} for ${u.email}?`)}>
             {u.role === "admin" ? "revoke admin" : "grant admin"}
           </ActionBtn>
+          <ActionBtn disabled={busy}
+            onClick={() => act({ action: "set_integration_access", value: !u.internshalaBetaAccess }, `${u.internshalaBetaAccess ? "Revoke" : "Grant"} Internshala integration access for ${u.email}?`)}>
+            {u.internshalaBetaAccess ? "revoke integration access" : "grant integration access"}
+          </ActionBtn>
         </div>
+        <p className="mt-2 font-mono text-[11px] text-[#5a606b]">
+          Integration access: <span className={u.internshalaBetaAccess ? "text-[#3ddc84]" : "text-[#8b919c]"}>{u.internshalaBetaAccess ? "granted" : "not granted"}</span>
+          {" "}— lets this user connect Internshala in the beta even when the global rollout is closed.
+        </p>
       </Panel>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-2">

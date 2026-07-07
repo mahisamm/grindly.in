@@ -14,6 +14,7 @@ const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("set_paid"), value: z.boolean() }),
   z.object({ action: z.literal("set_plan"), value: z.enum(["free", "starter", "pro"]) }),
   z.object({ action: z.literal("set_role"), value: z.enum(["user", "admin"]) }),
+  z.object({ action: z.literal("set_integration_access"), value: z.boolean() }),
   z.object({ action: z.literal("disconnect"), platform: z.string().min(1).max(40) }),
 ]);
 
@@ -48,6 +49,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         return NextResponse.json({ error: "Cannot change your own role" }, { status: 400 });
       }
       await prisma.user.update({ where: { id }, data: { role: body.value } });
+      break;
+    case "set_integration_access":
+      await prisma.user.update({ where: { id }, data: { internshalaBetaAccess: body.value } });
       break;
     case "disconnect":
       await prisma.userIntegration.updateMany({
