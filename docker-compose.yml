@@ -33,7 +33,7 @@ services:
     image: grindly-web
     command: sh -c "npx prisma db push --skip-generate && node scripts/seed-admin.mjs"
     environment:
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_ENC}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
     depends_on:
@@ -47,7 +47,7 @@ services:
       dockerfile: Dockerfile
     image: grindly-web
     environment:
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_ENC}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
@@ -83,7 +83,7 @@ services:
       dockerfile: Dockerfile.worker
     environment:
       INTERNPILOT_DB: ""            # unset → db.py uses the Postgres DATABASE_URL
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_ENC}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
       INTERNPILOT_HEADLESS: "0"     # headed inside Xvfb (Dockerfile.worker) — far harder to bot-detect than headless
       # Persistent login sessions live here, on the shared appdata volume, so the
