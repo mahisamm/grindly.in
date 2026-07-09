@@ -145,13 +145,47 @@ def test_mark_failed_permanently_after_max_attempts():
     for _ in range(3):
         run_queue.claim_next("w1")
         c = _get_conn()
-        # Reset to queued to allow next iteration to re-claim
-        c.execute("UPDATE agent_runs SET status='queued' WHERE id=?", (rid,))
+        # Reset to queued and clear updated_at so the next claim_next() isn't
+        # blocked by the post-failure backoff window — that's covered
+        # separately below, not what this test is about.
+        c.execute("UPDATE agent_runs SET status='queued', updated_at=0 WHERE id=?", (rid,))
         c.commit()
     run_queue.mark_failed(rid, "persistent error")
     c = _get_conn()
     row = c.execute("SELECT status FROM agent_runs WHERE id=?", (rid,)).fetchone()
     assert row["status"] == "failed"
+
+
+# ─── backoff ──────────────────────────────────────────────────────────────
+
+def test_claim_next_skips_job_within_backoff_window():
+    rid = run_queue.enqueue("user_1")
+    run_queue.claim_next("w1")                      # attempts=1
+    run_queue.mark_failed(rid, "transient error")    # requeued, updated_at=now
+    job = run_queue.claim_next("w2")
+    assert job is None   # 2min * 1 attempt backoff hasn't elapsed yet
+
+
+def test_claim_next_reclaims_job_after_backoff_elapses():
+    rid = run_queue.enqueue("user_1")
+    run_queue.claim_next("w1")                      # attempts=1
+    run_queue.mark_failed(rid, "transient error")
+    c = _get_conn()
+    c.execute(
+        "UPDATE agent_runs SET updated_at=? WHERE id=?",
+        (_db_module.now_db() - run_queue.BACKOFF_BASE_MS - 1000, rid),
+    )
+    c.commit()
+    job = run_queue.claim_next("w2")
+    assert job is not None
+    assert job["attempts"] == 2
+
+
+def test_claim_next_never_backoff_blocked_on_first_attempt():
+    # A freshly enqueued job (attempts=0) must always be immediately claimable.
+    run_queue.enqueue("user_1")
+    job = run_queue.claim_next("w1")
+    assert job is not None
 
 
 # ─── reclaim_stale ────────────────────────────────────────────────────────

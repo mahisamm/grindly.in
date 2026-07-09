@@ -14,7 +14,7 @@ const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("set_paid"), value: z.boolean() }),
   z.object({ action: z.literal("set_plan"), value: z.enum(["free", "starter", "pro"]) }),
   z.object({ action: z.literal("set_role"), value: z.enum(["user", "admin"]) }),
-  z.object({ action: z.literal("disconnect"), platform: z.string().min(1).max(40) }),
+  z.object({ action: z.literal("disconnect"), platform: z.enum(["linkedin", "internshala", "naukri", "unstop", "indeed", "gmail"]) }),
 ]);
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {

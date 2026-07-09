@@ -3,6 +3,12 @@
 # before web/worker start. See PHASE3_DEPLOY_REPORT.md for the deploy runbook.
 # Redis is provisioned for when the queue moves off the DB to BullMQ/Celery.
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -17,11 +23,23 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    logging: *default-logging
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
+    logging: *default-logging
     restart: unless-stopped
 
   # One-shot: create/refresh the schema (prisma db push) + seed the admin, then
@@ -39,6 +57,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    logging: *default-logging
     restart: "no"
 
   web:
@@ -57,6 +76,7 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       GROQ_API_KEY: ${GROQ_API_KEY}
+      SENTRY_DSN: ${SENTRY_DSN:-}
     expose:
       - "3000"
     volumes:
@@ -67,6 +87,12 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "1.0"
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,13 +108,66 @@ services:
       INTERNPILOT_DB: ""            # unset → db.py uses the Postgres DATABASE_URL
       DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
-      INTERNPILOT_HEADLESS: "1"     # headless — there's no display on a server
+      # "0" (headed) — NOT "1". Dockerfile.worker runs Chromium headed inside
+      # an Xvfb virtual display specifically to eliminate headless-mode JS
+      # probes (navigator.webdriver leaks, missing GPU renderer, etc — see
+      # that file's comment). Setting this to "1" would launch real headless
+      # Chromium instead, silently defeating the entire point of Xvfb while
+      # still paying its startup cost — this was found and fixed as a bug.
+      INTERNPILOT_HEADLESS: "0"
       GRINDLY_SPREAD_APPLIES: "1"   # human-pacing: 5-15 min gap between applies
       GROQ_API_KEY: ${GROQ_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       SENTRY_DSN: ${SENTRY_DSN:-}
     deploy:
       replicas: 2  # horizontal browser-worker fleet; per-user lock prevents double-apply
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'worker.py --serve' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
+    volumes:
+      - appdata:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Remote-browser connect service — lets a hosted user (no local machine, no
+  # screen) log into a job platform for real by watching/driving a live
+  # browser stream in their dashboard. Single replica: one shared Xvfb
+  # display, one session at a time (see agent/connect_service.py). Only
+  # reachable from inside the compose network — Caddy proxies the public
+  # /connect-ws/ path to it; it is never given a host port mapping.
+  connect:
+    build:
+      context: .
+      dockerfile: Dockerfile.connect
+    environment:
+      INTERNPILOT_DB: ""
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          memory: 768M
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'connect_service.py' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
     volumes:
       - appdata:/app/data
     depends_on:
@@ -111,22 +190,40 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddydata:/data
       - caddyconfig:/config
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
+    logging: *default-logging
     depends_on:
       - web
     restart: unless-stopped
 
-  # Daily pg_dump → /backup, 7-day retention. Mount a host dir or named volume.
+  # Daily pg_dump → /backup, 7-day retention, plus a restore drill that loads
+  # each dump into a throwaway database and records the result in
+  # backup_health — workerWatchdog.ts alerts if a cycle goes missing or the
+  # restore fails, instead of finding out only when someone needs it.
   backup:
     image: postgres:16-alpine
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD}
     entrypoint: []
-    command:
-      - "sh"
-      - "-c"
-      - "while true; do sleep 86400 && pg_dump -h postgres -U grindly grindly | gzip > /backup/grindly_$(date +%Y%m%d_%H%M%S).sql.gz && find /backup -name '*.sql.gz' -mtime +7 -delete && echo '[backup] daily dump done'; done"
+    command: ["sh", "/scripts/backup-drill.sh"]
     volumes:
       - pgbackup:/backup
+      - ./scripts/backup-drill.sh:/scripts/backup-drill.sh:ro
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy

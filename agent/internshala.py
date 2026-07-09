@@ -26,7 +26,9 @@ import stealth
 
 BASE = "https://internshala.com"
 
-PROFILE_DIR = os.path.join(os.path.dirname(__file__), "browser_profile", "shared", "internshala")
+# Under data/ (not agent/) so it lands on the persisted appdata volume —
+# otherwise every worker container restart wipes all saved logins.
+PROFILE_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "browser_profile", "shared", "internshala")
 
 _contexts: dict = {}
 
@@ -34,7 +36,7 @@ _contexts: dict = {}
 def _profile_dir(uid: str) -> str:
     if not uid:
         return PROFILE_DIR
-    return os.path.join(os.path.dirname(__file__), "browser_profile", uid, "internshala")
+    return os.path.join(os.path.dirname(__file__), "..", "data", "browser_profile", uid, "internshala")
 
 
 def _context(uid: str = ""):
@@ -379,11 +381,9 @@ def apply(
         _human_click(page, submit)
         page.wait_for_timeout(random.randint(2000, 3500))
 
-        if (page.query_selector(":text('Application sent')")
-                or page.query_selector(":text('successfully')")
-                or page.query_selector(":text('Thank you')")):
-            return "applied", "submitted via Internshala"
-        return "applied", "submitted (confirmation not detected)"
+        return safety.classify_submit(page, [
+            ":text('Application sent')", ":text('successfully')", ":text('Thank you')",
+        ])
 
     except Exception as e:
         err = str(e)

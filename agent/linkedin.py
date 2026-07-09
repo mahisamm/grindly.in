@@ -31,7 +31,9 @@ _contexts: dict = {}
 
 
 def _profile_dir(uid: str) -> str:
-    return os.path.join(os.path.dirname(__file__), "browser_profile", uid or "shared", "linkedin")
+    # Under data/ (not agent/) so it lands on the persisted appdata volume —
+    # otherwise every worker container restart wipes all saved logins.
+    return os.path.join(os.path.dirname(__file__), "..", "data", "browser_profile", uid or "shared", "linkedin")
 
 
 def _context(uid: str = ""):
@@ -320,9 +322,9 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                 _rand_delay(page, 1.5, 2.5)
                 return "applied", "submitted via LinkedIn Easy Apply"
 
-        if page.query_selector(":text('Application submitted'), :text('application was sent')"):
-            return "applied", "submitted via LinkedIn Easy Apply"
-        return "applied", "submitted on LinkedIn (confirmation not detected)"
+        return safety.classify_submit(page, [
+            ":text('Application submitted')", ":text('application was sent')",
+        ])
     except Exception as e:  # noqa: BLE001
         try:
             safety.screenshot(page, uid, f"exception_li_{job.get('external_id','')}")

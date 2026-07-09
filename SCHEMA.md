@@ -5,13 +5,16 @@
 ```
 User (1) ──→ (1) Profile
   │
-  ├─→ (N) Application
+  ├─→ (N) Application ──→ (1) ResumeVersion (optional snapshot)
+  │        └─→ (1) Job (optional)
   │
   ├─→ (N) Report
-  │
-  └─→ (N) UserIntegration
-
-Job (1) ──→ (N) Application
+  ├─→ (N) UserIntegration
+  ├─→ (N) ResumeVersion
+  ├─→ (N) AuditLog
+  ├─→ (N) Notification
+  ├─→ (N) AgentRun
+  └─→ (N) PlatformCredential
 ```
 
 ---
@@ -108,14 +111,22 @@ Per-run job application attempt (matched, applied, skipped, or failed).
 | `company` | String | Company name |
 | `url` | String? | Job listing URL |
 | `match_score` | Integer | 0–100 agent scoring |
-| `status` | String | "matched" \| "applied" \| "skipped" \| "failed" |
-| `reason` | String? | Why matched / skipped / failed |
+| `status` | ApplyStatus | matched \| approved \| submitting \| applied \| skipped \| failed \| needs_review |
+| `reason` | String? | Why matched / skipped / failed (free text) |
+| `failure_reason` | FailureReason? | Machine reason on failure — see [src/lib/applyState.ts](src/lib/applyState.ts) |
+| `screenshot_path` | String? | Proof image of the submit attempt |
+| `resume_version_id` | String (FK)? | Exact ResumeVersion sent for this application |
 | `applied_at` | DateTime? | When actually applied (if status=applied) |
+| `outcome` | Outcome? | interview \| offer \| rejected \| no_response (user-reported) |
+| `outcome_at` | DateTime? | When the outcome was reported |
 | `created_at` | DateTime | Record creation timestamp |
 
 **Relations:**
 - Belongs to User (cascade delete)
 - Belongs to Job (optional, nullable)
+- Belongs to ResumeVersion (optional, nullable)
+
+**Indexes:** `userId`, `[userId, status]`, `status`, `jobId`, `resumeVersionId`, `createdAt` — this is the most-queried table (dashboard, admin overview, per-platform fail-rate stats), so every common filter/sort column is indexed.
 
 **Denormalization:** job_title, company, url are copied from Job table for query speed and archive purposes.
 
@@ -163,6 +174,86 @@ Daily run summary sent to user (Slack, email, or dashboard).
 
 **Relations:**
 - Belongs to User (cascade delete)
+
+---
+
+### `resume_versions`
+Immutable snapshot of the exact resume sent for one application — answers "which resume did the recruiter see?" Never mutated after create.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | String (cuid) | Primary key |
+| `user_id` | String (FK) | Owner |
+| `label` | String | Human label, e.g. "Frontend Dev @ Razorpay" |
+| `job_title` / `company` | String? | Target role context |
+| `text` | String | Exact tailored resume text sent |
+| `file_path` | String? | Path to the exact PDF sent |
+| `skills_claimed` | String (JSON) | Skills surfaced for this specific role |
+| `base_skills` | String (JSON) | Master skills at time of send (truthfulness reference — see `agent/resume_ai.py`) |
+| `created_at` | DateTime | Creation timestamp |
+
+**Relations:** Belongs to User (cascade delete); has many Applications. **Index:** `userId`.
+
+---
+
+### `audit_logs`
+Append-only audit trail — reconstruct what auth/agent did, for disputes.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | String (cuid) | Primary key |
+| `user_id` | String (FK)? | Nullable — some events are pre-auth |
+| `action` | String | login \| otp_issued \| otp_throttled \| apply \| apply_failed \| firewall_block \| session_expired \| consent \| high_failure_rate \| ... |
+| `target` | String? | Job URL / platform / phone-mask / etc |
+| `detail` | String? | Freeform or JSON |
+| `created_at` | DateTime | Event timestamp |
+
+**Indexes:** `userId`, `action`.
+
+---
+
+### `agent_runs`
+DB-backed run queue — gives retries, per-user locking, and idempotent resume without needing Redis. `worker.py --serve`/`--drain` claims queued rows transactionally.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | String (cuid) | Primary key |
+| `user_id` | String (FK) | Owner |
+| `mode` | RunMode | mock \| live \| analyze |
+| `status` | RunStatus | queued \| running \| done \| failed \| cancelled |
+| `attempts` / `max_attempts` | Integer | Retry bookkeeping (default max 3) |
+| `locked_by` / `locked_at` | String? / DateTime? | Worker instance holding the row |
+| `error` | String? | Failure detail |
+| `result` | String? | JSON `{applied,matched,failed}` |
+| `created_at` / `updated_at` | DateTime | |
+
+**Indexes:** `status`, `userId`.
+
+---
+
+### `platform_credentials`
+Encrypted-at-rest platform credentials. Plaintext is **never** stored — ciphertext is AES-256-GCM (`src/lib/crypto.ts` / `agent/secret_box.py`).
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | String (cuid) | Primary key |
+| `user_id` | String (FK) | Owner |
+| `platform` | String | Platform name (includes "gmail" for the Gmail OAuth refresh token, in addition to the 5 apply platforms) |
+| `ciphertext` | String | `base64(nonce).base64(ciphertext+tag)` |
+| `updated_at` | DateTime | |
+
+**Constraints:** unique `(userId, platform)`.
+
+---
+
+### `notifications`, `otp_tokens`, `otp_attempts`, `password_reset_tokens`, `rate_limit_entries`
+Supporting tables for delivery tracking and DB-backed (multi-instance-safe) counters that replaced in-process `Map`s:
+
+- **`notifications`** — tiered notification log (`tier`: urgent \| digest; `channel`: slack \| email \| console), indexed on `userId`.
+- **`otp_tokens`** — phone OTP codes with expiry, indexed on `phone`.
+- **`otp_attempts`** — brute-force counter per phone (`OtpAttempt`), unique + indexed on `phone`.
+- **`password_reset_tokens`** — 15-minute single-use tokens, unique `tokenHash`, indexed on `userId`.
+- **`rate_limit_entries`** — generic rate-limit counters keyed `"forgot:<ip>"` / `"otp:<phone>"` / etc, unique + indexed on `key`.
 
 ---
 
@@ -259,18 +350,39 @@ Daily run summary sent to user (Slack, email, or dashboard).
 
 ---
 
-## Indexes (SQLite)
+## Enums (native Postgres enums)
 
-Default Prisma indexes:
-- `users.email` (unique)
-- `user_integrations.userId_platform` (unique)
-- `jobs.source_externalId` (unique)
-- Foreign key columns for query performance
+`status`/`role`/`plan`/`platform`/etc used to be bare `String` columns with the
+valid value set only documented in comments — nothing stopped a typo'd value
+from being written. They're now real Prisma/Postgres enums, verified against
+actual read/write call sites in `src/` and `agent/` (not just doc comments):
+`Role`, `PlanTier`, `UserStatus`, `Platform`, `IntegrationStatus`,
+`ApplyStatus`, `FailureReason`, `Outcome`, `RunMode`, `RunStatus`. See
+`prisma/schema.prisma` for the exact member lists. `ApplyStatus` and
+`FailureReason` are mirrored with the Python agent via
+`src/lib/applyState.ts` ↔ `agent/safety.py` — keep both in sync if the set
+ever changes.
 
-Optional (not yet added):
-- `applications.userId, status` — dashboard filters
-- `applications.createdAt DESC` — recent apps sorting
-- `reports.userId, date DESC` — daily reports lookup
+## Indexes (Postgres)
+
+Postgres does **not** auto-index foreign-key columns — every FK below is
+explicitly indexed, not just the default unique constraints:
+- `users.email`, `users.googleId`, `users.phone` (unique)
+- `user_integrations.(userId, platform)` (unique)
+- `platform_credentials.(userId, platform)` (unique)
+- `jobs.(source, externalId)` (unique)
+- `applications.userId`, `applications.(userId, status)`, `applications.status`,
+  `applications.jobId`, `applications.resumeVersionId`, `applications.createdAt`
+- `resume_versions.userId`, `audit_logs.userId`, `audit_logs.action`,
+  `agent_runs.status`, `agent_runs.userId`, `notifications.userId`
+- `otp_tokens.phone`, `otp_attempts.phone` (unique), `password_reset_tokens.userId`,
+  `password_reset_tokens.tokenHash` (unique), `rate_limit_entries.key` (unique)
+
+No `prisma/migrations/` history exists yet — schema changes are applied via
+`prisma db push` (see `docker-compose.yml`'s `migrate` service and
+`prisma/MIGRATE_POSTGRES.md`). Baselining a real migration history against
+the live prod DB is a manual follow-up, not something to generate blind
+against an unknown prod state.
 
 ---
 

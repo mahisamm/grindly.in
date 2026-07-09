@@ -65,6 +65,12 @@ if _SENTRY_DSN:
     except ImportError:
         log.warning("SENTRY_DSN set but sentry-sdk not installed — pip install sentry-sdk")
 
+# Ops alert channel for things the team needs to see (not the end user) — high
+# platform failure rates, worker crashes. Defaults to a stub channel name;
+# with SLACK_BOT_TOKEN unset this just appends to data/slack-outbox.jsonl like
+# everything else notify.send() writes.
+_OPS_CHANNEL = os.environ.get("OPS_SLACK_CHANNEL", "ops-alerts")
+
 
 def _classify_failure(why: str) -> str:
     """Map a freeform apply failure message to an enumerated FAILURE_REASON."""
@@ -83,8 +89,84 @@ def _classify_failure(why: str) -> str:
         return safety.FAILURE_REASON.TIMEOUT
     return safety.FAILURE_REASON.EXCEPTION
 
+
+# IST by default — a human job-searching isn't online at 3am. Env-overridable
+# so a non-India launch can shift the window without a code change (the deeper
+# fix, per-user timezone, needs profile tz data we don't collect yet).
+HUMAN_HOURS_START = int(os.environ.get("GRINDLY_HUMAN_HOURS_START", "9"))
+HUMAN_HOURS_END = int(os.environ.get("GRINDLY_HUMAN_HOURS_END", "21"))
+
+
+def _in_human_hours(hour: int) -> bool:
+    return HUMAN_HOURS_START <= hour < HUMAN_HOURS_END
+
+
+def _daily_cap_for_today(uid: str, plan_cap: int, today: str | None = None) -> int:
+    """Human-pace ceiling: a person applying manually sends roughly 5-10
+    applications a day, not the plan's raw 10-30/day allowance. Seeded by
+    uid+date so repeat runs the same day don't reroll, but the number varies
+    day to day and user to user — an identical count every single day is
+    itself a bot signal. Never exceeds the plan's own cap."""
+    today = today or datetime.date.today().isoformat()
+    rng = random.Random(f"{uid}:{today}:cap")
+    return min(plan_cap, rng.randint(5, 10))
+
+
+def _platforms_for_today(uid: str, available: list[str], today: str | None = None) -> list[str]:
+    """Rotate which connected platforms actually get touched today. Hitting
+    all 5 platforms every single day is itself a bot signal — a human
+    job-searching doesn't check every site daily. Seeded by uid+date so
+    re-runs the same day pick the same platforms, but the set rotates daily
+    and differs per user (so many users don't all hit the same platform on
+    the same day).
+
+    Biased toward 2 platforms (not 1) when 2+ are connected: the daily cap
+    is 5-10 applies, and dumping all of that onto a single site in one day
+    looks more bot-like per-platform than splitting it across two."""
+    if not available:
+        return []
+    today = today or datetime.date.today().isoformat()
+    rng = random.Random(f"{uid}:{today}:platforms")
+    n = min(len(available), rng.choice([1, 2, 2]))
+    ordered = sorted(available)
+    rng.shuffle(ordered)
+    return ordered[:n]
+
+
+def _requires_approval(src: str, auto_apply: bool) -> bool:
+    """True if a match must land in the matched->approve queue instead of an
+    immediate live submit. ADVERSARIAL_PLATFORMS forces this regardless of the
+    user's auto_apply setting — a bot submitting on a platform whose ToS bans
+    bots is what gets accounts banned; that risk isn't something a settings
+    toggle should be able to waive."""
+    return src in ADVERSARIAL_PLATFORMS or not auto_apply
+
+
+def _cooldown_active(row: dict | None, cutoff) -> bool:
+    """True if an integration row is still inside its post-challenge cooldown.
+    Pure function (no DB access) so it's testable with plain dicts: caller
+    passes `db.get_integration(uid, src)` and `db.time_ago_db(CHALLENGE_COOLDOWN_MS)`."""
+    if not row or row.get("status") != "challenge_detected":
+        return False
+    updated_at = row.get("updated_at")
+    if updated_at is None:
+        return False
+    return updated_at >= cutoff
+
 # Source priority order — agent applies across platforms in this sequence.
 SOURCE_PRIORITY = ["linkedin", "internshala", "naukri", "unstop", "indeed"]
+
+# Platforms whose ToS prohibits automated submission (all 5 we currently
+# integrate — none of them are ATS-hosted company pages that welcome bots).
+# For these, the bot is never allowed to click the final submit button on its
+# own: it fills nothing eagerly, scores the job, and files it as "matched" so
+# a human has to tap Approve in the dashboard before anything gets sent. That
+# single human tap is what keeps the account off the hook for automation —
+# a bot acting on standing permission is exactly what gets accounts banned;
+# a bot acting on a specific human decision per job is not. If a
+# non-adversarial ATS integration (Greenhouse/Lever/Workday) is ever added,
+# it belongs outside this set and can stay fully automatic.
+ADVERSARIAL_PLATFORMS = frozenset(SOURCE_PRIORITY)
 
 # --- Beta safety rails -------------------------------------------------------
 # Two independent hard caps that sit *under* the user's plan cap. They exist so a
@@ -99,6 +181,18 @@ SAFETY_CAP_PER_RUN = int(os.environ.get("GRINDLY_CAP_PER_RUN", "0"))
 # Each successful apply pauses 5-15 min before the next one.
 _SPREAD_APPLIES = os.environ.get("GRINDLY_SPREAD_APPLIES", "0") == "1"
 _SPREAD_GAP_SEC = (300, 900)
+# Baseline pacing floor — applies after every attempt (success, fail, or
+# ambiguous), unconditionally. _SPREAD_GAP_SEC above is an extra long pause
+# layered on top of this for successes only; this floor exists so a run
+# doesn't fire attempts back-to-back at machine speed on any outcome, which is
+# itself a bot tell independent of spread mode.
+_BASE_PACE_SEC = (3, 8)
+
+# CAPTCHA/challenge circuit breaker — a challenge means the site already
+# flagged us as a bot; hitting it again immediately is how accounts get
+# banned. Once seen, stop attempting that platform for the rest of this run
+# AND skip it on future runs until the cooldown elapses.
+CHALLENGE_COOLDOWN_MS = 6 * 60 * 60 * 1000  # 6h
 
 # Directory for per-job tailored resume PDFs
 _AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -121,7 +215,7 @@ def build_plan(profile: dict, skills: list[str], cap: int) -> dict:
         "locations": _jlist(profile.get("preferred_locations")),
         "work_mode": profile.get("work_mode") or "any",
         "stipend_min": profile.get("stipend_min") or 0,
-        "min_match_score": profile.get("min_match_score") or 55,
+        "min_match_score": profile.get("min_match_score") or 65,
         "max_per_day": cap,
         "auto_apply": bool(profile.get("auto_apply")),
         "excluded": _jlist(profile.get("excluded_companies")),
@@ -216,7 +310,7 @@ def _scrape_jd_if_available(src: str, mod, url: str, uid: str) -> str:
 
 def _ist_hour() -> int:
     """Current hour in IST (UTC+5:30) — no external dependency."""
-    utc = datetime.datetime.utcnow()
+    utc = datetime.datetime.now(datetime.timezone.utc)
     ist = utc + datetime.timedelta(hours=5, minutes=30)
     return ist.hour
 
@@ -241,10 +335,17 @@ def _fetch_live(source: str, mod, domains: list[str], limit: int, uid: str) -> l
 def _fetch_source_all_kw(
     src: str, mod, kw_sets: list[list[str]], per_kw: int, uid: str
 ) -> tuple[str, list[dict]]:
-    """Fetch one platform across all keyword sets; dedup by external_id. Thread-safe — each platform has isolated browser context."""
+    """Fetch one platform across all keyword sets; dedup by external_id. Thread-safe — each platform has isolated browser context.
+
+    Firing every search back-to-back the instant login completes is itself a
+    bot tell independent of apply pacing — a human tries one search term,
+    looks at results, then tries the next. A small gap between searches
+    matches that rhythm without materially slowing the run."""
     seen_eids: set[str] = set()
     jobs: list[dict] = []
-    for kw_list in kw_sets:
+    for i, kw_list in enumerate(kw_sets):
+        if i > 0:
+            time.sleep(random.uniform(*_BASE_PACE_SEC))
         for j in _fetch_live(src, mod, kw_list, per_kw + 5, uid):
             eid = j.get("external_id") or j.get("url", "")
             if eid and eid not in seen_eids:
@@ -303,8 +404,8 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     name = user.get("name") or (user.get("email") or "").split("@")[0]
     channel = user.get("slack_channel") or user.get("slack_user_id") or "demo-dm"
 
-    cap = db.get_plan_cap(uid)
-    log.info("=== run for %s (%s) mode=%s cap=%d/day ===", name, uid, mode, cap)
+    cap = _daily_cap_for_today(uid, db.get_plan_cap(uid))
+    log.info("=== run for %s (%s) mode=%s cap=%d/day (human-pace) ===", name, uid, mode, cap)
     db.add_audit("run_start", user_id=uid, detail=f"mode={mode} cap={cap}")
     # consent trace: auto-apply submits on the user's behalf — record whether
     # they explicitly consented (profile.auto_apply_consent_at). Prototype only
@@ -368,16 +469,36 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
         "plan: domains=%s threshold=%d cap=%d IST=%dh",
         plan["domains"], plan["min_match_score"], plan["max_per_day"], ist_h,
     )
-    if not (8 <= ist_h < 20):
-        log.info("outside IST business hours (%dh) — apply delays will be longer", ist_h)
+
+    # Human-hours gate — a real job-seeker isn't browsing LinkedIn at 3am.
+    # Running live outside a plausible daytime window is itself a bot tell,
+    # independent of pacing within the run. Mock mode is unaffected (no
+    # platform is actually touched).
+    if mode == "live" and not _in_human_hours(ist_h):
+        msg = (
+            f"It's outside normal hours right now (IST {ist_h}h) — I only search and apply "
+            f"during the day ({HUMAN_HOURS_START}:00-{HUMAN_HOURS_END}:00 IST) to keep this "
+            f"looking like a real person, not a bot running around the clock. Open the "
+            f"dashboard and run again during the day."
+        )
+        log.info("deferred: outside human hours (IST %dh)", ist_h)
+        notify.send(channel, f":clock3: {msg}")
+        return {"deferred": "outside_human_hours", "hour_ist": ist_h}
 
     # 3. fetch listings
     all_jobs: list[dict] = []
     source_modules: dict = {}
+    # All platforms with a live session — distinct from the rotated subset we
+    # *discover* on today. Approved-application submits (4a) and the
+    # account-wide challenge breaker both need every connected platform, not
+    # just today's rotation, so this is hoisted to function scope.
+    connected_platforms: list[str] = []
 
     if mode == "live":
-        connected = db.get_connected_platforms(uid)
-        active_sources = [s for s in SOURCE_PRIORITY if s in connected]
+        connected_platforms = db.get_connected_platforms(uid)
+        active_sources = _platforms_for_today(uid, [s for s in SOURCE_PRIORITY if s in connected_platforms])
+        if active_sources:
+            log.info("platform rotation today: %s (connected: %s)", active_sources, connected_platforms)
 
         if not active_sources:
             msg = (
@@ -436,6 +557,37 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     per_src_applied: dict[str, int] = {}   # per-platform applies this run (bot-pace guard)
     per_src_failed:  dict[str, int] = {}   # per-platform failures this run (reliability monitor)
     needs_login_srcs: set[str] = set()     # platforms whose session died mid-run
+    challenged_srcs: set[str] = set()      # platforms that flagged a captcha/challenge this run
+
+    def _platform_blocked(src: str) -> bool:
+        """True if this platform should be skipped: challenged already this run,
+        or still cooling down from a challenge on a previous run."""
+        if src in challenged_srcs:
+            return True
+        return _cooldown_active(db.get_integration(uid, src), db.time_ago_db(CHALLENGE_COOLDOWN_MS))
+
+    def _flag_challenge(src: str):
+        challenged_srcs.add(src)
+        db.set_integration_status(uid, src, "challenge_detected")
+        db.add_audit("challenge_detected", user_id=uid, target=src)
+        log.warning("challenge/captcha on %s — pausing this platform for the rest of the run", src)
+
+        # Account-wide pause: a challenge on one platform often means the
+        # automation pattern itself got noticed, not just that one site's
+        # rules — treat it as a signal about this account, not this site.
+        # Flags EVERY connected platform (not just today's rotated subset),
+        # so the cross-run cooldown applies account-wide the way the name
+        # says — a platform not touched today still gets paused on its next
+        # rotation. Reuses the same per-platform block/cooldown machinery.
+        for other in connected_platforms:
+            if other != src and other not in challenged_srcs:
+                challenged_srcs.add(other)
+                db.set_integration_status(uid, other, "challenge_detected")
+                db.add_audit("challenge_detected", user_id=uid, target=other,
+                             detail=f"account-wide pause triggered by {src}")
+        if len(challenged_srcs) > 1:
+            log.warning("account-wide pause: %s flagged, also pausing %s",
+                       src, sorted(challenged_srcs - {src}))
 
     _FAIL_RATE_WARN = 0.5   # warn when >50% of attempts on a platform fail
 
@@ -481,7 +633,26 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             if remaining <= 0:
                 break
             src = app_row.get("source") or ""
-            if src not in source_modules:
+            # A user tapped Approve on this — it MUST send, regardless of
+            # today's discovery rotation. Rotation only limits which sites we
+            # *scrape* for new jobs; it must never strand an already-approved
+            # application (that would silently break the one-tap promise).
+            # So load the platform module on demand for any connected
+            # platform, even one not in today's rotated source_modules.
+            if src not in connected_platforms:
+                # Platform genuinely not connected (session gone / never set) —
+                # can't submit; leave it approved for a run where it's connected.
+                continue
+            mod = source_modules.get(src)
+            if mod is None:
+                mod = _load_module(src)
+                if mod is None:
+                    continue
+                source_modules[src] = mod  # so end-of-run close() cleans it up too
+            if _platform_blocked(src):
+                db.update_application_status(
+                    app_row["id"], "matched", f"{src} paused — captcha/challenge cooldown active",
+                )
                 continue
             job = {
                 "source": src,
@@ -503,6 +674,8 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             except Exception as e:  # noqa: BLE001
                 status, why = "failed", f"exception: {str(e)[:100]}"
             fr = _classify_failure(why) if status == "failed" else None
+            if fr == safety.FAILURE_REASON.CAPTCHA:
+                _flag_challenge(src)
             db.update_application_status(
                 app_row["id"], status, why, resume_version_id=vid, failure_reason=fr
             )
@@ -514,6 +687,7 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 remaining -= 1
                 per_src_applied[src] = per_src_applied.get(src, 0) + 1
                 applied_keys.add((job["company"].lower(), job["title"].lower()[:40]))
+            time.sleep(random.uniform(*_BASE_PACE_SEC))
 
     # 4b. Score fresh listings
     scored = []
@@ -558,11 +732,17 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
 
         matched += 1
 
-        if not plan["auto_apply"]:
+        if _requires_approval(src, plan["auto_apply"]):
+            approval_reason = (
+                f"{reason} — ready to send, tap Approve (final step is manual "
+                f"on {src} to keep your account safe)"
+                if src in ADVERSARIAL_PLATFORMS
+                else f"{reason} — awaiting your OK"
+            )
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
-                reason=f"{reason} — awaiting your OK", applied=False,
+                reason=approval_reason, applied=False,
             )
             continue
 
@@ -571,6 +751,14 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
                 reason=f"{reason} — daily cap reached", applied=False,
+            )
+            continue
+
+        if _platform_blocked(src):
+            db.add_application(
+                uid, job_id=job_id, title=job["title"], company=job["company"],
+                url=job["url"], score=score, status="matched",
+                reason=f"{reason} — {src} paused (captcha/challenge cooldown)", applied=False,
             )
             continue
 
@@ -644,15 +832,36 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="skipped", reason=why, applied=False,
             )
+        elif status == "needs_review":
+            # Submit click registered but we couldn't confirm the outcome — do NOT
+            # count this as a success (would misreport accuracy) or a failure
+            # (would skew the per-platform fail-rate warning). Spend the daily
+            # budget slot and dedup it like a real attempt so we never re-click
+            # an already-submitted form, but surface it for the user to verify.
+            remaining -= 1
+            per_src_applied[src] = per_src_applied.get(src, 0) + 1
+            applied_keys.add(dedup_key)
+            db.add_application(
+                uid, job_id=job_id, title=job["title"], company=job["company"],
+                url=job["url"], score=score, status="needs_review", reason=why,
+                applied=False, resume_version_id=vid,
+            )
+            db.add_audit("apply_needs_review", user_id=uid, target=job.get("url"), detail=why[:120])
         else:
             failed += 1
             per_src_failed[src] = per_src_failed.get(src, 0) + 1
+            fr = _classify_failure(why)
+            if fr == safety.FAILURE_REASON.CAPTCHA:
+                _flag_challenge(src)
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="failed", reason=why, applied=False,
-                resume_version_id=vid, failure_reason=_classify_failure(why),
+                resume_version_id=vid, failure_reason=fr,
             )
             db.add_audit("apply_failed", user_id=uid, target=job.get("url"), detail=why[:120])
+
+        if mode == "live":
+            time.sleep(random.uniform(*_BASE_PACE_SEC))
 
     # per-platform failure rate check — warn if >50% of attempts on a platform fail
     for src in set(list(per_src_applied) + list(per_src_failed)):
@@ -666,6 +875,11 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 )
                 db.add_audit("high_failure_rate", user_id=uid, target=src,
                              detail=f"{int(rate*100)}% fail rate ({attempts} attempts)")
+                notify.send(
+                    _OPS_CHANNEL,
+                    f":warning: High failure rate on *{src}*: {per_src_failed.get(src, 0)}/{attempts} "
+                    f"({int(rate*100)}%) for user {uid} — selectors may be broken or the site changed.",
+                )
 
     # close browser contexts
     if mode == "live":
@@ -686,6 +900,16 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
         db.add_audit("notify_urgent", user_id=uid,
                      detail=f"needs_login: {','.join(sorted(needs_login_srcs))}")
 
+    # heads-up: a platform flagged us as a bot mid-run — paused, not stalled
+    if challenged_srcs:
+        notify.send(
+            channel,
+            f":large_orange_diamond: I paused applying on "
+            f"{', '.join(sorted(challenged_srcs))} after it flagged an automation "
+            f"check — safer to back off than push through. Retrying automatically "
+            f"after a cooldown.",
+        )
+
     # 5. report + 6. notify
     today = datetime.date.today().isoformat()
     top = sorted(scored, key=lambda x: x[0], reverse=True)[:3]
@@ -703,12 +927,19 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                   summary=summary, delivered=True)
 
     sources_used = ", ".join(source_modules.keys()) if source_modules else "mock board"
+    approve_nudge = (
+        "\n\n:point_right: I don't auto-submit on LinkedIn/Internshala/Naukri/Unstop/Indeed "
+        "— that's what keeps your account safe. Open the dashboard and tap *Approve* on "
+        "your matches to send them."
+        if matched > applied
+        else ""
+    )
     msg = (
         f":robot_face: *Grindly daily report — {today}*\n"
         f":white_check_mark: Applied: *{applied}*  ·  :star: Shortlisted: {matched}  ·  "
         f":x: Failed: {failed}\n"
         f"Sources: {sources_used}\n\n"
-        f"{summary}\n\nNext sweep in 24h. Pause anytime from the dashboard."
+        f"{summary}\n\nNext sweep in 24h. Pause anytime from the dashboard.{approve_nudge}"
     )
     notify.send(channel, msg)
     log.info("done: applied=%d matched=%d failed=%d", applied, matched, failed)

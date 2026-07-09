@@ -4,37 +4,58 @@ import path from "node:path";
 import fs from "node:fs";
 import { getUid } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import type { Platform } from "@prisma/client";
 
 const ALLOWED = ["linkedin", "internshala", "naukri", "unstop", "indeed"];
 
 /**
  * POST /api/integrations/connect  body: { platform: string }
  *
- * Spawns connect_platform.py detached — opens a headed browser window
- * so the user logs in once. The script writes user_integrations.status='connected'
- * when login is detected; the dashboard polls /api/integrations until it flips.
+ * Marks user_integrations.status='connecting'. Two different things pick
+ * that up depending on environment:
+ *
+ *   - Production: agent/connect_service.py (a separate always-running
+ *     container, see docker-compose's `connect` service) polls for this
+ *     status, opens a real headed browser on an isolated Xvfb display, and
+ *     issues a short-lived token so the dashboard can show the user a live
+ *     view of that browser to log into themselves — see connectToken on
+ *     GET /api/integrations and src/components/ConnectViewer.tsx. Grindly
+ *     never sees or stores the password, only the resulting session.
+ *
+ *   - Dev: no connect service running locally, so this spawns
+ *     connect_platform.py directly — same headed-browser flow, just
+ *     literally on the developer's own screen instead of streamed.
  */
 export async function POST(req: Request) {
   const uid = await getUid();
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
 
-  const { platform } = (await req.json().catch(() => ({}))) as { platform?: string };
-  if (!platform || !ALLOWED.includes(platform)) {
+  const { platform: rawPlatform } = (await req.json().catch(() => ({}))) as { platform?: string };
+  if (!rawPlatform || !ALLOWED.includes(rawPlatform)) {
     return NextResponse.json({ error: "invalid platform" }, { status: 400 });
   }
+  const platform = rawPlatform as Platform;
 
   const user = await prisma.user.findUnique({ where: { id: uid } });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  // Live platform-connect drives a HEADED browser the user logs into — only
-  // possible on the user's own machine. A hosted server has no display, so this
-  // is disabled in production until the remote-browser flow lands (Phase 4).
-  // Mock agent runs still work without connecting a platform.
+  // Mark as "connecting" in DB — the sole signal both paths below rely on.
+  try {
+    await prisma.userIntegration.upsert({
+      where: { userId_platform: { userId: uid, platform } },
+      update: { status: "connecting" },
+      create: { userId: uid, platform, status: "connecting" },
+    });
+  } catch {
+    // Table might not exist until prisma db push runs; still proceed —
+    // dev-spawn / prod-polling can pick this up once the schema lands.
+  }
+
   if (process.env.NODE_ENV === "production") {
-    return NextResponse.json(
-      { error: "Connecting job platforms isn't available in the hosted beta yet — live auto-apply is coming soon." },
-      { status: 503 },
-    );
+    // The `connect` service container does the actual work — nothing more
+    // for this request to do. Frontend polls GET /api/integrations for a
+    // connectToken to appear, then opens the remote-browser viewer.
+    return NextResponse.json({ ok: true, platform, mode: "remote" });
   }
 
   const root = process.cwd();
@@ -46,17 +67,6 @@ export async function POST(req: Request) {
   const logDir = path.join(root, "data", "logs");
   if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
   const out = fs.openSync(path.join(logDir, `${uid}-${platform}-connect.log`), "a");
-
-  // Mark as "connecting" in DB so dashboard can show a pending state
-  try {
-    await prisma.userIntegration.upsert({
-      where: { userId_platform: { userId: uid, platform } },
-      update: { status: "connecting" },
-      create: { userId: uid, platform, status: "connecting" },
-    });
-  } catch {
-    // Table might not exist until prisma db push runs; browser will still open
-  }
 
   const py = process.env.PYTHON_BIN || "python";
   let child;
@@ -75,5 +85,5 @@ export async function POST(req: Request) {
   child.on("error", () => {});
   child.unref();
 
-  return NextResponse.json({ ok: true, platform, pid: child.pid });
+  return NextResponse.json({ ok: true, platform, mode: "local", pid: child.pid });
 }

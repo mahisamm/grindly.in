@@ -85,7 +85,11 @@ _PLATFORMS: dict[str, dict] = {
 
 
 def _profile_dir(uid: str, platform: str) -> str:
-    base = os.path.join(os.path.dirname(__file__), "browser_profile")
+    # Under data/ (not agent/) so it lands on the persisted appdata volume —
+    # otherwise every worker container restart wipes all saved logins. Must
+    # match linkedin.py/naukri.py/etc _profile_dir() exactly, or connect_platform.py
+    # saves a login the apply-side driver will never find.
+    base = os.path.join(os.path.dirname(__file__), "..", "data", "browser_profile")
     return os.path.join(base, uid, platform)
 
 

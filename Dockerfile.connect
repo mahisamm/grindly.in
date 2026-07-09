@@ -1,0 +1,41 @@
+# Remote-browser connect service — lets a hosted user (no local machine, no
+# screen) log into a job platform by watching/driving a live browser stream.
+# Shares the worker image's Playwright/Chromium install; adds x11vnc (exposes
+# an Xvfb display over VNC) and websockify (bridges that VNC port to a
+# browser-reachable WebSocket, with per-token session routing).
+FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
+WORKDIR /app
+COPY agent/requirements.txt ./agent/requirements.txt
+RUN pip install --no-cache-dir -r agent/requirements.txt websockify \
+    && python -m playwright install chromium
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb x11vnc procps \
+    && rm -rf /var/lib/apt/lists/*
+COPY agent ./agent
+COPY prisma ./prisma
+ENV PYTHONUNBUFFERED=1
+# Same uid:gid as web/worker so all three can share the appdata volume
+# (browser_profile/, vnc-tokens.txt both live under /app/data).
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 --gid 1001 worker \
+    && mkdir -p /app/data \
+    && chown -R worker:nodejs /app/data /app \
+    && mkdir -p /home/worker \
+    && chown -R worker:nodejs /home/worker \
+    && chown -R worker:nodejs /ms-playwright 2>/dev/null || true
+ENV HOME=/home/worker
+USER worker
+# websockify does double duty: bridges wss:// traffic to the VNC port AND
+# serves the noVNC static viewer would if we vendored it — we don't (the
+# Next.js app ships @novnc/novnc itself), so websockify here is bridge-only.
+# --token-plugin=TokenFile resolves each connection's ?token= against
+# connect_service.py's vnc-tokens.txt, so one long-lived websockify process
+# can serve whichever single session connect_service.py currently has open.
+# Binds to 0.0.0.0 *inside the container network only* — Caddy is the only
+# thing that should ever be able to reach this port from outside.
+#
+# The `mkdir -p` + `touch` before websockify is load-bearing: on a cold
+# container the token file doesn't exist until connect_service.py first
+# writes it, and websockify's --token-source pointed at a missing file can
+# fail at boot. Creating an empty file up front means "no tokens resolve"
+# (nothing reachable) until a real session starts — the correct default.
+CMD ["sh", "-c", "mkdir -p /app/data && touch /app/data/vnc-tokens.txt && websockify --token-plugin=TokenFile --token-source=/app/data/vnc-tokens.txt 0.0.0.0:6080 & sleep 1 && python agent/connect_service.py"]

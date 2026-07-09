@@ -91,6 +91,13 @@ def time_ago_db(ms: int):
     return (_utcnow() - datetime.timedelta(milliseconds=ms)) if PG else (now_ms() - ms)
 
 
+def time_from_now_db(ms: int):
+    """`now + ms` as the right type for a DateTime comparison on this backend
+    — e.g. an expiry timestamp. now_db() can't just be added to directly:
+    it's an int on SQLite but a datetime on Postgres."""
+    return (_utcnow() + datetime.timedelta(milliseconds=ms)) if PG else (now_ms() + ms)
+
+
 def cuid() -> str:
     # cuid-shaped enough; uniqueness is all that matters for a TEXT pk.
     return "c" + secrets.token_hex(12)
@@ -253,9 +260,16 @@ def _ensure_integrations_table(c):
             status TEXT NOT NULL DEFAULT 'disconnected',
             connected_at INTEGER,
             updated_at INTEGER NOT NULL,
+            connect_token TEXT,
+            connect_token_expires_at INTEGER,
             UNIQUE(user_id, platform)
         )
     """)
+    cols = {row[1] for row in c.execute("PRAGMA table_info(user_integrations)").fetchall()}
+    if "connect_token" not in cols:
+        c.execute("ALTER TABLE user_integrations ADD COLUMN connect_token TEXT")
+    if "connect_token_expires_at" not in cols:
+        c.execute("ALTER TABLE user_integrations ADD COLUMN connect_token_expires_at INTEGER")
 
 
 _PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"]
@@ -283,6 +297,17 @@ def get_connected_platforms(uid: str) -> list[str]:
             (uid,),
         ).fetchall()
     return [r["platform"] for r in rows]
+
+
+def get_integration(uid: str, platform: str) -> dict | None:
+    with conn() as c:
+        _ensure_integrations_table(c)
+        row = c.execute(
+            "SELECT platform, status, connected_at, updated_at FROM user_integrations "
+            "WHERE user_id=? AND platform=?",
+            (uid, platform),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def set_integration_status(uid: str, platform: str, status: str):
@@ -313,6 +338,42 @@ def set_integration_status(uid: str, platform: str, status: str):
                 "UPDATE users SET internshala_connected=? WHERE id=?",
                 (status == "connected", uid),
             )
+
+
+def next_pending_connect_request() -> dict | None:
+    """Oldest still-pending 'connecting' request — connect_service.py handles
+    one remote-browser session at a time (single shared Xvfb display), so
+    this is a FIFO queue, not a fan-out."""
+    with conn() as c:
+        _ensure_integrations_table(c)
+        row = c.execute(
+            "SELECT user_id, platform FROM user_integrations "
+            "WHERE status='connecting' ORDER BY updated_at ASC LIMIT 1"
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def set_connect_token(uid: str, platform: str, token: str, expires_at_ms: int):
+    """Token gating the remote-browser viewer — see connect_service.py.
+    Never log this value; it's the only thing standing between anyone with
+    the URL and a live, mid-login browser session."""
+    with conn() as c:
+        _ensure_integrations_table(c)
+        c.execute(
+            "UPDATE user_integrations SET connect_token=?, connect_token_expires_at=? "
+            "WHERE user_id=? AND platform=?",
+            (token, expires_at_ms, uid, platform),
+        )
+
+
+def clear_connect_token(uid: str, platform: str):
+    with conn() as c:
+        _ensure_integrations_table(c)
+        c.execute(
+            "UPDATE user_integrations SET connect_token=NULL, connect_token_expires_at=NULL "
+            "WHERE user_id=? AND platform=?",
+            (uid, platform),
+        )
 
 
 def get_plan_cap(uid: str) -> int:

@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
-import { spawn } from "node:child_process";
 import path from "node:path";
-import fs from "node:fs";
 import fsp from "node:fs/promises";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
+import { spawnWorkerKick } from "@/lib/workerKick";
 
 /**
  * Triggers one agent run for the current user (resume parse → match → apply →
@@ -30,10 +29,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "worker not installed" }, { status: 500 });
   }
 
-  const logDir = path.join(root, "data", "logs");
-  await fsp.mkdir(logDir, { recursive: true });
-  const py = process.env.PYTHON_BIN || "python";
-
   // Enqueue in the DB-backed run queue (idempotent: reuse any queued/running job
   // for this user). The worker fleet (worker.py --serve) drains it — so the web
   // app does NOT need Python. The spawn below is only a best-effort local "kick"
@@ -49,15 +44,7 @@ export async function POST(req: Request) {
     run = existing ?? (await prisma.agentRun.create({ data: { userId: uid, mode: runMode } }));
   }
 
-  try {
-    const out = fs.openSync(path.join(logDir, `${uid}.log`), "a");
-    const child = spawn(py, [worker, "--drain"], { cwd: root, detached: true, stdio: ["ignore", out, out] });
-    fs.closeSync(out);
-    child.on("error", () => {}); // bad executable surfaces async — ignore; worker drains
-    child.unref();
-  } catch {
-    // No Python here (e.g. slim prod web image) — not an error; the worker drains it.
-  }
+  spawnWorkerKick(root, uid);
 
   return NextResponse.json({ ok: true, mode: analyzeOnly ? "analyze" : runMode, runId: run.id });
 }

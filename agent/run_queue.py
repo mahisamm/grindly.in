@@ -17,6 +17,7 @@ import db
 log = logging.getLogger("grindly.queue")
 
 STALE_LOCK_MS = 30 * 60 * 1000  # a job locked longer than this is presumed crashed
+BACKOFF_BASE_MS = 2 * 60 * 1000  # linear backoff: 2min * attempts already made
 
 
 def _ensure_table(c):
@@ -73,26 +74,44 @@ def reclaim_stale(now_ms: int | None = None):
         )
 
 
+def _backoff_ok(row) -> bool:
+    """True if a previously-failed job's backoff window has elapsed (or it has
+    never been attempted yet). Without this, a job requeued by mark_failed()
+    could be reclaimed again within the same drain() loop, milliseconds after
+    it failed — the site state hasn't changed that fast, so it's a wasted hit
+    that also raises bot-detection risk. Backoff grows linearly with attempts."""
+    attempts = row["attempts"] or 0
+    if attempts <= 0:
+        return True
+    updated_at = row["updated_at"]
+    if updated_at is None:
+        return True
+    cutoff = db.time_ago_db(BACKOFF_BASE_MS * attempts)
+    return updated_at < cutoff
+
+
 def claim_next(worker_id: str) -> dict | None:
-    """Atomically claim the oldest queued job whose user has nothing running.
-    Postgres uses row-level locking (FOR UPDATE SKIP LOCKED); SQLite uses an
-    immediate transaction. Either way two workers never grab the same row, and
-    a user with a running job is skipped so we never double-apply."""
+    """Atomically claim the oldest eligible queued job whose user has nothing
+    running. Postgres uses row-level locking (FOR UPDATE SKIP LOCKED); SQLite
+    uses an immediate transaction. Either way two workers never grab the same
+    row, and a user with a running job is skipped so we never double-apply.
+    Jobs still inside their post-failure backoff window are skipped too."""
     with db.conn() as c:
         _ensure_table(c)
         if db.PG:
-            row = c.execute(
+            candidates = c.execute(
                 "SELECT * FROM agent_runs WHERE status='queued' "
                 "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
-                "ORDER BY created_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED"
-            ).fetchone()
+                "ORDER BY created_at ASC LIMIT 20 FOR UPDATE SKIP LOCKED"
+            ).fetchall()
         else:
             c.execute("BEGIN IMMEDIATE")
-            row = c.execute(
+            candidates = c.execute(
                 "SELECT * FROM agent_runs WHERE status='queued' "
                 "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
-                "ORDER BY created_at ASC LIMIT 1"
-            ).fetchone()
+                "ORDER BY created_at ASC LIMIT 20"
+            ).fetchall()
+        row = next((r for r in candidates if _backoff_ok(r)), None)
         if not row:
             return None
         ts = db.now_db()

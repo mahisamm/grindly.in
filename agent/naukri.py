@@ -23,7 +23,9 @@ _contexts: dict = {}
 
 
 def _profile_dir(uid: str) -> str:
-    base = os.path.join(os.path.dirname(__file__), "browser_profile")
+    # Under data/ (not agent/) so it lands on the persisted appdata volume —
+    # otherwise every worker container restart wipes all saved logins.
+    base = os.path.join(os.path.dirname(__file__), "..", "data", "browser_profile")
     return os.path.join(base, uid or "shared", "naukri")
 
 
@@ -236,9 +238,9 @@ def apply(job: dict, cover_letter: str, uid: str = "",
         stealth.human_click(page, submit)
         page.wait_for_timeout(stealth.random_delay_ms())
 
-        if page.query_selector(":text('successfully'), :text('Applied'), :text('Thank you')"):
-            return "applied", "submitted via Naukri"
-        return "applied", "submitted on Naukri (confirmation not detected)"
+        return safety.classify_submit(page, [
+            ":text('successfully')", ":text('Applied')", ":text('Thank you')",
+        ])
     except Exception as e:  # noqa: BLE001
         try:
             safety.screenshot(page, uid, f"exception_naukri_{job.get('external_id','')}")

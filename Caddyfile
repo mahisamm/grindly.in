@@ -2,5 +2,42 @@
 # container. APP_DOMAIN comes from the .env that docker-compose passes through.
 {$APP_DOMAIN} {
 	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MB
+			roll_keep 5
+		}
+		# Redact the remote-browser connect token from logged URLs. It rides
+		# in the query string (/connect-ws/?token=...) and gates a live,
+		# mid-login browser session — logging it in plaintext would let anyone
+		# with log access hijack that session for its short validity window.
+		format filter {
+			request>uri query {
+				replace token REDACTED
+			}
+		}
+	}
+
+	# Remote-browser connect flow: websockify's WS bridge for the live login
+	# viewer (see agent/connect_service.py, Dockerfile.connect). Path-scoped
+	# so only this one prefix reaches the connect service — everything else
+	# still goes to web. Caddy reverse_proxy handles the WebSocket upgrade
+	# automatically; no extra directive needed. Access control is the
+	# token itself (?token=... in the URL, checked by websockify's
+	# TokenFile plugin) — Caddy does not and cannot authenticate this, so
+	# the token's entropy + short expiry is load-bearing here.
+	handle_path /connect-ws/* {
+		reverse_proxy connect:6080
+	}
+
 	reverse_proxy web:3000
 }

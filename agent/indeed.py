@@ -22,7 +22,9 @@ _contexts: dict = {}
 
 
 def _profile_dir(uid: str) -> str:
-    return os.path.join(os.path.dirname(__file__), "browser_profile", uid or "shared", "indeed")
+    # Under data/ (not agent/) so it lands on the persisted appdata volume —
+    # otherwise every worker container restart wipes all saved logins.
+    return os.path.join(os.path.dirname(__file__), "..", "data", "browser_profile", uid or "shared", "indeed")
 
 
 def _context(uid: str = ""):
@@ -245,9 +247,9 @@ def apply(job: dict, cover_letter: str, uid: str = "",
             if "submit" in label:
                 break
 
-        if page.query_selector(":text('Application submitted'), :text('applied')"):
-            return "applied", "submitted via Indeed Easy Apply"
-        return "applied", "submitted on Indeed (confirmation not detected)"
+        return safety.classify_submit(page, [
+            ":text('Application submitted')", ":text('applied')",
+        ])
     except Exception as e:  # noqa: BLE001
         try:
             safety.screenshot(page, uid, f"exception_indeed_{job.get('external_id','')}")

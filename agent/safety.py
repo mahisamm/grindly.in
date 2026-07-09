@@ -110,6 +110,43 @@ def screenshot(page, uid: str, key: str, root: str | None = None) -> str | None:
         return None
 
 
+_ERROR_HINTS_DEFAULT = (
+    ":text('required')",
+    ":text('please fill')",
+    ":text('invalid')",
+    ":text('something went wrong')",
+    "[role='alert']",
+    ".error, .form-error, .field-error",
+)
+
+
+def classify_submit(page, success_selectors: list[str]) -> tuple[str, str]:
+    """Classify the page right after a Submit click. Never re-clicks anything —
+    callers must not retry an ambiguous result, since resubmitting an
+    already-accepted form risks a duplicate application.
+
+    Returns (status, reason), status in {applied, needs_review, failed}:
+      - a success selector matched              -> applied (confirmed)
+      - a validation/error selector matched      -> failed (confirmed rejection)
+      - neither matched                          -> needs_review (ambiguous —
+        the click registered but we can't confirm the outcome; a human should
+        check, and the worker must not silently count this as a success)
+    """
+    for sel in success_selectors:
+        try:
+            if page.query_selector(sel):
+                return APPLY_STATUS.APPLIED, "submitted — confirmation detected"
+        except Exception:  # noqa: BLE001
+            pass
+    for sel in _ERROR_HINTS_DEFAULT:
+        try:
+            if page.query_selector(sel):
+                return APPLY_STATUS.FAILED, "submit click registered but page shows a validation/error message"
+        except Exception:  # noqa: BLE001
+            pass
+    return APPLY_STATUS.NEEDS_REVIEW, "submitted — confirmation not detected, verify manually"
+
+
 def skills_claimed(tailored_text: str, master_skills: list[str]) -> list[str]:
     """Which of the candidate's real skills the tailored resume surfaces — used
     for the immutable per-application 'what we presented' record."""

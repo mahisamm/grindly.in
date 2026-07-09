@@ -10,11 +10,22 @@ RUN pip install --no-cache-dir -r agent/requirements.txt \
 # Xvfb: run Chromium headed inside a virtual framebuffer — eliminates the
 # entire class of headless-mode JS probes (navigator.webdriver leaks, missing
 # GPU renderer, zero outerWidth, etc.). Much harder to detect than headless.
-RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb procps \
     && rm -rf /var/lib/apt/lists/*
 COPY agent ./agent
 COPY prisma ./prisma
 ENV PYTHONUNBUFFERED=1
+# Same uid:gid as the web image's nextjs user — both containers share the
+# appdata volume, so ownership must match or the worker can't write resumes.
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 --gid 1001 worker \
+    && mkdir -p /app/data/resumes /app/data/logs \
+    && chown -R worker:nodejs /app/data /app \
+    && mkdir -p /home/worker \
+    && chown -R worker:nodejs /home/worker \
+    && chown -R worker:nodejs /ms-playwright 2>/dev/null || true
+ENV HOME=/home/worker
+USER worker
 # Start Xvfb on :99, set DISPLAY, then run the worker (headed mode).
 # INTERNPILOT_HEADLESS is intentionally NOT set here — default is "0" (headed).
 CMD ["sh", "-c", "Xvfb :99 -screen 0 1366x768x24 -ac +extension GLX +render -noreset & sleep 1 && DISPLAY=:99 python agent/worker.py --serve"]

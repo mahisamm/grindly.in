@@ -1,0 +1,1500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GRINDLY — your AI applies while you sleep</title>
+<meta name="description" content="Grindly theme prototype — a living letterform. GRINDLY cast in forty thousand particles: carve it with your cursor, watch it heal, click to recast." />
+<meta name="theme-color" content="#f2ece1" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23151310'/%3E%3Cg fill='%23e3402a'%3E%3Ccircle cx='9' cy='11' r='1.6'/%3E%3Ccircle cx='15' cy='8' r='1.6'/%3E%3Ccircle cx='21' cy='12' r='1.6'/%3E%3Ccircle cx='12' cy='16' r='1.6'/%3E%3Ccircle cx='18' cy='17' r='1.6'/%3E%3Ccircle cx='10' cy='22' r='1.6'/%3E%3Ccircle cx='22' cy='21' r='1.6'/%3E%3Ccircle cx='16' cy='24' r='1.6'/%3E%3C/g%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --paper: #f2ece1;
+  --paper-2: #e9e1d3;
+  --panel: #faf6ee;
+  --ink: #17140f;
+  --ink-soft: #4a443b;
+  --ink-mute: #857c6e;
+  --line: rgba(23,20,15,.14);
+  --line-2: rgba(23,20,15,.30);
+  --vermilion: #e3402a;
+  --vermilion-deep: #c22e1c;
+  --ease: cubic-bezier(.22,.61,.36,1);
+  --ease-io: cubic-bezier(.7,0,.3,1);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.6;
+  overflow-x: hidden;
+  text-rendering: optimizeLegibility;
+}
+::selection { background: var(--vermilion); color: var(--paper); }
+a { color: inherit; text-decoration: none; }
+h1, h2, h3 { font-family: "Fraunces", Georgia, serif; font-weight: 900; line-height: .98; }
+section { scroll-margin-top: 70px; }
+
+/* ---- paper grain ---- */
+.grain {
+  position: fixed; inset: 0; z-index: 9; pointer-events: none;
+  opacity: .5; mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+}
+
+/* ---- scrollbar ---- */
+::-webkit-scrollbar { width: 11px; }
+::-webkit-scrollbar-track { background: var(--paper-2); }
+::-webkit-scrollbar-thumb { background: var(--ink); border: 3px solid var(--paper-2); border-radius: 20px; }
+::-webkit-scrollbar-thumb:hover { background: var(--vermilion); }
+
+/* ---- reveal on scroll ---- */
+[data-reveal] { opacity: 0; transform: translateY(18px); transition: opacity .7s var(--ease), transform .7s var(--ease); }
+[data-reveal].is-in { opacity: 1; transform: none; }
+
+/* =================== TOPBAR =================== */
+.topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px clamp(18px, 4vw, 44px);
+  mix-blend-mode: multiply;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-mark {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 2px;
+  width: 16px; height: 16px;
+}
+.brand-mark span {
+  background: var(--vermilion); border-radius: 50%;
+  animation: markpulse 3.2s var(--ease-io) infinite;
+}
+.brand-mark span:nth-child(2){ animation-delay: .25s; background: var(--ink); }
+.brand-mark span:nth-child(3){ animation-delay: .5s; background: var(--ink); }
+.brand-mark span:nth-child(4){ animation-delay: .75s; background: var(--vermilion); }
+.brand-mark--light span:nth-child(2),
+.brand-mark--light span:nth-child(3){ background: var(--paper); }
+@keyframes markpulse { 0%,100%{ transform: scale(1); opacity:1;} 50%{ transform: scale(.6); opacity:.55;} }
+.brand-word { font-weight: 700; letter-spacing: .14em; font-size: .92rem; }
+.brand-thin { font-weight: 300; color: var(--ink-soft); }
+.topnav { display: flex; align-items: center; gap: 10px; font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
+.topnav a:hover { color: var(--vermilion); }
+.nav-sep { color: var(--line-2); }
+.topbuy {
+  display: flex; align-items: baseline; gap: 9px;
+  border: 1px solid var(--line-2); border-radius: 40px;
+  padding: 7px 15px; transition: all .4s var(--ease);
+}
+.topbuy:hover { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.buy-label { font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; }
+.buy-price { font-weight: 700; }
+
+/* =================== HERO =================== */
+.hero {
+  position: relative;
+  height: 100svh; min-height: 680px;
+  overflow: hidden;
+}
+#scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.hero-poster { position: absolute; inset: 0; z-index: 1; display: none; }
+
+.hero-overlay {
+  position: absolute; z-index: 3;
+  left: clamp(18px, 4vw, 44px);
+  bottom: clamp(64px, 9vh, 110px);
+  max-width: min(470px, 82vw);
+}
+/* soft paper scrim so copy stays readable over the particle field */
+.hero-overlay::before {
+  content: ""; position: absolute; z-index: -1;
+  inset: -36px -70px -24px -44px;
+  background: radial-gradient(75% 75% at 38% 55%,
+    rgba(242,236,225,.94) 0%, rgba(242,236,225,.72) 55%, rgba(242,236,225,0) 100%);
+  pointer-events: none;
+}
+.hero-kicker {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-size: .78rem; letter-spacing: .04em; color: var(--ink-soft);
+  border: 1px solid var(--line-2); border-radius: 40px;
+  padding: 5px 13px;
+  margin-bottom: 16px;
+  background: rgba(250,246,238,.6);
+}
+.hero-kicker em { font-family: "Fraunces", serif; font-style: italic; color: var(--ink); }
+.kick-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--vermilion); flex: none; animation: markpulse 2.4s var(--ease-io) infinite; }
+.hero-h1 {
+  font-size: clamp(2.5rem, 5.8vw, 4.1rem);
+  letter-spacing: -.02em;
+  margin-bottom: 16px;
+}
+.h1-line { display: block; }
+.h1-accent { color: var(--vermilion); font-style: italic; font-weight: 900; }
+.hero-lede {
+  font-size: clamp(.92rem, 1.3vw, 1.02rem);
+  color: var(--ink-soft); line-height: 1.6;
+  max-width: 44ch;
+}
+.hero-ctas { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 20px; }
+.cta {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: .8rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  border-radius: 40px; padding: 12px 22px;
+  border: 1px solid var(--line-2);
+  transition: all .35s var(--ease);
+  cursor: pointer;
+}
+.cta--fill { background: var(--vermilion); border-color: var(--vermilion); color: var(--paper); }
+.cta--fill:hover { background: var(--ink); border-color: var(--ink); transform: translateY(-2px); }
+.cta--ghost:hover { background: var(--ink); border-color: var(--ink); color: var(--paper); transform: translateY(-2px); }
+.hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 16px; font-size: .78rem; color: var(--ink-mute); }
+.hero-android {
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 1px dashed var(--line-2); border-radius: 40px;
+  padding: 5px 12px; opacity: .75; cursor: not-allowed;
+}
+.hero-stars { display: inline-flex; align-items: center; gap: 8px; }
+.stars { color: var(--vermilion); letter-spacing: .18em; font-size: .82rem; }
+
+/* ---- HUD ---- */
+.specimen-hud { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.hud-block {
+  position: absolute; display: flex; flex-direction: column; gap: 2px;
+  font-size: .68rem; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-mute); mix-blend-mode: multiply;
+}
+.hud-block .hud-cap { opacity: .8; }
+.hud-tl { top: clamp(78px, 12vh, 108px); left: clamp(18px, 4vw, 44px); }
+.hud-tr { top: clamp(78px, 12vh, 108px); right: clamp(18px, 4vw, 44px); text-align: right; align-items: flex-end; }
+.hud-br { bottom: clamp(56px, 8vh, 76px); right: clamp(18px, 4vw, 44px); text-align: right; align-items: flex-end; }
+.hud-glyph { font-family: "Fraunces", serif; font-size: 2.2rem; font-weight: 900; color: var(--ink); letter-spacing: 0; line-height: 1; text-transform: none; }
+.hud-val { font-weight: 500; color: var(--ink-soft); }
+.hud-val.hud-fig { font-variant-numeric: tabular-nums; }
+
+/* ---- controls ---- */
+.specimen-controls {
+  position: absolute; z-index: 4;
+  right: clamp(18px, 4vw, 44px);
+  bottom: clamp(120px, 18vh, 190px);
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end;
+  max-width: 236px;
+}
+.glyph-btn {
+  font-family: "Fraunces", serif; font-weight: 900;
+  font-size: 1.25rem; line-height: 1;
+  width: 46px; height: 46px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--ink);
+  border: 1px solid var(--line-2); border-radius: 12px;
+  cursor: pointer; transition: all .35s var(--ease);
+}
+.glyph-btn:hover { background: var(--ink); color: var(--paper); transform: translateY(-2px); }
+.glyph-btn.is-active { background: var(--vermilion); border-color: var(--vermilion); color: var(--paper); }
+.glyph-btn--wide {
+  width: auto; height: 46px; font-family: "Space Grotesk", sans-serif;
+  font-size: .74rem; font-weight: 500; letter-spacing: .1em; text-transform: uppercase;
+  padding: 0 16px; gap: 8px; display: flex;
+}
+.glyph-btn--word {
+  width: auto; height: 46px;
+  font-size: .95rem; letter-spacing: .12em;
+  padding: 0 16px;
+}
+.auto-tick { width: 8px; height: 8px; border-radius: 50%; background: var(--vermilion); flex: none; transition: background .3s; }
+.glyph-btn--wide[aria-pressed="false"] .auto-tick { background: var(--line-2); }
+.glyph-btn--wide[aria-pressed="false"] { opacity: .7; }
+
+.hero-hint {
+  position: absolute; z-index: 4;
+  bottom: clamp(18px, 3vh, 30px); left: 50%; transform: translateX(-50%);
+  font-size: .72rem; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-mute); text-align: center; white-space: nowrap;
+}
+
+/* =================== MARQUEE =================== */
+.marquee {
+  position: relative; z-index: 5;
+  background: var(--ink); color: var(--paper);
+  border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink);
+  padding: 22px 0; overflow: hidden;
+}
+.mq-track { display: flex; width: max-content; animation: mq 30s linear infinite; }
+.mq-track--rev { animation: mqrev 34s linear infinite; margin-top: 10px; color: rgba(242,236,225,.55); }
+@keyframes mq { to { transform: translateX(-50%); } }
+@keyframes mqrev { from { transform: translateX(-50%); } to { transform: translateX(0); } }
+.mq-seg { display: flex; align-items: center; white-space: nowrap; }
+.mq-big { font-family: "Fraunces", serif; font-weight: 900; font-size: clamp(1.9rem, 4vw, 3rem); letter-spacing: -.01em; }
+.mq-small { font-family: "Fraunces", serif; font-style: italic; font-weight: 300; font-size: clamp(1rem, 1.8vw, 1.35rem); }
+.mq-item { padding: 0 clamp(18px, 2.6vw, 34px); }
+.mq-star { color: var(--vermilion); font-size: .8em; }
+
+/* =================== SHEET =================== */
+.sheet {
+  position: relative; z-index: 5;
+  background: var(--paper);
+  border-top: 1px solid var(--line-2);
+  padding: clamp(60px, 9vw, 120px) clamp(18px, 5vw, 80px);
+}
+.sheet-idx {
+  font-family: "Space Grotesk", sans-serif; font-weight: 500;
+  font-size: .72rem; letter-spacing: .16em; color: var(--vermilion);
+  font-variant-numeric: tabular-nums;
+}
+.sheet-head { display: grid; grid-template-columns: 1.05fr .95fr; gap: clamp(20px,4vw,60px); align-items: center; margin-bottom: clamp(50px, 7vw, 90px); }
+.sheet-title h2 { font-size: clamp(2.4rem, 5.4vw, 4.4rem); letter-spacing: -.02em; margin-top: 10px; }
+.sheet-title h2 .accent { color: var(--vermilion); font-style: italic; }
+.sheet-sub { font-size: clamp(.95rem, 1.4vw, 1.05rem); color: var(--ink-soft); max-width: 44ch; margin-top: 14px; }
+
+/* ---- dashboard mock ---- */
+.mock {
+  border: 1px solid var(--line-2); border-radius: 6px;
+  background: var(--panel);
+  padding: clamp(16px, 2vw, 24px);
+  box-shadow: 8px 8px 0 rgba(23,20,15,.08);
+}
+.mock-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  border-bottom: 1px dashed var(--line-2); padding-bottom: 12px; margin-bottom: 14px;
+  font-size: .78rem; letter-spacing: .06em;
+}
+.mock-live { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.mock-day { color: var(--ink-mute); text-transform: uppercase; font-size: .68rem; letter-spacing: .12em; }
+.mock-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+.mock-stat { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; background: var(--paper); }
+.mock-stat b { display: block; font-family: "Fraunces", serif; font-weight: 900; font-size: 1.9rem; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.mock-stat span { font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-mute); }
+.mock-stat--brand b { color: var(--vermilion); }
+.mock-stat--mute b { color: var(--ink-mute); }
+.mock-rows { display: flex; flex-direction: column; gap: 8px; }
+.mock-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--paper);
+  padding: 8px 12px; font-size: .82rem;
+}
+.mock-row b { display: block; font-weight: 600; line-height: 1.3; }
+.mock-row small { color: var(--ink-mute); font-size: .72rem; }
+.mock-right { display: flex; align-items: center; gap: 10px; flex: none; }
+.mock-score { font-family: "Fraunces", serif; font-weight: 900; color: var(--vermilion); font-variant-numeric: tabular-nums; }
+.mock-tag {
+  font-size: .62rem; letter-spacing: .1em; text-transform: uppercase; font-weight: 600;
+  border: 1px solid var(--line-2); border-radius: 30px; padding: 2px 9px;
+}
+.mock-tag--applied { color: var(--vermilion); border-color: var(--vermilion); background: rgba(227,64,42,.07); }
+.mock-tag--skipped { color: var(--ink-mute); }
+
+/* ---- feature grid ---- */
+.featgrid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  border-left: 1px solid var(--line); border-top: 1px solid var(--line);
+}
+.featcell {
+  border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  padding: clamp(20px, 2.6vw, 34px);
+  transition: background .35s var(--ease);
+}
+.featcell:hover { background: var(--panel); }
+.feat-ico {
+  display: inline-grid; place-items: center;
+  width: 44px; height: 44px; border: 1px solid var(--line-2); border-radius: 12px;
+  margin-bottom: 14px; color: var(--ink);
+  transition: all .35s var(--ease);
+}
+.featcell:hover .feat-ico { background: var(--vermilion); border-color: var(--vermilion); color: var(--paper); }
+.featcell h3 { font-size: 1.25rem; font-weight: 900; margin-bottom: 6px; }
+.featcell p { font-size: .86rem; color: var(--ink-soft); line-height: 1.55; }
+
+/* ---- waterfall (how it works) ---- */
+.waterfall { border-top: 1px solid var(--line); }
+.wf-row {
+  display: grid; grid-template-columns: 120px 1fr minmax(0, 380px); align-items: center; gap: 20px;
+  border-bottom: 1px solid var(--line);
+  padding: clamp(14px, 2vw, 26px) 0;
+  transition: background .4s var(--ease), padding-left .4s var(--ease);
+}
+.wf-row:hover { background: var(--panel); padding-left: 14px; }
+.wf-meta { font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-mute); font-variant-numeric: tabular-nums; }
+.wf-word { font-family: "Fraunces", serif; font-weight: 900; font-size: clamp(1.5rem, 3.2vw, 2.6rem); line-height: 1.05; letter-spacing: -.01em; transition: color .4s var(--ease); }
+.wf-row:hover .wf-word { color: var(--vermilion); }
+.wf-note { font-size: .84rem; color: var(--ink-soft); line-height: 1.55; }
+@media (max-width: 860px) {
+  .wf-row { grid-template-columns: 90px 1fr; }
+  .wf-note { grid-column: 2; }
+}
+
+/* =================== PRICING (dark) =================== */
+.license {
+  position: relative; z-index: 5;
+  background: var(--ink); color: var(--paper);
+  padding: clamp(60px, 9vw, 120px) clamp(18px, 5vw, 80px);
+}
+.license ::selection { background: var(--vermilion); color: var(--ink); }
+.lic-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 10px; }
+.lic-head h2 { font-size: clamp(2.6rem, 6vw, 5rem); letter-spacing: -.02em; color: var(--paper); }
+.lic-sub { color: rgba(242,236,225,.6); margin-bottom: clamp(40px, 6vw, 72px); font-size: .95rem; }
+.lic-grid { display: grid; grid-template-columns: repeat(2, minmax(0,460px)); justify-content: center; gap: clamp(16px, 2vw, 26px); }
+.lic-card {
+  position: relative;
+  border: 1px solid rgba(242,236,225,.18); border-radius: 4px;
+  padding: clamp(24px, 2.6vw, 38px);
+  display: flex; flex-direction: column; gap: 18px;
+  transition: border-color .4s var(--ease), transform .4s var(--ease), background .4s var(--ease);
+}
+.lic-card:hover { border-color: var(--vermilion); transform: translateY(-4px); }
+.lic-card--feature { background: rgba(242,236,225,.04); border-color: rgba(242,236,225,.3); }
+.lic-flag {
+  position: absolute; top: -11px; left: clamp(24px, 2.6vw, 38px);
+  background: var(--vermilion); color: var(--paper);
+  font-size: .66rem; letter-spacing: .14em; text-transform: uppercase; font-weight: 500;
+  padding: 4px 11px; border-radius: 30px;
+}
+.lic-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; border-bottom: 1px solid rgba(242,236,225,.16); padding-bottom: 16px; }
+.lic-card-head h3 { font-family: "Fraunces", serif; font-weight: 900; font-size: clamp(1.6rem, 2.6vw, 2.2rem); color: var(--paper); }
+.lic-price { font-family: "Fraunces", serif; font-weight: 900; font-size: clamp(1.4rem, 2.2vw, 1.9rem); color: var(--vermilion); white-space: nowrap; }
+.lic-price small { font-family: "Space Grotesk", sans-serif; font-weight: 400; font-size: .8rem; color: rgba(242,236,225,.55); }
+.lic-card p { font-size: .9rem; color: rgba(242,236,225,.7); line-height: 1.6; }
+.lic-list { list-style: none; display: flex; flex-direction: column; gap: 9px; }
+.lic-list li { font-size: .82rem; color: rgba(242,236,225,.82); padding-left: 18px; position: relative; }
+.lic-list li::before { content: ""; position: absolute; left: 0; top: .5em; width: 6px; height: 6px; border-radius: 50%; background: var(--vermilion); }
+.lic-cta {
+  margin-top: auto; display: block; text-align: center;
+  font-family: "Space Grotesk", sans-serif; font-weight: 500;
+  font-size: .78rem; letter-spacing: .1em; text-transform: uppercase;
+  background: transparent; color: var(--paper);
+  border: 1px solid rgba(242,236,225,.4); border-radius: 40px;
+  padding: 12px; cursor: pointer; transition: all .35s var(--ease);
+}
+.lic-cta:hover { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+.lic-cta--filled { background: var(--vermilion); border-color: var(--vermilion); }
+.lic-cta--filled:hover { background: var(--paper); color: var(--ink); }
+
+/* =================== CTA BAND =================== */
+.ctaband { position: relative; z-index: 5; background: var(--paper); padding: clamp(60px, 8vw, 110px) clamp(18px, 5vw, 80px); border-top: 1px solid var(--line-2); }
+.ctaband-card {
+  position: relative; overflow: hidden;
+  background: var(--vermilion); color: var(--paper);
+  border-radius: 8px; text-align: center;
+  padding: clamp(44px, 6vw, 90px) clamp(20px, 4vw, 60px);
+  max-width: 1000px; margin: 0 auto;
+}
+.ctaband-card::after {
+  content: "GRINDLY"; position: absolute; left: 50%; bottom: -.34em; transform: translateX(-50%);
+  font-family: "Fraunces", serif; font-weight: 900; font-size: clamp(5rem, 16vw, 13rem);
+  color: rgba(23,20,15,.10); letter-spacing: -.02em; pointer-events: none; white-space: nowrap;
+}
+.ctaband-card h2 { font-size: clamp(2.2rem, 5.4vw, 4.2rem); letter-spacing: -.02em; color: var(--paper); position: relative; z-index: 1; }
+.ctaband-card p { position: relative; z-index: 1; margin: 14px auto 0; max-width: 46ch; color: rgba(242,236,225,.85); font-size: .96rem; }
+.ctaband-btn {
+  position: relative; z-index: 1;
+  display: inline-flex; align-items: center; gap: 8px; margin-top: 28px;
+  background: var(--ink); color: var(--paper);
+  border-radius: 40px; padding: 14px 28px;
+  font-size: .8rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+  transition: all .35s var(--ease);
+}
+.ctaband-btn:hover { background: var(--paper); color: var(--ink); transform: translateY(-2px); }
+
+/* =================== FOOTER =================== */
+.foot {
+  position: relative; z-index: 5;
+  background: var(--paper); color: var(--ink-soft);
+  border-top: 1px solid var(--line-2);
+  padding: clamp(28px, 4vw, 44px) clamp(18px, 5vw, 80px);
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  flex-wrap: wrap;
+  font-size: .82rem;
+}
+.foot-mark { display: flex; align-items: center; gap: 11px; }
+.foot-links { display: flex; align-items: center; gap: clamp(16px, 3vw, 34px); flex-wrap: wrap; }
+.foot-guide { color: var(--vermilion); font-weight: 500; transition: opacity .3s; }
+.foot-guide:hover { opacity: .65; }
+
+/* =================== LOGIN VIEW =================== */
+#view-login { display: none; }
+body.view-login #view-landing { display: none; }
+body.view-login .topbar { display: none; }
+body.view-login #view-login { display: grid; min-height: 100svh; grid-template-columns: 1fr 1fr; }
+
+.login-aside {
+  position: relative; overflow: hidden;
+  background: var(--ink); color: var(--paper);
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: clamp(28px, 4vw, 52px);
+  border-right: 1px solid var(--ink);
+}
+.login-aside::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 80% 10%, rgba(227,64,42,.18) 0%, transparent 70%),
+    radial-gradient(50% 40% at 10% 90%, rgba(227,64,42,.10) 0%, transparent 70%);
+}
+.login-aside::after {
+  content: "G"; position: absolute; right: -4%; bottom: -14%;
+  font-family: "Fraunces", serif; font-weight: 900; font-size: clamp(16rem, 30vw, 30rem);
+  color: rgba(242,236,225,.045); line-height: 1; pointer-events: none;
+}
+.login-aside .brand { position: relative; z-index: 1; }
+.login-aside .brand-word { color: var(--paper); }
+.login-aside .brand-thin { color: rgba(242,236,225,.6); }
+.login-heading {
+  position: relative; z-index: 1;
+  font-size: clamp(2.2rem, 3.6vw, 3.4rem);
+  letter-spacing: -.02em; color: var(--paper);
+}
+.login-heading .accent { color: var(--vermilion); font-style: italic; }
+.login-points { list-style: none; margin-top: 30px; display: flex; flex-direction: column; gap: 14px; position: relative; z-index: 1; }
+.login-points li { display: flex; align-items: center; gap: 12px; font-size: .88rem; color: rgba(242,236,225,.88); }
+.login-ico {
+  display: inline-grid; place-items: center; flex: none;
+  width: 38px; height: 38px;
+  border: 1px solid rgba(242,236,225,.28); border-radius: 11px;
+  background: rgba(242,236,225,.06); color: var(--paper);
+}
+.login-foot { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; font-size: .82rem; color: rgba(242,236,225,.7); }
+.login-foot .stars { color: var(--vermilion); }
+
+.login-main {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  padding: clamp(20px, 4vw, 48px);
+  background:
+    linear-gradient(rgba(23,20,15,.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23,20,15,.07) 1px, transparent 1px);
+  background-size: 44px 44px;
+  background-color: var(--paper);
+}
+.login-box { width: 100%; max-width: 430px; }
+.login-brand-mobile { display: none; justify-content: center; margin-bottom: 26px; }
+.login-card {
+  background: var(--panel);
+  border: 1px solid var(--line-2); border-radius: 8px;
+  padding: clamp(24px, 3vw, 38px);
+  box-shadow: 10px 10px 0 rgba(23,20,15,.08);
+}
+.login-card h1 { font-size: clamp(1.8rem, 2.6vw, 2.3rem); letter-spacing: -.01em; }
+.login-card .login-sub { margin-top: 6px; font-size: .88rem; color: var(--ink-soft); }
+.google-btn {
+  margin-top: 24px;
+  display: flex; align-items: center; justify-content: center; gap: 11px;
+  width: 100%;
+  border: 1px solid var(--line-2); border-radius: 40px;
+  background: var(--paper);
+  padding: 13px 18px;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: .88rem; font-weight: 600;
+  cursor: pointer;
+  transition: all .35s var(--ease);
+}
+.google-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); transform: translateY(-2px); }
+.google-btn svg { flex: none; }
+.login-err { display: none; margin-top: 16px; font-size: .84rem; color: var(--vermilion-deep); border-left: 3px solid var(--vermilion); padding-left: 10px; }
+.login-err.is-on { display: block; }
+.login-terms { margin-top: 22px; font-size: .74rem; color: var(--ink-mute); line-height: 1.6; }
+.login-back { display: inline-block; margin-top: 18px; font-size: .76rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-mute); transition: color .3s; }
+.login-back:hover { color: var(--vermilion); }
+
+/* =================== FOCUS =================== */
+:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 3px; border-radius: 3px; }
+
+/* =================== RESPONSIVE =================== */
+@media (max-width: 1120px) {
+  .specimen-controls { max-width: 172px; }
+}
+@media (max-width: 980px) {
+  body.view-login #view-login { grid-template-columns: 1fr; }
+  .login-aside { display: none; }
+  .login-brand-mobile { display: flex; }
+}
+@media (max-width: 860px) {
+  .topnav { display: none; }
+  .sheet-head { grid-template-columns: 1fr; }
+  .featgrid { grid-template-columns: 1fr 1fr; }
+  .lic-grid { grid-template-columns: 1fr; }
+  .hud-tr, .hud-br { display: none; }
+  .specimen-controls { bottom: auto; top: clamp(70px, 11vh, 100px); max-width: 180px; }
+  .hero-overlay { max-width: 90vw; }
+}
+@media (max-width: 700px) {
+  #scene { height: 52%; top: 0; }
+  .hud-tl { display: none; }
+  .specimen-controls {
+    top: clamp(58px, 9vh, 88px); bottom: auto; right: auto;
+    left: 18px; right: 18px;
+    max-width: none; justify-content: flex-start;
+    gap: 7px;
+  }
+  .specimen-controls .glyph-btn { width: 38px; height: 38px; font-size: 1rem; }
+  .specimen-controls .glyph-btn--wide,
+  .specimen-controls .glyph-btn--word { width: auto; height: 38px; padding: 0 12px; font-size: .66rem; }
+  .specimen-controls .glyph-btn--wide { margin-left: auto; }
+  .hero { min-height: 740px; }
+  .hero-overlay {
+    bottom: clamp(20px, 3vh, 36px);
+    left: 18px; right: 18px; max-width: none;
+    background: linear-gradient(180deg, rgba(242,236,225,0) 0%, var(--paper) 12%);
+    padding: 26px 4px 4px;
+  }
+  .hero-h1 { font-size: clamp(1.9rem, 9.6vw, 3.2rem); }
+  .hero-hint { display: none; }
+  .featgrid { grid-template-columns: 1fr; }
+  .mock-stats { grid-template-columns: repeat(3, 1fr); gap: 7px; }
+  .mock-stat b { font-size: 1.5rem; }
+}
+/* short desktop viewports: compact the hero copy so it never hits the topbar */
+@media (min-width: 701px) and (max-height: 850px) {
+  .hud-tl, .hud-br { display: none; }
+  .hero-overlay { bottom: 36px; }
+  .hero-h1 { font-size: clamp(2rem, 4.2vw, 3rem); margin-bottom: 12px; }
+  .hero-lede { font-size: .88rem; max-width: 42ch; }
+  .hero-meta { display: none; }
+  .hero-kicker { margin-bottom: 12px; }
+  .hero-hint { display: none; }
+  .specimen-controls { bottom: clamp(70px, 12vh, 120px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+  html { scroll-behavior: auto; }
+  [data-reveal] { opacity: 1; transform: none; transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="topbar">
+  <a class="brand" href="#top" aria-label="Grindly home">
+    <span class="brand-mark" aria-hidden="true">
+      <span></span><span></span><span></span><span></span>
+    </span>
+    <span class="brand-word">GRINDLY<span class="brand-thin"> · agent</span></span>
+  </a>
+  <nav class="topnav" aria-label="Primary">
+    <a href="#features">Features</a>
+    <span class="nav-sep">·</span>
+    <a href="#how">How it works</a>
+    <span class="nav-sep">·</span>
+    <a href="#pricing">Pricing</a>
+  </nav>
+  <a class="topbuy" href="#login">
+    <span class="buy-label">Sign in</span>
+    <span class="buy-price">free</span>
+  </a>
+</header>
+
+<!-- ============================================================
+     VIEW : LANDING
+     ============================================================ -->
+<div id="view-landing">
+<main id="top">
+  <!-- ===== HERO : PARTICLE LETTERFORM ===== -->
+  <section class="hero" id="specimen">
+    <canvas id="scene" aria-hidden="true"></canvas>
+
+    <div class="hero-poster" id="poster" aria-hidden="true"></div>
+
+    <div class="hero-overlay">
+      <div class="hero-kicker">
+        <span class="kick-dot" aria-hidden="true"></span>
+        Your AI applies while you sleep
+      </div>
+      <h1 class="hero-h1">
+        <span class="h1-line">Stop filling</span>
+        <span class="h1-line">internship forms.</span>
+        <span class="h1-line h1-accent">let an agent do it.</span>
+      </h1>
+      <p class="hero-lede">
+        Grindly reads your resume, finds internships that actually match your
+        skills, and applies for you — every day, inside the limits you set.
+        You get a daily report via email or Slack.
+      </p>
+      <div class="hero-ctas">
+        <a class="cta cta--fill" href="#login">Get started now</a>
+        <a class="cta cta--ghost" href="#how">See how it works</a>
+      </div>
+      <div class="hero-meta">
+        <span class="hero-android">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M7.2 9.5a1 1 0 0 1 1-1h7.6a1 1 0 0 1 1 1v6.2a2 2 0 0 1-2 2H9.2a2 2 0 0 1-2-2V9.5z" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M8.6 8.4 7.4 6.3M15.4 8.4l1.2-2.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="10.2" cy="11" r=".8" fill="currentColor"/><circle cx="13.8" cy="11" r=".8" fill="currentColor"/>
+          </svg>
+          Android app — coming to Play Store soon
+        </span>
+        <span class="hero-stars">
+          <span class="stars" aria-hidden="true">✦✦✦✦✦</span>
+          Built for the intern grind across 5 platforms
+        </span>
+      </div>
+    </div>
+
+    <div class="specimen-hud" aria-hidden="true">
+      <div class="hud-block hud-tl">
+        <span class="hud-cap">Now casting</span>
+        <span class="hud-glyph" id="hudGlyph">G</span>
+      </div>
+      <div class="hud-block hud-tr">
+        <span class="hud-cap">Particles</span>
+        <span class="hud-val" id="hudCount">—</span>
+      </div>
+      <div class="hud-block hud-br">
+        <span class="hud-cap">State</span>
+        <span class="hud-val" id="hudState">settling</span>
+      </div>
+    </div>
+
+    <div class="specimen-controls" role="group" aria-label="Choose the letter">
+      <button class="glyph-btn" data-g="G">G</button>
+      <button class="glyph-btn" data-g="R">R</button>
+      <button class="glyph-btn" data-g="I">I</button>
+      <button class="glyph-btn" data-g="N">N</button>
+      <button class="glyph-btn" data-g="D">D</button>
+      <button class="glyph-btn" data-g="L">L</button>
+      <button class="glyph-btn" data-g="Y">Y</button>
+      <button class="glyph-btn glyph-btn--word" data-g="GRINDLY">GRINDLY</button>
+      <button class="glyph-btn glyph-btn--wide" id="autoBtn" aria-pressed="true">
+        <span class="auto-tick" aria-hidden="true"></span> auto-cast
+      </button>
+    </div>
+
+    <p class="hero-hint" id="heroHint">move over the letters to carve them · click to recast</p>
+  </section>
+
+  <!-- ===== MARQUEE BAND ===== -->
+  <section class="marquee" aria-hidden="true">
+    <div class="mq-track">
+      <span class="mq-seg mq-big">
+        <span class="mq-item">THE AGENT THAT GROWS WITH YOU</span><span class="mq-star">✦</span>
+        <span class="mq-item">APPLIES WHILE YOU SLEEP</span><span class="mq-star">✦</span>
+        <span class="mq-item">5 PLATFORMS, ONE BOT</span><span class="mq-star">✦</span>
+      </span>
+      <span class="mq-seg mq-big">
+        <span class="mq-item">THE AGENT THAT GROWS WITH YOU</span><span class="mq-star">✦</span>
+        <span class="mq-item">APPLIES WHILE YOU SLEEP</span><span class="mq-star">✦</span>
+        <span class="mq-item">5 PLATFORMS, ONE BOT</span><span class="mq-star">✦</span>
+      </span>
+    </div>
+    <div class="mq-track mq-track--rev">
+      <span class="mq-seg mq-small">
+        <span class="mq-item">resume-aware matching</span>·
+        <span class="mq-item">you set the firewall</span>·
+        <span class="mq-item">daily slack reports</span>·
+        <span class="mq-item">real applications, not links</span>·
+      </span>
+      <span class="mq-seg mq-small">
+        <span class="mq-item">resume-aware matching</span>·
+        <span class="mq-item">you set the firewall</span>·
+        <span class="mq-item">daily slack reports</span>·
+        <span class="mq-item">real applications, not links</span>·
+      </span>
+    </div>
+  </section>
+
+  <!-- ===== 01 FEATURES + DASHBOARD MOCK ===== -->
+  <section class="sheet" id="features">
+    <div class="sheet-head">
+      <div class="sheet-title" data-reveal>
+        <span class="sheet-idx">01 — Features</span>
+        <h2>Everything an intern-hunter <span class="accent">wishes</span> they had.</h2>
+        <p class="sheet-sub">
+          The agent drives job platforms like a human would — reads listings,
+          scores them against your resume, fills the forms, submits. You watch
+          it happen from one dashboard.
+        </p>
+      </div>
+      <div class="mock" data-reveal aria-label="Dashboard preview">
+        <div class="mock-head">
+          <span class="mock-live"><span class="kick-dot" aria-hidden="true"></span> Agent active · Pro plan</span>
+          <span class="mock-day">Today</span>
+        </div>
+        <div class="mock-stats">
+          <div class="mock-stat mock-stat--brand"><b data-count="12">0</b><span>Applied</span></div>
+          <div class="mock-stat"><b data-count="78">0</b><span>Avg match</span></div>
+          <div class="mock-stat mock-stat--mute"><b data-count="9">0</b><span>Skipped</span></div>
+        </div>
+        <div class="mock-rows">
+          <div class="mock-row">
+            <div><b>Frontend Developer Intern</b><small>Razorpay</small></div>
+            <div class="mock-right"><span class="mock-score">86</span><span class="mock-tag mock-tag--applied">applied</span></div>
+          </div>
+          <div class="mock-row">
+            <div><b>Data Science Intern</b><small>Swiggy</small></div>
+            <div class="mock-right"><span class="mock-score">81</span><span class="mock-tag mock-tag--applied">applied</span></div>
+          </div>
+          <div class="mock-row">
+            <div><b>ML Research Intern</b><small>Sarvam AI</small></div>
+            <div class="mock-right"><span class="mock-score">74</span><span class="mock-tag mock-tag--applied">applied</span></div>
+          </div>
+          <div class="mock-row">
+            <div><b>Sales Intern</b><small>LocalBiz</small></div>
+            <div class="mock-right"><span class="mock-score" style="color:var(--ink-mute)">38</span><span class="mock-tag mock-tag--skipped">skipped</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="featgrid">
+      <div class="featcell" data-reveal>
+        <span class="feat-ico" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>
+        </span>
+        <h3>Resume-aware matching</h3>
+        <p>Skills extracted from your resume score every role 0–100. Only real fits get an application.</p>
+      </div>
+      <div class="featcell" data-reveal>
+        <span class="feat-ico" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M13 3 5 13.5h5L10.6 21 19 10.5h-5.2L13 3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </span>
+        <h3>You set the firewall</h3>
+        <p>Min match score, max/day, excluded companies, stipend floor — hard constraints the agent can't cross.</p>
+      </div>
+      <div class="featcell" data-reveal>
+        <span class="feat-ico" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="6" y="3.5" width="12" height="17" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M9 8h6M9 11.5h6M9 15h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </span>
+        <h3>Real applications</h3>
+        <p>Drives the platform like a human: opens the listing, fills the form, submits. Not just a list of links.</p>
+      </div>
+      <div class="featcell" data-reveal>
+        <span class="feat-ico" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.6"/><path d="M12 7v5l3.4 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </span>
+        <h3>Runs on your terms</h3>
+        <p>Auto-submit, or shortlist-and-ask. Pause anytime from the dashboard.</p>
+      </div>
+      <div class="featcell" data-reveal>
+        <span class="feat-ico" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M9.5 4v16M14.5 4v16M4 9.5h16M4 14.5h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </span>
+        <h3>Daily reports your way</h3>
+        <p>Get progress reports via Slack DM or email — whichever you prefer. Connect Gmail to auto-detect interview calls.</p>
+      </div>
+      <div class="featcell" data-reveal>
+        <span class="feat-ico" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 3c.6 4.8 4.2 8.4 9 9-4.8.6-8.4 4.2-9 9-.6-4.8-4.2-8.4-9-9 4.8-.6 8.4-4.2 9-9z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+        </span>
+        <h3>Private brain</h3>
+        <p>Resume analysis runs on a local LLM. Your resume isn't shipped to a third-party model.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 02 HOW IT WORKS ===== -->
+  <section class="sheet" id="how">
+    <div class="sheet-head">
+      <div class="sheet-title" data-reveal>
+        <span class="sheet-idx">02 — How it works</span>
+        <h2>How it works</h2>
+        <p class="sheet-sub">From signup to your first applications in minutes.</p>
+      </div>
+    </div>
+
+    <div class="waterfall">
+      <div class="wf-row" data-reveal>
+        <span class="wf-meta">Step · 01</span>
+        <span class="wf-word">Drop your resume</span>
+        <span class="wf-note">Create an account and upload your resume. That's the only homework you do.</span>
+      </div>
+      <div class="wf-row" data-reveal>
+        <span class="wf-meta">Step · 02</span>
+        <span class="wf-word">Answer a few profile questions</span>
+        <span class="wf-note">Domains, locations, stipend, daily limits. These become the agent's firewall — what it may and may not apply to.</span>
+      </div>
+      <div class="wf-row" data-reveal>
+        <span class="wf-meta">Step · 03</span>
+        <span class="wf-word">Activate &amp; choose updates</span>
+        <span class="wf-note">Complete checkout, then pick how you want reports — email (no setup) or Slack DM. Connect Gmail to auto-detect interview calls.</span>
+      </div>
+      <div class="wf-row" data-reveal>
+        <span class="wf-meta">Step · 04</span>
+        <span class="wf-word">The agent applies for you</span>
+        <span class="wf-note">It reads listings, scores each against your resume, and auto-applies to the strong matches — within your limits.</span>
+      </div>
+      <div class="wf-row" data-reveal>
+        <span class="wf-meta">Step · 05</span>
+        <span class="wf-word">Daily progress reports</span>
+        <span class="wf-note">Every day you get a report: who it applied to, match scores, and what it skipped (and why). Update outcomes to track your interview rate.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 03 PRICING ===== -->
+  <section class="license" id="pricing">
+    <div class="lic-head" data-reveal>
+      <span class="sheet-idx">03 — Pricing</span>
+      <h2>Simple pricing</h2>
+    </div>
+    <p class="lic-sub" data-reveal>Cancel anytime.</p>
+    <div class="lic-grid">
+      <div class="lic-card" data-reveal>
+        <div class="lic-card-head">
+          <h3>Starter</h3>
+          <span class="lic-price">₹499<small> /mo</small></span>
+        </div>
+        <p>Up to 10 applications/day</p>
+        <ul class="lic-list">
+          <li>10 applications / day</li>
+          <li>Resume-aware matching</li>
+          <li>Daily Slack reports</li>
+          <li>Community support</li>
+        </ul>
+        <a class="lic-cta" href="#login">Choose Starter</a>
+      </div>
+      <div class="lic-card lic-card--feature" data-reveal>
+        <span class="lic-flag">✦ Most popular</span>
+        <div class="lic-card-head">
+          <h3>Pro</h3>
+          <span class="lic-price">₹999<small> /mo</small></span>
+        </div>
+        <p>Up to 30 applications/day + dedicated support</p>
+        <ul class="lic-list">
+          <li>30 applications / day</li>
+          <li>Resume-aware matching</li>
+          <li>Daily Slack reports</li>
+          <li>Dedicated email support</li>
+        </ul>
+        <a class="lic-cta lic-cta--filled" href="#login">Choose Pro</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== CTA BAND ===== -->
+  <section class="ctaband">
+    <div class="ctaband-card" data-reveal>
+      <h2>Your next internship is<br />one signup away.</h2>
+      <p>Let the agent grind the applications. You focus on the interviews.</p>
+      <a class="ctaband-btn" href="#login">Get started free →</a>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <div class="foot-mark">
+      <span class="brand-mark" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </span>
+      <span>© 2026 Grindly · Built for the intern grind.</span>
+    </div>
+    <div class="foot-links">
+      <span>42,000 grains of ink</span>
+      <a class="foot-guide" href="#specimen">Back to the letters ↑</a>
+    </div>
+  </footer>
+</main>
+</div>
+
+<!-- ============================================================
+     VIEW : LOGIN  (replica of /login — Google-only, beta)
+     ============================================================ -->
+<div id="view-login">
+  <aside class="login-aside">
+    <a class="brand" href="#top" aria-label="Grindly home">
+      <span class="brand-mark brand-mark--light" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </span>
+      <span class="brand-word">GRINDLY<span class="brand-thin"> · agent</span></span>
+    </a>
+
+    <div>
+      <h2 class="login-heading">
+        Your agent kept<br />
+        applying while<br />
+        <span class="accent">you were away.</span>
+      </h2>
+      <ul class="login-points">
+        <li>
+          <span class="login-ico" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>
+          </span>
+          Resume-aware matches, scored 0–100
+        </li>
+        <li>
+          <span class="login-ico" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M13 3 5 13.5h5L10.6 21 19 10.5h-5.2L13 3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          </span>
+          Hard limits you set — the agent can't cross them
+        </li>
+        <li>
+          <span class="login-ico" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M9.5 4v16M14.5 4v16M4 9.5h16M4 14.5h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </span>
+          Daily progress reports, right in Slack
+        </li>
+      </ul>
+    </div>
+
+    <div class="login-foot">
+      <span class="stars" aria-hidden="true">✦✦✦✦✦</span>
+      Built for the intern grind across 5 platforms
+    </div>
+  </aside>
+
+  <div class="login-main">
+    <div class="login-box">
+      <a class="brand login-brand-mobile" href="#top" aria-label="Grindly home">
+        <span class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </span>
+        <span class="brand-word">GRINDLY<span class="brand-thin"> · agent</span></span>
+      </a>
+
+      <div class="login-card">
+        <h1>Welcome to Grindly</h1>
+        <p class="login-sub">Continue with Google to start your agent.</p>
+
+        <a class="google-btn" id="googleBtn" href="/api/auth/google">
+          <svg width="18" height="18" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M47.532 24.552c0-1.636-.132-3.2-.388-4.704H24.48v8.896h12.956c-.568 2.952-2.22 5.456-4.692 7.132v5.912h7.572c4.432-4.072 6.988-10.072 6.988-17.236z" fill="#4285F4"/>
+            <path d="M24.48 48c6.48 0 11.916-2.148 15.888-5.812l-7.572-5.912c-2.148 1.44-4.896 2.288-8.316 2.288-6.396 0-11.82-4.32-13.748-10.128H2.9v6.1C6.856 42.86 15.088 48 24.48 48z" fill="#34A853"/>
+            <path d="M10.732 28.436A14.4 14.4 0 0 1 9.9 24c0-1.54.264-3.036.732-4.436v-6.1H2.9A23.952 23.952 0 0 0 .48 24c0 3.864.924 7.524 2.42 10.536l8.332-6.1z" fill="#FBBC05"/>
+            <path d="M24.48 9.552c3.604 0 6.836 1.24 9.38 3.672l6.972-6.972C36.388 2.352 30.96 0 24.48 0 15.088 0 6.856 5.14 2.9 13.464l7.832 6.1C12.66 13.872 18.084 9.552 24.48 9.552z" fill="#EA4335"/>
+          </svg>
+          Continue with Google
+        </a>
+
+        <p class="login-err" id="loginErr" role="alert"></p>
+
+        <p class="login-terms">
+          By continuing you agree to let Grindly apply to jobs on your behalf within the limits you set.
+        </p>
+      </div>
+
+      <a class="login-back" href="#top">← Back to home</a>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+
+/* ============================================================
+   GRINDLY — particle letterform hero
+   Each cast (a letter, or the full word GRINDLY) is rendered to
+   an offscreen 2D canvas; its opaque pixels become 3D particle
+   targets. Morphing = re-sampling targets and easing each
+   particle to its new home with a per-particle stagger. The
+   cursor is a 3D repeller that pushes particles off the glyph
+   plane; releasing lets them heal. Camera zooms to fit each cast.
+   ============================================================ */
+
+const canvas = document.getElementById("scene");
+const hudCount = document.getElementById("hudCount");
+const hudGlyph = document.getElementById("hudGlyph");
+const hudState = document.getElementById("hudState");
+const autoBtn = document.getElementById("autoBtn");
+const heroHint = document.getElementById("heroHint");
+const btns = [...document.querySelectorAll(".glyph-btn[data-g]")];
+
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const PALETTE = {
+  ink: new THREE.Color("#17140f"),
+  soft: new THREE.Color("#4a443b"),
+  vermilion: new THREE.Color("#e3402a"),
+};
+
+/* cast order: the word first, then each letter, then back to the word */
+const GLYPHS = ["GRINDLY", "G", "R", "I", "N", "D", "L", "Y"];
+
+/* ---- WebGL support / graceful fallback ---- */
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  const gl = renderer.getContext();
+  if (!gl) throw new Error("no gl");
+} catch (e) {
+  fallback();
+  throw e;
+}
+
+function fallback() {
+  canvas.style.display = "none";
+  const poster = document.getElementById("poster");
+  poster.style.display = "block";
+  poster.style.background =
+    "radial-gradient(120% 90% at 50% 45%, #e9e1d3 0%, #f2ece1 70%)";
+  const big = document.createElement("div");
+  big.textContent = "GRINDLY";
+  Object.assign(big.style, {
+    position: "absolute", inset: "0", display: "grid", placeItems: "center",
+    fontFamily: '"Fraunces", serif', fontWeight: "900",
+    fontSize: "min(18vh,13vw)", color: "#17140f", zIndex: "2",
+    letterSpacing: "-0.02em",
+  });
+  poster.appendChild(big);
+}
+
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x000000, 0);
+
+const scene = new THREE.Scene();
+
+/* orthographic-ish perspective for a flat specimen feel with subtle depth */
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 200);
+camera.position.set(0, 0, 30);
+let targetCamZ = 30;
+let targetCamX = 0;   // horizontal pan: push the wide word off the left-column copy
+let targetCamY = 0;   // vertical offset: lift the wide word off the headline
+
+/* ---------- particle sampling ---------- */
+const SAMPLE_W = 1440;                     // wide raster so the full word fits
+const SAMPLE_H = 360;
+const off = document.createElement("canvas");
+off.width = SAMPLE_W; off.height = SAMPLE_H;
+const octx = off.getContext("2d", { willReadFrequently: true });
+
+const PLANE_W = 44;                        // world-space width the raster maps to
+const WPP = PLANE_W / SAMPLE_W;            // world units per raster pixel
+
+// Sample a cast (letter or word) -> flat [x,y,...] world targets + bounds
+function sampleGlyph(text) {
+  octx.clearRect(0, 0, SAMPLE_W, SAMPLE_H);
+  octx.fillStyle = "#000";
+  octx.textAlign = "center";
+  octx.textBaseline = "middle";
+  let size = Math.round(SAMPLE_H * 0.82);
+  octx.font = `900 ${size}px "Fraunces", Georgia, serif`;
+  // shrink to fit long casts (the full word) inside the raster
+  const w = octx.measureText(text).width;
+  const maxW = SAMPLE_W * 0.94;
+  if (w > maxW) {
+    size = Math.floor(size * (maxW / w));
+    octx.font = `900 ${size}px "Fraunces", Georgia, serif`;
+  }
+  octx.fillText(text, SAMPLE_W / 2, SAMPLE_H / 2 + SAMPLE_H * 0.02);
+
+  const data = octx.getImageData(0, 0, SAMPLE_W, SAMPLE_H).data;
+  const pts = [];
+  let maxAbsX = 1, maxAbsY = 1;
+  const step = 2;                          // pixel stride -> particle density
+  for (let y = 0; y < SAMPLE_H; y += step) {
+    for (let x = 0; x < SAMPLE_W; x += step) {
+      const a = data[(y * SAMPLE_W + x) * 4 + 3];
+      if (a > 128) {
+        // jitter within the cell so edges don't look gridded
+        const jx = x + (Math.random() - 0.5) * step;
+        const jy = y + (Math.random() - 0.5) * step;
+        const wx = (jx / SAMPLE_W - 0.5) * PLANE_W;
+        const wy = -(jy / SAMPLE_H - 0.5) * (SAMPLE_H * WPP);
+        pts.push(wx, wy);
+        const ax = Math.abs(wx), ay = Math.abs(wy);
+        if (ax > maxAbsX) maxAbsX = ax;
+        if (ay > maxAbsY) maxAbsY = ay;
+      }
+    }
+  }
+  return { pts, maxAbsX, maxAbsY };
+}
+
+/* ---------- particle system ---------- */
+let PARTICLES = 42000;
+if (window.innerWidth < 700) PARTICLES = 24000;
+
+const positions = new Float32Array(PARTICLES * 3);   // live
+const targets = new Float32Array(PARTICLES * 3);     // where they want to be
+const homeZ = new Float32Array(PARTICLES);           // resting depth jitter
+const velocities = new Float32Array(PARTICLES * 3);  // for repel/heal spring
+const colors = new Float32Array(PARTICLES * 3);
+const seeds = new Float32Array(PARTICLES);           // per-particle stagger
+
+for (let i = 0; i < PARTICLES; i++) {
+  // start scattered in a soft cloud
+  const r = 16 + Math.random() * 12;
+  const th = Math.random() * Math.PI * 2;
+  positions[i * 3] = Math.cos(th) * r;
+  positions[i * 3 + 1] = (Math.random() - 0.5) * 24;
+  positions[i * 3 + 2] = (Math.random() - 0.5) * 8;
+  homeZ[i] = (Math.random() - 0.5) * 1.0;
+  seeds[i] = Math.random();
+  // color: mostly ink, a scatter of soft, ~7% vermilion accent
+  const roll = Math.random();
+  const c = roll < 0.07 ? PALETTE.vermilion : roll < 0.32 ? PALETTE.soft : PALETTE.ink;
+  colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+}
+
+const geo = new THREE.BufferGeometry();
+geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+// round, soft particle sprite drawn to a texture
+function dotTexture() {
+  const s = 64;
+  const c = document.createElement("canvas");
+  c.width = c.height = s;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.5, "rgba(255,255,255,0.85)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.beginPath(); g.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2); g.fill();
+  return new THREE.CanvasTexture(c);
+}
+
+const mat = new THREE.PointsMaterial({
+  size: 0.115,
+  map: dotTexture(),
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.95,
+  depthWrite: false,
+  sizeAttenuation: true,
+  blending: THREE.NormalBlending,
+});
+
+const points = new THREE.Points(geo, mat);
+scene.add(points);
+
+/* assign cast sample points across the fixed particle budget */
+function setTargets(text) {
+  const { pts, maxAbsX, maxAbsY } = sampleGlyph(text);
+  const n = pts.length / 2;
+  if (n === 0) return;
+  for (let i = 0; i < PARTICLES; i++) {
+    const s = (i % n) * 2;
+    targets[i * 3] = pts[s];
+    targets[i * 3 + 1] = pts[s + 1];
+    targets[i * 3 + 2] = homeZ[i];
+  }
+  hudGlyph.textContent = text.length > 1 ? "G–Y" : text;
+  hudState.textContent = "settling";
+  morphStart = performance.now();
+  morphing = true;
+  fitCamera(maxAbsX, maxAbsY, text.length > 1);
+}
+
+/* zoom the camera so the current cast fills the frame nicely */
+function fitCamera(halfW, halfH, isWord) {
+  const vFov = (camera.fov * Math.PI) / 180;
+  const tanV = Math.tan(vFov / 2);
+  const tanH = tanV * camera.aspect;
+  const marginW = isWord ? 1.9 : 1.28;    // word reads smaller so it clears the copy
+  const zH = (halfH * 1.9) / tanV;        // vertical margin
+  const zW = (halfW * marginW) / tanH;    // horizontal margin
+  targetCamZ = Math.max(zH, zW, 12);
+  // On wide (desktop) layouts the copy overlaps the hero on the bottom-left, so
+  // float the word into the top-right, clear of the headline. On portrait/mobile
+  // the copy sits *below* the canvas — no overlap — so keep the word centered.
+  // Single letters always stay centered specimens.
+  // Only landscape viewports are short enough that a centered word's lower-left
+  // would collide with the bottom-left copy; portrait/mobile stack copy below, so
+  // there the word stays centered.
+  const wide = window.innerWidth / window.innerHeight > 1.2;
+  const visibleHalfH = targetCamZ * tanV;
+  const visibleHalfW = visibleHalfH * camera.aspect;
+  targetCamX = (isWord && wide) ? -visibleHalfW * 0.27 : 0;
+  targetCamY = (isWord && wide) ? -visibleHalfH * 0.30 : 0;
+}
+
+let morphStart = 0;
+let morphing = false;
+const MORPH_MS = 1400;
+
+/* ---------- cursor as 3D repeller ---------- */
+const pointer = new THREE.Vector2(-10, -10);
+let pointerActive = false;
+const ndc = new THREE.Vector2();
+const raycaster = new THREE.Raycaster();
+const glyphPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const cursorWorld = new THREE.Vector3(999, 999, 0);
+const REPEL_R = 3.0;      // base radius of influence in world units
+const REPEL_STR = 2.6;    // push strength
+
+function updateCursorWorld() {
+  const rect = canvas.getBoundingClientRect();
+  ndc.x = ((pointer.x - rect.left) / rect.width) * 2 - 1;
+  ndc.y = -((pointer.y - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(ndc, camera);
+  raycaster.ray.intersectPlane(glyphPlane, cursorWorld);
+}
+
+canvas.addEventListener("pointermove", (e) => {
+  pointer.set(e.clientX, e.clientY);
+  pointerActive = true;
+});
+canvas.addEventListener("pointerleave", () => { pointerActive = false; cursorWorld.set(999, 999, 0); });
+
+/* click to recast (advance cast) + a ripple pulse from the click point */
+let pulse = 0;
+const pulseCenter = new THREE.Vector3();
+canvas.addEventListener("click", () => {
+  updateCursorWorld();
+  pulseCenter.copy(cursorWorld);
+  pulse = 1;
+  advance();
+});
+
+/* ---------- cast selection + auto-cast ---------- */
+let idx = 0;
+let auto = !reduceMotion;
+let autoTimer = 0;
+const AUTO_MS_LETTER = 3400;
+const AUTO_MS_WORD = 5600;
+
+function selectGlyph(i) {
+  idx = (i + GLYPHS.length) % GLYPHS.length;
+  setTargets(GLYPHS[idx]);
+  btns.forEach((b) => b.classList.toggle("is-active", b.dataset.g === GLYPHS[idx]));
+  autoTimer = performance.now();
+}
+function advance() { selectGlyph(idx + 1); }
+
+btns.forEach((b) => {
+  b.addEventListener("click", () => {
+    selectGlyph(GLYPHS.indexOf(b.dataset.g));
+  });
+});
+autoBtn.addEventListener("click", () => {
+  auto = !auto;
+  autoBtn.setAttribute("aria-pressed", String(auto));
+  autoTimer = performance.now();
+});
+
+/* ---------- resize ---------- */
+function resize() {
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(rect.width, 1);
+  const h = Math.max(rect.height, 1);
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  // re-fit the current cast to the new aspect
+  const { maxAbsX, maxAbsY } = sampleGlyph(GLYPHS[idx]);
+  fitCamera(maxAbsX, maxAbsY, GLYPHS[idx].length > 1);
+}
+window.addEventListener("resize", resize);
+
+/* ---------- easing ---------- */
+function easeInOut(t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; }
+
+/* ---------- main loop ---------- */
+hudCount.textContent = PARTICLES.toLocaleString();
+resize();
+selectGlyph(0);
+
+let last = performance.now();
+let idleRot = 0;
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  // pause the whole simulation when the tab is hidden or login view is up
+  if (document.hidden || document.body.classList.contains("view-login")) { last = now; return; }
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+
+  // glide the camera toward its fitted distance + framing offset
+  const camLerp = Math.min(dt * 3.2, 1);
+  camera.position.z += (targetCamZ - camera.position.z) * camLerp;
+  camera.position.y += (targetCamY - camera.position.y) * camLerp;
+  camera.position.x += (targetCamX - camera.position.x) * camLerp;
+  camera.lookAt(camera.position.x, camera.position.y, 0);   // pan without tilt — shifts content, not perspective
+
+  if (pointerActive) updateCursorWorld();
+
+  // repel radius scales with zoom so carving feels the same at any distance
+  const zoomScale = THREE.MathUtils.clamp(camera.position.z / 30, 0.7, 2.2);
+  const repelR = REPEL_R * zoomScale;
+  const repelR2 = repelR * repelR;
+
+  // morph progress (per-particle stagger via seed)
+  const gp = morphing ? Math.min((now - morphStart) / MORPH_MS, 1) : 1;
+  if (morphing && gp >= 1) { morphing = false; hudState.textContent = pointerActive ? "carving" : "cast"; }
+
+  const pos = geo.attributes.position.array;
+  const cx = cursorWorld.x, cy = cursorWorld.y;
+  const withinCursor = pointerActive && Math.abs(cx) < 60;
+  let carving = false;
+
+  for (let i = 0; i < PARTICLES; i++) {
+    const ix = i * 3;
+    // staggered local progress: particles with higher seed start later
+    let lp = 0;
+    if (morphing) {
+      const start = seeds[i] * 0.42;
+      lp = easeInOut(THREE.MathUtils.clamp((gp - start) / (1 - 0.42), 0, 1));
+    } else lp = 1;
+
+    const tx = targets[ix], ty = targets[ix + 1], tz = targets[ix + 2];
+
+    // spring toward target
+    const dx = tx - pos[ix];
+    const dy = ty - pos[ix + 1];
+    const dz = tz - pos[ix + 2];
+
+    const pull = morphing ? (0.06 + 0.22 * lp) : 0.20;
+    velocities[ix] += dx * pull;
+    velocities[ix + 1] += dy * pull;
+    velocities[ix + 2] += dz * pull;
+
+    // cursor repel (3D, off the plane) — carve holes
+    if (withinCursor) {
+      const rx = pos[ix] - cx;
+      const ry = pos[ix + 1] - cy;
+      const d2 = rx * rx + ry * ry;
+      if (d2 < repelR2) {
+        const d = Math.sqrt(d2) + 0.0001;
+        const f = (1 - d / repelR);
+        velocities[ix] += (rx / d) * f * REPEL_STR;
+        velocities[ix + 1] += (ry / d) * f * REPEL_STR;
+        velocities[ix + 2] += f * f * REPEL_STR * 1.8 * (seeds[i] > 0.5 ? 1 : -1);
+        carving = true;
+      }
+    }
+
+    // click ripple: a short outward shove from the click point
+    if (pulse > 0.01) {
+      const rx = pos[ix] - pulseCenter.x;
+      const ry = pos[ix + 1] - pulseCenter.y;
+      const d = Math.sqrt(rx * rx + ry * ry) + 0.0001;
+      if (d < 10) {
+        const f = pulse * (1 - d / 10) * 0.9;
+        velocities[ix] += (rx / d) * f;
+        velocities[ix + 1] += (ry / d) * f;
+        velocities[ix + 2] += (Math.random() - 0.5) * f * 1.4;
+      }
+    }
+
+    // integrate + damping (heal spring returns them)
+    const damp = morphing ? 0.80 : 0.68;
+    velocities[ix] *= damp;
+    velocities[ix + 1] *= damp;
+    velocities[ix + 2] *= damp * 0.96;
+    pos[ix] += velocities[ix];
+    pos[ix + 1] += velocities[ix + 1];
+    pos[ix + 2] += velocities[ix + 2];
+  }
+
+  geo.attributes.position.needsUpdate = true;
+  if (pulse > 0.01) pulse *= 0.86;
+
+  if (!morphing) {
+    hudState.textContent = carving ? "carving" : "cast";
+  }
+
+  // subtle idle breathing rotation of the whole cloud
+  if (!reduceMotion) {
+    idleRot += dt * 0.06;
+    points.rotation.y = Math.sin(idleRot) * 0.045;
+    points.rotation.x = Math.cos(idleRot * 0.7) * 0.02;
+  }
+
+  // auto-cast timer — the full word holds longer than single letters
+  const holdMs = GLYPHS[idx].length > 1 ? AUTO_MS_WORD : AUTO_MS_LETTER;
+  if (auto && now - autoTimer > holdMs && !morphing) {
+    advance();
+  }
+
+  renderer.render(scene, camera);
+}
+
+/* wait a beat for the webfont so the first raster is the real Fraunces */
+if (document.fonts && document.fonts.ready) {
+  document.fonts.load('900 100px "Fraunces"').then(() => {
+    selectGlyph(idx); // re-sample with loaded font
+  }).catch(() => {});
+}
+
+requestAnimationFrame(tick);
+
+/* hide the hero hint after first interaction */
+let hinted = false;
+["pointermove", "click"].forEach((ev) =>
+  canvas.addEventListener(ev, () => {
+    if (!hinted && heroHint) { hinted = true; heroHint.style.transition = "opacity .8s"; heroHint.style.opacity = "0"; }
+  })
+);
+</script>
+
+<script>
+/* ============================================================
+   Views (hash routing), login error handling, reveal, count-up.
+   Plain script — runs even if the module/CDN above fails.
+   ============================================================ */
+(function () {
+  /* ---- hash routing: #login <-> landing ---- */
+  function applyRoute() {
+    var isLogin = location.hash.replace(/^#\/?/, "") === "login";
+    document.body.classList.toggle("view-login", isLogin);
+    window.scrollTo(0, 0);
+  }
+  window.addEventListener("hashchange", applyRoute);
+  applyRoute();
+
+  /* ---- login error mapping (same as src/app/login/page.tsx) ---- */
+  var errEl = document.getElementById("loginErr");
+  var e = new URLSearchParams(window.location.search).get("error");
+  if (e && errEl) {
+    var msg;
+    if (e === "google_denied") msg = "Google sign-in was cancelled.";
+    else if (e === "google_state") msg = "Sign-in session expired. Please try again.";
+    else if (e === "google_unverified") msg = "Your Google email isn't verified. Verify it with Google, then try again.";
+    else if (e === "google_not_configured") msg = "Google sign-in is temporarily unavailable.";
+    else msg = "Google sign-in failed. Please try again.";
+    errEl.textContent = msg;
+    errEl.classList.add("is-on");
+  }
+
+  /* ---- Google button: real route in the app; demo note on file:// ---- */
+  var gbtn = document.getElementById("googleBtn");
+  if (gbtn) {
+    gbtn.addEventListener("click", function (ev) {
+      if (location.protocol === "file:") {
+        ev.preventDefault();
+        if (errEl) {
+          errEl.textContent = "Demo build — in the app this redirects to Google OAuth (/api/auth/google).";
+          errEl.classList.add("is-on");
+        }
+      }
+    });
+  }
+
+  /* ---- reveal on scroll ---- */
+  var revealed = document.querySelectorAll("[data-reveal]");
+  if ("IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) { en.target.classList.add("is-in"); io.unobserve(en.target); }
+      });
+    }, { threshold: 0.12 });
+    revealed.forEach(function (el) { io.observe(el); });
+  } else {
+    revealed.forEach(function (el) { el.classList.add("is-in"); });
+  }
+
+  /* ---- count-up for dashboard mock stats ---- */
+  var counters = document.querySelectorAll("[data-count]");
+  function runCount(el) {
+    var end = parseInt(el.getAttribute("data-count"), 10) || 0;
+    var t0 = performance.now(), dur = 950;
+    function step(t) {
+      var p = Math.min((t - t0) / dur, 1);
+      p = 1 - Math.pow(1 - p, 3);
+      el.textContent = Math.round(end * p);
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  if ("IntersectionObserver" in window) {
+    var cio = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) { runCount(en.target); cio.unobserve(en.target); }
+      });
+    }, { threshold: 0.5 });
+    counters.forEach(function (el) { cio.observe(el); });
+  } else {
+    counters.forEach(function (el) { el.textContent = el.getAttribute("data-count"); });
+  }
+})();
+</script>
+</body>
+</html>
