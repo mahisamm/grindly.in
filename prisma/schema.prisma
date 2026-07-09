@@ -14,6 +14,58 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Enum value sets below are verified against the actual read/write call sites
+// in src/ and agent/ (not just doc comments) — see src/lib/applyState.ts,
+// which is the mirrored single source of truth for ApplyStatus/FailureReason
+// shared with agent/safety.py.
+
+enum Role {
+  user
+  admin
+}
+
+enum PlanTier {
+  free
+  starter
+  pro
+}
+
+enum UserStatus {
+  registered
+  onboarding
+  active
+  paused
+}
+
+enum ApplyStatus {
+  matched
+  approved
+  submitting
+  applied
+  skipped
+  failed
+  needs_review
+}
+
+enum FailureReason {
+  session_expired
+  selector_missing
+  captcha
+  listing_closed
+  upload_failed
+  firewall_blocked
+  custom_questions
+  timeout
+  exception
+}
+
+enum Outcome {
+  interview
+  offer
+  rejected
+  no_response
+}
+
 model User {
   id            String   @id @default(cuid())
   email         String   @unique
@@ -25,7 +77,7 @@ model User {
   createdAt     DateTime @default(now()) @map("created_at")
   // billing (stubbed, real-ready)
   paid          Boolean  @default(false)
-  plan          String   @default("free") // free | starter | pro
+  plan          PlanTier @default(free)
   // slack (stubbed, real-ready)
   slackUserId   String?  @map("slack_user_id")
   slackChannel  String?  @map("slack_channel")
@@ -36,10 +88,10 @@ model User {
   // even when the global beta isn't open. OR'd with email/role/INTERNSHALA_BETA_OPEN.
   internshalaBetaAccess Boolean @default(false) @map("internshala_beta_access")
   // lifecycle: registered -> onboarding -> active -> paused
-  status        String   @default("registered")
-  // access role: "user" (default) | "admin". Admin-only dashboard gates on this
+  status        UserStatus @default(registered)
+  // access role: user (default) | admin. Admin-only dashboard gates on this
   // column server-side — never on email or a client flag.
-  role          String   @default("user")
+  role          Role     @default(user)
 
   profile        Profile?
   applications   Application[]
@@ -59,7 +111,14 @@ model UserIntegration {
   userId      String    @map("user_id")
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   platform    String    // linkedin | internshala | naukri | unstop | indeed
-  status      String    @default("disconnected") // connected | disconnected | connecting | needs_login | otp_required
+  // Loose string, not a Postgres enum: this session's captcha circuit
+  // breaker added "challenge_detected" as a status value that was never
+  // added to the old IntegrationStatus enum — would have thrown an invalid-
+  // enum-value error the first time it ran against real Postgres (SQLite
+  // tests never caught it, since SQLite doesn't enforce enum constraints).
+  // connected | disconnected | connecting | needs_login | otp_required |
+  // challenge_detected
+  status      String    @default("disconnected")
   connectedAt DateTime? @map("connected_at")
   // Credential-login relay (hosted): the worker logs in headless on the server.
   // When the platform demands a one-time code, it flips otpRequired and waits for
@@ -68,6 +127,15 @@ model UserIntegration {
   otpCode     String?   @map("otp_code")
   lastError   String?   @map("last_error")
   updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Remote-browser connect flow (hosted, headless server — see connect_service.py):
+  // a short-lived, single-use, random token handed to the frontend so it can
+  // open a view of the live login browser over the connect service's
+  // websocket bridge. High-entropy + short expiry is the whole security
+  // model here — never log this value, never expose it outside an
+  // authenticated response to the owning user.
+  connectToken          String?   @map("connect_token")
+  connectTokenExpiresAt DateTime? @map("connect_token_expires_at")
 
   @@unique([userId, platform])
   @@map("user_integrations")
@@ -92,7 +160,7 @@ model Profile {
   workMode           String @default("any") @map("work_mode")          // remote | onsite | any
   stipendMin         Int    @default(0)     @map("stipend_min")
   maxPerDay          Int    @default(10)    @map("max_per_day")
-  minMatchScore      Int    @default(55)    @map("min_match_score")     // 0-100 firewall threshold
+  minMatchScore      Int    @default(65)    @map("min_match_score")     // 0-100 firewall threshold
   excludedCompanies  String @default("[]")  @map("excluded_companies")  // JSON array
   autoApply          Boolean @default(true) @map("auto_apply")
 
@@ -144,22 +212,27 @@ model Application {
   url        String?
   matchScore Int      @default(0) @map("match_score")
   // lifecycle: matched | approved | submitting | applied | skipped | failed | needs_review
-  status     String   @default("matched")
+  status     ApplyStatus @default(matched)
   reason     String?  // why matched / why skipped / failure detail
-  // enumerated machine reason on failure: session_expired | selector_missing |
-  // captcha | listing_closed | upload_failed | firewall_blocked | timeout | exception
-  failureReason  String? @map("failure_reason")
+  // enumerated machine reason on failure — see FailureReason
+  failureReason  FailureReason? @map("failure_reason")
   screenshotPath String? @map("screenshot_path")  // proof image of the submit attempt
   // immutable snapshot of the exact resume sent for this application
   resumeVersionId String?        @map("resume_version_id")
   resumeVersion   ResumeVersion? @relation(fields: [resumeVersionId], references: [id])
   appliedAt  DateTime? @map("applied_at")
   // user-reported outcome — the single most important beta signal (interview rate)
-  // null (unset) | interview | offer | rejected | no_response
-  outcome    String?   @map("outcome")
+  // null (unset) until the user reports one
+  outcome    Outcome?  @map("outcome")
   outcomeAt  DateTime? @map("outcome_at")
   createdAt  DateTime @default(now()) @map("created_at")
 
+  @@index([userId])
+  @@index([userId, status])
+  @@index([status])
+  @@index([jobId])
+  @@index([resumeVersionId])
+  @@index([createdAt])
   @@map("applications")
 }
 
@@ -206,7 +279,11 @@ model AgentRun {
   id          String    @id @default(cuid())
   userId      String    @map("user_id")
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mode        String    @default("live") // live | analyze | connect_internshala
+  // Loose strings, not Postgres enums — same reasoning as UserIntegration.status
+  // above: "connect_internshala" (credential-login relay job) was never added
+  // to the old RunMode enum. mock is the safe default (every real call site
+  // passes mode explicitly; this only matters if one ever doesn't).
+  mode        String    @default("mock") // mock | live | analyze | connect_internshala
   status      String    @default("queued") // queued | running | done | failed | cancelled
   attempts    Int       @default(0)
   maxAttempts Int       @default(3) @map("max_attempts")

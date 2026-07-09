@@ -66,7 +66,7 @@ export const PROFF_FIELDS: ProffField[] = [
   {
     key: "minMatchScore",
     label: "Match threshold",
-    help: "The firewall: agent only applies when resume↔role fit is at least this (0–100). Higher = pickier.",
+    help: "The firewall: agent only applies when resume↔role fit is at least this (0–100). Higher = pickier, fewer but better-fit applications — quality of match matters more than volume of applies.",
     type: "number",
     suffix: "/100",
     group: "Firewall / limits",
@@ -81,8 +81,8 @@ export const PROFF_FIELDS: ProffField[] = [
   },
   {
     key: "autoApply",
-    label: "Auto-submit applications",
-    help: "On = the agent submits. Off = it only shortlists and asks you first.",
+    label: "Auto-prep applications",
+    help: "On = the agent finds and preps matches for you to approve with one tap. Off = it only shortlists — you have to turn this on before it prepares anything to send.",
     type: "toggle",
     group: "Firewall / limits",
   },
@@ -94,7 +94,7 @@ export const DEFAULTS: Record<string, unknown> = {
   workMode: "any",
   experienceLevel: "student",
   stipendMin: 0,
-  minMatchScore: 55,
+  minMatchScore: 65,
   excludedCompanies: [],
   autoApply: true,
 };

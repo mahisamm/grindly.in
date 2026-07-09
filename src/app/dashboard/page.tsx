@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
 import { CountUp } from "@/components/Motion";
+import ConnectViewer from "@/components/ConnectViewer";
 import { PROFF_FIELDS, CONTACT_FIELDS } from "@/lib/proffQuestions";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ type Integration = {
   connectedAt: string | null;
   otpRequired?: boolean;
   lastError?: string | null;
+  connectToken?: string | null;
 };
 type ResumeAnalysis = {
   score: number;
@@ -254,11 +256,14 @@ export default function Dashboard() {
   const [running, setRunning] = useState(false);
   const [tab, setTab] = useState<"profile" | "applications" | "integrations" | "reports">("applications");
   const [filter, setFilter] = useState<string>("all");
+  const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<{ platform: string; token: string } | null>(null);
   const [page, setPage] = useState(0);
   const [profileForm, setProfileForm] = useState<ProfileForm | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [approvingAll, setApprovingAll] = useState(false);
   const [analyzingResume, setAnalyzingResume] = useState(false);
   const [editingSkills, setEditingSkills] = useState(false);
   const [skillsDraft, setSkillsDraft] = useState<string[]>([]);
@@ -443,6 +448,71 @@ export default function Dashboard() {
     load();
   }
 
+  // ── Remote-browser connect flow — linkedin/naukri/unstop/indeed only.
+  // Internshala uses its own credential+OTP relay above; the other 4
+  // platforms don't have that, so this shows the user a live view of a
+  // real login browser instead (see agent/connect_service.py). ──
+  async function connectPlatform(platform: string) {
+    setConnectingPlatform(platform);
+    setNotice({ kind: "info", text: "Preparing your secure login window…" });
+    const res = await fetch("/api/integrations/connect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setNotice({ kind: "err", text: data.error || "Couldn't open the login browser." });
+      setConnectingPlatform(null);
+      return;
+    }
+    // Poll integration status until connected, or the connect service's own
+    // session window (5 min) elapses. In production a connectToken shows up
+    // once the remote-browser session is actually live — open the viewer
+    // then, not before (nothing to show until the browser exists).
+    // eslint-disable-next-line react-hooks/purity -- runs at click time (event handler), not during render
+    const started = Date.now();
+    const deadline = started + 300_000;
+    let opened = false;
+    const pollConnect = async () => {
+      if (Date.now() > deadline) {
+        setConnectingPlatform(null);
+        setViewer(null);
+        setNotice({ kind: "err", text: "Login window didn't open in time — please try Connect again." });
+        return;
+      }
+      const r = await fetch("/api/integrations").catch(() => null);
+      if (r?.ok) {
+        const d = await r.json().catch(() => ({}));
+        const row = (d.integrations as Integration[] ?? []).find(i => i.platform === platform);
+        if (row?.status === "connected") { setConnectingPlatform(null); setViewer(null); setNotice({ kind: "ok", text: `${platform} connected.` }); load(); return; }
+        if (row?.connectToken) { opened = true; setNotice(null); setViewer({ platform, token: row.connectToken }); }
+        else if (!opened && Date.now() - started > 12_000) {
+          // Still no token after a bit — almost always means another user's
+          // connect session is using the single shared browser. Say so
+          // instead of leaving them staring at a spinner.
+          setNotice({ kind: "info", text: "Waiting for the login window — someone else may be connecting right now. Holding your place…" });
+        }
+        if (row?.status !== "connecting" && !row?.connectToken) { setConnectingPlatform(null); setViewer(null); return; }
+      }
+      setTimeout(pollConnect, 2000);
+    };
+    setTimeout(pollConnect, 2000);
+  }
+
+  async function disconnectPlatform(platform: string) {
+    const res = await fetch("/api/integrations/disconnect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform }),
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      setNotice({ kind: "err", text: "Couldn't disconnect — please try again." });
+      return;
+    }
+    load();
+  }
+
   async function saveProfile() {
     if (!profileForm) return;
     setProfileSaving(true);
@@ -497,12 +567,27 @@ export default function Dashboard() {
 
   async function approveApplication(id: string) {
     setApprovingId(id);
-    await fetch("/api/applications/approve", {
+    const res = await fetch("/api/applications/approve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
-    });
+    }).catch(() => null);
     setApprovingId(null);
+    if (!res || !res.ok) {
+      setNotice({ kind: "err", text: "Couldn't approve — please try again." });
+      return;
+    }
+    load();
+  }
+
+  async function approveAllApplications() {
+    setApprovingAll(true);
+    const res = await fetch("/api/applications/approve-all", { method: "POST" }).catch(() => null);
+    setApprovingAll(false);
+    if (!res || !res.ok) {
+      setNotice({ kind: "err", text: "Couldn't approve all — please try again." });
+      return;
+    }
     load();
   }
 
@@ -511,13 +596,20 @@ export default function Dashboard() {
   }
 
   async function setOutcome(id: string, outcome: string) {
+    const prevOutcome = me?.applications.find((a) => a.id === id)?.outcome ?? null;
     // optimistic — reflect immediately, reconcile on next poll
     setMe((m) => m ? { ...m, applications: m.applications.map((a) => a.id === id ? { ...a, outcome: outcome || null } : a) } : m);
-    await fetch("/api/applications/outcome", {
+    const res = await fetch("/api/applications/outcome", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, outcome: outcome || null }),
-    });
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      // roll back — the optimistic update above never actually saved
+      setMe((m) => m ? { ...m, applications: m.applications.map((a) => a.id === id ? { ...a, outcome: prevOutcome } : a) } : m);
+      setNotice({ kind: "err", text: "Couldn't save outcome — please try again." });
+      return;
+    }
     load();
   }
 
@@ -539,11 +631,15 @@ export default function Dashboard() {
 
   async function submitSurvey(rating: number) {
     setSurveyRating(rating);
-    await fetch("/api/profile", {
+    const res = await fetch("/api/profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ matchQualityRating: rating }),
-    });
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      setNotice({ kind: "err", text: "Couldn't save your rating — please try again." });
+      return;
+    }
     load();
   }
 
@@ -624,6 +720,10 @@ export default function Dashboard() {
   const connectedCount = integrations.filter((i) => i.status === "connected").length;
   const cap = PLAN_CAP[me.user.plan] ?? 10;
   const matchedCount = me.applications.filter((a) => a.status === "matched").length;
+  const outcomeApps = me.applications.filter((a) => a.status === "applied" && a.outcome);
+  const responseRate = outcomeApps.length > 0
+    ? Math.round((outcomeApps.filter((a) => a.outcome !== "no_response").length / outcomeApps.length) * 100)
+    : null;
 
   return (
     <main className="grid-bg min-h-screen">
@@ -654,6 +754,15 @@ export default function Dashboard() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Remote-browser login viewer — live only while a connect session is open */}
+      {viewer && (
+        <ConnectViewer
+          platform={viewer.platform}
+          token={viewer.token}
+          onClose={() => { setViewer(null); setConnectingPlatform(null); }}
+        />
       )}
 
       {/* top bar */}
@@ -699,6 +808,12 @@ export default function Dashboard() {
               {" "}· <span className={connectedCount > 0 ? "text-accent" : "text-muted"}>
                 {connectedCount} platform{connectedCount !== 1 ? "s" : ""} connected
               </span>
+              {responseRate !== null && (
+                <>
+                  {" "}· {responseRate}% response rate
+                  <span className="text-xs"> (of {outcomeApps.length} tracked — quality of match matters more than volume)</span>
+                </>
+              )}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -751,10 +866,19 @@ export default function Dashboard() {
             <button onClick={() => setTab("integrations")} className="underline text-brand-2 ml-1">Set up integrations →</button>
           </div>
         )}
-        {matchedCount > 0 && !(me.profile?.autoApply) && (
-          <div className="mt-3 rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
-            <span className="font-medium">{matchedCount} job{matchedCount !== 1 ? "s" : ""} awaiting your approval.</span>{" "}
-            <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">Review & approve →</button>
+        {matchedCount > 0 && (
+          <div className="mt-3 flex items-center justify-between rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
+            <div>
+              <span className="font-medium">{matchedCount} job{matchedCount !== 1 ? "s" : ""} awaiting your approval.</span>{" "}
+              <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">Review & approve →</button>
+            </div>
+            <button
+              onClick={approveAllApplications}
+              disabled={approvingAll}
+              className="ml-4 shrink-0 rounded-lg border border-brand/40 px-3 py-1.5 text-xs text-brand-2 hover:bg-brand/10 transition disabled:opacity-50"
+            >
+              {approvingAll ? "Approving…" : `Approve all ${matchedCount}`}
+            </button>
           </div>
         )}
 
@@ -985,7 +1109,7 @@ export default function Dashboard() {
               {t === "integrations" && connectedCount > 0 && (
                 <span className="ml-1.5 rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] text-accent">{connectedCount}</span>
               )}
-              {t === "applications" && matchedCount > 0 && !me.profile?.autoApply && (
+              {t === "applications" && matchedCount > 0 && (
                 <span className="ml-1.5 rounded-full bg-warn/20 px-1.5 py-0.5 text-[10px] text-warn">{matchedCount}</span>
               )}
             </button>
@@ -1062,7 +1186,7 @@ export default function Dashboard() {
                         >
                           <span className={`absolute top-1 size-4 rounded-full bg-white transition-transform ${profileForm.autoApply ? "translate-x-6" : "translate-x-1"}`} />
                         </button>
-                        <span className="text-sm">{profileForm.autoApply ? "On — agent submits automatically" : "Off — agent shortlists, you approve"}</span>
+                        <span className="text-sm">{profileForm.autoApply ? "On — agent preps every match, you tap Approve to send" : "Off — agent only shortlists, nothing gets prepped until you turn this on"}</span>
                       </label>
                     )}
                   </div>
@@ -1174,13 +1298,13 @@ export default function Dashboard() {
                           ))}
                         </select>
                       )}
-                      {a.status === "matched" && !me.profile?.autoApply && (
+                      {a.status === "matched" && (
                         <button
                           onClick={() => approveApplication(a.id)}
                           disabled={approvingId === a.id}
                           className="rounded-md border border-brand/40 px-2.5 py-1 text-xs text-brand-2 hover:bg-brand/10 transition disabled:opacity-50"
                         >
-                          {approvingId === a.id ? "…" : "Apply"}
+                          {approvingId === a.id ? "…" : "Approve"}
                         </button>
                       )}
                     </div>

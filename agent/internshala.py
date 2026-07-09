@@ -394,11 +394,9 @@ def apply(
         _human_click(page, submit)
         page.wait_for_timeout(random.randint(2000, 3500))
 
-        if (page.query_selector(":text('Application sent')")
-                or page.query_selector(":text('successfully')")
-                or page.query_selector(":text('Thank you')")):
-            return "applied", "submitted via Internshala"
-        return "applied", "submitted (confirmation not detected)"
+        return safety.classify_submit(page, [
+            ":text('Application sent')", ":text('successfully')", ":text('Thank you')",
+        ])
 
     except Exception as e:
         err = str(e)

@@ -20,8 +20,19 @@ BASE = "https://unstop.com"
 _contexts: dict = {}
 
 
+def _profile_base() -> str:
+    """Root dir holding per-user persistent browser profiles — must be a
+    volume shared between the web app and every worker replica, or a session
+    saved by one container is invisible to the next. See internshala.py's
+    _profile_base() for the full rationale; override with GRINDLY_PROFILE_BASE."""
+    env = os.environ.get("GRINDLY_PROFILE_BASE")
+    if env:
+        return env
+    return os.path.join(os.path.dirname(__file__), "..", "data", "browser_profile")
+
+
 def _profile_dir(uid: str) -> str:
-    return os.path.join(os.path.dirname(__file__), "browser_profile", uid or "shared", "unstop")
+    return os.path.join(_profile_base(), uid or "shared", "unstop")
 
 
 def _context(uid: str = ""):
@@ -236,9 +247,9 @@ def apply(job: dict, cover_letter: str, uid: str = "",
         stealth.human_click(page, submit)
         page.wait_for_timeout(stealth.random_delay_ms())
 
-        if page.query_selector(":text('successfully'), :text('Applied'), :text('Registered')"):
-            return "applied", "submitted via Unstop"
-        return "applied", "submitted on Unstop (confirmation not detected)"
+        return safety.classify_submit(page, [
+            ":text('successfully')", ":text('Applied')", ":text('Registered')",
+        ])
     except Exception as e:  # noqa: BLE001
         try:
             safety.screenshot(page, uid, f"exception_unstop_{job.get('external_id','')}")

@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
-import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
+import { spawnWorkerKick } from "@/lib/workerKick";
 
 const RESUME_DIR = path.join(process.cwd(), "data", "resumes");
 const ALLOWED_EXT = new Set([".pdf", ".docx", ".txt"]);
@@ -79,18 +78,7 @@ export async function POST(req: Request) {
   const worker = path.join(process.cwd(), "agent", "worker.py");
   try {
     await fsp.access(worker);
-    const logDir = path.join(process.cwd(), "data", "logs");
-    await fsp.mkdir(logDir, { recursive: true });
-    const out = fs.openSync(path.join(logDir, `${uid}.log`), "a");
-    const py = process.env.PYTHON_BIN || "python";
-    const child = spawn(py, [worker, "--drain"], {
-      cwd: process.cwd(),
-      detached: true,
-      stdio: ["ignore", out, out],
-    });
-    fs.closeSync(out);
-    child.on("error", () => {});
-    child.unref();
+    spawnWorkerKick(process.cwd(), uid);
   } catch {
     // No Python here — the worker drains the queued analyze job.
   }

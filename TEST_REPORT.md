@@ -7,6 +7,44 @@
 
 ---
 
+## ✅ Test coverage expansion (2026-07-08)
+
+Gate checks: **tsc 0 errors**, **vitest 164/164 (22 files)**, **pytest 81/81
+(7 files)**, **next build OK**. Every count below was verified by actually
+running the suite, not carried over from a prior report.
+
+Coverage added this pass (previously untested despite being the exact code
+that broke prod 3× — resume upload — or carrying zero regression net):
+
+| Area | New test file | Why |
+|---|---|---|
+| Resume upload API | `src/app/api/resume/__tests__/route.test.ts` | 0 tests existed despite 3 consecutive prod hotfixes for this route |
+| Agent-run API | `src/app/api/agent/run/__tests__/route.test.ts` | enqueue idempotency, worker-missing handling |
+| Worker-kick helper | `src/lib/workerKick.test.ts` | log-truncation-at-1MB logic, real filesystem assertions |
+| DB reset script guard | `scripts/__tests__/reset-db.test.ts` | subprocess test of the `--yes`/`--force-prod` refusal logic (safety-critical, previously an unguarded full-wipe) |
+| Resume parsing (Python) | `agent/tests/test_resume_parse.py` | malformed PDF / missing file handling, skill-extraction fallback |
+| DB layer (Python) | `agent/tests/test_db.py` | plan caps, application lifecycle, outcome-rate math, integration status sync |
+| Worker pure logic (Python) | `agent/tests/test_worker.py` | failure classification, domain inference, cover-letter fallback |
+| Outcome/approve routes | `src/app/api/applications/{outcome,approve}/__tests__/` | enum-guard validation |
+| Integration connect/disconnect | `src/app/api/integrations/{connect,disconnect}/__tests__/` | platform allowlist, prod-disabled gate |
+| Admin user actions | `src/app/api/admin/users/[id]/action/__tests__/route.test.ts` | non-admin 404, self-role-change block |
+
+**Found and fixed along the way:** `agent/tests/test_run_queue.py` permanently
+monkeypatches `db.conn`/`db.cuid`/`db.PG` at module-import time with no
+teardown — harmless while no later-collected file touched `db.conn()` directly,
+but it silently corrupts any test file collected after it in a full-suite run.
+`test_db.py`'s fixture now restores real implementations via `monkeypatch`
+(auto-reverted) rather than relying on module state, so it's correct
+regardless of collection order — verified by running the suite in multiple
+file orders.
+
+**Still not covered** (flagged, not done): platform apply-automation modules
+(`internshala.py`, `linkedin.py`, `naukri.py`, `unstop.py`, `indeed.py`) need
+mocked-DOM fixtures for real coverage — bigger effort, separate pass. No
+component/page `.tsx` tests exist yet.
+
+---
+
 ## ✅ Resolution (2026-06-27) — Phase 0 (code blockers) + Phase 1 (production DB)
 
 All Critical + High + Medium (except M6, accepted) fixed and verified. Gate checks
