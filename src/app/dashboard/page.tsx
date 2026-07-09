@@ -3,10 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { Logo } from "@/components/Brand";
 import { CountUp } from "@/components/Motion";
-import ConnectViewer from "@/components/ConnectViewer";
 import { PROFF_FIELDS, CONTACT_FIELDS } from "@/lib/proffQuestions";
+
+// @novnc/novnc touches `window`/browser globals at module load time — a
+// static import crashes Next's server-side prerender of this page ("window
+// is not defined"), even though this component is only ever mounted in the
+// browser. ssr: false keeps it out of the server bundle entirely.
+const ConnectViewer = dynamic(() => import("@/components/ConnectViewer"), { ssr: false });
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
