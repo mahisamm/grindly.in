@@ -69,6 +69,9 @@ export function missingProdConfig(): string[] {
   if (!encryptionKeyValid()) miss.push("APP_ENCRYPTION_KEY (64 hex) — platform connect throws");
   if (!googleOAuthConfigured()) miss.push("GOOGLE_CLIENT_ID/SECRET — the only login method");
   if (!baseUrlConfigured()) miss.push("NEXT_PUBLIC_APP_URL — OAuth redirect + email links");
-  if (!emailConfigured()) miss.push("EMAIL_SMTP_HOST/USER/PASS -- password reset links won't be delivered without this");
+  // NOT required: EMAIL_SMTP_HOST/USER/PASS. This line was previously here and
+  // contradicted the comment above — Google-only auth means there's no password
+  // to reset, so a missing SMTP config can't legitimately block a production
+  // deploy. Found and fixed as a bug during the master/hosted-branch merge.
   return miss;
 }

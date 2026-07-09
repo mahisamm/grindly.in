@@ -72,18 +72,18 @@ describe("POST /api/agent/run", () => {
     expect(res.status).toBe(500);
   });
 
-  it("creates a new mock-mode run by default", async () => {
+  it("always creates a live run — there is no mock/demo mode", async () => {
     mockGetUid.mockResolvedValue("u1");
     const res = await POST(postReq());
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.mode).toBe("mock");
-    expect(mockAgentRunCreate).toHaveBeenCalledWith({ data: { userId: "u1", mode: "mock" } });
+    expect(body.mode).toBe("live");
+    expect(mockAgentRunCreate).toHaveBeenCalledWith({ data: { userId: "u1", mode: "live" } });
   });
 
-  it("honors mode=live", async () => {
+  it("ignores a mode passed in the request body — mode is not client-controlled", async () => {
     mockGetUid.mockResolvedValue("u1");
-    const res = await POST(postReq({ mode: "live" }));
+    const res = await POST(postReq({ mode: "mock" }));
     const body = await res.json();
     expect(body.mode).toBe("live");
     expect(mockAgentRunCreate).toHaveBeenCalledWith({ data: { userId: "u1", mode: "live" } });

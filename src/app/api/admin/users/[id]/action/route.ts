@@ -15,7 +15,12 @@ const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("set_plan"), value: z.enum(["free", "starter", "pro"]) }),
   z.object({ action: z.literal("set_role"), value: z.enum(["user", "admin"]) }),
   z.object({ action: z.literal("set_integration_access"), value: z.boolean() }),
-  z.object({ action: z.literal("disconnect"), platform: z.string().min(1).max(40) }),
+  z.object({
+    action: z.literal("disconnect"),
+    // Loose string in Prisma (platform enum was removed — see prisma/schema.prisma),
+    // but admin input still needs real validation, not "any 1-40 char string".
+    platform: z.enum(["linkedin", "internshala", "naukri", "unstop", "indeed"]),
+  }),
 ]);
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {

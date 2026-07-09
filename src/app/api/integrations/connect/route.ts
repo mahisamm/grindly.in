@@ -4,7 +4,6 @@ import path from "node:path";
 import fs from "node:fs";
 import { getUid } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import type { Platform } from "@prisma/client";
 
 const ALLOWED = ["linkedin", "internshala", "naukri", "unstop", "indeed"];
 
@@ -34,7 +33,7 @@ export async function POST(req: Request) {
   if (!rawPlatform || !ALLOWED.includes(rawPlatform)) {
     return NextResponse.json({ error: "invalid platform" }, { status: 400 });
   }
-  const platform = rawPlatform as Platform;
+  const platform = rawPlatform;
 
   const user = await prisma.user.findUnique({ where: { id: uid } });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });

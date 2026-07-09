@@ -3,7 +3,6 @@ import path from "node:path";
 import fsp from "node:fs/promises";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
-import type { Platform } from "@prisma/client";
 
 const ALLOWED = ["linkedin", "internshala", "naukri", "unstop", "indeed"];
 
@@ -15,7 +14,7 @@ export async function POST(req: Request) {
   if (!rawPlatform || !ALLOWED.includes(rawPlatform)) {
     return NextResponse.json({ error: "invalid platform" }, { status: 400 });
   }
-  const platform = rawPlatform as Platform;
+  const platform = rawPlatform;
 
   try {
     await prisma.userIntegration.upsert({
