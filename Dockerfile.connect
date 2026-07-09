@@ -8,6 +8,13 @@ WORKDIR /app
 COPY agent/requirements.txt ./agent/requirements.txt
 RUN pip install --no-cache-dir -r agent/requirements.txt websockify \
     && python -m playwright install chromium
+# DEBIAN_FRONTEND=noninteractive is load-bearing here: x11vnc pulls in tzdata
+# as a dependency, and tzdata's postinst script prompts interactively for a
+# geographic area/timezone selection — a plain `docker build` has no TTY to
+# answer that, so the build hangs forever instead of failing loudly.
+# Dockerfile.worker's xvfb+procps install doesn't hit this (no x11vnc there).
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
 RUN apt-get update && apt-get install -y --no-install-recommends xvfb x11vnc procps \
     && rm -rf /var/lib/apt/lists/*
 COPY agent ./agent
