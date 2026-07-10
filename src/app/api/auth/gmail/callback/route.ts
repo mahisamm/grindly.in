@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto";
 import { audit } from "@/lib/audit";
+import { baseUrl } from "@/lib/baseUrl";
 
 const STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -24,7 +25,7 @@ function verifyState(state: string): string | null {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const base = url.origin;
+  const base = baseUrl(url.origin);
   const code = url.searchParams.get("code");
   const rawState = url.searchParams.get("state");
   const error = url.searchParams.get("error");

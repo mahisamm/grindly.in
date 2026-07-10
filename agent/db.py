@@ -351,17 +351,17 @@ def set_integration_status(uid: str, platform: str, status: str, error: str | No
         if existing:
             c.execute(
                 "UPDATE user_integrations SET status=?, connected_at=?, "
-                "otp_required=0, otp_code=NULL, last_error=?, updated_at=? "
+                "otp_required=?, otp_code=NULL, last_error=?, updated_at=? "
                 "WHERE user_id=? AND platform=?",
-                (status, connected_at, err, ts, uid, platform),
+                (status, connected_at, False, err, ts, uid, platform),
             )
         else:
             c.execute(
                 "INSERT INTO user_integrations "
                 "(id, user_id, platform, status, connected_at, otp_required, "
                 "otp_code, last_error, updated_at) "
-                "VALUES (?,?,?,?,?,0,NULL,?,?)",
-                (cuid(), uid, platform, status, connected_at, err, ts),
+                "VALUES (?,?,?,?,?,?,NULL,?,?)",
+                (cuid(), uid, platform, status, connected_at, False, err, ts),
             )
         # keep legacy internshala_connected column in sync
         if platform == "internshala":
@@ -378,9 +378,9 @@ def set_integration_otp_required(uid: str, platform: str):
         _ensure_integrations_table(c)
         ts = now_db()
         c.execute(
-            "UPDATE user_integrations SET status='otp_required', otp_required=1, "
+            "UPDATE user_integrations SET status='otp_required', otp_required=?, "
             "otp_code=NULL, last_error=NULL, updated_at=? WHERE user_id=? AND platform=?",
-            (ts, uid, platform),
+            (True, ts, uid, platform),
         )
 
 

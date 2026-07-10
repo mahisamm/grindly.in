@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createHmac } from "node:crypto";
 import { getUid } from "@/lib/session";
+import { baseUrl } from "@/lib/baseUrl";
 
 function signState(uid: string, ts: number): string {
   const key = process.env.APP_ENCRYPTION_KEY ?? "";
@@ -20,7 +21,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Google OAuth not configured" }, { status: 503 });
   }
 
-  const base = new URL(req.url).origin;
+  const base = baseUrl(new URL(req.url).origin);
   const state = signState(uid, Date.now());
 
   const params = new URLSearchParams({
