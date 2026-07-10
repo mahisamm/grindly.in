@@ -209,6 +209,7 @@ def login(uid: str, platform: str = "internshala", timeout: int = 90) -> dict:
 
     profile = internshala_mod._profile_dir(uid)
     os.makedirs(profile, exist_ok=True)
+    stealth.clear_stale_lock(profile)
     headless = os.environ.get("INTERNPILOT_HEADLESS", "0") == "1"
 
     print(f"[connect_login] logging into {platform} for {uid} (headless={headless})")

@@ -5,7 +5,21 @@ that LinkedIn, Indeed, Naukri, and Internshala probe before showing content.
 All platforms call this instead of maintaining their own inline scripts.
 """
 from __future__ import annotations
+import os
 import random
+
+
+def clear_stale_lock(profile_dir: str) -> None:
+    """Remove Chrome's process-singleton markers before launching on a
+    persistent profile. Automated runs get killed (redeploy, OOM, crash)
+    without a graceful browser shutdown, which leaves these pointing at a
+    dead process — Chromium then refuses to start at all, reporting the
+    profile "in use by another process" even though nothing is running."""
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        try:
+            os.remove(os.path.join(profile_dir, name))
+        except OSError:
+            pass
 
 # Comprehensive init script — runs in every page before any site JS executes.
 _STEALTH_SCRIPT = """

@@ -26,6 +26,7 @@ except Exception:  # noqa: BLE001
     pass
 
 import db
+import stealth
 
 # Per-platform login entry URL and a logged-in predicate.
 # The predicate returns True when the user is detected as authenticated.
@@ -111,6 +112,7 @@ def connect(uid: str, platform: str, timeout: int = 300) -> bool:
 
     profile = _profile_dir(uid, platform)
     os.makedirs(profile, exist_ok=True)
+    stealth.clear_stale_lock(profile)
 
     print(
         f"[connect] launching browser for {uid} on {cfg['label']} — "

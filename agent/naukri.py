@@ -44,6 +44,7 @@ def _context(uid: str = ""):
     from playwright.sync_api import sync_playwright
     profile = _profile_dir(uid)
     os.makedirs(profile, exist_ok=True)
+    stealth.clear_stale_lock(profile)
     pw = sync_playwright().start()
     ctx = pw.chromium.launch_persistent_context(
         profile,
