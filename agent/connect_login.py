@@ -315,6 +315,8 @@ def login(uid: str, platform: str = "internshala", timeout: int = 90) -> dict:
         page.wait_for_timeout(2000)
         return final
     except Exception as e:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
         db.set_integration_status(uid, platform, "needs_login",
                                   error="Login failed unexpectedly — please retry.")
         return {"status": "failed", "detail": f"exception: {str(e)[:160]}"}
