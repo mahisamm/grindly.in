@@ -19,24 +19,6 @@ datasource db {
 // which is the mirrored single source of truth for ApplyStatus/FailureReason
 // shared with agent/safety.py.
 
-enum Role {
-  user
-  admin
-}
-
-enum PlanTier {
-  free
-  starter
-  pro
-}
-
-enum UserStatus {
-  registered
-  onboarding
-  active
-  paused
-}
-
 enum ApplyStatus {
   matched
   approved
@@ -77,21 +59,33 @@ model User {
   createdAt     DateTime @default(now()) @map("created_at")
   // billing (stubbed, real-ready)
   paid          Boolean  @default(false)
-  plan          PlanTier @default(free)
+  // Loose strings, not Postgres enums (PlanTier/UserStatus/Role): the live
+  // production `users` table already has plan/status/role as plain `text`
+  // columns (confirmed via \d users) — these enums were declared in schema
+  // but never actually applied to prod, so `prisma db push` was trying to
+  // convert text -> enum, which Postgres can only do via drop-and-recreate
+  // (data loss on every row). Matching what's actually live instead.
+  plan          String   @default("free") // free | starter | pro
   // slack (stubbed, real-ready)
   slackUserId   String?  @map("slack_user_id")
   slackChannel  String?  @map("slack_channel")
   slackConnected Boolean @default(false) @map("slack_connected")
   // internshala session (persistent browser profile) ready?
   internshalaConnected Boolean @default(false) @map("internshala_connected")
+  // Legacy flag, superseded by internshalaBetaAccess below — unused by any
+  // current code path (verified via grep), but still live with real rows.
+  // Declared here (not dropped) purely so `prisma db push` leaves it alone;
+  // safe to actually drop later via a real migration once confirmed unused
+  // in practice, not just in code.
+  internshalaAccess Boolean @default(false) @map("internshala_access")
   // staged-rollout grant: admin can enable Internshala auto-apply for this user
   // even when the global beta isn't open. OR'd with email/role/INTERNSHALA_BETA_OPEN.
   internshalaBetaAccess Boolean @default(false) @map("internshala_beta_access")
   // lifecycle: registered -> onboarding -> active -> paused
-  status        UserStatus @default(registered)
+  status        String   @default("registered")
   // access role: user (default) | admin. Admin-only dashboard gates on this
   // column server-side — never on email or a client flag.
-  role          Role     @default(user)
+  role          String   @default("user")
 
   profile        Profile?
   applications   Application[]
@@ -396,4 +390,21 @@ model RateLimitEntry {
 
   @@index([key])
   @@map("rate_limit_entries")
+}
+
+// Written by scripts/backup-drill.sh (raw SQL, not Prisma) — declared here
+// purely so `prisma db push` knows this table is intentional and doesn't
+// propose dropping it as "undeclared." @db.Timestamptz matches that
+// script's TIMESTAMPTZ columns exactly (Prisma's DateTime otherwise
+// defaults to timestamp(3) with no time zone — a different underlying
+// Postgres type, which would make db push want to drop+recreate anyway).
+model BackupHealth {
+  id            String    @id @default("singleton")
+  lastDumpAt    DateTime? @map("last_dump_at") @db.Timestamptz
+  lastRestoreAt DateTime? @map("last_restore_at") @db.Timestamptz
+  lastRestoreOk Boolean   @default(false) @map("last_restore_ok")
+  lastRowCount  Int?      @map("last_row_count")
+  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz
+
+  @@map("backup_health")
 }
