@@ -142,5 +142,19 @@ describe("POST /api/pay/confirm", () => {
         expect.objectContaining({ data: expect.objectContaining({ paid: true, plan: "pro" }) })
       );
     });
+
+    // Regression: `stub` used to be read from the request body, so a logged-in
+    // user could POST {"stub":true,"plan":"pro"} to skip signature verification
+    // and grant themselves a paid plan for free. Stub mode is server env only.
+    it("ignores a client-supplied stub flag and still demands a signature", async () => {
+      mockGetUid.mockResolvedValue("u1");
+      mockUserFindUnique.mockResolvedValue({ id: "u1", profile: null });
+
+      const res = await POST(makeReq({ plan: "pro", stub: true }));
+
+      expect(res.status).toBe(400);
+      expect(mockVerifyPaymentSignature).not.toHaveBeenCalled();
+      expect(mockUserUpdate).not.toHaveBeenCalled();
+    });
   });
 });

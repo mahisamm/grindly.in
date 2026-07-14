@@ -11,9 +11,12 @@ import { audit } from "@/lib/audit";
  * Called by the Razorpay modal success handler with the payment proof.
  * Verifies the HMAC signature before granting the plan.
  *
- * Stub mode (no RAZORPAY_KEY_ID): skips verification and grants plan
- * directly — safe because we still require an active session and only
- * grant to the logged-in user (never a uid from the request body).
+ * Stub mode (no RAZORPAY_KEY_ID) is the free beta: it skips verification and
+ * grants the plan directly. That is only safe because nobody is paying — so
+ * whether we are in stub mode is decided by SERVER ENV ALONE. It was previously
+ * also readable from a `stub` flag in the request body, which meant that the
+ * moment RAZORPAY_KEY_ID was set, any logged-in user could POST {"stub":true}
+ * to skip signature verification and grant themselves a paid plan for free.
  */
 export async function POST(req: Request) {
   const sessionUid = await getUid();
@@ -24,13 +27,12 @@ export async function POST(req: Request) {
     razorpay_payment_id?: string;
     razorpay_signature?: string;
     plan?: Plan;
-    stub?: boolean;
   };
 
   const plan: Plan = body.plan === "pro" ? "pro" : "starter";
 
   // Real Razorpay mode — verify signature before any DB write
-  if (!body.stub && process.env.RAZORPAY_KEY_ID) {
+  if (process.env.RAZORPAY_KEY_ID) {
     if (!body.razorpay_order_id || !body.razorpay_payment_id || !body.razorpay_signature) {
       return NextResponse.json({ error: "missing payment fields" }, { status: 400 });
     }

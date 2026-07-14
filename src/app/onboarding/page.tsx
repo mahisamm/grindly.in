@@ -140,10 +140,15 @@ export default function OnboardingPage() {
       body: JSON.stringify({ autoApply: Boolean(form.autoApply ?? true) }),
     }).catch(() => {});
 
+    // Free beta: no checkout modal yet, so this activates the plan directly.
+    // The server decides whether that's allowed (stub mode = no RAZORPAY_KEY_ID);
+    // it does not take our word for it. Once Razorpay keys are set this call
+    // starts failing 400 by design — build the checkout modal, call /api/pay to
+    // create an order, and pass the real payment proof through here.
     const r = await fetch("/api/pay/confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan, stub: true }),
+      body: JSON.stringify({ plan }),
     });
     if (r.ok) {
       window.location.href = "/dashboard";

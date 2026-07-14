@@ -79,6 +79,13 @@ services:
       GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
       GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET:-}
       GMAIL_SCAN_ENABLED: ${GMAIL_SCAN_ENABLED:-}
+      # Razorpay. Unset = stub mode = the intentional free beta (checkout grants
+      # the plan without charging). Setting KEY_ID is what flips /api/pay and
+      # /api/pay/confirm into real-money mode, so KEY_SECRET must be set with it
+      # — the secret is what verifies the payment signature.
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       GROQ_API_KEY: ${GROQ_API_KEY}
       # Staged rollout of Internshala credential login (see .env.example)
