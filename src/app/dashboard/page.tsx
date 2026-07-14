@@ -85,6 +85,7 @@ type Me = {
     slackUserId: string | null;
     internshalaConnected: boolean;
     gmailConnected: boolean;
+    gmailScanEnabled: boolean;
     internshalaLoginEnabled: boolean;
   };
   profile: RawProfile | null;
@@ -325,6 +326,8 @@ export default function Dashboard() {
     let next: { kind: "ok" | "err" | "info"; text: string } | null = null;
     if (params.get("gmailConnected") === "1") {
       next = { kind: "ok", text: "Gmail connected. The agent will now auto-detect interview emails." };
+    } else if (params.get("gmailError") === "unavailable") {
+      next = { kind: "info", text: "Gmail interview tracking is pending Google review — it'll switch on automatically once approved." };
     } else if (params.get("gmailError")) {
       next = { kind: "err", text: "Gmail connection failed. Please try again." };
     }
@@ -1400,7 +1403,11 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* Gmail email scanning */}
+            {/* Gmail email scanning — hidden until gmail.readonly clears Google
+                verification (server gate: GMAIL_SCAN_ENABLED). Showing it while
+                the restricted scope is unverified sends users into a consent
+                screen Google blocks. */}
+            {me.user.gmailScanEnabled && (
             <div className="mt-5 rounded-xl border border-border bg-surface p-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
@@ -1455,6 +1462,7 @@ export default function Dashboard() {
                 </a>
               )}
             </div>
+            )}
 
             <div className="mt-5 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
               <p className="font-medium text-foreground mb-1">How live applications work</p>

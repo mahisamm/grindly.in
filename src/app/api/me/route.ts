@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { internshalaLoginEnabled } from "@/lib/featureFlags";
+import { gmailScanEnabled } from "@/lib/googleOAuth";
 
 const PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"] as const;
 
@@ -103,6 +104,7 @@ export async function GET() {
       slackUserId: user.slackUserId,
       internshalaConnected: user.internshalaConnected,
       gmailConnected,
+      gmailScanEnabled: gmailScanEnabled(),
       internshalaLoginEnabled: internshalaLoginEnabled(user),
     },
     profile: user.profile,

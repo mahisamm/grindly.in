@@ -3,6 +3,8 @@
 // from here so the answer is consistent everywhere. Reads env only — never
 // returns secret values.
 
+import { gmailScanEnabled } from "./googleOAuth";
+
 export type SmsProvider = "fast2sms" | "msg91" | "twilio" | null;
 
 /** Which SMS provider is configured, in priority order. null = none (OTP login
@@ -31,6 +33,12 @@ export function googleOAuthConfigured(): boolean {
   return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 }
 
+// Gmail's gmail.readonly is a restricted scope on a separate OAuth client — it
+// is NOT required for production (login doesn't touch it), so it stays out of
+// missingProdConfig(). Surfaced here only so /api/health shows whether the
+// interview tracker is live. See src/lib/googleOAuth.ts.
+export { gmailScanEnabled } from "./googleOAuth";
+
 // Payment is Razorpay (see src/lib/adapters/payment.ts). "stub" = no keys set,
 // which is the intentional free-beta checkout. This only REPORTS the mode for
 // /api/health; it deliberately does not gate prod-readiness (free beta is a
@@ -54,6 +62,7 @@ export function serviceStatus() {
     email: emailConfigured(),
     llm: llmConfigured(),
     googleOAuth: googleOAuthConfigured(),
+    gmailScan: gmailScanEnabled(),      // false until gmail.readonly is verified
     payment: paymentMode(),             // "razorpay" | "stub"
     encryptionKey: encryptionKeyValid(),
     baseUrl: baseUrlConfigured(),

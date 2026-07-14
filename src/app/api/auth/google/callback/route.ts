@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { setUid } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { baseUrl } from "@/lib/baseUrl";
+import { loginClient } from "@/lib/googleOAuth";
 import { DEFAULTS } from "@/lib/proffQuestions";
 
 interface GoogleTokenResponse {
@@ -45,9 +46,8 @@ export async function GET(req: Request) {
     return NextResponse.redirect(`${base}/login?error=google_state`);
   }
 
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  const client = loginClient();
+  if (!client) {
     return NextResponse.redirect(`${base}/login?error=google_not_configured`);
   }
 
@@ -56,8 +56,8 @@ export async function GET(req: Request) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
       redirect_uri: `${base}/api/auth/google/callback`,
       grant_type: "authorization_code",
     }),

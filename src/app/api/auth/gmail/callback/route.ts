@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { encryptSecret } from "@/lib/crypto";
 import { audit } from "@/lib/audit";
 import { baseUrl } from "@/lib/baseUrl";
+import { gmailClient } from "@/lib/googleOAuth";
 
 const STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -39,9 +40,10 @@ export async function GET(req: Request) {
     return NextResponse.redirect(`${base}/dashboard?gmailError=csrf`);
   }
 
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) {
+  // Must be the same client that issued the code in /api/auth/gmail — Google
+  // rejects a token exchange whose client_id differs from the one that minted it.
+  const client = gmailClient();
+  if (!client) {
     return NextResponse.redirect(`${base}/dashboard?gmailError=config`);
   }
 
@@ -50,8 +52,8 @@ export async function GET(req: Request) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
       redirect_uri: `${base}/api/auth/gmail/callback`,
       grant_type: "authorization_code",
     }),

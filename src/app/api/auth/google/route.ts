@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { baseUrl } from "@/lib/baseUrl";
+import { loginClient } from "@/lib/googleOAuth";
 
 export async function GET(req: Request) {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  if (!clientId) {
+  const client = loginClient();
+  if (!client) {
     return NextResponse.json({ error: "Google OAuth not configured" }, { status: 503 });
   }
 
@@ -24,8 +25,10 @@ export async function GET(req: Request) {
     secure: process.env.NODE_ENV === "production",
   });
 
+  // Non-sensitive scopes only — keep it that way. Adding a sensitive or
+  // restricted scope here puts the login flow behind Google verification.
   const params = new URLSearchParams({
-    client_id: clientId,
+    client_id: client.clientId,
     redirect_uri: `${base}/api/auth/google/callback`,
     response_type: "code",
     scope: "openid email profile",

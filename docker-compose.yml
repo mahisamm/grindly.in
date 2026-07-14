@@ -74,6 +74,11 @@ services:
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      # Gmail runs on its own OAuth client so its restricted scope can't hold
+      # login hostage behind Google verification (see .env.example).
+      GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
+      GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET:-}
+      GMAIL_SCAN_ENABLED: ${GMAIL_SCAN_ENABLED:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       GROQ_API_KEY: ${GROQ_API_KEY}
       # Staged rollout of Internshala credential login (see .env.example)
