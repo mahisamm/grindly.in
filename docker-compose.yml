@@ -99,6 +99,8 @@ services:
       EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
       EMAIL_SMTP_PASS: ${EMAIL_SMTP_PASS:-}
       EMAIL_FROM: ${EMAIL_FROM:-Grindly <no-reply@grindly.in>}
+      # Needed for the onboarding DM. Unset = written to data/slack-outbox.jsonl.
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
     expose:
       - "3000"
     volumes:
