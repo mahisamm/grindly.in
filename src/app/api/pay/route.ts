@@ -9,6 +9,14 @@ export async function POST(req: Request) {
   const { plan } = (await req.json().catch(() => ({}))) as { plan?: Plan };
   const chosen: Plan = plan === "pro" ? "pro" : "starter";
 
-  const order = await createOrder({ userId: uid, plan: chosen });
-  return NextResponse.json(order);
+  try {
+    const order = await createOrder({ userId: uid, plan: chosen });
+    return NextResponse.json(order);
+  } catch (e) {
+    console.error("[pay] createOrder failed:", e);
+    return NextResponse.json(
+      { error: "Could not start checkout. Please try again." },
+      { status: 502 }
+    );
+  }
 }

@@ -180,25 +180,41 @@ def _json_list(v) -> list[str]:
         return []
 
 
+def _unit_mult(unit: str) -> int:
+    if unit == "k":
+        return 1_000
+    if unit in ("l", "lpa", "lakh", "lac"):
+        return 100_000
+    return 1
+
+
 def _parse_stipend(s) -> int | None:
     # Mirrors src/lib/firewall.ts:parseStipend — keep the two in sync.
-    #  - "unpaid"/"none" -> 0 (explicit zero, so a >0 floor blocks it)
-    #  - units: "10k" -> 10000, "6 LPA"/"6 lakh" -> 600000
+    #  - "unpaid"/"none" -> 0; units: "10k" -> 10000, "6 LPA" -> 600000
+    #  - ranges: "10-15k" -> 10000 (trailing unit governs BOTH ends, so the
+    #    low bound is not misread as ₹10 and used to wrongly block a stipend)
     #  - returns None only when no figure is present (unknown -> not gated)
     if not s:
         return None
     st = str(s).lower()
     if re.search(r"\b(unpaid|none|no stipend|nil)\b", st):
         return 0
-    vals = []
-    for num, unit in re.findall(r"(\d[\d,]*\.?\d*)\s*(k|l|lpa|lakh|lac)?", st):
+    vals: list[int] = []
+    consumed: list[tuple[int, int]] = []
+    for mm in re.finditer(r"(\d[\d,]*\.?\d*)\s*(?:-|–|—|to)\s*(\d[\d,]*\.?\d*)\s*(k|l|lpa|lakh|lac)?", st):
+        mult = _unit_mult(mm.group(3) or "")
+        for num in (mm.group(1), mm.group(2)):
+            try:
+                vals.append(int(round(float(num.replace(",", "")) * mult)))
+            except ValueError:
+                continue
+        consumed.append((mm.start(), mm.end()))
+    for mm in re.finditer(r"(\d[\d,]*\.?\d*)\s*(k|l|lpa|lakh|lac)?", st):
+        if any(cs <= mm.start() < ce for cs, ce in consumed):
+            continue
         try:
-            v = float(num.replace(",", ""))
+            v = float(mm.group(1).replace(",", ""))
         except ValueError:
             continue
-        if unit == "k":
-            v *= 1_000
-        elif unit in ("l", "lpa", "lakh", "lac"):
-            v *= 100_000
-        vals.append(int(round(v)))
+        vals.append(int(round(v * _unit_mult(mm.group(2) or ""))))
     return min(vals) if vals else None

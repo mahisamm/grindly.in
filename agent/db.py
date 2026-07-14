@@ -154,6 +154,9 @@ def conn():
         c.row_factory = sqlite3.Row
         try:
             c.execute("PRAGMA busy_timeout = 8000")
+            # WAL: let the dashboard (Prisma) keep reading while the worker writes;
+            # without it a writer blocks readers and the 4s poll can hit "database is locked".
+            c.execute("PRAGMA journal_mode = WAL")
             yield c
             c.commit()
         finally:

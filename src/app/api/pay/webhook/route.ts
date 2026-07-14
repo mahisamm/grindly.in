@@ -81,7 +81,9 @@ export async function POST(req: Request) {
   if (event.event === "payment.captured") {
     const payment = event.payload?.payment?.entity ?? {};
     const uid  = payment.notes?.userId;
-    const plan: Plan = payment.notes?.plan === "starter" ? "starter" : "pro";
+    // Default to the CHEAPER plan on any missing/garbled note — granting Pro by
+    // default would hand out the expensive tier for free on malformed payloads.
+    const plan: Plan = payment.notes?.plan === "pro" ? "pro" : "starter";
     if (uid) await grantPlan(uid, plan, String(payment.id ?? ""));
   }
 

@@ -39,7 +39,17 @@ export async function createOrder(opts: { userId: string; plan: Plan }): Promise
         notes: { userId: opts.userId, plan: opts.plan },
       }),
     });
-    const data = (await res.json()) as { id: string };
+    if (!res.ok) {
+      // Razorpay rejected the order (bad keys, amount, etc.). Surface it instead
+      // of returning an order with orderId=undefined, which would hand the
+      // checkout modal a broken order and fail silently for the user.
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Razorpay order failed (${res.status}): ${detail.slice(0, 300)}`);
+    }
+    const data = (await res.json()) as { id?: string };
+    if (!data.id) {
+      throw new Error("Razorpay order response missing order id");
+    }
     return { stub: false, orderId: data.id, keyId, amount, currency: "INR", plan: opts.plan };
   }
 

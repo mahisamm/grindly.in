@@ -109,7 +109,14 @@ def _daily_cap_for_today(uid: str, plan_cap: int, today: str | None = None) -> i
     itself a bot signal. Never exceeds the plan's own cap."""
     today = today or datetime.date.today().isoformat()
     rng = random.Random(f"{uid}:{today}:cap")
-    return min(plan_cap, rng.randint(5, 10))
+    # Scale the human-pace band with the plan so Pro (30/day) genuinely
+    # applies to more than Starter (10/day). Previously this was a flat
+    # randint(5,10) for everyone, so the Pro upgrade bought nothing.
+    cap = max(1, int(plan_cap))
+    low = max(3, cap // 2)
+    if low >= cap:
+        return cap
+    return min(cap, rng.randint(low, cap))
 
 
 def _platforms_for_today(uid: str, available: list[str], today: str | None = None) -> list[str]:
@@ -681,6 +688,11 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 remaining -= 1
                 per_src_applied[src] = per_src_applied.get(src, 0) + 1
                 applied_keys.add((job["company"].lower(), job["title"].lower()[:40]))
+            elif status == "failed":
+                # Count approve-queue failures too, so the daily report and the
+                # per-platform fail-rate monitor reflect reality.
+                failed += 1
+                per_src_failed[src] = per_src_failed.get(src, 0) + 1
             time.sleep(random.uniform(*_BASE_PACE_SEC))
 
     # 4b. Score fresh listings
@@ -786,9 +798,12 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 status, why = mod.apply(
                     job, letter, uid, profile=profile, resume_path=resume_path
                 )
+                # Retry ONLY on clearly pre-submit failures (missing selector /
+                # element). A "timeout" can fire AFTER the submit click went
+                # through, so retrying it would file a SECOND real application.
                 if status == "failed" and any(
-                    k in why.lower() for k in ("selector", "not found", "timeout")
-                ):
+                    k in why.lower() for k in ("selector", "not found", "element")
+                ) and "timeout" not in why.lower():
                     time.sleep(random.randint(15, 40))
                     status, why = mod.apply(job, letter, uid, profile=profile, resume_path=resume_path)
             except Exception as e:  # noqa: BLE001

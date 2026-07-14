@@ -7,10 +7,21 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     await import("../sentry.server.config");
 
-    const { serviceStatus, missingProdConfig } = await import("@/lib/serverConfig");
+    const { serviceStatus, missingProdConfig, encryptionKeyValid } = await import("@/lib/serverConfig");
     console.log("[startup] service config:", JSON.stringify(serviceStatus()));
 
     if (process.env.NODE_ENV === "production") {
+      // Hard stop: without a valid 64-hex APP_ENCRYPTION_KEY the session HMAC is
+      // computed with an empty secret, so anyone can forge a login for any user.
+      // Refuse to boot rather than merely warn — a crash-on-start is far better
+      // than silent auth bypass.
+      if (!encryptionKeyValid()) {
+        throw new Error(
+          "[startup] FATAL: APP_ENCRYPTION_KEY missing or not 64 hex chars. " +
+            "Refusing to start in production — sessions would be forgeable. Run `npm run setup`."
+        );
+      }
+
       const missing = missingProdConfig();
       if (missing.length) {
         console.warn("[startup] ⚠ MISSING PRODUCTION CONFIG — the app will be degraded/broken until these are set:");

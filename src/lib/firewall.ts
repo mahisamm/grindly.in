@@ -44,9 +44,17 @@ function fuzzyCompanyMatch(company: string, excluded: string): boolean {
   return !!cw[0] && !!ew[0] && cw[0] === ew[0];
 }
 
+function unitMult(u?: string): number {
+  if (u === "k") return 1_000;
+  if (u === "l" || u === "lpa" || u === "lakh" || u === "lac") return 100_000;
+  return 1;
+}
+
 // Parse a free-text stipend into a rupee number.
 //  - "unpaid"/"none" → 0 (explicit zero, so a >0 floor blocks it).
 //  - units: "10k" → 10000, "6 LPA"/"6 lakh" → 600000.
+//  - ranges: "10-15k" → 10000 (the trailing unit governs BOTH ends, so the low
+//    bound isn't misread as ₹10 and used to wrongly block a real stipend).
 //  - returns null only when genuinely no figure is present (unknown → not gated).
 // Mirrors agent/matcher.py:_parse_stipend so TS and Python gate identically.
 function parseStipend(s?: string | null): number | null {
@@ -54,13 +62,27 @@ function parseStipend(s?: string | null): number | null {
   const str = String(s).toLowerCase();
   if (/\b(unpaid|none|no stipend|nil)\b/.test(str)) return 0;
   const vals: number[] = [];
+  const consumed: Array<[number, number]> = [];
+
+  // 1) ranges first — "10-15k", "10 to 15 lpa": apply the unit after B to A too.
+  const rangeRe = /(\d[\d,]*\.?\d*)\s*(?:-|–|—|to)\s*(\d[\d,]*\.?\d*)\s*(k|l|lpa|lakh|lac)?/g;
+  for (const m of str.matchAll(rangeRe)) {
+    const mult = unitMult(m[3]);
+    for (const num of [m[1], m[2]]) {
+      const v = parseFloat(num.replace(/,/g, ""));
+      if (!isNaN(v)) vals.push(Math.round(v * mult));
+    }
+    const start = m.index ?? 0;
+    consumed.push([start, start + m[0].length]);
+  }
+
+  // 2) standalone numbers not already captured inside a range span.
   for (const m of str.matchAll(/(\d[\d,]*\.?\d*)\s*(k|l|lpa|lakh|lac)?/g)) {
-    let v = parseFloat(m[1].replace(/,/g, ""));
+    const start = m.index ?? 0;
+    if (consumed.some(([cs, ce]) => cs <= start && start < ce)) continue;
+    const v = parseFloat(m[1].replace(/,/g, ""));
     if (isNaN(v)) continue;
-    const u = m[2];
-    if (u === "k") v *= 1_000;
-    else if (u === "l" || u === "lpa" || u === "lakh" || u === "lac") v *= 100_000;
-    vals.push(Math.round(v));
+    vals.push(Math.round(v * unitMult(m[2])));
   }
   return vals.length ? Math.min(...vals) : null;
 }
