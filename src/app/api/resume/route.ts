@@ -20,7 +20,10 @@ export async function POST(req: Request) {
     form = await req.formData();
   } catch (e) {
     console.error("[resume] formData parse failed:", e);
-    return NextResponse.json({ error: "Could not read the uploaded file. Try again." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Upload a resume file (PDF, DOCX, or TXT) — not text or JSON." },
+      { status: 400 },
+    );
   }
   const file = form.get("file");
   if (!(file instanceof File)) {

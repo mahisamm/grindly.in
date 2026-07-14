@@ -49,6 +49,18 @@ export default function OnboardingPage() {
       .catch(() => {});
   }, []);
 
+  // Pre-select the plan the user picked on the pricing page (stashed by /login
+  // before the Google round-trip). Cleared once consumed.
+  useEffect(() => {
+    try {
+      const p = localStorage.getItem("grindly_plan");
+      if (p === "starter" || p === "pro") {
+        setPlan(p);
+        localStorage.removeItem("grindly_plan");
+      }
+    } catch {}
+  }, []);
+
   function set(key: string, v: unknown) {
     setForm((f) => ({ ...f, [key]: v }));
   }
@@ -456,7 +468,7 @@ export default function OnboardingPage() {
                 />
                 <span className="text-sm leading-relaxed text-muted">
                   I understand that automated job applications may violate the Terms of Service of
-                  some platforms (notably LinkedIn and Indeed). I accept this risk and take full
+                  the platform (Internshala). I accept this risk and take full
                   responsibility for my connected accounts. I have read the{" "}
                   <a href="/terms" target="_blank" className="text-brand-2 underline">
                     Terms of Service

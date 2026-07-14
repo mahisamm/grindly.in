@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
 import { PaperPlane, Target, Bolt, Slack, Star } from "@/components/Doodles";
@@ -9,6 +9,17 @@ import { PaperPlane, Target, Bolt, Slack, Star } from "@/components/Doodles";
 // routes still exist but are intentionally not exposed here (no SMS provider
 // needed to launch). Re-add the form to bring them back.
 export default function LoginPage() {
+  // Remember a plan picked on the pricing page (?plan=starter|pro) so onboarding
+  // can pre-select it after the Google round-trip. localStorage survives the
+  // OAuth redirect (same origin); the query string does not.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const plan = new URLSearchParams(window.location.search).get("plan");
+    if (plan === "starter" || plan === "pro") {
+      try { localStorage.setItem("grindly_plan", plan); } catch {}
+    }
+  }, []);
+
   const [err] = useState(() => {
     if (typeof window === "undefined") return "";
     const e = new URLSearchParams(window.location.search).get("error");
@@ -62,7 +73,7 @@ export default function LoginPage() {
           <span className="flex text-[#ffd9b8]">
             {[0, 1, 2, 3, 4].map((i) => <Star key={i} size={15} />)}
           </span>
-          Built for the intern grind across 5 platforms
+          Built for the intern grind on Internshala
         </div>
       </aside>
 

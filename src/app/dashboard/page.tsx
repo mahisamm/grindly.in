@@ -724,13 +724,13 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-sm">
               <span className={`size-2 rounded-full ${
-                me.user.status === "active" ? "bg-accent pulse-dot"
-                : me.user.status === "paused" ? "bg-warn"
+                me.user.status === "paused" ? "bg-warn"
+                : me.user.status === "active" && connectedCount > 0 ? "bg-accent pulse-dot"
                 : "bg-muted"
               }`} />
               <span className="hidden sm:inline">
-                {me.user.status === "active" ? "Agent active"
-                 : me.user.status === "paused" ? "Paused"
+                {me.user.status === "paused" ? "Paused"
+                 : me.user.status === "active" && connectedCount > 0 ? "Agent active"
                  : "Setup incomplete"}
               </span>
             </span>

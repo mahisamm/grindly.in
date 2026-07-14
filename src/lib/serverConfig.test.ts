@@ -4,7 +4,7 @@ import { smsProvider, missingProdConfig, paymentMode } from "./serverConfig";
 const TOUCHED = [
   "FAST2SMS_API_KEY", "MSG91_AUTH_KEY", "MSG91_TEMPLATE_ID", "MSG91_SENDER_ID",
   "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER",
-  "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "STRIPE_SECRET_KEY",
+  "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "RAZORPAY_KEY_ID",
   "DATABASE_URL", "APP_ENCRYPTION_KEY", "NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_BASE_URL",
   "EMAIL_SMTP_HOST", "EMAIL_SMTP_USER",
 ];
@@ -77,11 +77,11 @@ describe("missingProdConfig — Google-only beta", () => {
 });
 
 describe("paymentMode", () => {
-  it("stub without a Stripe key", () => {
+  it("stub without a Razorpay key", () => {
     expect(paymentMode()).toBe("stub");
   });
-  it("stripe when STRIPE_SECRET_KEY is set", () => {
-    process.env.STRIPE_SECRET_KEY = "sk_test_x";
-    expect(paymentMode()).toBe("stripe");
+  it("razorpay when RAZORPAY_KEY_ID is set", () => {
+    process.env.RAZORPAY_KEY_ID = "rzp_test_x";
+    expect(paymentMode()).toBe("razorpay");
   });
 });

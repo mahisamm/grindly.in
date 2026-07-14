@@ -1,13 +1,14 @@
-# NexPath
+# Grindly
 
 Your AI applies to internships while you sleep. A local-first SaaS: users sign up,
 upload a resume, answer a few **proff questions** (which become the agent's firewall),
 pay, connect Slack — then an agent reads the resume, finds matching internships,
 **auto-applies** within your limits, and sends a **daily Slack report**.
 
-Built around **Internshala, LinkedIn, Naukri, Indeed, Unstop**. Payment + Slack run
-in **stub mode** locally (no keys needed) and flip to real Stripe/Slack by setting
-two env vars. Resume analysis + match scoring use a **fusion LLM ensemble** (Groq,
+Auto-apply currently runs on **Internshala** (LinkedIn, Naukri, Indeed, Unstop
+adapters exist but are gated off in the UI). Payment + Slack run in **stub mode**
+locally (no keys needed) and flip to real Razorpay/Slack by setting env vars.
+Resume analysis + match scoring use a **fusion LLM ensemble** (Groq,
 Gemini, Cerebras, Mistral) with local Ollama as fallback — free and private.
 
 ---
@@ -142,10 +143,12 @@ python agent/worker.py --loop     # sweeps all active users every 24h
 Set in `.env` — nothing else changes:
 
 ```env
-STRIPE_SECRET_KEY=sk_live_...    # real Stripe Checkout
+RAZORPAY_KEY_ID=rzp_live_...     # real Razorpay Checkout (unset = free stub)
+RAZORPAY_KEY_SECRET=...          # server-only: signs orders + verifies payments
 SLACK_BOT_TOKEN=xoxb-...         # real Slack DMs
 TRUST_PROXY=1                    # when behind Caddy/Nginx
 GRINDLY_SPREAD_APPLIES=1         # human pacing (5-15 min between applies)
+INTERNSHALA_BETA_OPEN=1          # open Internshala auto-apply to all users
 ```
 
 ---
@@ -204,7 +207,7 @@ Pause from the dashboard anytime — the scheduler skips paused users (only swee
 - Live platform scraping is best-effort — DOM shifts and anti-bot measures can break
   selectors; the firewall + daily cap keep the agent polite.
 - Match score **is** the firewall: raise `min match score` to be pickier.
-- Payment + Slack are stubbed locally; set `STRIPE_SECRET_KEY` / `SLACK_BOT_TOKEN`
-  to go real (no code change).
+- Payment + Slack are stubbed locally; set `RAZORPAY_KEY_ID` + `RAZORPAY_KEY_SECRET`
+  / `SLACK_BOT_TOKEN` to go real (no code change).
 - `GRINDLY_SPREAD_APPLIES=1` enables 5-15 min gaps between applies in production —
   strongly recommended to avoid bot-detection flags.

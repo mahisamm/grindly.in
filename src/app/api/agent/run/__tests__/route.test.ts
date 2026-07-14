@@ -6,6 +6,7 @@ const {
   mockUserFindUnique,
   mockAgentRunFindFirst,
   mockAgentRunCreate,
+  mockUserIntegrationCount,
   mockSpawnWorkerKick,
 } = vi.hoisted(() => ({
   mockGetUid: vi.fn(),
@@ -13,6 +14,7 @@ const {
   mockUserFindUnique: vi.fn(),
   mockAgentRunFindFirst: vi.fn(),
   mockAgentRunCreate: vi.fn(),
+  mockUserIntegrationCount: vi.fn(),
   mockSpawnWorkerKick: vi.fn(),
 }));
 
@@ -20,6 +22,7 @@ vi.mock("@/lib/session", () => ({ getUid: mockGetUid }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: { findUnique: mockUserFindUnique },
+    userIntegration: { count: mockUserIntegrationCount },
     agentRun: {
       findFirst: mockAgentRunFindFirst,
       create: mockAgentRunCreate,
@@ -46,7 +49,10 @@ function getReq(id?: string) {
 beforeEach(() => {
   vi.resetAllMocks();
   mockAccess.mockResolvedValue(undefined); // worker.py present by default
-  mockUserFindUnique.mockResolvedValue({ id: "u1" });
+  // Connected platform by default so live runs are allowed; individual tests
+  // override to exercise the no-platform gate.
+  mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: true });
+  mockUserIntegrationCount.mockResolvedValue(1);
   mockAgentRunFindFirst.mockResolvedValue(null);
   mockAgentRunCreate.mockResolvedValue({ id: "run1" });
 });
@@ -70,6 +76,15 @@ describe("POST /api/agent/run", () => {
     mockAccess.mockRejectedValue(new Error("ENOENT"));
     const res = await POST(postReq());
     expect(res.status).toBe(500);
+  });
+
+  it("returns 400 for a live run with no connected platform", async () => {
+    mockGetUid.mockResolvedValue("u1");
+    mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: false });
+    mockUserIntegrationCount.mockResolvedValue(0);
+    const res = await POST(postReq());
+    expect(res.status).toBe(400);
+    expect(mockAgentRunCreate).not.toHaveBeenCalled();
   });
 
   it("always creates a live run — there is no mock/demo mode", async () => {
@@ -98,8 +113,11 @@ describe("POST /api/agent/run", () => {
     expect(mockAgentRunCreate).not.toHaveBeenCalled();
   });
 
-  it("analyzeOnly always creates a fresh analyze run, even with a queued run pending", async () => {
+  it("analyzeOnly creates a fresh analyze run even with no platform connected", async () => {
     mockGetUid.mockResolvedValue("u1");
+    // No connected platform — analyzeOnly must still work (it touches no board).
+    mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: false });
+    mockUserIntegrationCount.mockResolvedValue(0);
     mockAgentRunFindFirst.mockResolvedValue({ id: "existing_run" });
     const res = await POST(postReq({ analyzeOnly: true }));
     const body = await res.json();

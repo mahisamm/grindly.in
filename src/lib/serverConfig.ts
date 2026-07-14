@@ -31,8 +31,12 @@ export function googleOAuthConfigured(): boolean {
   return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 }
 
-export function paymentMode(): "stripe" | "stub" {
-  return process.env.STRIPE_SECRET_KEY ? "stripe" : "stub";
+// Payment is Razorpay (see src/lib/adapters/payment.ts). "stub" = no keys set,
+// which is the intentional free-beta checkout. This only REPORTS the mode for
+// /api/health; it deliberately does not gate prod-readiness (free beta is a
+// valid deploy), so Razorpay keys are NOT in missingProdConfig().
+export function paymentMode(): "razorpay" | "stub" {
+  return process.env.RAZORPAY_KEY_ID ? "razorpay" : "stub";
 }
 
 export function encryptionKeyValid(): boolean {
@@ -50,7 +54,7 @@ export function serviceStatus() {
     email: emailConfigured(),
     llm: llmConfigured(),
     googleOAuth: googleOAuthConfigured(),
-    payment: paymentMode(),             // "stripe" | "stub"
+    payment: paymentMode(),             // "razorpay" | "stub"
     encryptionKey: encryptionKeyValid(),
     baseUrl: baseUrlConfigured(),
   };

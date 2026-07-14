@@ -26,6 +26,25 @@ export async function POST(req: Request) {
   // via the user's connected platform, so nothing fabricated reaches the UI.
   const runMode = "live";
 
+  // A live run applies against a connected platform — without one the worker can
+  // only report login_required, so refuse up front instead of enqueueing a
+  // doomed job. `analyzeOnly` just scores the resume and needs no platform.
+  // (The dashboard already disables the button; this enforces it server-side so
+  // a direct API call can't queue a run with nothing connected.)
+  if (!analyzeOnly) {
+    const connected =
+      user.internshalaConnected ||
+      (await prisma.userIntegration
+        .count({ where: { userId: uid, status: "connected" } })
+        .catch(() => 0)) > 0;
+    if (!connected) {
+      return NextResponse.json(
+        { error: "Connect Internshala before running the agent." },
+        { status: 400 },
+      );
+    }
+  }
+
   const root = process.cwd();
   const worker = path.join(root, "agent", "worker.py");
   try { await fsp.access(worker); } catch {

@@ -113,7 +113,7 @@ export default function Home() {
               <span className="flex text-[#ff7a1a]">
                 {[0, 1, 2, 3, 4].map((i) => <Star key={i} size={16} />)}
               </span>
-              Built for the intern grind across 5 platforms
+              Built for the intern grind on Internshala
             </div>
           </div>
 
@@ -183,7 +183,7 @@ export default function Home() {
         <div className="marquee-track">
           {[0, 1].map((dup) => (
             <span key={dup} className="display flex items-center text-4xl sm:text-5xl" aria-hidden={dup === 1}>
-              {["THE AGENT THAT GROWS WITH YOU", "APPLIES WHILE YOU SLEEP", "5 PLATFORMS, ONE BOT"].map((t) => (
+              {["THE AGENT THAT GROWS WITH YOU", "APPLIES WHILE YOU SLEEP", "ONE BOT, ZERO BUSYWORK"].map((t) => (
                 <span key={t} className="flex items-center">
                   <span className="px-8">{t}</span>
                   <Star className="opacity-90" size={26} />
@@ -291,7 +291,7 @@ export default function Home() {
                   ))}
                 </ul>
                 <Link
-                  href="/login"
+                  href={`/login?plan=${key}`}
                   className={`press mt-7 block rounded-2xl px-4 py-3 text-center font-semibold transition ${
                     key === "pro"
                       ? "border-2 border-ink bg-white text-brand hover:bg-white/90"

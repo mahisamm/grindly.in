@@ -86,6 +86,11 @@ model User {
   // access role: user (default) | admin. Admin-only dashboard gates on this
   // column server-side — never on email or a client flag.
   role          String   @default("user")
+  // Session revocation counter. Embedded in the signed session cookie; getUid()
+  // rejects any cookie whose version is below this. Incremented on logout (and
+  // any future force-logout / credential change) so a leaked or already-issued
+  // cookie stops working immediately — a stateless HMAC alone can't be revoked.
+  tokenVersion  Int      @default(0) @map("token_version")
 
   profile        Profile?
   applications   Application[]
