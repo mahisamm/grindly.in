@@ -71,6 +71,7 @@ type RawProfile = {
   resumeName: string | null;
   matchQualityRating: number | null;
   resumeParseFailed: boolean;
+  reportChannel: string;
 };
 type Me = {
   user: {
@@ -93,6 +94,8 @@ type Me = {
   reports: Report[];
   stats: {
     matched: number;
+    approved: number;
+    reviewed: number;
     applied: number;
     skipped: number;
     failed: number;
@@ -116,6 +119,7 @@ type ProfileForm = {
   autoApply: boolean;
   phone: string;
   gpa: string;
+  reportChannel: string;
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -205,6 +209,7 @@ function profileToForm(p: RawProfile): ProfileForm {
     autoApply: p.autoApply ?? true,
     phone: p.phone || "",
     gpa: p.gpa != null ? String(p.gpa) : "8.0",
+    reportChannel: p.reportChannel || "email",
   };
 }
 
@@ -845,16 +850,18 @@ export default function Dashboard() {
           </div>
         ))}
 
-        {/* stats */}
+        {/* stats — "Matched" is jobs awaiting your approval, NOT everything the
+            agent looked at. "Reviewed" is that total. Conflating the two is what
+            made a run that matched nothing report "Matched 49". */}
         <div className="mt-6 grid grid-cols-3 sm:grid-cols-5 gap-3">
           {([
-            ["Matched", me.stats.matched, "text-foreground"],
-            ["Applied", me.stats.applied, "text-accent"],
-            ["Skipped", me.stats.skipped, "text-muted"],
-            ["Failed", me.stats.failed, "text-danger"],
-            ["Avg match", me.stats.avgScore, "text-brand-2"],
-          ] as const).map(([label, val, c]) => (
-            <div key={label} className="sticker tilt rounded-2xl bg-surface p-4" role="region" aria-label={`${label}: ${val}`}>
+            ["Reviewed", me.stats.reviewed, "text-muted", "Listings the agent scored"],
+            ["Matched", me.stats.matched, "text-foreground", "Cleared your threshold — awaiting your approval"],
+            ["Applied", me.stats.applied, "text-accent", "Actually submitted"],
+            ["Failed", me.stats.failed, "text-danger", "Submission failed"],
+            ["Avg match", me.stats.avgScore, "text-brand-2", "Average score across everything reviewed"],
+          ] as const).map(([label, val, c, help]) => (
+            <div key={label} className="sticker tilt rounded-2xl bg-surface p-4" role="region" aria-label={`${label}: ${val}. ${help}`} title={help}>
               <div className={`display text-4xl ${c}`} aria-hidden="true"><CountUp value={val} /></div>
               <div className="text-xs text-muted mt-1" aria-hidden="true">{label}</div>
             </div>
@@ -1147,6 +1154,37 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+            </div>
+
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-4">Reports</h2>
+              <p className="text-xs text-muted mb-4">
+                Where the agent sends your daily report and any &quot;action needed&quot; alerts.
+                Change this whenever you like.
+              </p>
+              <div className="grid grid-cols-2 gap-3 max-w-md">
+                {([
+                  ["email", "📧", "Email", me.user.email],
+                  ["slack", "💬", "Slack DM", me.user.slackConnected ? "Connected" : "Needs setup below"],
+                ] as const).map(([value, icon, label, sub]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => patchForm("reportChannel", value)}
+                    className={`rounded-xl border-2 p-4 text-left transition ${profileForm.reportChannel === value ? "border-brand bg-brand/5" : "border-border hover:border-brand/40"}`}
+                  >
+                    <div className="text-xl mb-1">{icon}</div>
+                    <div className="font-semibold text-sm">{label}</div>
+                    <div className="text-xs text-muted mt-0.5 truncate">{sub}</div>
+                  </button>
+                ))}
+              </div>
+              {profileForm.reportChannel === "slack" && !me.user.slackConnected && (
+                <p className="mt-3 text-xs text-warn">
+                  Slack isn&apos;t connected yet — connect it in the Integrations tab, or your
+                  reports will fall back to email.
+                </p>
+              )}
             </div>
 
             <div>

@@ -26,6 +26,10 @@ _ALIAS = {
     "next.js": "nextjs", "reactjs": "react", "react.js": "react",
     "react native": "reactnative", "rest api": "restapi",
     "scikit-learn": "sklearn", "ui/ux": "uiux", "power bi": "powerbi",
+    # "React JS Development Internship" is one of the commonest listing titles
+    # on Internshala, and its "js" token matched nothing at all — a candidate
+    # whose resume says "javascript" scored no hit on a JavaScript job.
+    "js": "javascript", "ts": "typescript", "ml": "machine learning",
 }
 
 
@@ -39,7 +43,42 @@ def _norm(s: str) -> str:
 
 
 def _tokens(s: str) -> set[str]:
-    return {t for t in _norm(s).split() if len(t) > 1}
+    """Aliased token set. The alias map has to apply to listing text too, not just
+    to the candidate's declared skills — otherwise "React JS" in a title never
+    lines up with "javascript" on a resume."""
+    out: set[str] = set()
+    for t in _norm(s).split():
+        if len(t) <= 1:
+            continue
+        out.update(_ALIAS.get(t, t).split())
+    return out
+
+
+# How many of the candidate's own skills a listing must mention before the
+# "this listing is in my field" signal is saturated. It is a COUNT, not a ratio
+# over the candidate's whole skill list.
+#
+# This used to be `len(hits) / len(skills)`, which made breadth a penalty: the
+# identical Full Stack listing scored 65 for a candidate with 17 skills and 88
+# for one with 3, because the strong candidate's own skill count was the
+# denominator. Nearly nobody real could clear the default 65 threshold — a live
+# run scraped 49 Internshala listings and matched zero, every one of them
+# scoring around 21.
+RELEVANCE_SATURATION = 3
+
+
+def _domain_hit(domains: list[str], haystack: str, hay_tokens: set[str]) -> bool:
+    """True only if a whole domain phrase is present — every token of it, not
+    just one. A loose `any token overlaps` test fired on the word "development"
+    alone, so every "<Anything> Development Internship" collected the domain
+    bonus regardless of field."""
+    for d in domains:
+        dt = _tokens(d)
+        if not dt:
+            continue
+        if _norm(d).strip() in haystack or dt <= hay_tokens:
+            return True
+    return False
 
 
 def _experience_penalty(title: str, exp_level: str | None) -> float:
@@ -82,32 +121,41 @@ def score_job(
     if not skills:
         return 50, "no skills extracted yet; neutral score"
 
-    # 1) direct skill hits (substring OR token)
-    hits = []
-    for sk in skills:
-        if sk in haystack or hay_tokens & _tokens(sk):
-            hits.append(sk)
-    overlap = len(hits) / max(1, len(skills))
+    # 1) relevance — how many of the candidate's skills this listing mentions.
+    #    Saturating count, NOT a fraction of their skill list: see
+    #    RELEVANCE_SATURATION. A candidate with more skills must never score
+    #    lower than a narrower one on the same job.
+    hits = [sk for sk in skills if sk in haystack or hay_tokens & _tokens(sk)]
+    relevance = min(1.0, len(hits) / RELEVANCE_SATURATION)
 
-    # 2) explicit job-skill overlap (stronger signal)
+    # 2) coverage — of what the ROLE asks for, how much does the candidate have.
+    #    None (not 0.0) when the listing declares no skills at all, so "we don't
+    #    know what this role wants" doesn't read as "the candidate has none of it".
     js_hits = [s for s in job_skills if s in skills or _tokens(s) & set(skills)]
-    js_ratio = len(js_hits) / max(1, len(job_skills)) if job_skills else 0
+    coverage = len(js_hits) / len(job_skills) if job_skills else None
 
     # 3) domain alignment
-    domain_hit = any(_tokens(d) & hay_tokens for d in domains) if domains else False
+    domain_hit = _domain_hit(domains, haystack, hay_tokens) if domains else False
 
-    base = 0.55 * min(1.0, overlap * 1.8) + 0.35 * js_ratio
+    if coverage is None:
+        base = 0.75 * relevance
+    else:
+        base = 0.50 * coverage + 0.35 * relevance
     if domain_hit:
-        base += 0.10
+        base += 0.12
 
     # 4) experience level adjustment
     base += _experience_penalty(job.get("title", ""), exp_level)
 
-    # 5) semantic blend — TF-IDF cosine(skills, JD text) when JD available
+    # 5) semantic bonus — TF-IDF cosine(skills, JD text) when the JD is available.
+    #    Additive, never a haircut. The old form was `base = 0.70*base + 0.30*semantic`,
+    #    but a cosine between a bag of skill words and prose is structurally low
+    #    (0.05-0.25 even for a perfect fit), so that blend almost always *lowered*
+    #    the score — reading the job description could only ever hurt a listing.
     if jd_text:
         semantic = _tfidf_score(" ".join(skills), jd_text)
         if semantic > 0:
-            base = 0.70 * base + 0.30 * semantic
+            base += 0.15 * min(1.0, semantic * 2.5)
 
     score = int(round(min(1.0, max(0.0, base)) * 100))
 
@@ -118,7 +166,7 @@ def score_job(
 
     # transparent breakdown — surfaced verbatim in the dashboard so the user can
     # see *why* a job scored the way it did (and contest a bad match).
-    parts = [f"{len(hits)}/{len(skills)} of your skills"]
+    parts = [f"{len(hits)} of your skills mentioned"]
     if job_skills:
         parts.append(f"{len(js_hits)}/{len(job_skills)} role skills")
     parts.append("domain ✓" if domain_hit else "domain ✗")

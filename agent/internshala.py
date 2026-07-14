@@ -464,24 +464,45 @@ def _attr_el(scope, selectors):
 
 _SKILL_HINTS = {
     "frontend":        ["react", "javascript", "html", "css"],
+    "front end":       ["react", "javascript", "html", "css"],
     "full stack":      ["react", "node", "javascript", "mongodb"],
     "backend":         ["python", "django", "sql", "rest api"],
+    "back end":        ["python", "django", "sql", "rest api"],
     "data science":    ["python", "pandas", "machine learning", "sql"],
     "machine learning":["python", "pytorch", "deep learning"],
+    "artificial intel":["python", "machine learning", "deep learning"],
     "android":         ["kotlin", "android", "java"],
+    "ios":             ["swift", "ios"],
     "ui":              ["figma", "ui/ux"],
     "ux":              ["figma", "ui/ux"],
     "data analyst":    ["sql", "excel", "tableau"],
+    "data analytics":  ["sql", "excel", "tableau"],
     "devops":          ["docker", "aws", "linux"],
+    "cloud":           ["aws", "docker", "linux"],
     "marketing":       ["marketing", "seo"],
     "flutter":         ["flutter", "firebase"],
+    "react native":    ["react native", "javascript"],
+    "react":           ["react", "javascript"],
+    "node":            ["node", "javascript"],
+    "django":          ["python", "django"],
     "python":          ["python", "sql"],
     "web":             ["html", "css", "javascript"],
     "java":            ["java", "spring"],
+    "software":        ["programming", "data structures", "git"],
+    "sde":             ["programming", "data structures", "git"],
 }
 
 
 def _infer_skills(title: str) -> list[str]:
+    """Best-effort guess at what a role wants, from its title alone.
+
+    Returns [] — not a placeholder — when nothing is recognised. It used to
+    return ["communication"], which the matcher then read as a real requirement
+    the candidate didn't have, dragging every unrecognised title (e.g. "React JS
+    Development Internship", which no hint matched) down to a near-zero role-skill
+    score. An empty list means "requirements unknown", and matcher.score_job
+    scores on the candidate's own relevance signal instead of inventing a miss.
+    """
     low = (title or "").lower()
     out: list[str] = []
     for k, v in _SKILL_HINTS.items():
@@ -489,4 +510,4 @@ def _infer_skills(title: str) -> list[str]:
             for s in v:
                 if s not in out:
                     out.append(s)
-    return out or ["communication"]
+    return out

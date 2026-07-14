@@ -261,10 +261,15 @@ def test_in_human_hours_boundaries_are_inclusive_start_exclusive_end():
 
 # ---------- _daily_cap_for_today (human-pace volume) ----------
 
-def test_daily_cap_for_today_within_5_to_10_range():
+def test_daily_cap_for_today_scales_with_the_plan():
+    # The human-pace band is half the plan cap up to the plan cap — it used to be
+    # a flat randint(5, 10) for everyone, which meant the Pro upgrade (30/day)
+    # bought exactly nothing. This test was still asserting the old flat band.
     for i in range(50):
-        cap = worker._daily_cap_for_today(f"user{i}", plan_cap=30, today="2026-07-09")
-        assert 5 <= cap <= 10
+        starter = worker._daily_cap_for_today(f"user{i}", plan_cap=10, today="2026-07-09")
+        pro = worker._daily_cap_for_today(f"user{i}", plan_cap=30, today="2026-07-09")
+        assert 5 <= starter <= 10
+        assert 15 <= pro <= 30
 
 
 def test_daily_cap_for_today_never_exceeds_plan_cap():

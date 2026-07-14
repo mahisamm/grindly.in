@@ -92,6 +92,13 @@ services:
       INTERNSHALA_BETA_EMAILS: ${INTERNSHALA_BETA_EMAILS:-}
       INTERNSHALA_BETA_OPEN: ${INTERNSHALA_BETA_OPEN:-}
       SENTRY_DSN: ${SENTRY_DSN:-}
+      # SMTP — password-reset mail and any web-side notification. Unset = the mail
+      # is written to data/email-outbox.jsonl instead of being sent.
+      EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST:-}
+      EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-587}
+      EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
+      EMAIL_SMTP_PASS: ${EMAIL_SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Grindly <no-reply@grindly.in>}
     expose:
       - "3000"
     volumes:
@@ -137,6 +144,16 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       SENTRY_DSN: ${SENTRY_DSN:-}
+      # Report delivery. The worker sends each user's daily report on the channel
+      # they chose (profile.report_channel). Without these the email path falls
+      # back to data/email-outbox.jsonl — persisted, but read by nobody, which is
+      # exactly the state every report was in before this was wired up.
+      EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST:-}
+      EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-587}
+      EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
+      EMAIL_SMTP_PASS: ${EMAIL_SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Grindly <no-reply@grindly.in>}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
     deploy:
       replicas: 2  # horizontal browser-worker fleet; per-user lock prevents double-apply
       resources:

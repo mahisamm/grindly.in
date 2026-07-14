@@ -27,11 +27,19 @@ def send(to: str, subject: str, body: str) -> bool:
             msg["From"] = sender
             msg["To"] = to
             ctx = ssl.create_default_context()
-            with smtplib.SMTP(host, port) as s:
-                s.ehlo()
-                s.starttls(context=ctx)
-                s.login(user, passwd)
-                s.sendmail(sender, [to], msg.as_string())
+            # Port 465 is implicit TLS (SMTPS) — the connection is encrypted from
+            # the first byte and STARTTLS is a protocol error there. 587 is plain
+            # with an explicit STARTTLS upgrade.
+            if port == 465:
+                with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as s:
+                    s.login(user, passwd)
+                    s.sendmail(sender, [to], msg.as_string())
+            else:
+                with smtplib.SMTP(host, port, timeout=20) as s:
+                    s.ehlo()
+                    s.starttls(context=ctx)
+                    s.login(user, passwd)
+                    s.sendmail(sender, [to], msg.as_string())
             print(f"[email_notify] sent → {to}: {subject}", flush=True)
             return True
         except Exception as e:

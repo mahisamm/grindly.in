@@ -30,6 +30,13 @@ const STR_FIELDS = new Set([
 ]);
 const BOOL_FIELDS = new Set(["autoApply"]);
 
+// Fields whose value must be one of a fixed set — anything else is dropped, so a
+// typo or a hostile body can't write a channel the worker doesn't know how to
+// deliver on (which would silently mean no reports at all).
+const ENUM_FIELDS: Record<string, Set<string>> = {
+  reportChannel: new Set(["email", "slack"]),
+};
+
 export async function POST(req: Request) {
   const uid = await getUid();
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
@@ -41,6 +48,7 @@ export async function POST(req: Request) {
     if (ARRAY_FIELDS.has(k)) data[k] = JSON.stringify(Array.isArray(v) ? v : []);
     else if (NUM_FIELDS.has(k)) data[k] = Math.max(0, Math.round(Number(v) || 0));
     else if (BOOL_FIELDS.has(k)) data[k] = Boolean(v);
+    else if (ENUM_FIELDS[k]) { if (ENUM_FIELDS[k].has(String(v))) data[k] = String(v); }
     else if (STR_FIELDS.has(k)) data[k] = String(v ?? "");
   }
 

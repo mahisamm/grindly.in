@@ -184,6 +184,10 @@ ADVERSARIAL_PLATFORMS = frozenset(SOURCE_PRIORITY)
 #   GRINDLY_CAP_PER_RUN      — max applies total in a single run (0 = use plan cap)
 SAFETY_CAP_PER_PLATFORM = int(os.environ.get("GRINDLY_CAP_PER_PLATFORM", "15"))
 SAFETY_CAP_PER_RUN = int(os.environ.get("GRINDLY_CAP_PER_RUN", "0"))
+# How many of the top-scoring listings get their full job description fetched and
+# re-scored BEFORE the threshold decides (see step 4b). Each one is a page load,
+# so this is deliberately bounded rather than "all of them".
+JD_RESCORE_LIMIT = int(os.environ.get("GRINDLY_JD_RESCORE_LIMIT", "12"))
 # Spread applies over time to mimic human pacing — set GRINDLY_SPREAD_APPLIES=1 in prod.
 # Each successful apply pauses 5-15 min before the next one.
 _SPREAD_APPLIES = os.environ.get("GRINDLY_SPREAD_APPLIES", "0") == "1"
@@ -409,7 +413,15 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
 
     profile = user.get("profile") or {}
     name = user.get("name") or (user.get("email") or "").split("@")[0]
-    channel = user.get("slack_channel") or user.get("slack_user_id") or "demo-dm"
+
+    # "approved" = submit-only. Fired when the user taps Approve in the dashboard:
+    # send the applications they just OK'd and nothing else. Skips discovery
+    # entirely (no scraping, no scoring), because tapping Approve on one job
+    # shouldn't cost a full multi-minute sweep of every board. All the safety
+    # machinery — human hours, daily cap, pacing, the challenge breaker — still
+    # applies; it is the same submit path a normal run uses in step 4a.
+    submit_only = mode == "approved"
+    live = mode in ("live", "approved")
 
     cap = _daily_cap_for_today(uid, db.get_plan_cap(uid))
     log.info("=== run for %s (%s) mode=%s cap=%d/day (human-pace) ===", name, uid, mode, cap)
@@ -420,8 +432,9 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     if profile.get("auto_apply") and not profile.get("auto_apply_consent_at"):
         log.warning("BLOCKED: auto_apply on without consent timestamp — refusing to submit applications")
         db.add_audit("consent_blocked", user_id=uid, detail="auto_apply blocked: no consent timestamp")
-        notify.send(
-            channel,
+        notify.to_user(
+            user,
+            "Grindly: action needed — confirm your settings",
             ":lock: *Agent blocked* — auto-apply requires explicit consent. "
             "Re-open the dashboard, confirm your settings, and re-activate to continue.",
         )
@@ -446,8 +459,9 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     db.set_resume_parse_failed(uid, parse_failed)
     if parse_failed:
         log.warning("no skills available — matches will be weak until skills are set")
-        notify.send(
-            channel,
+        notify.to_user(
+            user,
+            "Grindly: I couldn't read your resume skills",
             ":warning: I couldn't read any skills from your resume. Open the dashboard "
             "(Resume Intelligence → Edit skills) and add them so I can match you accurately.",
         )
@@ -481,7 +495,7 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     # Running live outside a plausible daytime window is itself a bot tell,
     # independent of pacing within the run. Mock mode is unaffected (no
     # platform is actually touched).
-    if mode == "live" and not _in_human_hours(ist_h):
+    if live and not _in_human_hours(ist_h):
         msg = (
             f"It's outside normal hours right now (IST {ist_h}h) — I only search and apply "
             f"during the day ({HUMAN_HOURS_START}:00-{HUMAN_HOURS_END}:00 IST) to keep this "
@@ -489,7 +503,7 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             f"dashboard and run again during the day."
         )
         log.info("deferred: outside human hours (IST %dh)", ist_h)
-        notify.send(channel, f":clock3: {msg}")
+        notify.to_user(user, "Grindly: paused until daytime", f":clock3: {msg}")
         return {"deferred": "outside_human_hours", "hour_ist": ist_h}
 
     # 3. fetch listings — live platforms only (no mock/demo path)
@@ -499,14 +513,9 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     # *discover* on today. Approved-application submits (4a) and the
     # account-wide challenge breaker both need every connected platform, not
     # just today's rotation, so this is hoisted to function scope.
-    connected_platforms: list[str] = []
+    connected_platforms: list[str] = db.get_connected_platforms(uid)
 
-    connected_platforms = db.get_connected_platforms(uid)
-    active_sources = _platforms_for_today(uid, [s for s in SOURCE_PRIORITY if s in connected_platforms])
-    if active_sources:
-        log.info("platform rotation today: %s (connected: %s)", active_sources, connected_platforms)
-
-    if not active_sources:
+    if not connected_platforms:
         msg = (
             "no platforms connected. "
             "Connect a platform in the Integrations tab before running the agent."
@@ -514,34 +523,54 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
         log.warning(msg)
         return {"error": "no_platforms_connected", "message": msg}
 
-    kw_sets = _expand_search_keywords(plan["domains"], skills)
-    per_kw = max(8, (cap + 5) // max(1, len(active_sources) * len(kw_sets)))
+    # A submit-only run does no discovery: the rotation exists to decide which
+    # boards to *scrape* today, and there is nothing to scrape.
+    active_sources = (
+        [] if submit_only
+        else _platforms_for_today(uid, [s for s in SOURCE_PRIORITY if s in connected_platforms])
+    )
+    if active_sources:
+        log.info("platform rotation today: %s (connected: %s)", active_sources, connected_platforms)
 
-    # Load modules serially (importlib side-effects must stay single-threaded)
-    loaded: dict[str, object] = {}
-    for src in active_sources:
-        mod = _load_module(src)
-        if mod is not None:
-            loaded[src] = mod
+    if not submit_only:
+        kw_sets = _expand_search_keywords(plan["domains"], skills)
+        per_kw = max(8, (cap + 5) // max(1, len(active_sources) * len(kw_sets)))
 
-    # Fetch all platforms in parallel — each has isolated browser context per uid
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(loaded))) as ex:
-        futs = {
-            ex.submit(_fetch_source_all_kw, src, mod, kw_sets, per_kw, uid): src
-            for src, mod in loaded.items()
-        }
-        for fut in concurrent.futures.as_completed(futs):
-            src_done = futs[fut]
-            try:
-                _, src_jobs = fut.result()
-                all_jobs.extend(src_jobs)
-                source_modules[src_done] = loaded[src_done]
-            except Exception as e:  # noqa: BLE001
-                log.error("%s parallel fetch error: %s", src_done, e)
+        # Load modules serially (importlib side-effects must stay single-threaded)
+        loaded: dict[str, object] = {}
+        for src in active_sources:
+            mod = _load_module(src)
+            if mod is not None:
+                loaded[src] = mod
 
-    log.info("total fetched: %d listings across all sources", len(all_jobs))
+        # Fetch all platforms in parallel — each has isolated browser context per uid
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(loaded))) as ex:
+            futs = {
+                ex.submit(_fetch_source_all_kw, src, mod, kw_sets, per_kw, uid): src
+                for src, mod in loaded.items()
+            }
+            for fut in concurrent.futures.as_completed(futs):
+                src_done = futs[fut]
+                try:
+                    _, src_jobs = fut.result()
+                    all_jobs.extend(src_jobs)
+                    source_modules[src_done] = loaded[src_done]
+                except Exception as e:  # noqa: BLE001
+                    log.error("%s parallel fetch error: %s", src_done, e)
+
+        log.info("total fetched: %d listings across all sources", len(all_jobs))
 
     # 4. score + apply within firewall + daily cap
+    # Wipe the previous verdict on anything we just re-fetched, so a re-run
+    # replaces a stale skip instead of stacking a second row beside it. Paired
+    # with applied_external_ids() no longer treating a skip as final, this is
+    # what lets a scoring fix (or an updated resume) reach jobs the agent had
+    # already dismissed once.
+    if all_jobs:
+        dropped = db.clear_skipped(uid, [j.get("url", "") for j in all_jobs])
+        if dropped:
+            log.info("re-scoring %d listing(s) previously skipped", dropped)
+
     already = db.applied_external_ids(uid)
     applied_today = db.todays_applied_count(uid)
     day_remaining = max(0, cap - applied_today)
@@ -600,7 +629,7 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
         """Build (or reuse) the tailored resume for this role and record an
         immutable ResumeVersion snapshot. Returns (pdf_path, version_id) so the
         application row can point at the exact resume the recruiter received."""
-        if not text or mode != "live":
+        if not text or not live:
             return None, None
         tkey = _tailor_key(title)
         if tkey in tailor_cache:
@@ -629,7 +658,7 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
 
     # 4a. Handle pre-approved applications (auto_apply=False users who manually approved)
     approved_apps = db.get_approved_applications(uid)
-    if mode == "live" and approved_apps:
+    if live and approved_apps:
         for app_row in approved_apps:
             if remaining <= 0:
                 break
@@ -706,6 +735,35 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
         scored.append((score, reason, job))
     scored.sort(key=lambda x: x[0], reverse=True)
 
+    # Re-score the strongest candidates against the REAL job description.
+    #
+    # A listing card carries only a title, so the role's requirements are a guess
+    # inferred from that title. The JD is the one signal that can correct it — and
+    # it used to be fetched only *after* a job had already cleared the threshold,
+    # so it could never rescue a borderline listing, only decorate one that had
+    # already won. Reading the JD of the few most promising listings before
+    # deciding is also just what a person does.
+    #
+    # Bounded to JD_RESCORE_LIMIT page loads, paced like the rest of the run.
+    if live and scored and JD_RESCORE_LIMIT > 0:
+        for i in range(min(JD_RESCORE_LIMIT, len(scored))):
+            _, _, job = scored[i]
+            src = job.get("source", "")
+            mod = source_modules.get(src)
+            if mod is None or _platform_blocked(src):
+                continue
+            jd = _scrape_jd_if_available(src, mod, job.get("url", ""), uid)
+            if not jd:
+                continue
+            job["jd_text"] = jd   # reused at apply time; never scrape the same JD twice
+            scored[i] = matcher.score_job(
+                job, skills, plan["domains"], exp_level=plan["exp_level"], jd_text=jd
+            ) + (job,)
+            time.sleep(random.uniform(*_BASE_PACE_SEC))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        log.info("re-scored top %d listing(s) against their job descriptions",
+                 min(JD_RESCORE_LIMIT, len(scored)))
+
     for score, reason, job in scored:
         dedup_key = (job["company"].lower(), job["title"].lower()[:40])
         if dedup_key in applied_keys:
@@ -779,14 +837,12 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             continue
 
         # apply
-        if mode == "live" and src in source_modules:
+        if live and src in source_modules:
             mod = source_modules[src]
-            # Fetch JD text — enriches cover letter and resume tailoring; refines score
-            jd_text = _scrape_jd_if_available(src, mod, job["url"], uid)
-            if jd_text:
-                score, reason = matcher.score_job(
-                    job, skills, plan["domains"], exp_level=plan["exp_level"], jd_text=jd_text
-                )
+            # JD text enriches the cover letter and the resume tailoring. The
+            # top candidates already had theirs fetched (and were scored on it)
+            # in 4b — reuse that rather than loading the page a second time.
+            jd_text = job.get("jd_text") or _scrape_jd_if_available(src, mod, job["url"], uid)
             letter_key = (job["title"], job["company"])
             if letter_key not in letter_cache:
                 letter_cache[letter_key] = cover_letter(
@@ -871,7 +927,7 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             )
             db.add_audit("apply_failed", user_id=uid, target=job.get("url"), detail=why[:120])
 
-        if mode == "live":
+        if live:
             time.sleep(random.uniform(*_BASE_PACE_SEC))
 
     # per-platform failure rate check — warn if >50% of attempts on a platform fail
@@ -893,7 +949,7 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 )
 
     # close browser contexts
-    if mode == "live":
+    if live:
         for src, mod in source_modules.items():
             try:
                 mod.close(uid)
@@ -902,8 +958,9 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
 
     # urgent: session(s) died mid-run — user must reconnect or the agent stalls
     if needs_login_srcs:
-        notify.send(
-            channel,
+        notify.to_user(
+            user,
+            "Grindly: reconnect needed",
             f":warning: *Action needed* — your session expired on "
             f"{', '.join(sorted(needs_login_srcs))}. Reconnect in the dashboard so "
             f"I can keep applying. (Pending matches are saved.)",
@@ -913,13 +970,28 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
 
     # heads-up: a platform flagged us as a bot mid-run — paused, not stalled
     if challenged_srcs:
-        notify.send(
-            channel,
+        notify.to_user(
+            user,
+            "Grindly: paused after an automation check",
             f":large_orange_diamond: I paused applying on "
             f"{', '.join(sorted(challenged_srcs))} after it flagged an automation "
             f"check — safer to back off than push through. Retrying automatically "
             f"after a cooldown.",
         )
+
+    # A submit-only run sends the applications the user just approved and stops.
+    # It isn't a sweep, so it must not file a daily report (that would overwrite
+    # the day's real numbers with matched=0) or repeat the daily digest.
+    if submit_only:
+        log.info("done (approved submits): applied=%d failed=%d", applied, failed)
+        if applied or failed:
+            notify.to_user(
+                user,
+                "Grindly: your approved applications are in",
+                f":white_check_mark: Sent *{applied}* application(s) you approved."
+                + (f"  ({failed} couldn't be submitted — see the dashboard.)" if failed else ""),
+            )
+        return {"applied": applied, "matched": 0, "failed": failed, "mode": "approved"}
 
     # 5. report + 6. notify
     today = datetime.date.today().isoformat()
@@ -952,7 +1024,7 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
         f"Sources: {sources_used}\n\n"
         f"{summary}\n\nNext sweep in 24h. Pause anytime from the dashboard.{approve_nudge}"
     )
-    notify.send(channel, msg)
+    notify.to_user(user, f"Grindly daily report — {today}", msg)
     log.info("done: applied=%d matched=%d failed=%d", applied, matched, failed)
     return {"applied": applied, "matched": matched, "failed": failed}
 
@@ -962,6 +1034,7 @@ def run_job(uid: str, mode: str) -> dict:
     Python itself:
       'analyze'              → resume analysis only
       'connect_<platform>'   → credential login for that platform (hosted)
+      'approved'             → submit only the applications the user approved
       anything else          → full apply pipeline.
     Used by both --drain and --serve."""
     if mode == "analyze":
@@ -979,7 +1052,7 @@ def main():
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--user")
-    ap.add_argument("--mode", default="live", choices=["live"])
+    ap.add_argument("--mode", default="live", choices=["live", "approved"])
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--analyze", action="store_true", help="Resume analyze only — no job scraping")
     ap.add_argument("--loop", action="store_true")
@@ -1010,7 +1083,7 @@ def main():
         else:
             run_for_user(args.user, args.mode)
     else:
-        log.warning("specify --user <uid> [--mode live|mock] [--analyze], --drain, --serve, or --loop")
+        log.warning("specify --user <uid> [--mode live|approved] [--analyze], --drain, --serve, or --loop")
 
 
 if __name__ == "__main__":

@@ -114,6 +114,17 @@ export default function OnboardingPage() {
     setStep(2);
   }
 
+  /** Persist the report channel. This choice used to live only in React state,
+   *  so picking Email did nothing at all: the worker sent every report to Slack
+   *  regardless, and there was no setting anywhere to change your mind. */
+  async function saveReportChannel(channel: "slack" | "email") {
+    await fetch("/api/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reportChannel: channel }),
+    }).catch(() => null);
+  }
+
   async function connectSlack() {
     setBusy(true);
     setMsg("");
@@ -122,11 +133,13 @@ export default function OnboardingPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ slackUserId: slackId }),
     });
-    setBusy(false);
     if (res.ok) {
+      await saveReportChannel("slack");
+      setBusy(false);
       setSlackDone(true);
       setStep(3);
     } else {
+      setBusy(false);
       setMsg("Enter your Slack member ID (e.g. U12345678).");
     }
   }
@@ -403,7 +416,7 @@ export default function OnboardingPage() {
                   {notifChannel === "slack" ? (
                     <>
                       <button
-                        onClick={() => setStep(3)}
+                        onClick={async () => { await saveReportChannel("email"); setStep(3); }}
                         className="rounded-lg border border-border px-5 py-2.5 text-muted hover:text-foreground transition"
                       >
                         Skip for now
@@ -418,7 +431,7 @@ export default function OnboardingPage() {
                     </>
                   ) : (
                     <button
-                      onClick={() => setStep(3)}
+                      onClick={async () => { await saveReportChannel("email"); setStep(3); }}
                       className="rounded-lg brand-gradient px-5 py-2.5 font-medium text-white hover:opacity-90 transition"
                     >
                       Continue with Email →

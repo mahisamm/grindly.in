@@ -77,7 +77,13 @@ export async function GET() {
   const offers = appliedApps.filter((a) => a.outcome === "offer").length;
   const outcomeReported = appliedApps.filter((a) => a.outcome).length;
   const stats = {
-    matched: apps.length,
+    // "matched" means: cleared your threshold and is waiting for you to approve it.
+    // This used to be apps.length — EVERY row, skips included — so a run that
+    // scraped 49 listings and matched none of them still reported "Matched 49".
+    matched: apps.filter((a) => a.status === "matched").length,
+    approved: apps.filter((a) => a.status === "approved").length,
+    // everything the agent has looked at and scored, whatever the verdict
+    reviewed: apps.length,
     applied: appliedApps.length,
     skipped: apps.filter((a) => a.status === "skipped").length,
     failed: apps.filter((a) => a.status === "failed").length,

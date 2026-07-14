@@ -185,6 +185,8 @@ def _ensure_profile_columns(c):
         c.execute("ALTER TABLE profiles ADD COLUMN resume_parse_failed INTEGER DEFAULT 0")
     if "auto_apply_consent_at" not in cols:
         c.execute("ALTER TABLE profiles ADD COLUMN auto_apply_consent_at TEXT")
+    if "report_channel" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN report_channel TEXT DEFAULT 'email'")
 
 
 def get_user(uid: str) -> dict | None:
@@ -208,12 +210,47 @@ def active_users() -> list[dict]:
 
 
 def applied_external_ids(uid: str) -> set[str]:
-    """Job urls this user already has an application row for (dedupe)."""
+    """Job urls this user is committed to, and which must never be re-scored.
+
+    Deliberately EXCLUDES 'skipped'. A skip is a scoring judgement, not a
+    commitment — it can be wrong (bad threshold, stale resume, a bug in the
+    scorer) and it left no trace on the platform. Counting skips here froze
+    every listing the first time it was seen: a re-run scored nothing at all and
+    reported "matched 0, applied 0", so no scoring fix could ever reach a job the
+    agent had already dismissed once.
+
+    Everything else stays locked — applied / approved / matched / needs_review /
+    failed have all either reached the platform or are awaiting a human decision.
+    """
     with conn() as c:
         rows = c.execute(
-            "SELECT url FROM applications WHERE user_id=? AND url IS NOT NULL", (uid,)
+            "SELECT url FROM applications "
+            "WHERE user_id=? AND url IS NOT NULL AND status <> 'skipped'",
+            (uid,),
         ).fetchall()
         return {r["url"] for r in rows}
+
+
+def clear_skipped(uid: str, urls: list[str]) -> int:
+    """Drop stale 'skipped' rows for listings we are about to re-score, so a
+    re-run replaces the old verdict rather than filing a duplicate row beside it.
+    Returns the number of rows removed."""
+    urls = [u for u in urls if u]
+    if not urls:
+        return 0
+    removed = 0
+    with conn() as c:
+        # Chunked so a large fetch can't exceed the driver's parameter limit.
+        for i in range(0, len(urls), 200):
+            chunk = urls[i:i + 200]
+            marks = ",".join("?" for _ in chunk)
+            cur = c.execute(
+                f"DELETE FROM applications WHERE user_id=? AND status='skipped' "
+                f"AND url IN ({marks})",
+                (uid, *chunk),
+            )
+            removed += cur.rowcount or 0
+    return removed
 
 
 def todays_applied_count(uid: str) -> int:

@@ -1,25 +1,35 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockGetUid, mockFindMany, mockUpdate, mockTransaction } = vi.hoisted(() => ({
+const {
+  mockGetUid, mockFindMany, mockUpdate, mockTransaction,
+  mockRunFindFirst, mockRunCreate, mockSpawnWorkerKick,
+} = vi.hoisted(() => ({
   mockGetUid: vi.fn(),
   mockFindMany: vi.fn(),
   mockUpdate: vi.fn(),
   mockTransaction: vi.fn(),
+  mockRunFindFirst: vi.fn(),
+  mockRunCreate: vi.fn(),
+  mockSpawnWorkerKick: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getUid: mockGetUid }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     application: { findMany: mockFindMany, update: mockUpdate },
+    agentRun: { findFirst: mockRunFindFirst, create: mockRunCreate },
     $transaction: mockTransaction,
   },
 }));
+vi.mock("@/lib/workerKick", () => ({ spawnWorkerKick: mockSpawnWorkerKick }));
 
 import { POST } from "@/app/api/applications/approve-all/route";
 
 beforeEach(() => {
   vi.resetAllMocks();
   mockTransaction.mockResolvedValue([]);
+  mockRunFindFirst.mockResolvedValue(null);
+  mockRunCreate.mockResolvedValue({ id: "run1" });
 });
 
 describe("POST /api/applications/approve-all", () => {
@@ -58,7 +68,7 @@ describe("POST /api/applications/approve-all", () => {
     const res = await POST();
     const body = await res.json();
 
-    expect(body).toEqual({ ok: true, approved: 2 });
+    expect(body).toMatchObject({ ok: true, approved: 2 });
     expect(mockTransaction).toHaveBeenCalledTimes(1);
     expect(mockUpdate).toHaveBeenCalledWith({
       where: { id: "a1" },
@@ -68,5 +78,21 @@ describe("POST /api/applications/approve-all", () => {
       where: { id: "a2" },
       data: { status: "approved", reason: " — approved by you" },
     });
+  });
+
+  // Approving 12 jobs must queue ONE send, not 12 — and must queue it at all.
+  it("enqueues exactly one submit-only run for the whole batch", async () => {
+    mockGetUid.mockResolvedValue("u1");
+    mockFindMany.mockResolvedValue([
+      { id: "a1", reason: "r" },
+      { id: "a2", reason: "r" },
+    ]);
+    mockUpdate.mockImplementation((args) => args);
+
+    await POST();
+
+    expect(mockRunCreate).toHaveBeenCalledTimes(1);
+    expect(mockRunCreate).toHaveBeenCalledWith({ data: { userId: "u1", mode: "approved" } });
+    expect(mockSpawnWorkerKick).toHaveBeenCalled();
   });
 });

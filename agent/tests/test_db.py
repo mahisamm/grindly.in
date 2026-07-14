@@ -174,6 +174,46 @@ def test_applied_external_ids_dedupes(testdb):
     assert ids == {"https://x/1", "https://x/2"}
 
 
+def test_applied_external_ids_excludes_skipped(testdb):
+    """A skip is a scoring judgement, not a commitment. Treating it as final froze
+    the listing forever: a re-run scored nothing and reported "matched 0", so no
+    scoring fix could ever reach a job the agent had already dismissed once."""
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="A", company="C", url="https://x/1",
+                       score=90, status="applied", reason="r", applied=True)
+    db.add_application("u1", job_id=None, title="B", company="C", url="https://x/2",
+                       score=21, status="skipped", reason="below 65", applied=False)
+    db.add_application("u1", job_id=None, title="C", company="C", url="https://x/3",
+                       score=80, status="matched", reason="awaiting approval", applied=False)
+
+    ids = db.applied_external_ids("u1")
+
+    assert "https://x/2" not in ids            # re-scorable
+    assert ids == {"https://x/1", "https://x/3"}  # committed / awaiting a human
+
+
+def test_clear_skipped_only_removes_skipped_rows(testdb):
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="A", company="C", url="https://x/1",
+                       score=21, status="skipped", reason="below 65", applied=False)
+    db.add_application("u1", job_id=None, title="B", company="C", url="https://x/2",
+                       score=90, status="applied", reason="r", applied=True)
+
+    removed = db.clear_skipped("u1", ["https://x/1", "https://x/2"])
+
+    assert removed == 1
+    c = sqlite3.connect(testdb)
+    c.row_factory = sqlite3.Row
+    rows = c.execute("SELECT url, status FROM applications WHERE user_id='u1'").fetchall()
+    c.close()
+    assert [(r["url"], r["status"]) for r in rows] == [("https://x/2", "applied")]
+
+
+def test_clear_skipped_handles_an_empty_url_list(testdb):
+    _insert_user(testdb, "u1")
+    assert db.clear_skipped("u1", []) == 0
+
+
 def test_todays_applied_count_excludes_older_rows(testdb):
     _insert_user(testdb, "u1")
     db.add_application("u1", job_id=None, title="Today", company="C", url="https://x/1",
