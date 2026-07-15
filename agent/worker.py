@@ -817,6 +817,23 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             )
         return _baseline_pages[0]
 
+    # Neatness baseline: how many Overfull \hbox/\vbox the UNEDITED .tex already
+    # has. Some college templates run a line slightly long by design; the test is
+    # not "zero overfull boxes" but "the edit added none". Compiled once per run
+    # (the master .tex is the same for every job), then cached.
+    _baseline_overfull: list[int | None] = []
+
+    def _master_overfull() -> int | None:
+        if not _baseline_overfull:
+            val: int | None = None
+            if master_tex:
+                r = latex_resume.compile_report(
+                    master_tex, os.path.join(_tailored_dir, "_baseline.pdf")
+                )
+                val = r.overfull if r.ok else None
+            _baseline_overfull.append(val)
+        return _baseline_overfull[0]
+
     def _get_resume(
         title: str, company: str, job_skills: list[str], jd_text: str = ""
     ) -> tuple[str | None, str | None]:
@@ -882,21 +899,38 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             return _snapshot(master_pdf, text, False, "master, unchanged (no safe edit found)")
 
         pdf = os.path.join(_tailored_dir, f"{ckey}.pdf")
-        if not latex_resume.compile_pdf(edited, pdf):
+        result = latex_resume.compile_report(edited, pdf)
+        if not result.ok:
             return _snapshot(master_pdf, text, False, "master, unchanged (LaTeX compile failed)")
 
+        def _discard(pdf_path: str, why: str):
+            try:
+                os.remove(pdf_path)
+            except OSError:
+                pass
+            return _snapshot(master_pdf, text, False, why)
+
+        # Alignment gate 1 — page count. An edit that changes it has reflowed the
+        # document, which the college template forbids.
         want = _master_pages()
-        got = latex_resume.page_count(pdf)
+        got = result.pages
         if want and got and got != want:
             log.warning(
                 "tailored resume for %s reflowed to %d page(s) (master is %d) — discarding the edit",
                 title, got, want,
             )
-            try:
-                os.remove(pdf)
-            except OSError:
-                pass
-            return _snapshot(master_pdf, text, False, "master, unchanged (edit changed the page count)")
+            return _discard(pdf, "master, unchanged (edit changed the page count)")
+
+        # Alignment gate 2 — neatness. Same page count can still mean a line now
+        # spills past the margin (an Overfull box). Accept only if the edit added
+        # none the master didn't already have.
+        base_of = _master_overfull()
+        if base_of is not None and result.overfull > base_of:
+            log.warning(
+                "tailored resume for %s introduced %d new overfull box(es) — not neat, discarding",
+                title, result.overfull - base_of,
+            )
+            return _discard(pdf, "master, unchanged (edit broke the alignment)")
 
         return _snapshot(pdf, edited, True, "tailored (Skills/Hobbies only)")
 

@@ -16,6 +16,7 @@ Public API:
     editable_sections(tex)           -> {"skills": Section, "hobbies": Section}
     replace_bodies(tex, edits)       -> str
     compile_pdf(tex_source, out_pdf) -> bool
+    compile_report(tex_source, pdf)  -> CompileResult   (ok, pages, overfull)
     page_count(pdf)                  -> int | None
     unsafe_commands(tex)             -> list[str]
 """
@@ -198,22 +199,62 @@ def replace_bodies(tex: str, edits: dict[str, str]) -> str:
 
 # --- compile ----------------------------------------------------------------
 
+# "Overfull \hbox" / "Overfull \vbox" — LaTeX's report that a line ran past the
+# right margin or a block ran past the bottom. It's the misalignment a page-count
+# check can't see: the page total is unchanged, but text is visibly spilling out
+# of the column. This is the signal an edit "isn't neat".
+_OVERFULL = re.compile(r"Overfull \\[hv]box", re.I)
+
+
+@dataclass
+class CompileResult:
+    """A compile outcome plus the two signals that decide whether an edit stayed
+    neat: the page count, and the number of Overfull boxes LaTeX reported. A caller
+    accepts a tailored resume only when the page count matches the master AND the
+    edit added no new overfull boxes."""
+    ok: bool
+    pages: int | None = None
+    overfull: int = 0
+
+
 def tectonic_available() -> bool:
     return shutil.which("tectonic") is not None
 
 
-def compile_pdf(tex_source: str, out_pdf: str) -> bool:
-    """Compile LaTeX source to `out_pdf`. Returns False (never raises) on any
-    failure — a resume that won't build must degrade to sending the master PDF,
-    not blow up the run."""
+def _count_overfull(workdir: str, proc: "subprocess.CompletedProcess") -> int:
+    """How many Overfull \\hbox/\\vbox LaTeX reported for this build.
+
+    The .log (kept via --keep-logs) is authoritative — LaTeX records every
+    overfull box there regardless of how quiet the console is. The captured
+    stdout/stderr is only a fallback if no log was written.
+    """
+    text = ""
+    try:
+        for name in os.listdir(workdir):
+            if name.endswith(".log"):
+                with open(os.path.join(workdir, name), encoding="utf-8", errors="ignore") as f:
+                    text += f.read()
+    except OSError:
+        pass
+    if not text:
+        text = (proc.stderr or "") + (proc.stdout or "")
+    return len(_OVERFULL.findall(text))
+
+
+def compile_report(tex_source: str, out_pdf: str) -> CompileResult:
+    """Compile LaTeX to `out_pdf` and report page count + overfull-box count.
+
+    Never raises — a resume that won't build must degrade to sending the master
+    PDF, not blow up the run. On any failure returns CompileResult(ok=False).
+    """
     bad = unsafe_commands(tex_source)
     if bad:
         print(f"[latex] refusing to compile — unsafe command(s): {bad}")
-        return False
+        return CompileResult(False)
 
     if not tectonic_available():
         print("[latex] tectonic not installed — cannot compile; see Dockerfile.worker")
-        return False
+        return CompileResult(False)
 
     with tempfile.TemporaryDirectory(prefix="grindly-tex-") as tmp:
         src = os.path.join(tmp, "resume.tex")
@@ -224,6 +265,7 @@ def compile_pdf(tex_source: str, out_pdf: str) -> bool:
                 [
                     "tectonic",
                     "--untrusted",     # no shell-escape, no reads outside `tmp`
+                    "--keep-logs",     # keep resume.log so we can read overfull warnings
                     "--chatter", "minimal",
                     "--outdir", tmp,
                     src,
@@ -235,20 +277,28 @@ def compile_pdf(tex_source: str, out_pdf: str) -> bool:
             )
         except subprocess.TimeoutExpired:
             print(f"[latex] compile timed out after {COMPILE_TIMEOUT_SEC}s")
-            return False
+            return CompileResult(False)
         except OSError as e:
             print(f"[latex] compile could not start: {e}")
-            return False
+            return CompileResult(False)
 
         built = os.path.join(tmp, "resume.pdf")
         if proc.returncode != 0 or not os.path.exists(built):
             tail = (proc.stderr or proc.stdout or "")[-500:]
             print(f"[latex] compile failed (rc={proc.returncode}): {tail}")
-            return False
+            return CompileResult(False)
 
+        overfull = _count_overfull(tmp, proc)
+        pages = page_count(built)
         os.makedirs(os.path.dirname(os.path.abspath(out_pdf)), exist_ok=True)
         shutil.copyfile(built, out_pdf)
-        return True
+        return CompileResult(True, pages=pages, overfull=overfull)
+
+
+def compile_pdf(tex_source: str, out_pdf: str) -> bool:
+    """Back-compat boolean wrapper around compile_report — used by the upload-time
+    self-test, which only needs to know whether the untouched .tex builds at all."""
+    return compile_report(tex_source, out_pdf).ok
 
 
 def page_count(pdf_path: str) -> int | None:

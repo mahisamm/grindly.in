@@ -1,6 +1,8 @@
 """The contract here is mostly about what must NOT happen: the user's template is
 mandated by their college, so an edit that reflows the page or touches a section
 outside Skills/Hobbies is worse than no edit at all."""
+import os
+
 import latex_resume
 import resume_ai
 
@@ -104,6 +106,58 @@ def test_a_clean_resume_is_not_flagged():
 def test_compile_refuses_an_unsafe_document(tmp_path):
     out = str(tmp_path / "out.pdf")
     assert latex_resume.compile_pdf(r"\write18{id}" + TEX, out) is False
+
+
+# --- neatness: an edit must not spill text past the margin --------------------
+# The page-count check can't see an "Overfull \hbox" — the page total is
+# unchanged but a line is running off the edge of the column. compile_report
+# surfaces that count so the worker can reject an edit that isn't neat.
+
+def _fake_tectonic(overfull_lines: int):
+    """A subprocess.run stand-in: writes a resume.pdf and a resume.log (with the
+    given number of overfull warnings) into whatever --outdir it's handed."""
+    def run(cmd, **kw):
+        outdir = cmd[cmd.index("--outdir") + 1]
+        with open(os.path.join(outdir, "resume.pdf"), "wb") as f:
+            f.write(b"%PDF-1.4\n%%EOF\n")
+        log = "\n".join(r"Overfull \hbox (12.0pt too wide) in paragraph"
+                        for _ in range(overfull_lines))
+        with open(os.path.join(outdir, "resume.log"), "w", encoding="utf-8") as f:
+            f.write("This is the log.\n" + log + "\nOutput written.\n")
+
+        class _P:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return _P()
+    return run
+
+
+def test_compile_report_counts_overfull_boxes(tmp_path, monkeypatch):
+    monkeypatch.setattr(latex_resume, "tectonic_available", lambda: True)
+    monkeypatch.setattr(latex_resume.subprocess, "run", _fake_tectonic(3))
+    monkeypatch.setattr(latex_resume, "page_count", lambda p: 1)
+    out = str(tmp_path / "out.pdf")
+
+    r = latex_resume.compile_report(TEX, out)
+    assert r.ok is True
+    assert r.pages == 1
+    assert r.overfull == 3          # the misalignment signal, read from the log
+    assert os.path.exists(out)      # the built PDF was still delivered
+
+
+def test_compile_report_clean_document_has_no_overfull(tmp_path, monkeypatch):
+    monkeypatch.setattr(latex_resume, "tectonic_available", lambda: True)
+    monkeypatch.setattr(latex_resume.subprocess, "run", _fake_tectonic(0))
+    monkeypatch.setattr(latex_resume, "page_count", lambda p: 1)
+
+    r = latex_resume.compile_report(TEX, str(tmp_path / "o.pdf"))
+    assert r.ok is True and r.overfull == 0
+
+
+def test_compile_report_refuses_unsafe_before_compiling(tmp_path):
+    r = latex_resume.compile_report(r"\write18{id}" + TEX, str(tmp_path / "o.pdf"))
+    assert r.ok is False
 
 
 # --- the LLM's output is not trusted either ---------------------------------

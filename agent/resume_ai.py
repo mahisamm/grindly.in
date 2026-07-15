@@ -2,9 +2,13 @@
 
 analyze(text)              -> dict  score/grade/strengths/issues/suggestions
 fit_score(text, job, jd)   -> int   how well the MASTER resume already covers a role
-tailor(text, ...)          -> str   plain-text rewrite (legacy; no template fidelity)
 tailor_latex(tex, ...)     -> str   the user's own .tex with ONLY Skills/Hobbies rewritten
-to_pdf(text, path)         -> bool  write PDF; requires fpdf2 (pip install fpdf2)
+
+There is deliberately no plain-text tailor()/to_pdf() any more. That path
+re-rendered the whole resume from scratch with fpdf2, throwing away the user's
+college-mandated template — the exact "looks patched together" output the LaTeX
+path exists to prevent. The only sanctioned edit is tailor_latex: the user's own
+.tex, with Skills/Hobbies rewritten and every other byte spliced back untouched.
 """
 from __future__ import annotations
 import json
@@ -36,19 +40,6 @@ _ANALYZE_SYS = (
     "No markdown, no prose outside the JSON object."
 )
 
-_TAILOR_SYS = (
-    "You are a careful resume editor. Make MINIMAL targeted edits to a resume for a specific role. "
-    "STRICT rules you must follow: "
-    "1. NEVER add a skill, tool, language, or framework not already present in the original resume. "
-    "2. NEVER change dates, company names, job titles, or GPA. "
-    "3. If the resume already matches the role well, return it COMPLETELY UNCHANGED. "
-    "4. Only allowed changes: reorder bullet points to put most relevant first, "
-    "   minor wording tweaks to highlight relevant existing experience. "
-    "5. The output must look 95%+ identical to the input — small, surgical edits only. "
-    "6. Output ONLY the resume text. No commentary, no JSON, no explanation."
-)
-
-
 # ---------- public API ----------
 
 def analyze(resume_text: str) -> dict:
@@ -68,44 +59,6 @@ def analyze(resume_text: str) -> dict:
         except (ValueError, TypeError):
             pass
     return _fallback_analysis(text)
-
-
-def tailor(
-    resume_text: str,
-    job_title: str,
-    company: str,
-    job_skills: list[str],
-    job_description: str = "",
-    master_skills: list[str] | None = None,
-) -> str:
-    """Return resume tailored for a specific role. Falls back to original if LLM unavailable.
-
-    Truthfulness guard: the tailored output is run through `_constrain_skills`,
-    which strips any skill keyword from an explicit Skills line that the
-    candidate's original resume / master skill set does not support. Tailoring
-    may re-order and emphasize — it must never invent skills the user can't back
-    up in an interview.
-    """
-    text = (resume_text or "").strip()
-    if not text:
-        return text
-
-    job_ctx = f"Target role: {job_title} at {company}."
-    if job_skills:
-        job_ctx += f" Required skills: {', '.join(job_skills[:8])}."
-    if job_description:
-        job_ctx += f" Role description: {job_description[:400]}"
-
-    prompt = (
-        f"{job_ctx}\n\n"
-        f"Original resume:\n\"\"\"\n{text[:5000]}\n\"\"\"\n\n"
-        "Rewrite this resume tailored for the role above. Do NOT add skills, tools, "
-        "or experience that are not already present. Output resume text only."
-    )
-    out = llm_mod.chat(prompt, system=_TAILOR_SYS, timeout=90)
-    if out and len(out.strip()) > 100:
-        return _constrain_skills(out.strip(), text, master_skills or [])
-    return text  # LLM unavailable — original unchanged is fine
 
 
 # ---------- ATS: what a machine actually reads off the page ----------
@@ -357,89 +310,31 @@ def tailor_latex(
     return latex_resume.replace_bodies(tex, edits)
 
 
-def _constrain_skills(tailored: str, original: str, master_skills: list[str]) -> str:
-    """Remove fabricated skill keywords from explicit 'Skills:' lines.
-
-    Conservative: only edits lines that look like a skills list. A skill token is
-    kept only if it appears in the original resume text or the master skill set.
-    Anything else (an LLM-invented competency) is dropped, with a logged warning.
-    """
-    allowed = {s.strip().lower() for s in master_skills if s.strip()}
-    orig_low = (original or "").lower()
-    dropped: list[str] = []
-    out_lines: list[str] = []
-
-    for line in tailored.split("\n"):
-        stripped = line.strip()
-        low = stripped.lower()
-        is_skills_line = bool(re.match(r"^(technical\s+skills|skills|tech\s+stack|core\s+competencies)\s*[:\-]", low))
-        if is_skills_line and (":" in stripped or "-" in stripped):
-            head, _, tail = stripped.partition(":")
-            if not tail:
-                head, _, tail = stripped.partition("-")
-            tokens = re.split(r"[,/|•]", tail)
-            kept = []
-            for tok in tokens:
-                t = tok.strip()
-                if not t:
-                    continue
-                tl = t.lower()
-                if tl in allowed or tl in orig_low or any(w in orig_low for w in tl.split()):
-                    kept.append(t)
-                else:
-                    dropped.append(t)
-            out_lines.append(f"{head}: " + ", ".join(kept))
-        else:
-            out_lines.append(line)
-
-    if dropped:
-        print(f"[resume_ai] truthfulness guard dropped unsupported skills: {dropped}")
-    return "\n".join(out_lines)
-
-
-def to_pdf(text: str, output_path: str) -> bool:
-    """Write resume text to a PDF. Returns True on success. Requires: pip install fpdf2"""
-    try:
-        from fpdf import FPDF  # fpdf2
-
-        pdf = FPDF()
-        pdf.set_margins(18, 18, 18)
-        pdf.add_page()
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.set_font("Helvetica", size=10)
-
-        for raw in (text or "").split("\n"):
-            line = raw.strip()
-            if not line:
-                pdf.ln(2)
-                continue
-            clean = _ascii_only(line)
-            if (line.isupper() and len(line) < 60) or (len(line) < 55 and line.endswith(":")):
-                pdf.ln(2)
-                pdf.set_font("Helvetica", "B", 11)
-                pdf.cell(0, 6, clean, new_x="LMARGIN", new_y="NEXT")
-                pdf.set_font("Helvetica", size=10)
-            elif line.startswith(("- ", "• ", "* ")):
-                pdf.cell(4, 5, "")
-                pdf.multi_cell(0, 5, "• " + _ascii_only(line[2:]))
-            else:
-                pdf.multi_cell(0, 5, clean)
-
-        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-        pdf.output(output_path)
-        return True
-    except ImportError:
-        print("[resume_ai] fpdf2 not installed — run: pip install fpdf2")
-        return False
-    except Exception as e:  # noqa: BLE001
-        print(f"[resume_ai] PDF write error: {e}")
-        return False
-
-
 # ---------- internals ----------
 
-def _ascii_only(s: str) -> str:
-    return re.sub(r"[^\x20-\x7E]", "", s)
+def _tfidf_score(a: str, b: str) -> float:
+    """Cosine similarity of two texts under a TF-IDF vectorizer, in [0, 1].
+
+    The semantic backstop to fit_score's literal keyword coverage: it credits a
+    resume that discusses the same things the job description does even when it
+    doesn't repeat the exact skill tokens. Degrades to 0.0 (coverage-only scoring)
+    when scikit-learn isn't installed or the texts share no vocabulary — a scoring
+    helper must never be the thing that crashes an application run.
+    """
+    a, b = (a or "").strip(), (b or "").strip()
+    if not a or not b:
+        return 0.0
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
+    except ImportError:
+        return 0.0
+    try:
+        m = TfidfVectorizer(stop_words="english").fit_transform([a, b])
+        return float(cosine_similarity(m[0:1], m[1:2])[0][0])
+    except Exception as e:  # noqa: BLE001
+        print(f"[resume_ai] tfidf scoring skipped: {e}")
+        return 0.0
 
 
 def _coerce(d: dict) -> dict:
