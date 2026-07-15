@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 import argparse
 import concurrent.futures
+import hashlib
 import importlib
 import json
 import logging
@@ -42,6 +43,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import db
 import notify
+import latex_resume
 import matcher
 import resume_parse
 import resume_ai
@@ -188,6 +190,30 @@ SAFETY_CAP_PER_RUN = int(os.environ.get("GRINDLY_CAP_PER_RUN", "0"))
 # re-scored BEFORE the threshold decides (see step 4b). Each one is a page load,
 # so this is deliberately bounded rather than "all of them".
 JD_RESCORE_LIMIT = int(os.environ.get("GRINDLY_JD_RESCORE_LIMIT", "12"))
+
+# One discovery sweep is meant to find roughly a MONTH of work, not a day of it,
+# and then drip it out. Two reasons, and the second is the important one:
+#
+#   1. Scraping five job boards every single day, for every user, is a lot of
+#      traffic to sites that are actively watching for exactly that pattern.
+#      Filling the queue once and living off it is quieter.
+#   2. The user must never see the whole pile. If the dashboard showed 300 matched
+#      listings, the rational move is to close the tab and go apply to them by
+#      hand — we would have done the expensive part (finding them) and captured
+#      none of the value. So matches are banked with a scheduled_for date and only
+#      the ones due today are ever sent to the client.
+PIPELINE_DAYS = int(os.environ.get("GRINDLY_PIPELINE_DAYS", "30"))
+
+# ...and we only go back to the boards once the queue has genuinely run down.
+#
+# This needs hysteresis, and the obvious version doesn't have it: "refill unless
+# the pipeline is full" means approving a single application drops the depth below
+# full and triggers a fresh scrape of all five boards on the next sweep. The
+# pipeline would refill every single day — precisely the traffic pattern it exists
+# to prevent. So: fill to PIPELINE_DAYS, but don't refill until under
+# PIPELINE_REFILL_DAYS.
+PIPELINE_REFILL_DAYS = int(os.environ.get("GRINDLY_PIPELINE_REFILL_DAYS", "7"))
+_DAY_MS = 86_400_000
 # Spread applies over time to mimic human pacing — set GRINDLY_SPREAD_APPLIES=1 in prod.
 # Each successful apply pauses 5-15 min before the next one.
 _SPREAD_APPLIES = os.environ.get("GRINDLY_SPREAD_APPLIES", "0") == "1"
@@ -366,8 +392,65 @@ def _fetch_source_all_kw(
     return src, jobs
 
 
-def _tailor_key(title: str) -> str:
-    return re.sub(r"[^a-z0-9]", "_", title.lower()[:30])
+def _tailor_key(title: str, company: str = "") -> str:
+    """Cache key for a tailored resume. Includes the company: two listings can
+    share a title ("Web Development Internship" is on Internshala a hundred times)
+    while asking for very different things, and reusing one company's tailored
+    resume for another is exactly the kind of silent wrongness nobody would catch."""
+    raw = f"{title.lower()[:30]}_{company.lower()[:20]}"
+    return re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+
+
+def _schedule_day(slot: int, cap: int, days: int = PIPELINE_DAYS) -> int:
+    """Which day (0 = today) the match in queue position `slot` comes due.
+
+    Round-robin across the days, NOT a straight `slot // cap` fill.
+
+    The straight fill is the obvious implementation and it is wrong: `scored` is
+    sorted best-first, so it hands the user their ten strongest matches on day 1
+    and the bottom of the barrel on day 30. Every day after the first would be
+    visibly worse than the last, and the user would reasonably conclude the agent
+    had stopped working. Dealing the matches out like cards instead means each
+    day's batch spans the same quality range.
+    """
+    cap = max(1, cap)
+    days = max(1, days)
+    # Deal one to each day in turn, then start the next round. Past the horizon
+    # (more matches than cap*days), fall back to filling the tail day.
+    if slot >= cap * days:
+        return days - 1
+    return slot % days
+
+
+def _resume_hash(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8", "replace")).hexdigest()
+
+
+def _analyze_if_changed(uid: str, profile: dict, text: str, skills: list[str],
+                        force: bool = False) -> dict | None:
+    """Score the resume, but only when there is something new to score.
+
+    Returns the analysis if one was computed, None if the cached one still stands.
+    `force=True` is the user pressing "re-analyze" — they get a fresh answer even
+    if nothing changed, because that button has to do something.
+    """
+    h = _resume_hash(text)
+    if not force and h == (profile.get("resume_hash") or "") and profile.get("resume_score") is not None:
+        log.info("resume unchanged — reusing the stored analysis (score %s)",
+                 profile.get("resume_score"))
+        return None
+
+    # with_ats() folds in the mechanical extraction check and caps the score when a
+    # parser can't read the file. A beautifully written resume that no ATS can read
+    # is not an 82/100 resume, whatever the model thinks of the prose.
+    analysis = resume_ai.with_ats(resume_ai.analyze(text), text, skills)
+    db.set_resume_analysis(uid, analysis["score"], json.dumps(analysis), resume_hash=h)
+    log.info(
+        "resume score: %d/100 (%s) — %d issue(s), ats_readable=%s",
+        analysis["score"], analysis["grade"], len(analysis["issues"]),
+        analysis["ats"]["readable"],
+    )
+    return analysis
 
 
 def analyze_only(uid: str) -> dict:
@@ -396,13 +479,77 @@ def analyze_only(uid: str) -> dict:
         if skills:
             db.update_skills(uid, skills)
 
-    analysis = resume_ai.analyze(text)
-    db.set_resume_analysis(uid, analysis["score"], json.dumps(analysis))
-    log.info(
-        "resume analysis: score=%d/100 grade=%s issues=%d",
-        analysis["score"], analysis["grade"], len(analysis["issues"]),
+    # force=True: this path is the user pressing "Re-analyze", and a button that
+    # silently reuses a cached answer is a broken button.
+    return _analyze_if_changed(uid, profile, text, skills, force=True) or {}
+
+
+def latex_check(uid: str) -> dict:
+    """Compile the user's UNEDITED .tex and decide whether tailoring can work at all.
+
+    Runs once, at upload. Everything it catches would otherwise fail silently and
+    permanently at apply time: compile_pdf() would return False, the master resume
+    would go out untouched, and the user would never learn that the file they
+    uploaded is doing nothing. Better to say so while they're still looking at the
+    upload screen.
+
+    Also establishes the page-count baseline the per-job tailoring is later judged
+    against — if compiling the untouched source already yields a different page
+    count than their master PDF, then the .tex and the PDF are not the same
+    document, and no edit to it can be trusted.
+    """
+    tex = latex_resume.read_tex(uid)
+    if not tex:
+        db.set_tex_status(uid, "missing", "No .tex on file.")
+        return {"status": "missing"}
+
+    def _fail(status: str, detail: str) -> dict:
+        log.warning("latex check for %s: %s — %s", uid, status, detail)
+        db.set_tex_status(uid, status, detail)
+        return {"status": status, "detail": detail}
+
+    bad = latex_resume.unsafe_commands(tex)
+    if bad:
+        return _fail("unsafe", f"This .tex uses commands we won't run on the server: {', '.join(bad)}.")
+
+    sections = latex_resume.editable_sections(tex)
+    if not sections:
+        return _fail(
+            "no_sections",
+            "We couldn't find a Skills or Hobbies section in this file, so there's "
+            "nothing we're allowed to tailor. Your resume will still be sent — just "
+            "unchanged.",
+        )
+
+    if not latex_resume.tectonic_available():
+        return _fail("no_compiler", "The LaTeX compiler isn't available on this server yet.")
+
+    out = os.path.join(_ROOT_DIR, "data", "tailored", uid, "_baseline.pdf")
+    if not latex_resume.compile_pdf(tex, out):
+        return _fail(
+            "compile_failed",
+            "This .tex didn't compile. Make sure it's the complete source (including "
+            "\\documentclass and \\begin{document}), not a fragment.",
+        )
+
+    pages = latex_resume.page_count(out)
+    master = resume_parse.find_resume_file(uid)
+    master_pages = (
+        latex_resume.page_count(master)
+        if master and master.lower().endswith(".pdf") else None
     )
-    return analysis
+    if master_pages and pages and master_pages != pages:
+        return _fail(
+            "page_mismatch",
+            f"Your .tex compiles to {pages} page(s) but your uploaded resume is "
+            f"{master_pages}. They look like different documents — upload the .tex "
+            f"that produced the PDF you're sending.",
+        )
+
+    detail = f"Ready. The agent may edit: {', '.join(sorted(sections))}."
+    log.info("latex check for %s: ok (%s)", uid, detail)
+    db.set_tex_status(uid, "ok", detail)
+    return {"status": "ok", "sections": sorted(sections), "pages": pages}
 
 
 def run_for_user(uid: str, mode: str = "live") -> dict:
@@ -466,14 +613,13 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             "(Resume Intelligence → Edit skills) and add them so I can match you accurately.",
         )
 
-    # 1.5 Resume analysis — always run so dashboard reflects current quality
+    # 1.5 Resume analysis — only when the resume actually changed.
+    #
+    # This used to run unconditionally on every sweep: a full LLM call, every day,
+    # to re-score a resume that was byte-identical to yesterday's. The hash is the
+    # whole fix.
     if text:
-        analysis = resume_ai.analyze(text)
-        db.set_resume_analysis(uid, analysis["score"], json.dumps(analysis))
-        log.info(
-            "resume score: %d/100 (%s) — %d issue(s)",
-            analysis["score"], analysis["grade"], len(analysis["issues"]),
-        )
+        _analyze_if_changed(uid, profile, text, skills)
 
     # 2. plan
     plan = build_plan(profile, skills, cap)
@@ -523,16 +669,32 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
         log.warning(msg)
         return {"error": "no_platforms_connected", "message": msg}
 
+    # Don't re-scrape while the queue still holds real work. Going back to five job
+    # boards for listings we have no free day to send anyway is pure noise — to them
+    # and to us — and daily scraping is itself the pattern they watch for.
+    plan_cap = db.get_plan_cap(uid)
+    pipeline = db.pipeline_depth(uid)
+    refill_at = plan_cap * PIPELINE_REFILL_DAYS
+    stocked = pipeline >= refill_at
+    if stocked and not submit_only:
+        log.info(
+            "pipeline holds %d match(es) (~%d days of work, refill under %d) — "
+            "skipping discovery this run",
+            pipeline, pipeline // max(1, plan_cap), refill_at,
+        )
+
+    discover = not submit_only and not stocked
+
     # A submit-only run does no discovery: the rotation exists to decide which
     # boards to *scrape* today, and there is nothing to scrape.
     active_sources = (
-        [] if submit_only
-        else _platforms_for_today(uid, [s for s in SOURCE_PRIORITY if s in connected_platforms])
+        _platforms_for_today(uid, [s for s in SOURCE_PRIORITY if s in connected_platforms])
+        if discover else []
     )
     if active_sources:
         log.info("platform rotation today: %s (connected: %s)", active_sources, connected_platforms)
 
-    if not submit_only:
+    if discover:
         kw_sets = _expand_search_keywords(plan["domains"], skills)
         per_kw = max(8, (cap + 5) // max(1, len(active_sources) * len(kw_sets)))
 
@@ -582,7 +744,12 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
         log.info("per-run safety cap active: %d (plan/day allows %d)", remaining, day_remaining)
 
     matched = applied = failed = 0
+    queued = 0   # matches banked into the pipeline THIS run (drives the due-date)
     letter_cache: dict[tuple[str, str], str] = {}
+    # What the adapters get. The profile row alone lacks the candidate's name and
+    # email, and agent/questions.py needs both to answer "Your name" / "Email"
+    # fields from stored fact instead of letting a model guess at them.
+    apply_profile = {**profile, "name": name, "email": user.get("email") or ""}
     applied_keys: set[tuple[str, str]] = set()
     per_src_applied: dict[str, int] = {}   # per-platform applies this run (bot-pace guard)
     per_src_failed:  dict[str, int] = {}   # per-platform failures this run (reliability monitor)
@@ -621,40 +788,117 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
 
     _FAIL_RATE_WARN = 0.5   # warn when >50% of attempts on a platform fail
 
-    # Tailored resume cache: title_key -> (pdf_path | None, resume_version_id | None)
+    # Tailored resume cache: key -> (pdf_path | None, resume_version_id | None)
     tailor_cache: dict[str, tuple[str | None, str | None]] = {}
     _tailored_dir = os.path.join(_ROOT_DIR, "data", "tailored", uid)
+    master_pdf = resume_parse.find_resume_file(uid)
+    # Only tailor from a .tex that PASSED its upload-time self-test (latex_check).
+    # Trusting the file just because it exists is what made the failure silent:
+    # a .tex that doesn't compile would be re-attempted, and re-fail, on every
+    # single application forever, with the user told nothing either time.
+    tex_ok = (profile.get("resume_tex_status") or "") == "ok"
+    master_tex = latex_resume.read_tex(uid) if tex_ok else ""
+    if not tex_ok and profile.get("resume_tex_name"):
+        log.info(
+            "skipping LaTeX tailoring: .tex self-test says %r",
+            profile.get("resume_tex_status") or "not checked",
+        )
+    # Layout tripwire: the page count of the resume the user actually approved of.
+    # Any edit that changes it has reflowed the document — which is precisely what
+    # a college-mandated template forbids — so that edit gets thrown away.
+    _baseline_pages: list[int | None] = []   # lazily filled, one-element cache
 
-    def _get_resume(title: str, company: str, job_skills: list[str], jd_text: str = "") -> tuple[str | None, str | None]:
-        """Build (or reuse) the tailored resume for this role and record an
-        immutable ResumeVersion snapshot. Returns (pdf_path, version_id) so the
-        application row can point at the exact resume the recruiter received."""
-        if not text or not live:
-            return None, None
-        tkey = _tailor_key(title)
-        if tkey in tailor_cache:
-            return tailor_cache[tkey]
-        tailored_text = resume_ai.tailor(text, title, company, job_skills,
-                                         job_description=jd_text, master_skills=skills)
-        pdf = os.path.join(_tailored_dir, f"{tkey}.pdf")
-        ok = resume_ai.to_pdf(tailored_text, pdf)
-        pdf_path = pdf if ok else None
-        try:
-            vid = db.add_resume_version(
-                uid,
-                label=f"{title} @ {company}",
-                job_title=title,
-                company=company,
-                text=tailored_text,
-                file_path=pdf_path,
-                skills_claimed=safety.skills_claimed(tailored_text, skills),
-                base_skills=skills,
+    def _master_pages() -> int | None:
+        if not _baseline_pages:
+            _baseline_pages.append(
+                latex_resume.page_count(master_pdf)
+                if master_pdf and master_pdf.lower().endswith(".pdf")
+                else None
             )
-        except Exception as e:  # noqa: BLE001
-            log.warning("resume snapshot failed: %s", e)
-            vid = None
-        tailor_cache[tkey] = (pdf_path, vid)
-        return tailor_cache[tkey]
+        return _baseline_pages[0]
+
+    def _get_resume(
+        title: str, company: str, job_skills: list[str], jd_text: str = ""
+    ) -> tuple[str | None, str | None]:
+        """Decide which resume this role gets, and record an immutable snapshot.
+
+        Returns (pdf_path, resume_version_id) so the application row points at the
+        exact document the recruiter received.
+
+        The default is to change NOTHING. We only edit when the master resume
+        genuinely under-sells the candidate for this role (fit_score below
+        resume_ai.TAILOR_THRESHOLD) AND the user gave us the LaTeX source to edit
+        safely. Every other path sends the master PDF untouched.
+
+        There is no plain-text-to-PDF fallback any more. The old one re-rendered
+        the whole resume with fpdf2, which threw away the user's college template
+        — the exact "it looks patched together" failure this is meant to fix. A
+        resume we cannot edit correctly is one we must not edit at all.
+        """
+        if not live:
+            return None, None
+        ckey = _tailor_key(title, company)
+        if ckey in tailor_cache:
+            return tailor_cache[ckey]
+
+        fit = resume_ai.fit_score(text, {"title": title, "skills": job_skills}, jd_text)
+
+        def _snapshot(path, doc_text, tailored, why):
+            try:
+                vid = db.add_resume_version(
+                    uid,
+                    label=f"{title} @ {company}",
+                    job_title=title,
+                    company=company,
+                    text=doc_text,
+                    file_path=path,
+                    skills_claimed=safety.skills_claimed(doc_text, skills),
+                    base_skills=skills,
+                    tailored=tailored,
+                    fit_score=fit,
+                )
+            except Exception as e:  # noqa: BLE001
+                log.warning("resume snapshot failed: %s", e)
+                vid = None
+            log.info("resume for %s @ %s: %s (fit %d/100)", title, company, why, fit)
+            tailor_cache[ckey] = (path, vid)
+            return tailor_cache[ckey]
+
+        # Good enough as-is — the commonest case, and the cheapest.
+        if fit >= resume_ai.TAILOR_THRESHOLD:
+            return _snapshot(master_pdf, text, False, "master, unchanged")
+
+        if not master_tex:
+            return _snapshot(
+                master_pdf, text, False,
+                "master, unchanged (no usable .tex — cannot edit without breaking the template)",
+            )
+
+        edited = resume_ai.tailor_latex(
+            master_tex, title, company, job_skills,
+            job_description=jd_text, master_skills=skills,
+        )
+        if not edited:
+            return _snapshot(master_pdf, text, False, "master, unchanged (no safe edit found)")
+
+        pdf = os.path.join(_tailored_dir, f"{ckey}.pdf")
+        if not latex_resume.compile_pdf(edited, pdf):
+            return _snapshot(master_pdf, text, False, "master, unchanged (LaTeX compile failed)")
+
+        want = _master_pages()
+        got = latex_resume.page_count(pdf)
+        if want and got and got != want:
+            log.warning(
+                "tailored resume for %s reflowed to %d page(s) (master is %d) — discarding the edit",
+                title, got, want,
+            )
+            try:
+                os.remove(pdf)
+            except OSError:
+                pass
+            return _snapshot(master_pdf, text, False, "master, unchanged (edit changed the page count)")
+
+        return _snapshot(pdf, edited, True, "tailored (Skills/Hobbies only)")
 
     # 4a. Handle pre-approved applications (auto_apply=False users who manually approved)
     approved_apps = db.get_approved_applications(uid)
@@ -699,15 +943,29 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 letter_cache[letter_key] = cover_letter(name, job["title"], job["company"], skills, job, jd_text=jd_text)
             letter = letter_cache[letter_key]
             resume_path, vid = _get_resume(job["title"], job["company"], job["skills"], jd_text=jd_text)
+            rec: dict = {}
             try:
-                status, why = mod.apply(job, letter, uid, profile=profile, resume_path=resume_path)
+                status, why = mod.apply(
+                    job, letter, uid, profile=apply_profile,
+                    resume_path=resume_path, record=rec,
+                )
             except Exception as e:  # noqa: BLE001
                 status, why = "failed", f"exception: {str(e)[:100]}"
             fr = _classify_failure(why) if status == "failed" else None
             if fr == safety.FAILURE_REASON.CAPTCHA:
                 _flag_challenge(src)
+            if status == "skipped" and "closed" in why.lower():
+                # The listing died between banking it and offering it — three weeks
+                # is a long time for an internship posting. Backfill the day's batch
+                # from the pipeline so a closed posting doesn't silently cost the
+                # user an application they were owed.
+                fr = safety.FAILURE_REASON.LISTING_CLOSED
+                if db.promote_next_match(uid, 1):
+                    log.info("listing closed — pulled the next queued match forward")
             db.update_application_status(
-                app_row["id"], status, why, resume_version_id=vid, failure_reason=fr
+                app_row["id"], status, why, resume_version_id=vid, failure_reason=fr,
+                screenshot_path=rec.get("screenshot_path"),
+                answers_json=rec.get("answers"),
             )
             db.add_audit("apply", user_id=uid, target=job.get("url"),
                          detail=f"{src}:{status}")
@@ -797,6 +1055,12 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
         matched += 1
 
         if _requires_approval(src, plan["auto_apply"]):
+            # Bank it with a due date instead of dumping it on the dashboard.
+            # `pipeline` is what was already queued before this run, so a second
+            # sweep keeps filling days behind the existing queue rather than
+            # piling another `cap` matches onto today.
+            day = _schedule_day(pipeline + queued, plan_cap)
+            queued += 1
             approval_reason = (
                 f"{reason} — ready to send, tap Approve (final step is manual "
                 f"on {src} to keep your account safe)"
@@ -807,6 +1071,10 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
                 reason=approval_reason, applied=False,
+                scheduled_for=db.time_from_now_db(day * _DAY_MS) if day > 0 else None,
+                missing_skills=matcher.missing_skills(
+                    job, skills, jd_text=job.get("jd_text", "")
+                ),
             )
             continue
 
@@ -850,9 +1118,11 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 )
             letter = letter_cache[letter_key]
             resume_path, vid = _get_resume(job["title"], job["company"], job.get("skills", []), jd_text=jd_text)
+            rec = {}
             try:
                 status, why = mod.apply(
-                    job, letter, uid, profile=profile, resume_path=resume_path
+                    job, letter, uid, profile=apply_profile,
+                    resume_path=resume_path, record=rec,
                 )
                 # Retry ONLY on clearly pre-submit failures (missing selector /
                 # element). A "timeout" can fire AFTER the submit click went
@@ -861,13 +1131,16 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                     k in why.lower() for k in ("selector", "not found", "element")
                 ) and "timeout" not in why.lower():
                     time.sleep(random.randint(15, 40))
-                    status, why = mod.apply(job, letter, uid, profile=profile, resume_path=resume_path)
+                    status, why = mod.apply(
+                        job, letter, uid, profile=apply_profile,
+                        resume_path=resume_path, record=rec,
+                    )
             except Exception as e:  # noqa: BLE001
                 status, why = "failed", f"exception: {str(e)[:100]}"
         else:
             # No live module loaded for this listing's platform — never fabricate
             # an apply. Shortlist it so nothing fake reaches the dashboard.
-            status, why, vid = "skipped", f"{src} unavailable this run", None
+            status, why, vid, rec = "skipped", f"{src} unavailable this run", None, {}
 
         if status == "applied":
             applied += 1
@@ -878,6 +1151,8 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="applied", reason=why, applied=True,
                 resume_version_id=vid,
+                screenshot_path=rec.get("screenshot_path"),
+                answers_json=rec.get("answers"),
             )
             db.add_audit("apply", user_id=uid, target=job.get("url"), detail=f"{src}:applied")
             if _SPREAD_APPLIES and remaining > 0:
@@ -912,6 +1187,8 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="needs_review", reason=why,
                 applied=False, resume_version_id=vid,
+                screenshot_path=rec.get("screenshot_path"),
+                answers_json=rec.get("answers"),
             )
             db.add_audit("apply_needs_review", user_id=uid, target=job.get("url"), detail=why[:120])
         else:
@@ -924,6 +1201,8 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="failed", reason=why, applied=False,
                 resume_version_id=vid, failure_reason=fr,
+                screenshot_path=rec.get("screenshot_path"),
+                answers_json=rec.get("answers"),
             )
             db.add_audit("apply_failed", user_id=uid, target=job.get("url"), detail=why[:120])
 
@@ -994,39 +1273,65 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
         return {"applied": applied, "matched": 0, "failed": failed, "mode": "approved"}
 
     # 5. report + 6. notify
+    #
+    # The report talks about what the user can ACT on today, not about the size of
+    # the pipeline. Telling them "we found 300 jobs" invites them to go ask for the
+    # list — and the list is the product.
     today = datetime.date.today().isoformat()
-    top = sorted(scored, key=lambda x: x[0], reverse=True)[:3]
-    top_lines = "\n".join(
-        f"  • {j['title']} @ {j['company']} [{j.get('source','?')}] — match {s}"
-        for s, _, j in top
-    )
+    ready = db.ready_today_count(uid)
+    depth = db.pipeline_depth(uid)
     summary = (
-        f"Applied to {applied} internship(s) today, shortlisted {matched}.\n"
-        f"Top matches:\n{top_lines}"
-        if top
-        else f"Applied to {applied}, shortlisted {matched}."
+        f"Applied to {applied} internship(s) today. "
+        f"{ready} more ready for your OK. "
+        f"{depth} lined up over the coming weeks."
     )
     db.add_report(uid, date=today, matched=matched, applied=applied, failed=failed,
                   summary=summary, delivered=True)
 
-    sources_used = ", ".join(source_modules.keys()) if source_modules else "mock board"
+    sources_used = ", ".join(source_modules.keys()) if source_modules else "your queue"
     approve_nudge = (
-        "\n\n:point_right: I don't auto-submit on LinkedIn/Internshala/Naukri/Unstop/Indeed "
-        "— that's what keeps your account safe. Open the dashboard and tap *Approve* on "
-        "your matches to send them."
-        if matched > applied
+        "\n\n:point_right: I don't click the final submit on LinkedIn/Internshala/Naukri/"
+        "Unstop/Indeed — that one human tap is what keeps your account safe. Open the "
+        "dashboard and tap *Approve* to send today's batch."
+        if ready
         else ""
     )
     msg = (
         f":robot_face: *Grindly daily report — {today}*\n"
-        f":white_check_mark: Applied: *{applied}*  ·  :star: Shortlisted: {matched}  ·  "
+        f":white_check_mark: Applied: *{applied}*  ·  :inbox_tray: Ready for you: {ready}  ·  "
         f":x: Failed: {failed}\n"
         f"Sources: {sources_used}\n\n"
-        f"{summary}\n\nNext sweep in 24h. Pause anytime from the dashboard.{approve_nudge}"
+        f"{summary}\n\nI'll keep working through your queue. Pause anytime from the "
+        f"dashboard.{approve_nudge}"
     )
-    notify.to_user(user, f"Grindly daily report — {today}", msg)
-    log.info("done: applied=%d matched=%d failed=%d", applied, matched, failed)
-    return {"applied": applied, "matched": matched, "failed": failed}
+    # A report nobody receives is the same as no agent at all, so an undeliverable
+    # one is an operational failure, not a cosmetic one. Say so loudly — the whole
+    # point of the delivered flag is that a mute production install stops looking
+    # exactly like a working one.
+    if not notify.to_user(user, f"Grindly daily report — {today}", msg):
+        log.error(
+            "daily report UNDELIVERED for %s — the user has no working channel", uid
+        )
+        db.add_audit("report_undelivered", user_id=uid, detail=f"date={today}")
+        notify.send(
+            _OPS_CHANNEL,
+            f":rotating_light: Daily report undeliverable for user `{uid}`. "
+            f"SMTP configured: {notify.email_notify.configured()}. "
+            f"Slack configured: {notify.slack_configured()}.",
+        )
+
+    log.info(
+        "done: applied=%d matched=%d queued=%d ready_today=%d pipeline=%d failed=%d",
+        applied, matched, queued, ready, depth, failed,
+    )
+    return {
+        "applied": applied,
+        "matched": matched,
+        "queued": queued,
+        "ready": ready,
+        "pipeline": depth,
+        "failed": failed,
+    }
 
 
 def run_job(uid: str, mode: str) -> dict:
@@ -1039,6 +1344,8 @@ def run_job(uid: str, mode: str) -> dict:
     Used by both --drain and --serve."""
     if mode == "analyze":
         return analyze_only(uid)
+    if mode == "latex_check":
+        return latex_check(uid)
     if mode.startswith("connect"):
         # mode is "connect_internshala" (or legacy "connect" → internshala)
         platform = mode.split("_", 1)[1] if "_" in mode else "internshala"

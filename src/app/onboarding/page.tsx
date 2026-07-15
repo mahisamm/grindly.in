@@ -20,7 +20,7 @@ export default function OnboardingPage() {
   const [slackId, setSlackId] = useState("");
   const [slackDone, setSlackDone] = useState(false);
   const [notifChannel, setNotifChannel] = useState<"slack" | "email">("email");
-  const [plan, setPlan] = useState<Plan>("starter");
+  const [plan, setPlan] = useState<Plan>("plus");
   const [busy, setBusy] = useState(false);
   const [tosAck, setTosAck] = useState(false);
   const [msg, setMsg] = useState("");
@@ -54,7 +54,7 @@ export default function OnboardingPage() {
   useEffect(() => {
     try {
       const p = localStorage.getItem("grindly_plan");
-      if (p === "starter" || p === "pro") {
+      if (p === "plus" || p === "pro") {
         setPlan(p);
         localStorage.removeItem("grindly_plan");
       }

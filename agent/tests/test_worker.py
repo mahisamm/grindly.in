@@ -113,11 +113,88 @@ def test_expand_search_keywords_deduplicates_and_caps_at_4():
 
 # ---------- _tailor_key ----------
 
-def test_tailor_key_normalizes_and_truncates():
-    key = worker._tailor_key("Frontend Developer Intern @ Acme!!")
-    assert key == "frontend_developer_intern___ac"
-    assert len(key) == 30
-    assert re.fullmatch(r"[a-z0-9_]+", key)
+def test_tailor_key_is_filesystem_safe():
+    key = worker._tailor_key("Frontend Developer Intern @ Acme!!", "Bolt & Co.")
+    assert re.fullmatch(r"[a-z0-9_]+", key)   # it becomes a filename
+
+
+def test_tailor_key_separates_the_same_title_at_different_companies():
+    """The cache key used to be the title alone. "Web Development Internship" is on
+    Internshala a hundred times over, asking for very different things each time —
+    so one company's tailored resume was silently being sent to another's listing."""
+    acme = worker._tailor_key("Web Development Internship", "Acme")
+    bolt = worker._tailor_key("Web Development Internship", "Bolt")
+    assert acme != bolt
+
+
+# ---------- _schedule_day ----------
+
+def test_a_full_pipeline_spreads_evenly_over_the_month():
+    """A sweep banks ~a month of matches at once (cap x days). They must come due a
+    batch a day — dumping them at once would hand the user the whole list for free
+    and tempt a same-day mass-apply, the loudest bot signal there is."""
+    cap, days = 10, 30
+    counts: dict[int, int] = {}
+    for slot in range(cap * days):
+        d = worker._schedule_day(slot, cap, days)
+        counts[d] = counts.get(d, 0) + 1
+    assert set(counts) == set(range(days))        # every day is used
+    assert set(counts.values()) == {cap}          # ...and each gets exactly cap
+
+
+def test_every_day_gets_a_share_of_the_best_matches():
+    """`scored` is sorted best-first. A straight slot//cap fill would give day 1 the
+    ten strongest matches and day 30 the dregs — each day visibly worse than the
+    last, until the user concluded the agent had stopped working. Dealt round-robin,
+    the top matches land on DIFFERENT days."""
+    cap, days = 10, 30
+    top_ten_days = {worker._schedule_day(s, cap, days) for s in range(10)}
+    assert len(top_ten_days) == 10   # the ten best go to ten different days
+
+
+def test_the_first_match_is_still_available_today():
+    assert worker._schedule_day(0, 10, 30) == 0
+
+
+def test_overflow_past_the_horizon_lands_on_the_last_day():
+    cap, days = 10, 30
+    assert worker._schedule_day(cap * days, cap, days) == days - 1
+    assert worker._schedule_day(cap * days + 500, cap, days) == days - 1
+
+
+def test_schedule_day_never_divides_by_zero():
+    assert worker._schedule_day(5, 0, 0) == 0
+
+
+# ---------- pipeline refill hysteresis ----------
+
+def _stocked(depth: int, cap: int = 10) -> bool:
+    """Mirrors the discovery gate in run_for_user: do we still hold enough work to
+    skip scraping the boards this run?"""
+    return depth >= cap * worker.PIPELINE_REFILL_DAYS
+
+
+def test_a_nearly_full_pipeline_does_not_trigger_a_rescrape():
+    """The bug this guards: "refill unless full" means approving ONE application
+    drops the depth below full, so the next sweep re-scrapes all five boards. The
+    pipeline would refill every single day — exactly the traffic pattern the whole
+    design exists to avoid."""
+    cap, full = 10, 10 * worker.PIPELINE_DAYS
+    assert _stocked(full, cap)
+    assert _stocked(full - 1, cap)     # one application sent: still stocked
+    assert _stocked(full // 2, cap)    # half the month gone: still stocked
+
+
+def test_a_drained_pipeline_does_trigger_a_rescrape():
+    cap = 10
+    assert not _stocked(cap * worker.PIPELINE_REFILL_DAYS - 1, cap)
+    assert not _stocked(0, cap)
+
+
+def test_the_refill_threshold_sits_below_the_fill_target():
+    """Refilling at the same depth we fill to is the no-hysteresis bug by another
+    name — the two constants must not converge."""
+    assert worker.PIPELINE_REFILL_DAYS < worker.PIPELINE_DAYS
 
 
 # ---------- _scrape_jd_if_available ----------

@@ -7,7 +7,7 @@ export async function POST(req: Request) {
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
 
   const { plan } = (await req.json().catch(() => ({}))) as { plan?: Plan };
-  const chosen: Plan = plan === "pro" ? "pro" : "starter";
+  const chosen: Plan = plan === "pro" ? "pro" : "plus";
 
   try {
     const order = await createOrder({ userId: uid, plan: chosen });

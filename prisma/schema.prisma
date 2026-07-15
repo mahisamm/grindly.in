@@ -65,7 +65,10 @@ model User {
   // but never actually applied to prod, so `prisma db push` was trying to
   // convert text -> enum, which Postgres can only do via drop-and-recreate
   // (data loss on every row). Matching what's actually live instead.
-  plan          String   @default("free") // free | starter | pro
+  // free | plus | pro.  "starter" is the legacy name for "plus" and may still be
+  // present on old rows — every read goes through normalizePlan() (src/lib/plans.ts)
+  // / _norm_plan() (agent/db.py) rather than comparing this string directly.
+  plan          String   @default("free")
   // slack (stubbed, real-ready)
   slackUserId   String?  @map("slack_user_id")
   slackChannel  String?  @map("slack_channel")
@@ -147,6 +150,22 @@ model Profile {
 
   resumeText String? @map("resume_text")
   resumeName String? @map("resume_name")
+  // Optional LaTeX source of the master resume (data/resume_tex/<uid>.tex).
+  // When present, per-job tailoring edits the .tex in place and recompiles, so
+  // the output is byte-identical to the user's own template. When absent, the
+  // agent sends the master PDF UNTOUCHED — it must never regenerate a resume
+  // from plain text, which is what produced the "patched-looking" output.
+  resumeTexName String? @map("resume_tex_name")
+  // Result of compiling the UNEDITED .tex the moment it was uploaded:
+  //   ok | no_sections | compile_failed | page_mismatch | no_compiler
+  //
+  // Without this, a .tex that can't be compiled — or whose section headings this
+  // template doesn't recognise — fails silently and forever: compile_pdf() returns
+  // False, the master resume goes out untouched, and the user is never told that
+  // the feature they uploaded a file for is doing nothing. A guard that fails
+  // silently is not a guard. Checked once at upload, not per-application.
+  resumeTexStatus String? @map("resume_tex_status")
+  resumeTexDetail String? @map("resume_tex_detail")
   skills     String  @default("[]") // JSON array of skills (agent-extracted)
   education  String?
   experienceLevel String? @map("experience_level") // student | fresher | 1-2yr
@@ -165,6 +184,11 @@ model Profile {
 
   resumeScore       Int?     @map("resume_score")       // 0-100 quality score
   resumeSuggestions String?  @map("resume_suggestions")  // JSON analysis from resume_ai
+  // SHA-256 of the resume text the stored analysis was computed from. The worker
+  // re-analyzes ONLY when this changes. It used to run resume_ai.analyze() on every
+  // single sweep — an LLM call, every day, to re-score a resume that hadn't changed
+  // since yesterday.
+  resumeHash        String?  @map("resume_hash")
 
   // beta: one-tap "are these matches good?" survey (1-5). null = not yet asked
   matchQualityRating Int?     @map("match_quality_rating")
@@ -223,9 +247,31 @@ model Application {
   // enumerated machine reason on failure — see FailureReason
   failureReason  FailureReason? @map("failure_reason")
   screenshotPath String? @map("screenshot_path")  // proof image of the submit attempt
+  // The platform's screening questions and the answers submitted under the user's
+  // name: JSON [{q, a, source}], where source is "profile" (a stored fact, e.g. their
+  // real CGPA), "ai" (a model phrasing something their resume supports), or
+  // "fallback". Recorded because an application the user cannot read back is one they
+  // cannot walk into an interview and defend. See agent/questions.py.
+  answersJson    String? @map("answers_json")
+  // JSON array: what this role asked for that the candidate does not show. The
+  // actionable half of a match score — "you scored 72" tells someone nothing they
+  // can act on; "this role wants Docker and you don't show it" tells them what to
+  // learn, and what they will be asked about if they get the call.
+  missingSkills  String? @map("missing_skills")
   // immutable snapshot of the exact resume sent for this application
   resumeVersionId String?        @map("resume_version_id")
   resumeVersion   ResumeVersion? @relation(fields: [resumeVersionId], references: [id])
+  // When this match is due to be surfaced to the user for a one-tap send.
+  //
+  // A single discovery sweep finds ~a month of work (plan cap x 30). Dumping all
+  // of it on the dashboard at once would (a) hand the user a free job board they
+  // could go apply to themselves, and (b) tempt a same-day mass-apply, which is
+  // the single loudest bot signal there is. So matches are filed HIDDEN with a
+  // date, and only the ones due today are ever returned to the client — see
+  // src/app/api/applications/route.ts, which is the enforcement point.
+  //
+  // null = due immediately (legacy rows, and anything the user approved by hand).
+  scheduledFor DateTime? @map("scheduled_for")
   appliedAt  DateTime? @map("applied_at")
   // user-reported outcome — the single most important beta signal (interview rate)
   // null (unset) until the user reports one
@@ -239,6 +285,8 @@ model Application {
   @@index([jobId])
   @@index([resumeVersionId])
   @@index([createdAt])
+  // The hot query: "what is due for this user right now" (status + scheduledFor).
+  @@index([userId, status, scheduledFor])
   @@map("applications")
 }
 
@@ -255,6 +303,14 @@ model ResumeVersion {
   filePath      String?  @map("file_path")      // path to the exact PDF sent
   skillsClaimed String   @default("[]") @map("skills_claimed") // JSON: skills surfaced for this role
   baseSkills    String   @default("[]") @map("base_skills")    // JSON: master skills at time (truthfulness ref)
+  // false = the master resume went out untouched. The agent only rewrites when
+  // the master genuinely under-sells the candidate for this role (fitScore below
+  // GRINDLY_TAILOR_THRESHOLD); a resume that already fits is left alone, because
+  // every edit is a chance to break a layout the college mandated.
+  tailored      Boolean  @default(false)
+  // 0-100: how well the MASTER resume covered this job before any edit. This is
+  // the number that decided whether to tailor — kept so the choice is auditable.
+  fitScore      Int?     @map("fit_score")
   createdAt     DateTime @default(now()) @map("created_at")
 
   applications  Application[]

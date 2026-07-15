@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 import { Logo } from "@/components/Brand";
 import { CountUp } from "@/components/Motion";
 import { PROFF_FIELDS, CONTACT_FIELDS } from "@/lib/proffQuestions";
+import { planCap } from "@/lib/plans";
 
 // @novnc/novnc touches `window`/browser globals at module load time — a
 // static import crashes Next's server-side prerender of this page ("window
@@ -27,6 +28,9 @@ type App = {
   outcome: string | null;
   appliedAt: string | null;
   createdAt: string;
+  // JSON array: what this role asks for that you don't show. The actionable half of
+  // a match score, and the list you want in front of you if they call.
+  missingSkills: string | null;
 };
 type Report = {
   id: string;
@@ -50,6 +54,11 @@ type ResumeAnalysis = {
   strengths: string[];
   issues: string[];
   suggestions: string[];
+  // Mechanical check of what an applicant tracking system can actually extract from
+  // the file — not an opinion about the writing. `readable: false` means a scanned
+  // or image-based PDF: it looks perfect on screen and is a blank page to a parser,
+  // which silently sinks every application made with it.
+  ats?: { readable: boolean; chars: number; warnings: string[] };
 };
 
 type RawProfile = {
@@ -69,6 +78,12 @@ type RawProfile = {
   resumeScore: number | null;
   resumeSuggestions: string | null;
   resumeName: string | null;
+  resumeTexName: string | null;
+  // Verdict from compiling the untouched .tex at upload — see agent/worker.py:latex_check.
+  // "ok" is the ONLY value that lets the agent tailor; anything else means it sends
+  // the master unchanged, and the user is told so instead of it failing in silence.
+  resumeTexStatus: string | null;
+  resumeTexDetail: string | null;
   matchQualityRating: number | null;
   resumeParseFailed: boolean;
   reportChannel: string;
@@ -93,7 +108,11 @@ type Me = {
   applications: App[];
   reports: Report[];
   stats: {
-    matched: number;
+    // Matches that have come due — the batch the user can actually send today.
+    ready: number;
+    // The rest of the month's pipeline. A count only: the server never sends the
+    // list (see src/lib/pipeline.ts).
+    queued: number;
     approved: number;
     reviewed: number;
     applied: number;
@@ -146,8 +165,8 @@ const STATUS_STYLE: Record<string, string> = {
 
 const STATUS_LABEL: Record<string, string> = {
   applied:  "applied",
-  approved: "approved ✓",
-  matched:  "awaiting",
+  approved: "sending…",
+  matched:  "ready",
   skipped:  "skipped",
   failed:   "failed",
 };
@@ -174,6 +193,83 @@ function scoreColor(s: number) {
   return "text-muted";
 }
 
+/** Every state except "ok" means the agent will send the master resume unchanged.
+ *  Saying so is the entire point — a .tex that silently does nothing is worse than
+ *  no .tex at all, because the user thinks the feature is working. */
+const TEX_STATUS: Record<string, { label: string; tone: string }> = {
+  checking:       { label: "Checking…",          tone: "border-border text-muted" },
+  ok:             { label: "Ready",              tone: "border-accent text-accent" },
+  no_sections:    { label: "No Skills section",  tone: "border-warn text-warn" },
+  compile_failed: { label: "Won't compile",      tone: "border-danger text-danger" },
+  page_mismatch:  { label: "Doesn't match PDF",  tone: "border-warn text-warn" },
+  no_compiler:    { label: "Compiler offline",   tone: "border-warn text-warn" },
+  unsafe:         { label: "Refused",            tone: "border-danger text-danger" },
+  missing:        { label: "Not found",          tone: "border-warn text-warn" },
+};
+
+/** One upload slot: shows the file currently on record and lets the user replace it. */
+function ResumeSlot({
+  label, hint, current, accept, busy, onPick, status, detail,
+}: {
+  label: string;
+  hint: string;
+  current: string | null;
+  accept: string;
+  busy: boolean;
+  onPick: (f: File) => void;
+  status?: string | null;
+  detail?: string | null;
+}) {
+  const s = status ? TEX_STATUS[status] : null;
+  return (
+    <label
+      className={`block cursor-pointer rounded-xl border-2 border-dashed p-4 transition ${
+        busy ? "border-brand bg-brand/5 opacity-70" : "border-border hover:border-brand/50"
+      }`}
+    >
+      <input
+        type="file"
+        accept={accept}
+        className="sr-only"
+        disabled={busy}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          // Reset the input so re-picking the SAME filename fires change again —
+          // otherwise a user who re-exports resume.pdf and uploads it a second time
+          // gets no event at all, and the app silently keeps the old file.
+          e.target.value = "";
+          if (f) onPick(f);
+        }}
+      />
+      <div className="text-sm font-medium">{label}</div>
+      <div className="mt-0.5 text-xs text-muted">{hint}</div>
+      <div className="mt-2.5 flex items-center gap-2">
+        {current ? (
+          <span className="truncate rounded-md bg-surface-2 px-2 py-1 text-xs" title={current}>
+            {current}
+          </span>
+        ) : (
+          <span className="text-xs text-muted">Nothing uploaded</span>
+        )}
+        {s && (
+          <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${s.tone}`}>
+            {s.label}
+          </span>
+        )}
+        <span className="ml-auto shrink-0 text-xs text-brand-2">
+          {busy ? "Uploading…" : current ? "Replace" : "Upload"}
+        </span>
+      </div>
+      {detail && status !== "ok" && (
+        <p className="mt-2 text-xs text-warn">{detail}</p>
+      )}
+      {detail && status === "ok" && (
+        <p className="mt-2 text-xs text-muted">{detail}</p>
+      )}
+    </label>
+  );
+}
+
 function resumeScoreColor(s: number) {
   if (s >= 75) return "text-accent";
   if (s >= 55) return "text-brand-2";
@@ -188,7 +284,6 @@ function resumeGradeBg(g: string) {
   return "bg-danger/20 text-danger border-danger/40";
 }
 
-const PLAN_CAP: Record<string, number> = { starter: 10, pro: 30 };
 const PAGE_SIZE = 20;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -277,6 +372,7 @@ export default function Dashboard() {
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approvingAll, setApprovingAll] = useState(false);
   const [analyzingResume, setAnalyzingResume] = useState(false);
+  const [uploading, setUploading] = useState<"master" | "tex" | null>(null);
   const [editingSkills, setEditingSkills] = useState(false);
   const [skillsDraft, setSkillsDraft] = useState<string[]>([]);
   const [skillsSaving, setSkillsSaving] = useState(false);
@@ -359,6 +455,24 @@ export default function Dashboard() {
     window.location.href = "/login";
   }
 
+  async function deleteAccount() {
+    const sure = window.confirm(
+      "Delete your account permanently? This erases your profile, resumes, and every " +
+      "application record. It cannot be undone."
+    );
+    if (!sure) return;
+    const res = await fetch("/api/account", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    });
+    if (res.ok) {
+      window.location.href = "/login";
+    } else {
+      setNotice({ kind: "err", text: "Couldn't delete the account. Please try again." });
+    }
+  }
+
   async function runAgent() {
     setRunning(true);
     setNotice(null);
@@ -384,7 +498,12 @@ export default function Dashboard() {
           const s = await r.json();
           if (s.status === "done") {
             const x = s.result || {};
-            setNotice({ kind: "ok", text: `Agent finished — applied ${x.applied ?? 0}, matched ${x.matched ?? 0}, failed ${x.failed ?? 0}.` });
+            setNotice({
+              kind: "ok",
+              text: `Agent finished — ${x.ready ?? 0} ready for your OK, ${x.applied ?? 0} sent`
+                + (x.failed ? `, ${x.failed} failed` : "")
+                + (x.pipeline ? `. ${x.pipeline} lined up for the coming days.` : "."),
+            });
             setRunning(false); load(); return;
           }
           if (s.status === "failed") {
@@ -525,6 +644,29 @@ export default function Dashboard() {
     } catch { setAnalyzingResume(false); }
   }
 
+  /** Replace the master resume or the LaTeX source. A new master clears the
+   *  skills/score derived from the old one server-side, so `load()` afterwards is
+   *  what makes the re-analysis visible. */
+  async function uploadResume(file: File, kind: "master" | "tex") {
+    setUploading(kind);
+    const body = new FormData();
+    body.append("file", file);
+    const res = await fetch("/api/resume", { method: "POST", body }).catch(() => null);
+    setUploading(null);
+    if (!res || !res.ok) {
+      const msg = res ? ((await res.json().catch(() => ({}))) as { error?: string }).error : null;
+      setNotice({ kind: "err", text: msg || "Couldn't upload that file — please try again." });
+      return;
+    }
+    setNotice({
+      kind: "ok",
+      text: kind === "tex"
+        ? "LaTeX source saved — the agent can now tailor without touching your layout."
+        : "Resume updated. Re-reading your skills now; the agent uses it from the next run.",
+    });
+    load();
+  }
+
   async function approveApplication(id: string) {
     setApprovingId(id);
     const res = await fetch("/api/applications/approve", {
@@ -534,7 +676,7 @@ export default function Dashboard() {
     }).catch(() => null);
     setApprovingId(null);
     if (!res || !res.ok) {
-      setNotice({ kind: "err", text: "Couldn't approve — please try again." });
+      setNotice({ kind: "err", text: "Couldn't send that one — please try again." });
       return;
     }
     load();
@@ -671,6 +813,9 @@ export default function Dashboard() {
   }
 
   const skills: string[] = me.profile ? parseJ<string[]>(me.profile.skills, []) : [];
+  const resumeAts = me.profile?.resumeSuggestions
+    ? parseJ<ResumeAnalysis>(me.profile.resumeSuggestions, {} as ResumeAnalysis).ats
+    : undefined;
   const filteredApps = filter === "all"
     ? me.applications
     : me.applications.filter((a) => a.status === filter);
@@ -678,8 +823,11 @@ export default function Dashboard() {
   const apps = filteredApps.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const integrations = (me.integrations ?? []).filter((i) => VISIBLE_PLATFORMS.includes(i.platform));
   const connectedCount = integrations.filter((i) => i.status === "connected").length;
-  const cap = PLAN_CAP[me.user.plan] ?? 10;
-  const matchedCount = me.applications.filter((a) => a.status === "matched").length;
+  const cap = planCap(me.user.plan);
+  // Every "matched" row the server sent us has already come due — the rest of the
+  // month's pipeline never leaves the server (src/lib/pipeline.ts). So this is
+  // "ready to send today", not "everything we found".
+  const readyCount = me.stats.ready;
   const outcomeApps = me.applications.filter((a) => a.status === "applied" && a.outcome);
   const responseRate = outcomeApps.length > 0
     ? Math.round((outcomeApps.filter((a) => a.outcome !== "no_response").length / outcomeApps.length) * 100)
@@ -826,19 +974,32 @@ export default function Dashboard() {
             <button onClick={() => setTab("integrations")} className="underline text-brand-2 ml-1">Set up integrations →</button>
           </div>
         )}
-        {matchedCount > 0 && (
+        {readyCount > 0 && (
           <div className="mt-3 flex items-center justify-between rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
             <div>
-              <span className="font-medium">{matchedCount} job{matchedCount !== 1 ? "s" : ""} awaiting your approval.</span>{" "}
-              <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">Review & approve →</button>
+              <span className="font-medium">
+                {readyCount} application{readyCount !== 1 ? "s" : ""} ready to send.
+              </span>{" "}
+              <span className="text-muted">
+                Prepped with your resume — one tap and the agent submits.
+              </span>{" "}
+              <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">Review & send →</button>
             </div>
             <button
               onClick={approveAllApplications}
               disabled={approvingAll}
               className="ml-4 shrink-0 rounded-lg border border-brand/40 px-3 py-1.5 text-xs text-brand-2 hover:bg-brand/10 transition disabled:opacity-50"
             >
-              {approvingAll ? "Approving…" : `Approve all ${matchedCount}`}
+              {approvingAll ? "Sending…" : `Send all ${readyCount}`}
             </button>
+          </div>
+        )}
+        {readyCount === 0 && me.stats.queued > 0 && (
+          <div className="mt-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-sm text-muted">
+            <span className="font-medium text-foreground">You&apos;re all caught up for today.</span>{" "}
+            The agent has {me.stats.queued} more {me.stats.queued === 1 ? "role" : "roles"} lined
+            up and releases a fresh batch each day — applying to a month&apos;s worth in one
+            sitting is what gets accounts flagged.
           </div>
         )}
 
@@ -850,13 +1011,13 @@ export default function Dashboard() {
           </div>
         ))}
 
-        {/* stats — "Matched" is jobs awaiting your approval, NOT everything the
-            agent looked at. "Reviewed" is that total. Conflating the two is what
-            made a run that matched nothing report "Matched 49". */}
+        {/* stats — "Ready" is today's batch, waiting on one tap. "Queued" is the rest
+            of the month, which the agent releases a day at a time; the user is told
+            the work exists but is never handed the list (src/lib/pipeline.ts). */}
         <div className="mt-6 grid grid-cols-3 sm:grid-cols-5 gap-3">
           {([
-            ["Reviewed", me.stats.reviewed, "text-muted", "Listings the agent scored"],
-            ["Matched", me.stats.matched, "text-foreground", "Cleared your threshold — awaiting your approval"],
+            ["Ready", me.stats.ready, "text-foreground", "Prepped and waiting for your OK — tap to send"],
+            ["Queued", me.stats.queued, "text-muted", "Lined up for the coming days, released a batch at a time"],
             ["Applied", me.stats.applied, "text-accent", "Actually submitted"],
             ["Failed", me.stats.failed, "text-danger", "Submission failed"],
             ["Avg match", me.stats.avgScore, "text-brand-2", "Average score across everything reviewed"],
@@ -944,6 +1105,21 @@ export default function Dashboard() {
                 </button>
               </div>
             </div>
+
+            {/* The one failure that looks fine to a human. Louder than every other
+                issue on this card, because if a parser can't open the file, nothing
+                else about the resume matters. */}
+            {resumeAts && !resumeAts.readable && (
+              <div className="mb-3 rounded-lg border-2 border-danger bg-danger/10 px-3 py-2.5 text-xs text-danger">
+                <div className="font-semibold">A recruiter&apos;s system can&apos;t read this resume.</div>
+                <p className="mt-1">
+                  Almost no text could be extracted from the file — it&apos;s most likely a
+                  scan, an image, or an export with embedded fonts. It looks fine on screen
+                  and arrives as a blank page. Re-export a text-based PDF and upload it
+                  below before the agent sends anything.
+                </p>
+              </div>
+            )}
 
             {/* Parse-failure fallback — agent told us it read no skills */}
             {me.profile.resumeParseFailed && !editingSkills && (
@@ -1044,7 +1220,7 @@ export default function Dashboard() {
               <div className="text-sm text-muted">
                 {me.profile.resumeName
                   ? "Analysis in progress — check back in a moment."
-                  : "Upload your resume in Onboarding to get an AI quality score and improvement suggestions."}
+                  : "Upload your resume below to get an AI quality score and improvement suggestions."}
                 {skills.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {skills.map((s) => (
@@ -1054,6 +1230,42 @@ export default function Dashboard() {
                 )}
               </div>
             )}
+
+            {/* Resume files. Two slots, because they do different jobs: the master is
+                what a recruiter receives; the .tex is the source the agent edits when
+                a role needs a tailored version. With no .tex the agent sends the
+                master untouched rather than rebuilding a lookalike and wrecking the
+                template the college mandated. */}
+            <div className="mt-6 border-t border-border pt-5">
+              <div className="text-xs uppercase tracking-wide text-muted mb-3">Resume files</div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <ResumeSlot
+                  label="Master resume"
+                  hint="PDF, DOCX or TXT · this is what gets sent"
+                  current={me.profile.resumeName}
+                  accept=".pdf,.docx,.txt"
+                  busy={uploading === "master"}
+                  onPick={(f) => uploadResume(f, "master")}
+                />
+                <ResumeSlot
+                  label="LaTeX source (optional)"
+                  hint=".tex · lets the agent tailor without breaking your template"
+                  current={me.profile.resumeTexName}
+                  accept=".tex"
+                  busy={uploading === "tex"}
+                  onPick={(f) => uploadResume(f, "tex")}
+                  status={me.profile.resumeTexStatus}
+                  detail={me.profile.resumeTexDetail}
+                />
+              </div>
+              <p className="mt-3 text-xs text-muted">
+                Replacing your master resume re-extracts your skills and re-scores it —
+                the agent uses the new one from its next run. The agent only ever edits
+                the <span className="text-foreground">Skills</span> and{" "}
+                <span className="text-foreground">Hobbies</span> sections of your .tex,
+                and throws the edit away if it changes your page count.
+              </p>
+            </div>
           </div>
         )}
 
@@ -1071,8 +1283,8 @@ export default function Dashboard() {
               {t === "integrations" && connectedCount > 0 && (
                 <span className="ml-1.5 rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] text-accent">{connectedCount}</span>
               )}
-              {t === "applications" && matchedCount > 0 && (
-                <span className="ml-1.5 rounded-full bg-warn/20 px-1.5 py-0.5 text-[10px] text-warn">{matchedCount}</span>
+              {t === "applications" && readyCount > 0 && (
+                <span className="ml-1.5 rounded-full bg-warn/20 px-1.5 py-0.5 text-[10px] text-warn">{readyCount}</span>
               )}
             </button>
           ))}
@@ -1225,7 +1437,17 @@ export default function Dashboard() {
         {tab === "applications" && (
           <div className="mt-4">
             <div className="flex flex-wrap gap-2 mb-3 text-sm">
-              {["all", "applied", "approved", "matched", "skipped", "failed"].map((f) => (
+              {/* "matched" is labelled "ready" — every matched row the server sends
+                  has already come due, so from the user's side it means "ready to
+                  send", not "we found this somewhere in the pipeline". */}
+              {([
+                ["all", "all"],
+                ["matched", "ready"],
+                ["applied", "applied"],
+                ["approved", "sending"],
+                ["failed", "failed"],
+                ["skipped", "skipped"],
+              ] as const).map(([f, label]) => (
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
@@ -1234,7 +1456,7 @@ export default function Dashboard() {
                     filter === f ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground"
                   }`}
                 >
-                  {f}
+                  {label}
                 </button>
               ))}
             </div>
@@ -1270,6 +1492,28 @@ export default function Dashboard() {
                           {a.reason}
                         </div>
                       )}
+                      {/* What they want that you don't show. Worth knowing before you
+                          send it, and worth revising before the call. */}
+                      {(() => {
+                        const gap = parseJ<string[]>(a.missingSkills ?? "[]", []);
+                        if (!gap.length) return null;
+                        return (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] uppercase tracking-wide text-muted">
+                              They also want
+                            </span>
+                            {gap.map((s) => (
+                              <span
+                                key={s}
+                                title="This role asks for it and your resume doesn't show it — expect to be asked."
+                                className="rounded border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-[10px] text-warn"
+                              >
+                                {s}
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <div className="text-right">
@@ -1295,9 +1539,10 @@ export default function Dashboard() {
                         <button
                           onClick={() => approveApplication(a.id)}
                           disabled={approvingId === a.id}
+                          title="The agent fills and submits this for you. It never clicks submit without this tap."
                           className="rounded-md border border-brand/40 px-2.5 py-1 text-xs text-brand-2 hover:bg-brand/10 transition disabled:opacity-50"
                         >
-                          {approvingId === a.id ? "…" : "Approve"}
+                          {approvingId === a.id ? "…" : "Send"}
                         </button>
                       )}
                     </div>
@@ -1510,6 +1755,22 @@ export default function Dashboard() {
                 <li>Click <strong>Run agent</strong> on this dashboard to start applying.</li>
                 <li>The agent applies up to <strong>{cap}</strong> internships/day on Internshala.</li>
               </ol>
+            </div>
+
+            {/* ── DANGER ZONE ── self-serve account deletion. Kept visually
+                separated and behind a browser confirm so it's never a stray tap. */}
+            <div className="mt-5 rounded-xl border border-danger/40 bg-danger/5 p-4">
+              <p className="font-medium text-danger mb-1">Delete account</p>
+              <p className="text-sm text-muted mb-3">
+                Permanently erases your profile, resumes, and every application record.
+                This cannot be undone.
+              </p>
+              <button
+                onClick={deleteAccount}
+                className="press rounded-lg border-2 border-danger px-4 py-2 text-sm font-medium text-danger hover:bg-danger/10 transition"
+              >
+                Delete my account
+              </button>
             </div>
           </div>
         )}

@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit";
 import { baseUrl } from "@/lib/baseUrl";
 import { loginClient } from "@/lib/googleOAuth";
 import { DEFAULTS } from "@/lib/proffQuestions";
+import { isRateLimited, getIp } from "@/lib/rateLimit";
 
 interface GoogleTokenResponse {
   access_token: string;
@@ -44,6 +45,15 @@ export async function GET(req: Request) {
   c.delete("g_oauth_state");
   if (!returnedState || !savedState || !statesMatch(returnedState, savedState)) {
     return NextResponse.redirect(`${base}/login?error=google_state`);
+  }
+
+  // Per-IP cap on completed OAuth callbacks. The CSRF state above stops junk
+  // hits, but a valid-state flood — or one host spinning up many accounts from
+  // many Google identities — is still capped here. Generous enough that a real
+  // person re-logging in never hits it; the point is a ceiling on account churn.
+  const ip = getIp(req);
+  if (await isRateLimited(`oauth_cb:${ip}`, 20, 60 * 60 * 1000)) {
+    return NextResponse.redirect(`${base}/login?error=rate_limited`);
   }
 
   const client = loginClient();

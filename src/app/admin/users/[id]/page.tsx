@@ -102,7 +102,7 @@ export default function AdminUserDetail() {
           <ActionBtn disabled={busy} onClick={() => act({ action: "set_paid", value: !u.paid }, `Set paid=${!u.paid} for ${u.email}?`)}>
             {u.paid ? "mark unpaid" : "mark paid"}
           </ActionBtn>
-          {(["free", "starter", "pro"] as const).map((p) => (
+          {(["free", "plus", "pro"] as const).map((p) => (
             <ActionBtn key={p} disabled={busy || u.plan === p} onClick={() => act({ action: "set_plan", value: p }, `Set plan=${p} for ${u.email}?`)}>plan: {p}</ActionBtn>
           ))}
           <ActionBtn disabled={busy} danger

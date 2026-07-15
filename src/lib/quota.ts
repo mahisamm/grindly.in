@@ -3,16 +3,10 @@
 
 import { prisma } from "./prisma";
 
-export function planCap(plan?: string | null): number {
-  switch (plan) {
-    case "pro":
-      return 30;
-    case "starter":
-      return 10;
-    default:
-      return 10; // beta: all users get 10/day
-  }
-}
+// Re-exported so existing `import { planCap } from "@/lib/quota"` call sites keep
+// working; the definition itself lives in lib/plans.ts alongside the prices.
+export { planCap } from "./plans";
+import { planCap } from "./plans";
 
 function startOfTodayMs(): number {
   const d = new Date();

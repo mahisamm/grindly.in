@@ -5,6 +5,14 @@ from __future__ import annotations
 import json
 import re
 
+# The vocabulary we are willing to name as a gap to the user. Reuses the resume
+# parser's list so we never tell someone they're "missing" a word that isn't
+# actually a real, learnable skill.
+try:
+    from resume_parse import KNOWN_SKILLS as _KNOWN_FOR_GAP
+except Exception:  # noqa: BLE001 — matcher is importable standalone in tests
+    _KNOWN_FOR_GAP: list[str] = []
+
 
 def _tfidf_score(text_a: str, text_b: str) -> float:
     """TF-IDF cosine similarity between two text blobs. 0.0-1.0. Requires scikit-learn."""
@@ -177,6 +185,38 @@ def score_job(
         parts.append("level mismatch ✗")
     reason = f"{reason} · " + ", ".join(parts)
     return score, reason
+
+
+def missing_skills(job: dict, skills: list[str], jd_text: str = "") -> list[str]:
+    """What this role asks for that the candidate does not show.
+
+    The actionable half of a match score. "You scored 72" tells someone nothing they
+    can do anything about; "this role wants Docker and Kubernetes, and you show
+    neither" tells them what to go learn, and what they'll be asked about if they
+    get the call. Same matching rules as score_job, so the two can never disagree
+    about what counts as a hit.
+    """
+    skills = [_alias(s) for s in skills]
+    skill_tokens = set(skills)
+    for s in skills:
+        skill_tokens |= _tokens(s)
+
+    job_skills = [_alias(s) for s in (job.get("skills") or [])]
+    if jd_text:
+        # The listing card often declares nothing; the JD is where the real
+        # requirements are written down.
+        low = _norm(jd_text)
+        for known in _KNOWN_FOR_GAP:
+            if known in low and known not in job_skills:
+                job_skills.append(known)
+
+    out: list[str] = []
+    for s in job_skills:
+        if s in skills or (_tokens(s) & skill_tokens):
+            continue
+        if s not in out:
+            out.append(s)
+    return out[:6]
 
 
 def _fuzzy_company_match(company: str, excluded: str) -> bool:

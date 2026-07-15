@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Nav, Logo } from "@/components/Brand";
 import { PLANS } from "@/lib/adapters/payment";
+import { isFreeBeta } from "@/lib/plans";
 import { Reveal, CountUp } from "@/components/Motion";
 import {
   Magnifier, PaperPlane, Resume, Sparkle, Arrow, Clock,
@@ -258,6 +259,13 @@ export default function Home() {
         <Reveal className="relative z-[1] text-center">
           <h2 className="display text-4xl sm:text-5xl">Simple pricing</h2>
           <p className="mt-3 text-muted">Cancel anytime.</p>
+          {/* Checkout grants the plan without charging while RAZORPAY_KEY_ID is
+              unset — so say so plainly rather than showing a price we don't take. */}
+          {isFreeBeta() && (
+            <p className="mt-4 inline-block rounded-full border-2 border-ink bg-accent/15 px-4 py-1.5 text-sm font-semibold">
+              Free during beta — pick a plan, pay nothing yet
+            </p>
+          )}
         </Reveal>
         <div className="relative z-[1] mt-12 grid gap-6 sm:grid-cols-2">
           {(Object.entries(PLANS) as [keyof typeof PLANS, (typeof PLANS)[keyof typeof PLANS]][]).map(
@@ -282,7 +290,7 @@ export default function Home() {
                   {[
                     `${p.perDay} applications / day`,
                     "Resume-aware matching",
-                    "Daily Slack reports",
+                    "Tailors your resume per role",
                     key === "pro" ? "Dedicated email support" : "Community support",
                   ].map((f) => (
                     <li key={f} className={`flex items-center gap-2 ${key === "pro" ? "text-white/90" : "text-muted"}`}>

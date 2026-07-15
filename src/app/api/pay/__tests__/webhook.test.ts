@@ -16,7 +16,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/adapters/payment", () => ({
-  PLANS: { starter: { perDay: 10 }, pro: { perDay: 30 } },
+  PLANS: { plus: { perDay: 10 }, pro: { perDay: 30 } },
   verifyWebhookSignature: vi.fn(() => true), // default: valid sig
 }));
 vi.mock("@/lib/audit", () => ({ audit: mockAuditLogCreate }));

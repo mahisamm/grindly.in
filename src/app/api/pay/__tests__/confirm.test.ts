@@ -31,7 +31,7 @@ vi.mock("@/lib/adapters/slack", () => ({
 }));
 vi.mock("@/lib/adapters/payment", () => ({
   PLANS: {
-    starter: { name: "Starter", price: 499, perDay: 10, blurb: "" },
+    plus: { name: "Plus", price: 200, perDay: 10, blurb: "" },
     pro:     { name: "Pro",     price: 999, perDay: 30, blurb: "" },
   },
   verifyPaymentSignature: mockVerifyPaymentSignature,
@@ -64,7 +64,7 @@ beforeEach(() => {
 describe("POST /api/pay/confirm", () => {
   it("returns 401 when no session", async () => {
     mockGetUid.mockResolvedValue(null);
-    const res = await POST(makeReq({ plan: "starter", stub: true }));
+    const res = await POST(makeReq({ plan: "plus", stub: true }));
     expect(res.status).toBe(401);
   });
 
@@ -80,14 +80,14 @@ describe("POST /api/pay/confirm", () => {
       );
     });
 
-    it("grants correct maxPerDay for starter", async () => {
+    it("grants correct maxPerDay for plus", async () => {
       mockGetUid.mockResolvedValue("u1");
       mockUserFindUnique.mockResolvedValue({ id: "u1", profile: { id: "p1" } });
 
-      await POST(makeReq({ plan: "starter", stub: true }));
+      await POST(makeReq({ plan: "plus", stub: true }));
       expect(mockUserUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ paid: true, plan: "starter" }),
+          data: expect.objectContaining({ paid: true, plan: "plus" }),
         })
       );
     });
@@ -95,7 +95,7 @@ describe("POST /api/pay/confirm", () => {
     it("returns 404 when user not found", async () => {
       mockGetUid.mockResolvedValue("ghost");
       mockUserFindUnique.mockResolvedValue(null);
-      const res = await POST(makeReq({ plan: "starter", stub: true }));
+      const res = await POST(makeReq({ plan: "plus", stub: true }));
       expect(res.status).toBe(404);
     });
   });
@@ -107,7 +107,7 @@ describe("POST /api/pay/confirm", () => {
 
     it("returns 400 when payment fields missing", async () => {
       mockGetUid.mockResolvedValue("u1");
-      const res = await POST(makeReq({ plan: "starter" }));
+      const res = await POST(makeReq({ plan: "plus" }));
       expect(res.status).toBe(400);
       expect(mockUserUpdate).not.toHaveBeenCalled();
     });
@@ -120,7 +120,7 @@ describe("POST /api/pay/confirm", () => {
         razorpay_order_id: "order_1",
         razorpay_payment_id: "pay_1",
         razorpay_signature: "badsig",
-        plan: "starter",
+        plan: "plus",
       }));
       expect(res.status).toBe(400);
       expect(mockUserUpdate).not.toHaveBeenCalled();

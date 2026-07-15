@@ -168,7 +168,12 @@ def scrape_jd(url: str, uid: str = "") -> str:
 
 
 def apply(job: dict, cover_letter: str, uid: str = "",
-          profile: dict | None = None, resume_path: str | None = None) -> tuple[str, str]:
+          profile: dict | None = None, resume_path: str | None = None,
+          record: dict | None = None) -> tuple[str, str]:
+    # `record` is an optional out-parameter shared by every platform adapter (see
+    # internshala.apply). This adapter does not populate it yet; accepting it keeps
+    # the call shape uniform so the worker can pass it to all five without a branch.
+
     phone = (profile or {}).get("phone") or ""
     page = _context(uid).new_page()
     try:

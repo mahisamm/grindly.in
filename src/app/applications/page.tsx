@@ -12,6 +12,13 @@ type ResumeVersion = {
   skillsClaimed: string;
   baseSkills: string;
   filePath: string | null;
+  // false = your master resume went out untouched. The agent only rewrites when the
+  // master genuinely under-sells you for that role — every edit is a chance to break
+  // a layout your college mandated, so the default is to leave it alone.
+  tailored: boolean;
+  // 0-100: how well the master already covered this role. This is the number that
+  // decided whether to edit.
+  fitScore: number | null;
 };
 
 type Application = {
@@ -28,6 +35,28 @@ type Application = {
   createdAt: string;
   resumeVersion: ResumeVersion | null;
   outcome: string | null;
+  // JSON [{q, a, source}] — the platform's screening questions and the answers
+  // submitted under the user's name. See agent/questions.py.
+  answersJson: string | null;
+};
+
+type Answer = { q: string; a: string; source: string };
+
+function answers(json: string | null): Answer[] {
+  if (!json) return [];
+  try {
+    const a = JSON.parse(json);
+    return Array.isArray(a) ? (a as Answer[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+const ANSWER_SOURCE: Record<string, string> = {
+  profile: "from your profile",
+  ai: "written from your resume",
+  fallback: "written from your skills",
+  default: "picked from the options",
 };
 
 const STATUS_STYLE: Record<string, string> = {
@@ -124,7 +153,16 @@ export default function ApplicationsPage() {
 
         {/* Status filter buttons */}
       <div className="mt-6 flex flex-wrap gap-2">
-        {(["all", "applied", "failed", "skipped", "matched"] as const).map((s) => (
+        {/* "matched" reads as "ready" — the server only ever sends matches that have
+            come due, so from here it means "waiting on your tap", not "somewhere in
+            the pipeline". See src/lib/pipeline.ts. */}
+        {([
+          ["all", "All"],
+          ["applied", "Applied"],
+          ["matched", "Ready"],
+          ["failed", "Failed"],
+          ["skipped", "Skipped"],
+        ] as const).map(([s, label]) => (
           <button
             key={s}
             onClick={() => { setStatusFilter(s); setPage(1); }}
@@ -134,7 +172,7 @@ export default function ApplicationsPage() {
                 : "border-border text-muted hover:border-brand/50"
             }`}
           >
-            {s.charAt(0).toUpperCase() + s.slice(1)}
+            {label}
           </button>
         ))}
         {total > 0 && (
@@ -224,10 +262,81 @@ export default function ApplicationsPage() {
                       );
                     })()}
 
+                    {/* What the platform asked, and what went out under your name.
+                        Read this before an interview — you will be asked to defend
+                        it, and it is the one thing you never got to see before. */}
+                    {(() => {
+                      const qa = answers(a.answersJson);
+                      if (!qa.length) return null;
+                      return (
+                        <div className="mt-4 rounded-xl border-2 border-border bg-surface-2 p-4">
+                          <div className="font-display font-semibold">
+                            What you were asked
+                          </div>
+                          <p className="mt-0.5 text-xs text-muted">
+                            Submitted in your name. Facts came from your profile; the rest
+                            was written from your resume — nothing was invented.
+                          </p>
+                          <dl className="mt-3 space-y-3">
+                            {qa.map((x, i) => (
+                              <div key={i}>
+                                <dt className="text-xs font-semibold text-muted">
+                                  {x.q || "Question"}
+                                </dt>
+                                <dd className="mt-0.5 text-sm">
+                                  {x.a}
+                                  <span className="ml-2 whitespace-nowrap rounded border border-border px-1.5 py-0.5 text-[10px] text-muted">
+                                    {ANSWER_SOURCE[x.source] ?? x.source}
+                                  </span>
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        </div>
+                      );
+                    })()}
+
                     {a.resumeVersion ? (
                       <div className="mt-4 rounded-xl border-2 border-border bg-surface-2 p-4">
-                        <div className="font-display font-semibold">Resume sent</div>
-                        <div className="text-xs text-muted">{a.resumeVersion.label}</div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-display font-semibold">Resume sent</span>
+                          <span
+                            className={`rounded-md border px-2 py-0.5 text-xs font-semibold ${
+                              a.resumeVersion.tailored
+                                ? "border-brand bg-brand/10 text-brand"
+                                : "border-border bg-surface text-muted"
+                            }`}
+                          >
+                            {a.resumeVersion.tailored ? "Tailored ✎" : "Your master resume"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-muted">{a.resumeVersion.label}</div>
+
+                        {/* Why this resume and not the other one. The agent leaves the
+                            master alone unless it genuinely under-sells you here. */}
+                        {a.resumeVersion.fitScore != null && (
+                          <p className="mt-2 text-xs text-muted">
+                            {a.resumeVersion.tailored ? (
+                              <>
+                                Your master resume only covered{" "}
+                                <span className="text-foreground font-medium">
+                                  {a.resumeVersion.fitScore}%
+                                </span>{" "}
+                                of what this role asked for, so the agent reordered your
+                                Skills and Hobbies sections. Nothing else on the page was
+                                touched, and no skill you don&apos;t have was added.
+                              </>
+                            ) : (
+                              <>
+                                Your master resume already covered{" "}
+                                <span className="text-foreground font-medium">
+                                  {a.resumeVersion.fitScore}%
+                                </span>{" "}
+                                of this role — it went out unchanged.
+                              </>
+                            )}
+                          </p>
+                        )}
 
                         <div className="mt-3 text-xs font-semibold uppercase tracking-wide text-muted">
                           What you presented for this role

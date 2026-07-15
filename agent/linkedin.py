@@ -210,7 +210,12 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
 
 
 def apply(job: dict, cover_letter: str, uid: str = "",
-          profile: dict | None = None, resume_path: str | None = None) -> tuple[str, str]:
+          profile: dict | None = None, resume_path: str | None = None,
+          record: dict | None = None) -> tuple[str, str]:
+    # `record` is an optional out-parameter shared by every platform adapter (see
+    # internshala.apply). This adapter does not populate it yet; accepting it keeps
+    # the call shape uniform so the worker can pass it to all five without a branch.
+
     """Submit via LinkedIn Easy Apply. Reads phone/GPA from profile if provided."""
     phone = (profile or {}).get("phone") or "9000000000"
     gpa = str((profile or {}).get("gpa") or "8.0")

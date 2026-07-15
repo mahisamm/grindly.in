@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { internshalaLoginEnabled } from "@/lib/featureFlags";
 import { gmailScanEnabled } from "@/lib/googleOAuth";
+import { visibleToUser } from "@/lib/pipeline";
 
 const PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"] as const;
 
@@ -20,11 +21,23 @@ export async function GET() {
     where: { id: uid },
     include: {
       profile: true,
-      applications: { orderBy: { createdAt: "desc" }, take: 100 },
+      // Only applications the user is allowed to see. Future-dated matches — the
+      // rest of the month's pipeline — are deliberately withheld and surfaced as
+      // a bare count below. See lib/pipeline.ts.
+      applications: {
+        where: visibleToUser(uid),
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      },
       reports: { orderBy: { date: "desc" }, take: 14 },
     },
   });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  // Everything still embargoed. A number, never a list.
+  const queued = await prisma.application.count({
+    where: { userId: uid, status: "matched", scheduledFor: { gt: new Date() } },
+  });
 
   // Load integrations (graceful if table not yet migrated)
   let integrationRows: {
@@ -77,10 +90,12 @@ export async function GET() {
   const offers = appliedApps.filter((a) => a.outcome === "offer").length;
   const outcomeReported = appliedApps.filter((a) => a.outcome).length;
   const stats = {
-    // "matched" means: cleared your threshold and is waiting for you to approve it.
-    // This used to be apps.length — EVERY row, skips included — so a run that
-    // scraped 49 listings and matched none of them still reported "Matched 49".
-    matched: apps.filter((a) => a.status === "matched").length,
+    // `apps` is already filtered to what this user may see, so every "matched" row
+    // in it has come due — this IS the ready-to-send count, not the pipeline size.
+    ready: apps.filter((a) => a.status === "matched").length,
+    // The rest of the month, as a number only. The user is told the work exists;
+    // they are not handed the list.
+    queued,
     approved: apps.filter((a) => a.status === "approved").length,
     // everything the agent has looked at and scored, whatever the verdict
     reviewed: apps.length,

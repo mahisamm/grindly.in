@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdmin } from "@/lib/admin";
+import { normalizePlan } from "@/lib/plans";
 
 export const dynamic = "force-dynamic";
 
@@ -50,10 +51,12 @@ export async function GET() {
     paid: users.filter((u) => u.paid).length,
     free: users.filter((u) => !u.paid).length,
     admins: users.filter((u) => u.role === "admin").length,
+    // normalizePlan folds the legacy "starter" rows into "plus" — counting the raw
+    // column would report them as neither, and the mix wouldn't add up to the total.
     byPlan: {
-      free: users.filter((u) => u.plan === "free").length,
-      starter: users.filter((u) => u.plan === "starter").length,
-      pro: users.filter((u) => u.plan === "pro").length,
+      free: users.filter((u) => normalizePlan(u.plan) === "free").length,
+      plus: users.filter((u) => normalizePlan(u.plan) === "plus").length,
+      pro: users.filter((u) => normalizePlan(u.plan) === "pro").length,
     },
   };
 

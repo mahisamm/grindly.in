@@ -33,14 +33,14 @@ describe("POST /api/pay", () => {
     expect((await res.json()).error).toMatch(/no session/i);
   });
 
-  it("calls createOrder with starter plan by default", async () => {
+  it("calls createOrder with plus plan by default", async () => {
     mockGetUid.mockResolvedValue("user_1");
-    mockCreateOrder.mockResolvedValue({ stub: true, plan: "starter" });
+    mockCreateOrder.mockResolvedValue({ stub: true, plan: "plus" });
 
     const res = await POST(makeReq({}));
     expect(res.status).toBe(200);
     expect(mockCreateOrder).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "user_1", plan: "starter" })
+      expect.objectContaining({ userId: "user_1", plan: "plus" })
     );
   });
 
@@ -54,21 +54,21 @@ describe("POST /api/pay", () => {
     );
   });
 
-  it("defaults to starter for unknown plan value", async () => {
+  it("defaults to plus for unknown plan value", async () => {
     mockGetUid.mockResolvedValue("user_1");
-    mockCreateOrder.mockResolvedValue({ stub: true, plan: "starter" });
+    mockCreateOrder.mockResolvedValue({ stub: true, plan: "plus" });
 
     await POST(makeReq({ plan: "enterprise" }));
     expect(mockCreateOrder).toHaveBeenCalledWith(
-      expect.objectContaining({ plan: "starter" })
+      expect.objectContaining({ plan: "plus" })
     );
   });
 
   it("returns stub:true when no Razorpay key", async () => {
     mockGetUid.mockResolvedValue("user_1");
-    mockCreateOrder.mockResolvedValue({ stub: true, plan: "starter" });
+    mockCreateOrder.mockResolvedValue({ stub: true, plan: "plus" });
 
-    const res = await POST(makeReq({ plan: "starter" }));
+    const res = await POST(makeReq({ plan: "plus" }));
     const body = await res.json();
     expect(body.stub).toBe(true);
   });
@@ -81,10 +81,10 @@ describe("POST /api/pay", () => {
       keyId: "rzp_test_key",
       amount: 49900,
       currency: "INR",
-      plan: "starter",
+      plan: "plus",
     });
 
-    const res = await POST(makeReq({ plan: "starter" }));
+    const res = await POST(makeReq({ plan: "plus" }));
     const body = await res.json();
     expect(body.orderId).toBe("order_abc");
     expect(body.keyId).toBe("rzp_test_key");

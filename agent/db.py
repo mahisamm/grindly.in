@@ -187,6 +187,14 @@ def _ensure_profile_columns(c):
         c.execute("ALTER TABLE profiles ADD COLUMN auto_apply_consent_at TEXT")
     if "report_channel" not in cols:
         c.execute("ALTER TABLE profiles ADD COLUMN report_channel TEXT DEFAULT 'email'")
+    if "resume_tex_name" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN resume_tex_name TEXT")
+    if "resume_tex_status" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN resume_tex_status TEXT")
+    if "resume_tex_detail" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN resume_tex_detail TEXT")
+    if "resume_hash" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN resume_hash TEXT")
 
 
 def get_user(uid: str) -> dict | None:
@@ -489,12 +497,25 @@ def clear_connect_token(uid: str, platform: str):
         )
 
 
+# Daily application cap per plan. Mirrors src/lib/plans.ts — keep the two in sync.
+PLAN_CAPS = {"free": 10, "plus": 10, "pro": 30}
+# "starter" was the old name for "plus" and is still on live rows. Every read
+# normalises through here rather than comparing the raw column, so a legacy row
+# keeps working without a data migration.
+_PLAN_ALIASES = {"starter": "plus"}
+
+
+def normalize_plan(plan: str | None) -> str:
+    p = (plan or "free").strip().lower()
+    p = _PLAN_ALIASES.get(p, p)
+    return p if p in PLAN_CAPS else "free"
+
+
 def get_plan_cap(uid: str) -> int:
-    """Daily application cap from user plan (10 = starter, 30 = pro)."""
+    """Daily application cap from user plan (plus = 10/day, pro = 30/day)."""
     with conn() as c:
         u = c.execute("SELECT plan FROM users WHERE id=?", (uid,)).fetchone()
-    plan = (u["plan"] if u else None) or "starter"
-    return 30 if plan == "pro" else 10
+    return PLAN_CAPS[normalize_plan(u["plan"] if u else None)]
 
 
 def set_resume_text(uid: str, text: str):
@@ -576,25 +597,117 @@ def _ensure_app_columns(c):
         c.execute("ALTER TABLE applications ADD COLUMN outcome TEXT")
     if "outcome_at" not in cols:
         c.execute("ALTER TABLE applications ADD COLUMN outcome_at INTEGER")
+    if "scheduled_for" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN scheduled_for INTEGER")
+    if "answers_json" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN answers_json TEXT")
+    if "missing_skills" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN missing_skills TEXT")
 
 
 def add_application(uid: str, *, job_id: str | None, title: str, company: str,
                     url: str | None, score: int, status: str, reason: str,
                     applied: bool, resume_version_id: str | None = None,
-                    failure_reason: str | None = None, screenshot_path: str | None = None):
+                    failure_reason: str | None = None, screenshot_path: str | None = None,
+                    scheduled_for=None, answers_json: str | None = None,
+                    missing_skills: list[str] | None = None):
     with conn() as c:
         _ensure_app_columns(c)
         c.execute(
             "INSERT INTO applications (id, user_id, job_id, job_title, company, url, "
             "match_score, status, reason, failure_reason, screenshot_path, "
-            "resume_version_id, applied_at, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "resume_version_id, scheduled_for, answers_json, missing_skills, "
+            "applied_at, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 cuid(), uid, job_id, title, company, url, int(score), status, reason,
-                failure_reason, screenshot_path, resume_version_id,
+                failure_reason, screenshot_path, resume_version_id, scheduled_for,
+                answers_json, json.dumps(missing_skills) if missing_skills else None,
                 now_db() if applied else None, now_db(),
             ),
         )
+
+
+def pipeline_depth(uid: str) -> int:
+    """Every match banked for this user — today's and every future day's.
+
+    Discovery fills a month of work in one sweep, so a run should not re-scrape
+    the boards when there is already a queue — that is just extra traffic to a
+    site that is watching for exactly that.
+    """
+    with conn() as c:
+        _ensure_app_columns(c)
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM applications "
+            "WHERE user_id=? AND status='matched'",
+            (uid,),
+        ).fetchone()
+    return int(row["n"] if row else 0)
+
+
+def has_live_run_today(uid: str) -> bool:
+    """True if a full sweep is already queued, running, or finished for this user
+    today. Guards the daily sweep against re-enqueueing on a container restart."""
+    start = _start_of_today_db()
+    with conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM agent_runs WHERE user_id=? AND mode='live' "
+            "AND created_at >= ? LIMIT 1",
+            (uid, start),
+        ).fetchone()
+    return row is not None
+
+
+def _start_of_today_db():
+    """Midnight today, in the type this backend's DateTime columns use."""
+    midnight = datetime.datetime.combine(
+        datetime.date.today(), datetime.time.min, tzinfo=datetime.timezone.utc
+    )
+    return midnight if PG else int(midnight.timestamp() * 1000)
+
+
+def promote_next_match(uid: str, n: int = 1) -> int:
+    """Pull the next future-scheduled match(es) forward to right now.
+
+    Called when a match the user was offered turns out to be a dead listing. The
+    day's batch was sized on purpose; silently shrinking it because a posting
+    closed sometime in the last three weeks would quietly starve the user of
+    applications through no fault of theirs. Best-scored first.
+    """
+    if n <= 0:
+        return 0
+    with conn() as c:
+        _ensure_app_columns(c)
+        rows = c.execute(
+            "SELECT id FROM applications WHERE user_id=? AND status='matched' "
+            "AND scheduled_for IS NOT NULL AND scheduled_for > ? "
+            "ORDER BY scheduled_for ASC, match_score DESC LIMIT ?",
+            (uid, now_db(), n),
+        ).fetchall()
+        for r in rows:
+            c.execute(
+                "UPDATE applications SET scheduled_for=NULL WHERE id=?", (r["id"],)
+            )
+    return len(rows)
+
+
+def ready_today_count(uid: str) -> int:
+    """Matches the user can act on RIGHT NOW: due (or overdue), not future-dated.
+
+    A null scheduled_for means "due immediately" — legacy rows written before the
+    pipeline existed, and anything a human queued by hand. Mirrors the filter in
+    src/app/api/applications/route.ts; the two must agree or the dashboard count
+    won't match the list under it.
+    """
+    with conn() as c:
+        _ensure_app_columns(c)
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM applications "
+            "WHERE user_id=? AND status='matched' "
+            "AND (scheduled_for IS NULL OR scheduled_for <= ?)",
+            (uid, now_db()),
+        ).fetchone()
+    return int(row["n"] if row else 0)
 
 
 def _ensure_resume_versions_table(c):
@@ -611,28 +724,80 @@ def _ensure_resume_versions_table(c):
             file_path TEXT,
             skills_claimed TEXT NOT NULL DEFAULT '[]',
             base_skills TEXT NOT NULL DEFAULT '[]',
+            tailored INTEGER NOT NULL DEFAULT 0,
+            fit_score INTEGER,
             created_at INTEGER NOT NULL
         )
     """)
+    cols = {row[1] for row in c.execute("PRAGMA table_info(resume_versions)").fetchall()}
+    if "tailored" not in cols:
+        c.execute("ALTER TABLE resume_versions ADD COLUMN tailored INTEGER NOT NULL DEFAULT 0")
+    if "fit_score" not in cols:
+        c.execute("ALTER TABLE resume_versions ADD COLUMN fit_score INTEGER")
 
 
 def add_resume_version(uid: str, *, label: str, job_title: str, company: str,
                        text: str, file_path: str | None,
-                       skills_claimed: list[str], base_skills: list[str]) -> str:
+                       skills_claimed: list[str], base_skills: list[str],
+                       tailored: bool = False, fit_score: int | None = None) -> str:
     """Immutable snapshot of the exact resume sent. Returns the version id to
     link onto the application row, so the user can later see (and download) the
-    precise resume a recruiter received."""
+    precise resume a recruiter received.
+
+    `tailored` records whether this role got an edited resume at all, and
+    `fit_score` records the number that made that call — so "why did my Acme
+    application use a different resume than my Bolt one?" is answerable from the
+    row, not from a guess.
+    """
     vid = cuid()
     with conn() as c:
         _ensure_resume_versions_table(c)
         c.execute(
             "INSERT INTO resume_versions (id, user_id, label, job_title, company, "
-            "text, file_path, skills_claimed, base_skills, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "text, file_path, skills_claimed, base_skills, tailored, fit_score, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (vid, uid, label, job_title, company, (text or "")[:40000], file_path,
-             json.dumps(skills_claimed), json.dumps(base_skills), now_db()),
+             json.dumps(skills_claimed), json.dumps(base_skills),
+             bool(tailored), fit_score, now_db()),
         )
     return vid
+
+
+def _ensure_notifications_table(c):
+    if PG:
+        return
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            tier TEXT NOT NULL DEFAULT 'digest',
+            channel TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            delivered INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL
+        )
+    """)
+
+
+def add_notification(uid: str, *, channel: str, title: str, body: str,
+                     delivered: bool, tier: str = "digest") -> None:
+    """Record a delivery attempt and whether it actually landed.
+
+    The `delivered` column existed from the start and nothing ever wrote it, so
+    "did my user get their report?" was unanswerable — the only trace was a print
+    in a container log. Now every attempt is on the record with its true outcome.
+    """
+    if not uid:
+        return
+    with conn() as c:
+        _ensure_notifications_table(c)
+        c.execute(
+            "INSERT INTO notifications (id, user_id, tier, channel, title, body, "
+            "delivered, created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (cuid(), uid, tier, channel, title[:200], body[:4000],
+             bool(delivered), now_db()),
+        )
 
 
 def _ensure_audit_table(c):
@@ -679,26 +844,49 @@ def get_approved_applications(uid: str) -> list[dict]:
 def update_application_status(app_id: str, status: str, reason: str,
                               resume_version_id: str | None = None,
                               failure_reason: str | None = None,
-                              screenshot_path: str | None = None):
+                              screenshot_path: str | None = None,
+                              answers_json: str | None = None):
     with conn() as c:
         _ensure_app_columns(c)
         applied_at = now_db() if status == "applied" else None
+        # COALESCE on the evidence columns: a later status change must never blank
+        # out the proof screenshot or the screening answers already recorded for
+        # this application.
         c.execute(
             "UPDATE applications SET status=?, reason=?, failure_reason=?, "
-            "screenshot_path=?, resume_version_id=COALESCE(?, resume_version_id), "
+            "screenshot_path=COALESCE(?, screenshot_path), "
+            "resume_version_id=COALESCE(?, resume_version_id), "
+            "answers_json=COALESCE(?, answers_json), "
             "applied_at=? WHERE id=?",
             (status, reason, failure_reason, screenshot_path, resume_version_id,
-             applied_at, app_id),
+             answers_json, applied_at, app_id),
         )
 
 
-def set_resume_analysis(uid: str, score: int, suggestions_json: str):
-    """Save resume quality score and full analysis JSON to the user's profile."""
+def set_resume_analysis(uid: str, score: int, suggestions_json: str,
+                        resume_hash: str | None = None):
+    """Save resume quality score and full analysis JSON to the user's profile.
+
+    `resume_hash` fingerprints the text the analysis was computed from, so the next
+    run can tell whether anything actually changed instead of re-running the LLM.
+    """
     with conn() as c:
         _ensure_profile_columns(c)
         c.execute(
-            "UPDATE profiles SET resume_score=?, resume_suggestions=?, updated_at=? WHERE user_id=?",
-            (score, suggestions_json, now_db(), uid),
+            "UPDATE profiles SET resume_score=?, resume_suggestions=?, "
+            "resume_hash=COALESCE(?, resume_hash), updated_at=? WHERE user_id=?",
+            (score, suggestions_json, resume_hash, now_db(), uid),
+        )
+
+
+def set_tex_status(uid: str, status: str, detail: str = ""):
+    """Record whether the user's uploaded .tex is actually usable for tailoring."""
+    with conn() as c:
+        _ensure_profile_columns(c)
+        c.execute(
+            "UPDATE profiles SET resume_tex_status=?, resume_tex_detail=?, "
+            "updated_at=? WHERE user_id=?",
+            (status, detail[:500], now_db(), uid),
         )
 
 

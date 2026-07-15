@@ -12,7 +12,7 @@ const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("pause") }),
   z.object({ action: z.literal("resume") }),
   z.object({ action: z.literal("set_paid"), value: z.boolean() }),
-  z.object({ action: z.literal("set_plan"), value: z.enum(["free", "starter", "pro"]) }),
+  z.object({ action: z.literal("set_plan"), value: z.enum(["free", "plus", "pro"]) }),
   z.object({ action: z.literal("set_role"), value: z.enum(["user", "admin"]) }),
   z.object({ action: z.literal("set_integration_access"), value: z.boolean() }),
   z.object({

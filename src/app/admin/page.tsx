@@ -6,7 +6,7 @@ import { PageTitle, Panel, StatCard, Badge, WeekTable, fmtDate } from "./ui";
 
 type Overview = {
   users: { total: number; active: number; paused: number; paid: number; free: number; admins: number;
-    byPlan: { free: number; starter: number; pro: number } };
+    byPlan: { free: number; plus: number; pro: number } };
   runs: { matched: number; applied: number; failed: number; failRate: number; appliedToday: number; windowDays: number; allTimeApplied: number };
   trend: { date: string; count: number }[];
   integrationHealth: { connected: number; needsLogin: number; disconnected: number; connecting: number };
@@ -152,7 +152,7 @@ export default function AdminOverview() {
             <div className="mt-4 border-t border-[#262a33] pt-3 font-mono text-xs">
               <div className="mb-2 text-[#8b919c]">plan mix</div>
               <div className="flex justify-between"><span>free</span><span>{d.users.byPlan.free}</span></div>
-              <div className="flex justify-between"><span>starter</span><span>{d.users.byPlan.starter}</span></div>
+              <div className="flex justify-between"><span>plus</span><span>{d.users.byPlan.plus}</span></div>
               <div className="flex justify-between"><span>pro</span><span>{d.users.byPlan.pro}</span></div>
             </div>
           </Panel>

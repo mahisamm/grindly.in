@@ -14,15 +14,26 @@ Human-behaviour layer:
   scroll-before-click, and a "reading pause" after page load are all included.
 """
 from __future__ import annotations
+import json
 import os
 import random
 import re
 import time
 import urllib.parse
 
+import questions
 import safety
 import selector_ai
 import stealth
+
+
+def _jlist(v) -> list[str]:
+    if not v:
+        return []
+    try:
+        return json.loads(v) if isinstance(v, str) else list(v)
+    except Exception:  # noqa: BLE001
+        return []
 
 BASE = "https://internshala.com"
 
@@ -258,15 +269,22 @@ def apply(
     uid: str = "",
     profile: dict | None = None,
     resume_path: str | None = None,
+    record: dict | None = None,
 ) -> tuple[str, str]:
     """Submit an application. Returns (status, reason).
 
-    status ∈ {applied, login_required, skipped, failed}
+    status ∈ {applied, login_required, skipped, failed, needs_review}
+
+    `record` is an optional out-parameter the caller can pass to collect side
+    evidence about the attempt — currently the screening-question Q&A and the
+    proof screenshot. It exists so the user can be shown exactly what was
+    submitted in their name without changing this function's return shape (all
+    five platform adapters share it).
 
     Reliability layers:
     - CSS selector list tried first; AI fallback (LLM) used if all fail.
     - Captcha detected and surfaced as distinct failure reason.
-    - Screenshot saved on any non-trivial failure for debugging.
+    - Screenshot saved on any non-trivial failure, AND on success (proof).
     - Timeout retried once before giving up.
     """
     page = _context(uid).new_page()
@@ -310,6 +328,13 @@ def apply(
             if (page.query_selector(":text('Application sent')")
                     or page.query_selector(":text('Already applied')")):
                 return "skipped", "already applied"
+            # A listing can close between the day we banked it and the day it comes
+            # due — a match scheduled three weeks out routinely will have. That is
+            # not a broken selector and it is not our failure; report it as what it
+            # is, so the worker pulls a fresh match forward instead of counting a
+            # dead posting against the day's batch.
+            if _listing_closed(page):
+                return "skipped", "listing closed — no longer accepting applications"
             safety.screenshot(page, uid, f"no_apply_btn_{job.get('external_id','')}")
             return "failed", "apply button not found (selector_missing)"
 
@@ -345,39 +370,41 @@ def apply(
             _human_type(page, cl, cover_letter[:1500])
             _read_pause(page, 400, 900)
 
-        # Fill required assessment textareas
-        for ta in page.query_selector_all("textarea"):
-            try:
-                if not ta.input_value():
-                    _human_type(
-                        page, ta,
-                        "I'm genuinely excited about this role and pick up new tools quickly. "
-                        "I'd love to contribute from day one.",
-                        wpm=55,
-                    )
-                    _read_pause(page, 300, 700)
-            except Exception:
-                pass
-
-        # Fill required single-line inputs (availability, phone, CGPA)
-        for inp in page.query_selector_all("input[required]"):
-            try:
-                itype = (inp.get_attribute("type") or "text").lower()
-                if itype in ("hidden", "file", "checkbox", "radio", "submit"):
-                    continue
-                if inp.input_value():
-                    continue
-                if itype == "tel" and profile:
-                    val = profile.get("phone") or ""
-                elif itype == "number":
-                    val = "8.5"
-                else:
-                    val = "Yes"
-                if val:
-                    _human_type(page, inp, val, wpm=70)
-                    _read_pause(page, 200, 500)
-            except Exception:
-                pass
+        # Screening questions.
+        #
+        # This is the make-or-break step on Internshala: most listings gate the
+        # submit behind per-listing questions, and a wrong answer is worse than a
+        # failed apply — it goes out under the candidate's name and they never see
+        # it. So: read the actual question text, answer facts from the profile and
+        # everything else from the resume, and hand the full Q&A back to the caller
+        # so it lands on the application row.
+        #
+        # What was here before typed one identical canned sentence into every
+        # textarea regardless of the question, "Yes" into every required text
+        # input, and a hardcoded "8.5" CGPA over the user's real one.
+        answered = 0
+        try:
+            fields = questions.read_fields(page)
+            if fields:
+                answers = questions.answer_fields(
+                    fields,
+                    profile=profile or {},
+                    resume_text=(profile or {}).get("resume_text") or "",
+                    skills=_jlist((profile or {}).get("skills")),
+                    job=job,
+                    name=(profile or {}).get("name") or "",
+                    email=(profile or {}).get("email") or "",
+                )
+                answered = questions.fill(page, fields, answers, _human_type)
+                if record is not None:
+                    record["answers"] = questions.to_record(answers)
+                if answered:
+                    print(f"[internshala] answered {answered} screening question(s)")
+                _read_pause(page, 400, 900)
+        except Exception as e:  # noqa: BLE001
+            # A form we couldn't read is not a reason to abandon the application —
+            # the submit below may still succeed if nothing was actually required.
+            print(f"[internshala] screening questions could not be answered: {e}")
 
         _read_pause(page, 600, 1400)
 
@@ -395,9 +422,21 @@ def apply(
         _human_click(page, submit)
         page.wait_for_timeout(random.randint(2000, 3500))
 
-        return safety.classify_submit(page, [
+        status, why = safety.classify_submit(page, [
             ":text('Application sent')", ":text('successfully')", ":text('Thank you')",
         ])
+
+        # Proof. "Applied" was previously a claim with nothing behind it: screenshots
+        # were captured on every failure path and none on success, so the one state
+        # the user most needs evidence for was the one state with no evidence. Also
+        # capture needs_review — that's the ambiguous case, and it's precisely what a
+        # human has to look at to resolve.
+        if status in (safety.APPLY_STATUS.APPLIED, safety.APPLY_STATUS.NEEDS_REVIEW):
+            shot = safety.screenshot(page, uid, f"{status}_{job.get('external_id', '')}")
+            if shot and record is not None:
+                record["screenshot_path"] = shot
+
+        return status, why
 
     except Exception as e:
         err = str(e)
@@ -411,6 +450,24 @@ def apply(
 
 
 # ── helpers ───────────────────────────────────────────────────────
+
+# Phrasings Internshala uses when a posting is no longer live. Matched against the
+# page text, not a selector, because the markup differs between "expired",
+# "closed by the employer", and "hiring complete" but the wording does not.
+_CLOSED = re.compile(
+    r"no longer accepting|applications? (are )?closed|this internship is closed|"
+    r"hiring (is )?(now )?closed|expired|position (has been )?filled|"
+    r"not accepting applications",
+    re.I,
+)
+
+
+def _listing_closed(page) -> bool:
+    try:
+        return bool(_CLOSED.search(page.inner_text("body") or ""))
+    except Exception:  # noqa: BLE001
+        return False
+
 
 def _is_logged_out(page) -> bool:
     html = page.content().lower()

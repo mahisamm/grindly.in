@@ -9,12 +9,10 @@
  */
 import crypto from "node:crypto";
 
-export type Plan = "starter" | "pro";
-
-export const PLANS: Record<Plan, { name: string; price: number; perDay: number; blurb: string }> = {
-  starter: { name: "Starter", price: 499, perDay: 10, blurb: "Up to 10 applications/day" },
-  pro:     { name: "Pro",     price: 999, perDay: 30, blurb: "Up to 30 applications/day + dedicated support" },
-};
+// Plan names, prices, and caps live in lib/plans.ts — re-exported here so the
+// existing `from "@/lib/adapters/payment"` imports keep working.
+export { PLANS, type Plan } from "@/lib/plans";
+import { PLANS, type Plan } from "@/lib/plans";
 
 export type OrderResult =
   | { stub: false; orderId: string; keyId: string; amount: number; currency: string; plan: Plan }

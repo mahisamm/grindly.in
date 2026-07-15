@@ -5,6 +5,7 @@ const {
   mockMkdir,
   mockWriteFile,
   mockAccess,
+  mockRm,
   mockProfileUpsert,
   mockAgentRunCreate,
   mockSpawnWorkerKick,
@@ -13,6 +14,7 @@ const {
   mockMkdir: vi.fn(),
   mockWriteFile: vi.fn(),
   mockAccess: vi.fn(),
+  mockRm: vi.fn(),
   mockProfileUpsert: vi.fn(),
   mockAgentRunCreate: vi.fn(),
   mockSpawnWorkerKick: vi.fn(),
@@ -27,7 +29,12 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/workerKick", () => ({ spawnWorkerKick: mockSpawnWorkerKick }));
 vi.mock("node:fs/promises", () => ({
-  default: { mkdir: mockMkdir, writeFile: mockWriteFile, access: mockAccess },
+  default: {
+    mkdir: mockMkdir,
+    writeFile: mockWriteFile,
+    access: mockAccess,
+    rm: mockRm,
+  },
 }));
 
 import { POST } from "@/app/api/resume/route";
@@ -42,6 +49,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mockMkdir.mockResolvedValue(undefined);
   mockWriteFile.mockResolvedValue(undefined);
+  mockRm.mockResolvedValue(undefined);
   mockAccess.mockRejectedValue(new Error("no python here")); // default: no worker.py kick
   mockProfileUpsert.mockResolvedValue({ id: "p1" });
   mockAgentRunCreate.mockResolvedValue({ id: "r1" });
@@ -120,5 +128,84 @@ describe("POST /api/resume", () => {
     mockGetUid.mockResolvedValue("u1");
     await POST(makeReq(new File(["hi"], "resume.pdf", { type: "application/pdf" })));
     expect(mockSpawnWorkerKick).not.toHaveBeenCalled();
+  });
+
+  // A new master resume must invalidate everything derived from the old one.
+  // Without this, the stale skills stay on the profile and worker.run_for_user
+  // only re-extracts when the list is EMPTY — so uploading an updated resume
+  // changed precisely nothing, silently, forever.
+  it("clears the skills and score derived from the previous resume", async () => {
+    mockGetUid.mockResolvedValue("u1");
+    await POST(makeReq(new File(["hi"], "resume.pdf", { type: "application/pdf" })));
+
+    const arg = mockProfileUpsert.mock.calls[0][0];
+    expect(arg.update).toMatchObject({
+      skills: "[]",
+      resumeScore: null,
+      resumeSuggestions: null,
+      resumeParseFailed: false,
+    });
+  });
+
+  it("removes the previous resume file when the new one has a different extension", async () => {
+    mockGetUid.mockResolvedValue("u1");
+    await POST(makeReq(new File(["hi"], "resume.pdf", { type: "application/pdf" })));
+
+    const removed = mockRm.mock.calls.map((c) => String(c[0]));
+    expect(removed.some((p) => p.endsWith("u1.docx"))).toBe(true);
+    expect(removed.some((p) => p.endsWith("u1.txt"))).toBe(true);
+    // ...but never the file we just wrote
+    expect(removed.some((p) => p.endsWith("u1.pdf"))).toBe(false);
+  });
+
+  describe("LaTeX source (.tex)", () => {
+    it("saves it under resume_tex, NOT beside the master resume", async () => {
+      mockGetUid.mockResolvedValue("u1");
+      const res = await POST(makeReq(new File(["\\section{Skills}"], "resume.tex")));
+      expect(res.status).toBe(200);
+
+      // agent/resume_parse.py:find_resume_file() scans data/resumes for "<uid>." and
+      // feeds the first hit to the PDF text extractor — a .tex in there would be
+      // picked as the resume itself and parsed as garbage.
+      const written = String(mockWriteFile.mock.calls[0][0]);
+      expect(written).toContain("resume_tex");
+      expect(written).toMatch(/u1\.tex$/);
+    });
+
+    it("does not re-run resume analysis — a .tex changes no extracted skill", async () => {
+      mockGetUid.mockResolvedValue("u1");
+      await POST(makeReq(new File(["\\section{Skills}"], "resume.tex")));
+
+      const modes = mockAgentRunCreate.mock.calls.map((c) => c[0].data.mode);
+      expect(modes).not.toContain("analyze");
+    });
+
+    // A .tex that won't compile, or whose headings we don't recognise, would
+    // otherwise fail silently and FOREVER: the agent falls back to the master
+    // resume on every application and never says why. So prove it at upload.
+    it("queues a compile self-test and marks the file as unverified until it passes", async () => {
+      mockGetUid.mockResolvedValue("u1");
+      await POST(makeReq(new File(["\\section{Skills}"], "resume.tex")));
+
+      expect(mockProfileUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          update: expect.objectContaining({
+            resumeTexName: "resume.tex",
+            resumeTexStatus: "checking",
+          }),
+        }),
+      );
+      expect(mockAgentRunCreate).toHaveBeenCalledWith({
+        data: { userId: "u1", mode: "latex_check" },
+      });
+    });
+
+    it("rejects a .tex over its own (much smaller) size cap", async () => {
+      mockGetUid.mockResolvedValue("u1");
+      const big = new Uint8Array(512 * 1024 + 1);
+      const res = await POST(makeReq(new File([big], "resume.tex")));
+      expect(res.status).toBe(413);
+      expect(mockWriteFile).not.toHaveBeenCalled();
+    });
   });
 });

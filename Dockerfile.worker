@@ -12,14 +12,35 @@ RUN pip install --no-cache-dir -r agent/requirements.txt \
 # GPU renderer, zero outerWidth, etc.). Much harder to detect than headless.
 RUN apt-get update && apt-get install -y --no-install-recommends xvfb procps \
     && rm -rf /var/lib/apt/lists/*
+
+# Tectonic — the LaTeX engine used to recompile a user's own resume template
+# after the agent edits its Skills/Hobbies sections (see agent/latex_resume.py).
+#
+# Chosen over a TeX Live install because it is a single ~50 MB binary rather than
+# a 1 GB distro: it fetches only the packages a given document actually needs and
+# caches them in TECTONIC_CACHE_DIR. That cache lives on the shared appdata volume,
+# so the download happens once for the fleet, not once per container start — and a
+# replica that restarts mid-month doesn't go back to the network.
+#
+# The first compile of a never-seen package set needs outbound HTTPS and takes
+# ~30-60s; everything after is ~2s. compile_pdf() degrades to "send the master
+# resume untouched" if this binary is missing, so the image still works without it.
+ARG TECTONIC_VERSION=0.15.0
+RUN curl -fsSL "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}/tectonic-${TECTONIC_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+      | tar -xz -C /usr/local/bin tectonic \
+    && chmod +x /usr/local/bin/tectonic \
+    && tectonic --version
+
 COPY agent ./agent
 COPY prisma ./prisma
 ENV PYTHONUNBUFFERED=1
+ENV TECTONIC_CACHE_DIR=/app/data/tectonic-cache
 # Same uid:gid as the web image's nextjs user — both containers share the
 # appdata volume, so ownership must match or the worker can't write resumes.
 RUN addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 --gid 1001 worker \
-    && mkdir -p /app/data/resumes /app/data/logs \
+    && mkdir -p /app/data/resumes /app/data/resume_tex /app/data/logs \
+                /app/data/tectonic-cache \
     && chown -R worker:nodejs /app/data /app \
     && mkdir -p /home/worker \
     && chown -R worker:nodejs /home/worker \

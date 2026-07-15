@@ -49,7 +49,10 @@ async function grantPlan(uid: string, plan: Plan, paymentId: string) {
 async function revokePlan(uid: string, refundId: string) {
   await prisma.user.update({
     where: { id: uid },
-    data: { paid: false, status: "paused", plan: "starter" },
+    // plan goes back to "free", not to a paid tier. paid:false + maxPerDay:0 already
+    // neuter the account, but leaving a paid plan name on a refunded user makes every
+    // downstream read (admin plan mix, planCap) quietly wrong.
+    data: { paid: false, status: "paused", plan: "free" },
   });
   await prisma.profile.updateMany({
     where: { userId: uid },
@@ -83,7 +86,7 @@ export async function POST(req: Request) {
     const uid  = payment.notes?.userId;
     // Default to the CHEAPER plan on any missing/garbled note — granting Pro by
     // default would hand out the expensive tier for free on malformed payloads.
-    const plan: Plan = payment.notes?.plan === "pro" ? "pro" : "starter";
+    const plan: Plan = payment.notes?.plan === "pro" ? "pro" : "plus";
     if (uid) await grantPlan(uid, plan, String(payment.id ?? ""));
   }
 

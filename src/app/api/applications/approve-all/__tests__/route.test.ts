@@ -39,14 +39,22 @@ describe("POST /api/applications/approve-all", () => {
     expect(res.status).toBe(401);
   });
 
-  it("scopes the lookup to this user's matched applications", async () => {
+  // The pipeline holds ~a month of matches (plan cap x 30). A plain
+  // status:"matched" filter here would approve all ~300 in one tap and authorize a
+  // month of applications the user was never even shown. Only the DUE ones.
+  it("approves only the matches that have come due — never the whole pipeline", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockFindMany.mockResolvedValue([]);
     await POST();
-    expect(mockFindMany).toHaveBeenCalledWith({
-      where: { userId: "u1", status: "matched" },
-      select: { id: true, reason: true },
-    });
+
+    const where = mockFindMany.mock.calls[0][0].where;
+    expect(where.userId).toBe("u1");
+    expect(where.status).toBe("matched");
+    // future-dated matches are excluded by the scheduledFor gate
+    expect(where.OR).toEqual([
+      { scheduledFor: null },
+      { scheduledFor: { lte: expect.any(Date) } },
+    ]);
   });
 
   it("returns approved: 0 and skips the transaction when nothing is matched", async () => {

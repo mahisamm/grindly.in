@@ -1,0 +1,85 @@
+"""The daily sweep. Two properties matter: it must actually fire (nothing enqueued
+runs before this existed, so "your agent applies daily" was false), and it must not
+fire for everyone at once (that is a fleet-wide pattern no amount of per-run pacing
+can hide)."""
+import datetime
+from unittest.mock import patch
+
+import sweep
+
+
+def _ist(hour: int, day: int = 14) -> datetime.datetime:
+    return datetime.datetime(2026, 7, day, hour, 0, tzinfo=datetime.timezone.utc)
+
+
+# --- the hour is spread across the fleet -------------------------------------
+
+def test_every_user_lands_inside_the_working_window():
+    for i in range(200):
+        h = sweep.sweep_hour(f"user{i}", "2026-07-14")
+        assert sweep.SWEEP_HOUR_START <= h <= sweep.SWEEP_HOUR_END
+
+
+def test_the_whole_fleet_is_not_swept_in_the_same_hour():
+    """If every user swept at 09:00 we would hit Internshala with the entire fleet
+    in one minute each morning, from one IP block. No amount of careful pacing
+    inside an individual run hides that."""
+    hours = {sweep.sweep_hour(f"user{i}", "2026-07-14") for i in range(200)}
+    assert len(hours) >= 5
+
+
+def test_a_users_hour_is_stable_within_the_day():
+    """Restarting the container must not reroll the hour — that could fire a second
+    sweep for a user who was already done."""
+    a = sweep.sweep_hour("u1", "2026-07-14")
+    b = sweep.sweep_hour("u1", "2026-07-14")
+    assert a == b
+
+
+def test_a_users_hour_moves_between_days():
+    hours = {sweep.sweep_hour("u1", f"2026-07-{d:02d}") for d in range(1, 29)}
+    assert len(hours) > 1
+
+
+# --- who is due --------------------------------------------------------------
+
+def test_a_user_is_not_due_before_their_hour():
+    hour = sweep.sweep_hour("u1", "2026-07-14")
+    with patch.object(sweep.db, "active_users", return_value=["u1"]), \
+         patch.object(sweep.db, "has_live_run_today", return_value=False):
+        assert sweep.due_users(_ist(hour - 1)) == []
+        assert sweep.due_users(_ist(hour)) == ["u1"]
+
+
+def test_a_user_who_already_ran_today_is_skipped():
+    """Otherwise a container restart re-enqueues the entire fleet."""
+    with patch.object(sweep.db, "active_users", return_value=["u1"]), \
+         patch.object(sweep.db, "has_live_run_today", return_value=True):
+        assert sweep.due_users(_ist(23)) == []
+
+
+def test_only_active_users_are_swept():
+    with patch.object(sweep.db, "active_users", return_value=[]), \
+         patch.object(sweep.db, "has_live_run_today", return_value=False):
+        assert sweep.due_users(_ist(23)) == []
+
+
+# --- enqueueing --------------------------------------------------------------
+
+def test_tick_enqueues_a_live_run_for_each_due_user():
+    with patch.object(sweep, "due_users", return_value=["u1", "u2"]), \
+         patch.object(sweep.run_queue, "enqueue") as enq, \
+         patch.object(sweep.db, "add_audit"):
+        assert sweep.tick() == 2
+    assert [c.args for c in enq.call_args_list] == [("u1", "live"), ("u2", "live")]
+
+
+def test_one_users_failure_does_not_stop_the_rest_of_the_fleet():
+    def flaky(uid, mode):
+        if uid == "u1":
+            raise RuntimeError("db blip")
+
+    with patch.object(sweep, "due_users", return_value=["u1", "u2"]), \
+         patch.object(sweep.run_queue, "enqueue", side_effect=flaky), \
+         patch.object(sweep.db, "add_audit"):
+        assert sweep.tick() == 1   # u2 still got swept

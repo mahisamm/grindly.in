@@ -59,13 +59,21 @@ describe("POST /api/applications/approve", () => {
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
-  it("scopes the lookup to this user's own application", async () => {
+  // Scoped to the user AND to the due-date gate. An id from the embargoed part of
+  // the pipeline must be unapprovable even if the caller somehow learned it — the
+  // list endpoint never serves those ids, but "the UI doesn't show it" is not
+  // access control.
+  it("scopes the lookup to this user's own, already-due application", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockFindFirst.mockResolvedValue({ id: "a1", reason: "good fit" });
     await POST(makeReq({ id: "a1" }));
-    expect(mockFindFirst).toHaveBeenCalledWith({
-      where: { id: "a1", userId: "u1", status: "matched" },
-    });
+
+    const where = mockFindFirst.mock.calls[0][0].where;
+    expect(where).toMatchObject({ id: "a1", userId: "u1", status: "matched" });
+    expect(where.OR).toEqual([
+      { scheduledFor: null },
+      { scheduledFor: { lte: expect.any(Date) } },
+    ]);
   });
 
   it("approves and appends a note to the reason", async () => {

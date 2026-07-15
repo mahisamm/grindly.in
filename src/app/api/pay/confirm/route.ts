@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     plan?: Plan;
   };
 
-  const plan: Plan = body.plan === "pro" ? "pro" : "starter";
+  const plan: Plan = body.plan === "pro" ? "pro" : "plus";
 
   // Real Razorpay mode — verify signature before any DB write
   if (process.env.RAZORPAY_KEY_ID) {
