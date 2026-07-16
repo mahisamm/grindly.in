@@ -11,7 +11,6 @@ path exists to prevent. The only sanctioned edit is tailor_latex: the user's own
 .tex, with Skills/Hobbies rewritten and every other byte spliced back untouched.
 """
 from __future__ import annotations
-import json
 import os
 import re
 

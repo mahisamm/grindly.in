@@ -55,6 +55,10 @@ export default function OnboardingPage() {
     try {
       const p = localStorage.getItem("grindly_plan");
       if (p === "plus" || p === "pro") {
+        // Syncing a value from an external store (localStorage) into React state —
+        // the exact case this effect exists for. It can't be a lazy useState
+        // initializer because localStorage is undefined during SSR.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setPlan(p);
         localStorage.removeItem("grindly_plan");
       }

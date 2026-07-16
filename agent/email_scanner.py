@@ -21,7 +21,7 @@ import base64
 import urllib.request
 import urllib.parse
 
-from db import _load_dotenv, get_conn, cuid
+from db import _load_dotenv, get_conn
 
 _load_dotenv()
 

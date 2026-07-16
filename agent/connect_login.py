@@ -165,7 +165,7 @@ def _wait_for_otp(uid: str, platform: str, page) -> str:
             return "connected"
         code = db.take_integration_otp(uid, platform)
         if code:
-            print(f"[connect_login] received OTP — submitting")
+            print("[connect_login] received OTP — submitting")
             _submit_otp(page, code.strip())
             page.wait_for_timeout(3000)
             if _logged_in(page):

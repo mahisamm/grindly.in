@@ -549,7 +549,6 @@ export default function Dashboard() {
     // session window (5 min) elapses. In production a connectToken shows up
     // once the remote-browser session is actually live — open the viewer
     // then, not before (nothing to show until the browser exists).
-    // eslint-disable-next-line react-hooks/purity -- runs at click time (event handler), not during render
     const started = Date.now();
     const deadline = started + 300_000;
     let opened = false;

@@ -83,7 +83,7 @@ def _classify_failure(why: str) -> str:
         return safety.FAILURE_REASON.CAPTCHA
     if "closed" in w or "expired" in w or "no longer" in w:
         return safety.FAILURE_REASON.LISTING_CLOSED
-    if "upload" in w or "resume" in w and "fail" in w:
+    if "upload" in w or ("resume" in w and "fail" in w):
         return safety.FAILURE_REASON.UPLOAD_FAILED
     if "selector" in w or "not found" in w or "element" in w:
         return safety.FAILURE_REASON.SELECTOR_MISSING

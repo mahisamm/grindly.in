@@ -40,6 +40,8 @@ export default function ConnectViewer({ platform, token, onClose }: Props) {
       rfb.addEventListener("connect", () => setStatus("live"));
       rfb.addEventListener("disconnect", () => setStatus("error"));
     } catch {
+      // Syncing an external system's (noVNC/WebSocket) failure into React state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setStatus("error");
     }
 

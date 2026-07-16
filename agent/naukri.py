@@ -10,7 +10,6 @@ Selectors are defensive with fallbacks; Naukri's DOM shifts often.
 from __future__ import annotations
 import os
 import re
-import time
 import urllib.parse
 
 import safety

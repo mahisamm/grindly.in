@@ -9,7 +9,6 @@ Returns (status, reason) where status in {applied, login_required, skipped, fail
 from __future__ import annotations
 import os
 import re
-import time
 
 import safety
 import selector_ai
