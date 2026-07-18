@@ -23,7 +23,7 @@ export async function GET() {
   const ok = checks.encryptionKey && checks.database;
   const missing = missingProdConfig();
   return NextResponse.json(
-    { ok, checks, services: serviceStatus(), prodReady: missing.length === 0, missing },
+    { ok, checks, services: serviceStatus(), prodReady: ok && missing.length === 0, missing },
     { status: ok ? 200 : 503 }
   );
 }
