@@ -7,18 +7,21 @@ const bodySans = Hanken_Grotesk({
   variable: "--ff-sans",
   subsets: ["latin"],
   display: "swap",
+  preload: false,
 });
 
 const codeMono = JetBrains_Mono({
   variable: "--ff-mono",
   subsets: ["latin"],
   display: "swap",
+  preload: false,
 });
 
 const displayFont = Orbitron({
   variable: "--ff-display",
   subsets: ["latin"],
   display: "swap",
+  preload: false,
 });
 
 export const viewport: Viewport = {
