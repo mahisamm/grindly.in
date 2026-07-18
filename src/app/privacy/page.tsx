@@ -39,7 +39,8 @@ export default function PrivacyPage() {
         <ul className="list-disc space-y-1 pl-5 text-sm">
           <li><strong>Google OAuth</strong> — used for sign-in only; we receive your name and email</li>
           <li><strong>AI providers (Groq, Cerebras, Mistral, Gemini)</strong> — resume and cover letter text is sent to generate AI responses; no personally identifying data beyond job context is included</li>
-          <li><strong>Job platforms (Internshala, LinkedIn, Naukri, Unstop, Indeed)</strong> — your credentials and resume are used to apply on your behalf via an automated browser</li>
+          <li><strong>Internshala</strong> — the currently available auto-apply integration uses your encrypted credentials and resume in an automated browser</li>
+          <li>LinkedIn, Naukri, Unstop, and Indeed integrations are planned but are not currently available to users</li>
           <li>We do not sell your data to third parties</li>
         </ul>
       </section>

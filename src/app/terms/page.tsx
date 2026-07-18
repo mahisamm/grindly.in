@@ -18,7 +18,8 @@ export default function TermsPage() {
         <p className="text-sm leading-relaxed">
           Grindly is an AI-powered job application agent. When you enable auto-apply, Grindly
           uses a browser automation tool to submit internship applications on your behalf on
-          platforms you have connected (Internshala, LinkedIn, Naukri, Unstop, Indeed).
+          platforms you have connected. The current beta supports Internshala; LinkedIn,
+          Naukri, Unstop, and Indeed are planned but are not currently available to users.
           You remain solely responsible for all applications submitted through your account.
         </p>
       </section>
