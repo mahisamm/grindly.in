@@ -15,8 +15,11 @@ const MAX_LOG_BYTES = 1 * 1024 * 1024; // 1 MB per-user log cap
  * forever (one file per user, appended to on every resume upload / run).
  */
 export function spawnWorkerKick(root: string, uid: string) {
-  const worker = path.join(root, "agent", "worker.py");
-  const logDir = path.join(root, "data", "logs");
+  if (process.env.NODE_ENV === "production") return;
+
+  // Runtime worker/log paths are outside the Next.js server bundle in production.
+  const worker = path.join(/*turbopackIgnore: true*/ root, "agent", "worker.py");
+  const logDir = path.join(/*turbopackIgnore: true*/ root, "data", "logs");
   try {
     fs.mkdirSync(logDir, { recursive: true });
     const logPath = path.join(logDir, `${uid}.log`);

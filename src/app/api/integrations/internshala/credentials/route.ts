@@ -1,8 +1,4 @@
 import { NextResponse } from "next/server";
-import { spawn } from "node:child_process";
-import path from "node:path";
-import fs from "node:fs";
-import { openWorkerLog } from "@/lib/workerLog";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
@@ -80,24 +76,6 @@ export async function POST(req: Request) {
   const run = existing ?? (await prisma.agentRun.create({
     data: { userId: uid, mode: "connect_internshala" },
   }));
-
-  // Best-effort local worker kick (no-op in the slim prod web image; the worker
-  // fleet drains the queue regardless).
-  try {
-    const worker = path.join(process.cwd(), "agent", "worker.py");
-    if (fs.existsSync(worker)) {
-      const logDir = path.join(process.cwd(), "data", "logs");
-      fs.mkdirSync(logDir, { recursive: true });
-      const out = openWorkerLog(logDir, `${uid}-connect`);
-      const py = process.env.PYTHON_BIN || "python";
-      const child = spawn(py, [worker, "--drain"], { cwd: process.cwd(), detached: true, stdio: ["ignore", out, out] });
-      fs.closeSync(out);
-      child.on("error", () => {});
-      child.unref();
-    }
-  } catch {
-    // Worker drains the queue — kick is only a dev convenience.
-  }
 
   return NextResponse.json({ ok: true, runId: run.id });
 }

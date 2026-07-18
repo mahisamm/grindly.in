@@ -21,7 +21,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const dataDir = path.join(process.cwd(), "data");
 
   if (rv.filePath) {
-    const abs = path.resolve(process.cwd(), rv.filePath);
+    // Runtime resume files come from the mounted data volume, not the bundle.
+    const abs = path.resolve(/*turbopackIgnore: true*/ process.cwd(), rv.filePath);
     // path-traversal guard: only serve files under <project>/data
     if (abs.startsWith(dataDir) && fs.existsSync(abs)) {
       const buf = fs.readFileSync(abs);
