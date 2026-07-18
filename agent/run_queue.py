@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import threading
 import time
 
@@ -23,6 +24,12 @@ BACKOFF_BASE_MS = 2 * 60 * 1000  # linear backoff: 2min * attempts already made
 HEARTBEAT_INTERVAL_SECONDS = max(
     1.0, float(os.environ.get("GRINDLY_QUEUE_HEARTBEAT_SECONDS", "60"))
 )
+
+
+def default_worker_id() -> str:
+    """Return an identity unique across both processes and containers."""
+    host = os.environ.get("HOSTNAME") or socket.gethostname() or "unknown-host"
+    return f"w-{host}-{os.getpid()}"
 
 
 def _ensure_table(c):

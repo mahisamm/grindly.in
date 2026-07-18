@@ -226,6 +226,13 @@ def test_heartbeat_renews_only_the_owners_lease():
     assert row["locked_at"] > old
 
 
+def test_default_worker_id_is_unique_per_container_and_process(monkeypatch):
+    monkeypatch.setenv("HOSTNAME", "replica-a")
+    monkeypatch.setattr(run_queue.os, "getpid", lambda: 42)
+
+    assert run_queue.default_worker_id() == "w-replica-a-42"
+
+
 def test_stale_worker_cannot_finish_or_fail_a_reclaimed_job():
     rid = run_queue.enqueue("user_1")
     run_queue.claim_next("old-worker")

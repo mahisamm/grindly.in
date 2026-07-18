@@ -1464,7 +1464,7 @@ def main():
     ap.add_argument("--interval", type=int, default=86400)
     args = ap.parse_args()
 
-    worker_id = f"w-{os.getpid()}"
+    worker_id = run_queue.default_worker_id()
 
     if args.drain:
         n = run_queue.drain(worker_id, run_job)
