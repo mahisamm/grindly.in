@@ -12,7 +12,7 @@ One run for one user:
 
 Platform priority (highest first): linkedin > internshala > naukri > unstop > indeed
 
-Daily cap:  starter = 10/day   pro = 30/day
+Quota: free = 5 total   plus = 5/day   pro = 15/day
 
 Usage:
   python worker.py --user <uid> --mode live --once
@@ -105,14 +105,14 @@ def _in_human_hours(hour: int) -> bool:
 
 def _daily_cap_for_today(uid: str, plan_cap: int, today: str | None = None) -> int:
     """Human-pace ceiling: a person applying manually sends roughly 5-10
-    applications a day, not the plan's raw 10-30/day allowance. Seeded by
+    applications a day, never more than the plan allowance. Seeded by
     uid+date so repeat runs the same day don't reroll, but the number varies
     day to day and user to user — an identical count every single day is
     itself a bot signal. Never exceeds the plan's own cap."""
     today = today or datetime.date.today().isoformat()
     rng = random.Random(f"{uid}:{today}:cap")
-    # Scale the human-pace band with the plan so Pro (30/day) genuinely
-    # applies to more than Starter (10/day). Previously this was a flat
+    # Scale the human-pace band with the plan so Pro (15/day) genuinely
+    # applies to more than Plus (5/day). Previously this was a flat
     # randint(5,10) for everyone, so the Pro upgrade bought nothing.
     cap = max(1, int(plan_cap))
     low = max(3, cap // 2)
@@ -570,8 +570,12 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     submit_only = mode == "approved"
     live = mode in ("live", "approved")
 
-    cap = _daily_cap_for_today(uid, db.get_plan_cap(uid))
-    log.info("=== run for %s (%s) mode=%s cap=%d/day (human-pace) ===", name, uid, mode, cap)
+    user_plan = db.get_user_plan(uid)
+    plan_cap = db.get_plan_cap(uid)
+    cap = plan_cap if user_plan == "free" else _daily_cap_for_today(uid, plan_cap)
+    quota_used = db.total_applied_count(uid) if user_plan == "free" else db.todays_applied_count(uid)
+    quota_kind = "trial" if user_plan == "free" else "today"
+    log.info("=== run for %s (%s) mode=%s cap=%d used=%d (%s) ===", name, uid, mode, cap, quota_used, quota_kind)
     db.add_audit("run_start", user_id=uid, detail=f"mode={mode} cap={cap}")
     # consent trace: auto-apply submits on the user's behalf — record whether
     # they explicitly consented (profile.auto_apply_consent_at). Prototype only
@@ -734,14 +738,15 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             log.info("re-scoring %d listing(s) previously skipped", dropped)
 
     already = db.applied_external_ids(uid)
-    applied_today = db.todays_applied_count(uid)
-    day_remaining = max(0, cap - applied_today)
-    # safety: never exceed the per-run cap even if the plan/day cap is higher
+    quota_remaining = max(0, cap - quota_used)
+    # Safety: never exceed the per-run cap even if the paid daily cap is higher.
+    # For free users quota_used is lifetime usage, so the fifth successful
+    # application exhausts the trial permanently rather than resetting tomorrow.
     remaining = (
-        min(day_remaining, SAFETY_CAP_PER_RUN) if SAFETY_CAP_PER_RUN > 0 else day_remaining
+        min(quota_remaining, SAFETY_CAP_PER_RUN) if SAFETY_CAP_PER_RUN > 0 else quota_remaining
     )
-    if remaining < day_remaining:
-        log.info("per-run safety cap active: %d (plan/day allows %d)", remaining, day_remaining)
+    if remaining < quota_remaining:
+        log.info("per-run safety cap active: %d (quota allows %d)", remaining, quota_remaining)
 
     matched = applied = failed = 0
     queued = 0   # matches banked into the pipeline THIS run (drives the due-date)

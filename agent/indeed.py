@@ -234,11 +234,13 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                         if "year" in hint or "experience" in hint:
                             inp.fill("0")
                         elif "phone" in hint or "mobile" in hint:
-                            inp.fill(phone or "9000000000")
+                            if not phone:
+                                return "skipped", "complex Indeed application needs a phone number not present in the profile"
+                            inp.fill(phone)
                         elif "name" in hint:
                             pass
-                        else:
-                            inp.fill("0")
+                        elif inp.get_attribute("required") is not None or inp.get_attribute("aria-required") == "true":
+                            return "skipped", "complex Indeed application has an unsupported required question"
                 except Exception:  # noqa: BLE001
                     pass
 

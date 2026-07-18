@@ -116,18 +116,18 @@ def test_now_ms_is_close_to_wall_clock():
 
 # ---------- plan cap ----------
 
-def test_plan_cap_pro_is_30(testdb):
+def test_plan_cap_pro_is_15(testdb):
     _insert_user(testdb, "u1", plan="pro")
-    assert db.get_plan_cap("u1") == 30
+    assert db.get_plan_cap("u1") == 15
 
 
-def test_plan_cap_starter_is_10(testdb):
+def test_plan_cap_starter_is_5(testdb):
     _insert_user(testdb, "u1", plan="starter")
-    assert db.get_plan_cap("u1") == 10
+    assert db.get_plan_cap("u1") == 5
 
 
-def test_plan_cap_defaults_to_10_for_unknown_user(testdb):
-    assert db.get_plan_cap("ghost") == 10
+def test_plan_cap_defaults_to_5_for_unknown_user(testdb):
+    assert db.get_plan_cap("ghost") == 5
 
 
 # ---------- applications ----------
@@ -342,10 +342,12 @@ def test_set_and_clear_connect_token_roundtrip(testdb):
 
 # ---------- time_from_now_db ----------
 
-def test_time_from_now_db_is_ahead_of_now_ms():
+def test_time_from_now_db_is_ahead_of_backend_now():
     future = db.time_from_now_db(60_000)
-    assert future > db.now_ms()
-    assert future - db.now_ms() <= 61_000  # allow a little test-runtime slack
+    now = db.now_db()
+    assert future > now
+    delta_ms = ((future - now).total_seconds() * 1000) if db.PG else (future - now)
+    assert delta_ms <= 61_000  # allow a little test-runtime slack
 
 
 # ---------- outcome stats ----------

@@ -9,6 +9,13 @@ export async function POST(req: Request) {
   const { plan } = (await req.json().catch(() => ({}))) as { plan?: Plan };
   const chosen: Plan = plan === "pro" ? "pro" : "plus";
 
+  if (process.env.NODE_ENV === "production" && (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET)) {
+    return NextResponse.json(
+      { error: "Paid plans are temporarily unavailable. Your free trial remains active." },
+      { status: 503 },
+    );
+  }
+
   try {
     const order = await createOrder({ userId: uid, plan: chosen });
     return NextResponse.json(order);

@@ -2,11 +2,11 @@
 
 Your AI applies to internships while you sleep. A local-first SaaS: users sign up,
 upload a resume, answer a few **proff questions** (which become the agent's firewall),
-pay, connect Slack — then an agent reads the resume, finds matching internships,
-**auto-applies** within your limits, and sends a **daily Slack report**.
+start a trial, connect a platform — then an agent reads the resume, finds matching
+internships, prepares supported applications for approval, and sends a **daily report**.
 
-Auto-apply currently runs on **Internshala** (LinkedIn, Naukri, Indeed, Unstop
-adapters exist but are gated off in the UI). Payment + Slack run in **stub mode**
+Supported integrations are **LinkedIn, Internshala, Naukri, Unstop, and Indeed**.
+External and unsupported complex application flows are skipped. Payment + Slack run in **stub mode**
 locally (no keys needed) and flip to real Razorpay/Slack by setting env vars.
 Resume analysis + match scoring can use a **fusion LLM ensemble** (Groq,
 Gemini, Cerebras, Mistral), with local Ollama as fallback. When external AI

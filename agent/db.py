@@ -272,6 +272,16 @@ def todays_applied_count(uid: str) -> int:
         return r["n"]
 
 
+def total_applied_count(uid: str) -> int:
+    """Lifetime successful applications, used to enforce the free trial."""
+    with conn() as c:
+        r = c.execute(
+            "SELECT COUNT(*) n FROM applications WHERE user_id=? AND status='applied'",
+            (uid,),
+        ).fetchone()
+        return r["n"]
+
+
 # ---------- writes ----------
 
 def update_skills(uid: str, skills: list[str], plan_json: dict | None = None):
@@ -498,7 +508,7 @@ def clear_connect_token(uid: str, platform: str):
 
 
 # Daily application cap per plan. Mirrors src/lib/plans.ts — keep the two in sync.
-PLAN_CAPS = {"free": 10, "plus": 10, "pro": 30}
+PLAN_CAPS = {"free": 5, "plus": 5, "pro": 15}
 # "starter" was the old name for "plus" and is still on live rows. Every read
 # normalises through here rather than comparing the raw column, so a legacy row
 # keeps working without a data migration.
@@ -512,10 +522,16 @@ def normalize_plan(plan: str | None) -> str:
 
 
 def get_plan_cap(uid: str) -> int:
-    """Daily application cap from user plan (plus = 10/day, pro = 30/day)."""
+    """Application allowance (free=5 total, plus=5/day, pro=15/day)."""
     with conn() as c:
         u = c.execute("SELECT plan FROM users WHERE id=?", (uid,)).fetchone()
     return PLAN_CAPS[normalize_plan(u["plan"] if u else None)]
+
+
+def get_user_plan(uid: str) -> str:
+    with conn() as c:
+        u = c.execute("SELECT plan FROM users WHERE id=?", (uid,)).fetchone()
+    return normalize_plan(u["plan"] if u else None)
 
 
 def set_resume_text(uid: str, text: str):

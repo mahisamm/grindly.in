@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { Nav, Logo } from "@/components/Brand";
 import { PLANS } from "@/lib/adapters/payment";
-import { isFreeBeta } from "@/lib/plans";
 import { Reveal, CountUp } from "@/components/Motion";
 import {
   Magnifier, PaperPlane, Resume, Sparkle, Arrow, Clock,
@@ -26,8 +25,8 @@ const STEPS = [
   },
   {
     n: "04",
-    title: "The agent applies for you",
-    body: "It reads listings, scores each against your resume, and auto-applies to the strong matches — within your limits.",
+    title: "You approve, the agent submits",
+    body: "It reads listings, scores each against your resume, prepares supported easy applications, and skips complex or external flows.",
   },
   {
     n: "05",
@@ -78,7 +77,7 @@ export default function Home() {
 
             <p className="mt-7 max-w-md text-lg text-muted">
               Grindly reads your resume, finds internships that actually match your
-              skills, and applies for you — every day, inside the limits you set.
+              skills, prepares supported matches, and submits only after your approval.
               You get a daily report via email or Slack.
             </p>
 
@@ -114,7 +113,7 @@ export default function Home() {
               <span className="flex text-[#ff7a1a]">
                 {[0, 1, 2, 3, 4].map((i) => <Star key={i} size={16} />)}
               </span>
-              Built for the intern grind on Internshala
+              LinkedIn · Internshala · Naukri · Unstop · Indeed
             </div>
           </div>
 
@@ -261,11 +260,9 @@ export default function Home() {
           <p className="mt-3 text-muted">Cancel anytime.</p>
           {/* Checkout grants the plan without charging while RAZORPAY_KEY_ID is
               unset — so say so plainly rather than showing a price we don't take. */}
-          {isFreeBeta() && (
-            <p className="mt-4 inline-block rounded-full border-2 border-ink bg-accent/15 px-4 py-1.5 text-sm font-semibold">
-              Free during beta — pick a plan, pay nothing yet
-            </p>
-          )}
+          <p className="mt-4 inline-block rounded-full border-2 border-ink bg-accent/15 px-4 py-1.5 text-sm font-semibold">
+            Start with 5 successful applications free
+          </p>
         </Reveal>
         <div className="relative z-[1] mt-12 grid gap-6 sm:grid-cols-2">
           {(Object.entries(PLANS) as [keyof typeof PLANS, (typeof PLANS)[keyof typeof PLANS]][]).map(

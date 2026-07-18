@@ -66,6 +66,7 @@ export default function OnboardingPage() {
   const [busy, setBusy] = useState(false);
   const [tosAck, setTosAck] = useState(false);
   const [msg, setMsg] = useState("");
+  const [upgradeMode, setUpgradeMode] = useState(false);
 
   // hydrate from existing profile (if user comes back)
   useEffect(() => {
@@ -105,6 +106,15 @@ export default function OnboardingPage() {
         localStorage.removeItem("grindly_plan");
       }
     } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("upgrade")) {
+      // URL state is external browser state; sync it after hydration.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setUpgradeMode(true);
+      setStep(3);
+    }
   }, []);
 
   function set(key: string, v: unknown) {
@@ -215,7 +225,10 @@ export default function OnboardingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plan }),
       });
-      if (!orderResponse.ok) throw new Error("Order creation failed");
+      if (!orderResponse.ok) {
+        const errorBody = await orderResponse.json().catch(() => ({}));
+        throw new Error(errorBody.error || "Order creation failed");
+      }
       const order = await orderResponse.json() as
         | { stub: true }
         | { stub: false; orderId: string; keyId: string; amount: number; currency: string };
@@ -253,10 +266,28 @@ export default function OnboardingPage() {
         setMsg("Payment failed. Check your payment details and try again.");
       });
       checkout.open();
-    } catch {
+    } catch (error) {
       setBusy(false);
-      setMsg("Could not start checkout. Please try again.");
+      setMsg(error instanceof Error ? error.message : "Could not start checkout. Please try again.");
     }
+  }
+
+  async function activateTrial() {
+    setBusy(true);
+    setMsg("");
+    await fetch("/api/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ autoApply: Boolean(form.autoApply ?? true) }),
+    }).catch(() => {});
+    const response = await fetch("/api/trial/activate", { method: "POST" });
+    if (response.ok) {
+      window.location.href = "/dashboard";
+      return;
+    }
+    const body = await response.json().catch(() => ({}));
+    setBusy(false);
+    setMsg(body.error || "Could not activate the free trial. Please try again.");
   }
 
   return (
@@ -533,9 +564,9 @@ export default function OnboardingPage() {
           {/* STEP 3 — Activate */}
           {step === 3 && (
             <div>
-              <h2 className="font-display text-2xl font-semibold">Choose your plan</h2>
+              <h2 className="font-display text-2xl font-semibold">{upgradeMode ? "Upgrade your plan" : "Start free or choose a plan"}</h2>
               <p className="mt-1 text-sm text-muted">
-                Pick a daily cap. Click Activate — agent starts immediately, no payment needed.
+                Try five successful applications free. Plus sends up to 5/day; Pro sends up to 15/day.
               </p>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -556,8 +587,7 @@ export default function OnboardingPage() {
                       )}
                     </div>
                     <div className="mt-1 text-2xl font-semibold text-accent">
-                      Free
-                      <span className="text-sm font-normal text-muted"> (beta)</span>
+                      ₹{p.price}<span className="text-sm font-normal text-muted">/month</span>
                     </div>
                     <div className="mt-1 text-sm text-muted">{p.blurb}</div>
                   </button>
@@ -574,7 +604,7 @@ export default function OnboardingPage() {
                 />
                 <span className="text-sm leading-relaxed text-muted">
                   I understand that automated job applications may violate the Terms of Service of
-                  the platform (Internshala). I accept this risk and take full
+                  connected job platforms. I accept this risk and take full
                   responsibility for my connected accounts. I have read the{" "}
                   <a href="/terms" target="_blank" className="text-brand-2 underline">
                     Terms of Service
@@ -585,20 +615,31 @@ export default function OnboardingPage() {
 
               {msg && <p className="mt-3 text-sm text-danger">{msg}</p>}
 
-              <div className="mt-6 flex justify-between">
+              <div className="mt-6 flex flex-wrap justify-between gap-3">
                 <button
-                  onClick={() => setStep(2)}
+                  onClick={() => upgradeMode ? (window.location.href = "/dashboard") : setStep(2)}
                   className="rounded-lg border border-border px-5 py-2.5 hover:border-brand/60 transition"
                 >
                   Back
                 </button>
-                <button
-                  disabled={busy || !tosAck}
-                  onClick={pay}
-                  className="rounded-lg brand-gradient px-6 py-2.5 font-medium text-white hover:opacity-90 transition disabled:opacity-60"
-                >
-                  {busy ? "Activating…" : "Activate agent →"}
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  {!upgradeMode && (
+                    <button
+                      disabled={busy || !tosAck}
+                      onClick={activateTrial}
+                      className="rounded-lg border border-brand px-5 py-2.5 font-medium text-brand-2 hover:bg-brand/10 transition disabled:opacity-60"
+                    >
+                      {busy ? "Activating…" : "Start 5-application free trial"}
+                    </button>
+                  )}
+                  <button
+                    disabled={busy || !tosAck}
+                    onClick={pay}
+                    className="rounded-lg brand-gradient px-6 py-2.5 font-medium text-white hover:opacity-90 transition disabled:opacity-60"
+                  >
+                    {busy ? "Opening checkout…" : `Choose ${PLANS[plan].name} →`}
+                  </button>
+                </div>
               </div>
             </div>
           )}

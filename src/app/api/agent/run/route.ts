@@ -4,6 +4,7 @@ import fsp from "node:fs/promises";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { spawnWorkerKick } from "@/lib/workerKick";
+import { getQuota } from "@/lib/quota";
 
 /**
  * Triggers one agent run for the current user (resume parse → match → apply →
@@ -32,6 +33,19 @@ export async function POST(req: Request) {
   // (The dashboard already disables the button; this enforces it server-side so
   // a direct API call can't queue a run with nothing connected.)
   if (!analyzeOnly) {
+    const quota = await getQuota(uid, user.plan);
+    if (quota.remaining === 0) {
+      return NextResponse.json(
+        {
+          error: quota.kind === "trial"
+            ? "Your 5-application free trial is complete. Upgrade to Plus or Pro to continue."
+            : `Your ${quota.cap}-application daily limit is reached. Try again tomorrow.`,
+          code: quota.kind === "trial" ? "trial_exhausted" : "daily_limit_reached",
+          quota,
+        },
+        { status: 402 },
+      );
+    }
     const connected =
       user.internshalaConnected ||
       (await prisma.userIntegration
@@ -39,7 +53,7 @@ export async function POST(req: Request) {
         .catch(() => 0)) > 0;
     if (!connected) {
       return NextResponse.json(
-        { error: "Connect Internshala before running the agent." },
+        { error: "Connect at least one job platform before running the agent." },
         { status: 400 },
       );
     }

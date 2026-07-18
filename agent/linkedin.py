@@ -216,7 +216,7 @@ def apply(job: dict, cover_letter: str, uid: str = "",
     # the call shape uniform so the worker can pass it to all five without a branch.
 
     """Submit via LinkedIn Easy Apply. Reads phone/GPA from profile if provided."""
-    phone = (profile or {}).get("phone") or "9000000000"
+    phone = (profile or {}).get("phone") or ""
     gpa = str((profile or {}).get("gpa") or "8.0")
 
     page = _context(uid).new_page()
@@ -284,13 +284,15 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                     inp.click()
                     _rand_delay(page, 0.2, 0.5)
                     if "phone" in hint or "mobile" in hint:
+                        if not phone:
+                            return "skipped", "complex LinkedIn application needs a phone number not present in the profile"
                         inp.fill(str(phone))
                     elif "year" in hint or "experience" in hint:
                         inp.fill("0")
                     elif "cgpa" in hint or "gpa" in hint:
                         inp.fill(gpa)
-                    else:
-                        inp.fill("0")
+                    elif inp.get_attribute("required") is not None or inp.get_attribute("aria-required") == "true":
+                        return "skipped", "complex LinkedIn application has an unsupported required question"
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -298,20 +300,14 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                 try:
                     first = radio_group.query_selector("input[type='radio']")
                     if first and not first.is_checked():
-                        first.check()
+                        return "skipped", "complex LinkedIn application has a required choice question"
                 except Exception:  # noqa: BLE001
                     pass
 
             for sel in page.query_selector_all("select:visible"):
                 try:
                     if not sel.input_value():
-                        opts = sel.query_selector_all("option")
-                        if len(opts) > 1:
-                            val = opts[1].get_attribute("value") or ""
-                            if val:
-                                sel.select_option(value=val)
-                            else:
-                                sel.select_option(index=1)
+                        return "skipped", "complex LinkedIn application has a required selection question"
                 except Exception:  # noqa: BLE001
                     pass
 

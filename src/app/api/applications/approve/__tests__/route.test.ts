@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const {
   mockGetUid, mockFindFirst, mockUpdate,
   mockRunFindFirst, mockRunCreate, mockSpawnWorkerKick,
+  mockUserFindUnique, mockGetQuota,
 } = vi.hoisted(() => ({
   mockGetUid: vi.fn(),
   mockFindFirst: vi.fn(),
@@ -10,16 +11,20 @@ const {
   mockRunFindFirst: vi.fn(),
   mockRunCreate: vi.fn(),
   mockSpawnWorkerKick: vi.fn(),
+  mockUserFindUnique: vi.fn(),
+  mockGetQuota: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getUid: mockGetUid }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    user: { findUnique: mockUserFindUnique },
     application: { findFirst: mockFindFirst, update: mockUpdate },
     agentRun: { findFirst: mockRunFindFirst, create: mockRunCreate },
   },
 }));
 vi.mock("@/lib/workerKick", () => ({ spawnWorkerKick: mockSpawnWorkerKick }));
+vi.mock("@/lib/quota", () => ({ getQuota: mockGetQuota }));
 
 import { POST } from "@/app/api/applications/approve/route";
 
@@ -36,6 +41,8 @@ beforeEach(() => {
   mockUpdate.mockResolvedValue({});
   mockRunFindFirst.mockResolvedValue(null);
   mockRunCreate.mockResolvedValue({ id: "run1" });
+  mockUserFindUnique.mockResolvedValue({ plan: "free" });
+  mockGetQuota.mockResolvedValue({ kind: "trial", cap: 5, used: 0, remaining: 5 });
 });
 
 describe("POST /api/applications/approve", () => {
@@ -49,6 +56,14 @@ describe("POST /api/applications/approve", () => {
     mockGetUid.mockResolvedValue("u1");
     const res = await POST(makeReq({}));
     expect(res.status).toBe(400);
+  });
+
+  it("does not approve after the free trial is exhausted", async () => {
+    mockGetUid.mockResolvedValue("u1");
+    mockGetQuota.mockResolvedValue({ kind: "trial", cap: 5, used: 5, remaining: 0 });
+    const res = await POST(makeReq({ id: "a1" }));
+    expect(res.status).toBe(402);
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 
   it("returns 404 when the application isn't in matched state (or isn't the user's)", async () => {

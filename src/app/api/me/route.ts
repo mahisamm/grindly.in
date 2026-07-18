@@ -4,6 +4,7 @@ import { getUid } from "@/lib/session";
 import { internshalaLoginEnabled } from "@/lib/featureFlags";
 import { gmailScanEnabled } from "@/lib/googleOAuth";
 import { visibleToUser } from "@/lib/pipeline";
+import { getQuota } from "@/lib/quota";
 
 const PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"] as const;
 
@@ -111,6 +112,7 @@ export async function GET() {
     // % of applications (with a reported outcome) that led to an interview/offer
     interviewRate: outcomeReported ? Math.round((interviews / outcomeReported) * 100) : null,
   };
+  const quota = await getQuota(uid, user.plan);
 
   return NextResponse.json({
     user: {
@@ -132,6 +134,7 @@ export async function GET() {
     applications: apps,
     reports: user.reports,
     stats,
+    quota,
     integrations,
   });
 }

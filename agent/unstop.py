@@ -214,7 +214,7 @@ def apply(job: dict, cover_letter: str, uid: str = "",
         ])
         if not btn:
             safety.screenshot(page, uid, f"no_apply_btn_unstop_{job.get('external_id','')}")
-            return "failed", "apply button not found on Unstop"
+            return "skipped", "unsupported Unstop application flow (no direct apply button)"
         stealth.scroll_to(page, btn)
         stealth.human_click(page, btn)
         page.wait_for_timeout(stealth.random_delay_ms())
@@ -231,7 +231,10 @@ def apply(job: dict, cover_letter: str, uid: str = "",
                 except Exception:  # noqa: BLE001
                     pass
 
-        for ta in page.query_selector_all("textarea"):
+        textareas = [ta for ta in page.query_selector_all("textarea") if ta.is_visible()]
+        if len(textareas) > 1:
+            return "skipped", "complex Unstop application has custom written questions"
+        for ta in textareas:
             try:
                 val = ta.input_value()
                 if not val:
@@ -247,7 +250,7 @@ def apply(job: dict, cover_letter: str, uid: str = "",
         ])
         if not submit:
             safety.screenshot(page, uid, f"no_submit_unstop_{job.get('external_id','')}")
-            return "failed", "submit button not found on Unstop"
+            return "skipped", "complex Unstop application requires manual completion"
         stealth.scroll_to(page, submit)
         stealth.human_click(page, submit)
         page.wait_for_timeout(stealth.random_delay_ms())

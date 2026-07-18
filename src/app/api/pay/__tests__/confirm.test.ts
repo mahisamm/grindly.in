@@ -31,8 +31,8 @@ vi.mock("@/lib/adapters/slack", () => ({
 }));
 vi.mock("@/lib/adapters/payment", () => ({
   PLANS: {
-    plus: { name: "Plus", price: 200, perDay: 10, blurb: "" },
-    pro:     { name: "Pro",     price: 999, perDay: 30, blurb: "" },
+    plus: { name: "Plus", price: 200, perDay: 5, blurb: "" },
+    pro:     { name: "Pro",     price: 999, perDay: 15, blurb: "" },
   },
   verifyPaymentSignature: mockVerifyPaymentSignature,
 }));

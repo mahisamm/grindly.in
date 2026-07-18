@@ -11,22 +11,24 @@ export const PLANS: Record<
   plus: {
     name: "Plus",
     price: 200,
-    perDay: 10,
-    blurb: "Up to 10 applications a day, every day",
+    perDay: 5,
+    blurb: "Up to 5 applications a day, every day",
   },
   pro: {
     name: "Pro",
     price: 500,
-    perDay: 30,
-    blurb: "Up to 30 applications a day + priority support",
+    perDay: 15,
+    blurb: "Up to 15 applications a day + priority support",
   },
 };
 
 export const PLAN_CAPS: Record<PlanOrFree, number> = {
-  free: 10, // free beta: same cap as Plus, no charge
-  plus: 10,
-  pro: 30,
+  free: 5, // lifetime trial allowance; paid plan caps reset daily
+  plus: 5,
+  pro: 15,
 };
+
+export const FREE_TRIAL_APPLICATIONS = PLAN_CAPS.free;
 
 // "starter" is the old name for "plus" and is still the value on live user rows.
 // Every read normalises through here instead of comparing the raw column, so a
@@ -41,10 +43,4 @@ export function normalizePlan(plan?: string | null): PlanOrFree {
 
 export function planCap(plan?: string | null): number {
   return PLAN_CAPS[normalizePlan(plan)];
-}
-
-/** True while checkout is a no-op that grants the plan without charging. Flipping
- *  RAZORPAY_KEY_ID is what ends the free beta — see lib/adapters/payment.ts. */
-export function isFreeBeta(): boolean {
-  return !process.env.RAZORPAY_KEY_ID;
 }

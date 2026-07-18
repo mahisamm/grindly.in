@@ -4,7 +4,7 @@ import { databaseUrlConfigured, smsProvider, missingProdConfig, paymentMode } fr
 const TOUCHED = [
   "FAST2SMS_API_KEY", "MSG91_AUTH_KEY", "MSG91_TEMPLATE_ID", "MSG91_SENDER_ID",
   "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER",
-  "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_OAUTH_BRAND_VERIFIED", "RAZORPAY_KEY_ID",
+  "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_OAUTH_BRAND_VERIFIED", "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET",
   "DATABASE_URL", "APP_ENCRYPTION_KEY", "NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_BASE_URL",
   "EMAIL_SMTP_HOST", "EMAIL_SMTP_USER",
 ];
@@ -65,6 +65,8 @@ describe("missingProdConfig — Google-only beta", () => {
     process.env.GOOGLE_CLIENT_SECRET = "sec";
     process.env.GOOGLE_OAUTH_BRAND_VERIFIED = "1";
     process.env.NEXT_PUBLIC_APP_URL = "https://d";
+    process.env.RAZORPAY_KEY_ID = "id";
+    process.env.RAZORPAY_KEY_SECRET = "secret";
     expect(missingProdConfig()).toEqual([]);
   });
   it("flags an APP_ENCRYPTION_KEY that isn't 64 hex", () => {
@@ -87,11 +89,14 @@ describe("databaseUrlConfigured", () => {
 });
 
 describe("paymentMode", () => {
-  it("stub without a Razorpay key", () => {
-    expect(paymentMode()).toBe("stub");
+  it("is unconfigured without both Razorpay keys", () => {
+    expect(paymentMode()).toBe("unconfigured");
+    process.env.RAZORPAY_KEY_ID = "rzp_test_x";
+    expect(paymentMode()).toBe("unconfigured");
   });
   it("razorpay when RAZORPAY_KEY_ID is set", () => {
     process.env.RAZORPAY_KEY_ID = "rzp_test_x";
+    process.env.RAZORPAY_KEY_SECRET = "secret";
     expect(paymentMode()).toBe("razorpay");
   });
 });

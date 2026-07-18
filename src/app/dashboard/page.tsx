@@ -124,6 +124,12 @@ type Me = {
     outcomeReported: number;
     interviewRate: number | null;
   };
+  quota: {
+    kind: "trial" | "daily";
+    cap: number;
+    used: number;
+    remaining: number;
+  };
   integrations: Integration[];
 };
 
@@ -153,7 +159,7 @@ const PLATFORM_META: Record<string, { label: string; color: string; icon: string
 
 // Platforms surfaced in the UI right now. Code/adapters for the others stay
 // intact — add their key here to re-enable them in the dashboard later.
-const VISIBLE_PLATFORMS = ["internshala"];
+const VISIBLE_PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"];
 
 const STATUS_STYLE: Record<string, string> = {
   applied:  "bg-accent/15 text-accent",
@@ -549,6 +555,8 @@ export default function Dashboard() {
     // session window (5 min) elapses. In production a connectToken shows up
     // once the remote-browser session is actually live — open the viewer
     // then, not before (nothing to show until the browser exists).
+    // This is event-driven polling state, not render output.
+    // eslint-disable-next-line react-hooks/purity
     const started = Date.now();
     const deadline = started + 300_000;
     let opened = false;
@@ -848,14 +856,14 @@ export default function Dashboard() {
               </li>
               <li className="flex gap-3">
                 <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">2</span>
-                <span><span className="font-medium">Connect Internshala.</span> In Integrations, click Connect and log in yourself in the live browser window that opens — the agent applies on your behalf afterward.</span>
+                <span><span className="font-medium">Connect a job platform.</span> Choose LinkedIn, Internshala, Naukri, Unstop, or Indeed and log in yourself in the live browser window.</span>
               </li>
               <li className="flex gap-3">
                 <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">3</span>
                 <span><span className="font-medium">Run the agent.</span> It scores and applies to matches. Then tell us the outcome on each application so we can prove it works.</span>
               </li>
             </ol>
-            <p className="mt-4 text-xs text-muted">Tip: connect Internshala first — <span className="text-foreground">Run agent</span> unlocks once a platform is linked.</p>
+            <p className="mt-4 text-xs text-muted">Tip: <span className="text-foreground">Run agent</span> unlocks as soon as one supported platform is connected.</p>
             <button onClick={dismissOnboarding} className="mt-5 w-full press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition">
               Got it — let&apos;s go
             </button>
@@ -911,7 +919,8 @@ export default function Dashboard() {
             </h1>
             <p className="text-muted text-sm mt-1">
               Plan: <span className="capitalize text-foreground font-medium">{me.user.plan}</span>
-              {" "}· {cap}/day cap · firewall ≥{me.profile?.minMatchScore ?? 55}
+              {" "}· {me.quota.kind === "trial" ? `${me.quota.remaining}/${me.quota.cap} trial applications left` : `${cap}/day cap`}
+              {" "}· firewall ≥{me.profile?.minMatchScore ?? 55}
               {" "}· <span className={connectedCount > 0 ? "text-accent" : "text-muted"}>
                 {connectedCount} platform{connectedCount !== 1 ? "s" : ""} connected
               </span>
@@ -935,16 +944,23 @@ export default function Dashboard() {
               <button
                 disabled
                 onClick={() => setTab("integrations")}
-                title="Connect Internshala first to run the agent"
+                title="Connect a job platform first to run the agent"
                 className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-muted cursor-not-allowed opacity-60"
               >
-                Connect Internshala first
+                Connect a platform first
               </button>
+            ) : me.quota.remaining === 0 ? (
+              <Link
+                href="/onboarding?upgrade=plus"
+                className="press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition"
+              >
+                {me.quota.kind === "trial" ? "Upgrade to continue" : "Daily limit reached"}
+              </Link>
             ) : (
               <button
               onClick={() => runAgent()}
-              disabled={running || connectedCount === 0}
-              title={connectedCount === 0 ? "Connect Internshala first" : "Find + apply to live matches"}
+              disabled={running || connectedCount === 0 || me.quota.remaining === 0}
+              title={connectedCount === 0 ? "Connect a job platform first" : "Find supported live matches"}
               className="press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
             >
               {running ? "Agent running…" : "Run agent"}
@@ -965,10 +981,25 @@ export default function Dashboard() {
           </div>
         )}
 
+        {me.quota.kind === "trial" && (
+          <div className={`mt-5 rounded-xl border px-4 py-3 text-sm ${
+            me.quota.remaining > 0 ? "border-accent/40 bg-accent/10" : "border-warn/50 bg-warn/10"
+          }`}>
+            <span className="font-medium">
+              {me.quota.remaining > 0
+                ? `Free trial: ${me.quota.remaining} of ${me.quota.cap} applications remaining.`
+                : "Your five-application free trial is complete."}
+            </span>{" "}
+            <Link href="/onboarding?upgrade=plus" className="underline text-brand-2 ml-1">
+              View Plus and Pro →
+            </Link>
+          </div>
+        )}
+
         {/* banners */}
-        {connectedCount === 0 && me.user.internshalaLoginEnabled && (
+        {connectedCount === 0 && (
           <div className="mt-5 rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
-            <span className="font-medium">Connect Internshala</span>{" "}
+            <span className="font-medium">Connect a job platform</span>{" "}
             <span className="text-muted">so the agent can find and apply to matches for you.</span>{" "}
             <button onClick={() => setTab("integrations")} className="underline text-brand-2 ml-1">Set up integrations →</button>
           </div>
@@ -1467,7 +1498,7 @@ export default function Dashboard() {
 
             {apps.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-10 text-center text-muted">
-                No applications yet. Connect Internshala, then hit <span className="text-foreground">Run agent</span> to start applying.
+                No applications yet. Connect a job platform, then hit <span className="text-foreground">Run agent</span> to find supported matches.
               </div>
             ) : (
               <div className="space-y-2">
@@ -1579,75 +1610,69 @@ export default function Dashboard() {
         {tab === "integrations" && (
           <div className="mt-4">
             <p className="text-sm text-muted mb-4">
-              Connect Internshala so the agent can apply for you. You log in yourself in a live
+              Connect one or more job platforms. You log in yourself in a live
               browser window — Grindly never sees or stores your password.
             </p>
 
-            {(() => {
-              const intern = integrations.find((i) => i.platform === "internshala")
-                ?? { platform: "internshala", status: "disconnected", connectedAt: null, otpRequired: false, lastError: null };
-              const isConnected = intern.status === "connected";
-              const isConnecting = intern.status === "connecting" || connectingPlatform === "internshala";
-
-              return (
-                <div className={`rounded-xl border p-4 transition ${
-                  isConnected ? "border-accent/40 bg-accent/5" : "border-border bg-surface"
-                }`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold rounded-md px-1.5 py-0.5 border text-[#00aaff] border-current">IS</span>
-                      <span className="font-medium">Internshala</span>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {integrations.map((integration) => {
+                const meta = PLATFORM_META[integration.platform];
+                const isConnected = integration.status === "connected";
+                const isConnecting = integration.status === "connecting" || connectingPlatform === integration.platform;
+                const isPaused = integration.status === "challenge_detected";
+                return (
+                  <div key={integration.platform} className={`rounded-xl border p-4 transition ${
+                    isConnected ? "border-accent/40 bg-accent/5" : "border-border bg-surface"
+                  }`}>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-bold rounded-md px-1.5 py-0.5 border border-current ${meta.color}`}>{meta.icon}</span>
+                        <span className="font-medium">{meta.label}</span>
+                      </div>
+                      <span className={`text-xs rounded-full px-2 py-0.5 ${
+                        isConnected ? "bg-accent/20 text-accent"
+                        : isConnecting ? "bg-brand/20 text-brand-2"
+                        : isPaused ? "bg-warn/20 text-warn"
+                        : "bg-surface-2 text-muted"
+                      }`}>
+                        {isConnected ? "Connected" : isConnecting ? "Connecting…" : isPaused ? "Paused" : "Not connected"}
+                      </span>
                     </div>
-                    <span className={`text-xs rounded-full px-2 py-0.5 ${
-                      isConnected ? "bg-accent/20 text-accent"
-                      : isConnecting ? "bg-brand/20 text-brand-2"
-                      : "bg-surface-2 text-muted"
-                    }`}>
-                      {isConnected ? "Connected" : isConnecting ? "Connecting…" : "Not connected"}
-                    </span>
+
+                    {integration.lastError && !isConnected && (
+                      <div className="mb-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+                        {integration.lastError}
+                      </div>
+                    )}
+
+                    {isConnected ? (
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs text-muted">Session ready for supported easy-apply jobs.</span>
+                        <button onClick={() => disconnectPlatform(integration.platform)} className="text-xs text-muted hover:text-danger transition">Disconnect</button>
+                      </div>
+                    ) : isConnecting ? (
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs text-brand-2">Opening your secure login window…</span>
+                        <button onClick={() => disconnectPlatform(integration.platform)} className="text-xs text-muted hover:text-danger transition">Cancel</button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted">
+                          Log in yourself and handle any OTP or CAPTCHA normally. Grindly stores only the resulting browser session.
+                        </p>
+                        <button
+                          onClick={() => connectPlatform(integration.platform)}
+                          disabled={connectingPlatform !== null}
+                          className="w-full press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+                        >
+                          Connect {meta.label}
+                        </button>
+                      </div>
+                    )}
                   </div>
-
-                  {/* last error from a previous connect attempt */}
-                  {intern.lastError && !isConnected && (
-                    <div className="mb-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
-                      {intern.lastError}
-                    </div>
-                  )}
-
-                  {isConnected ? (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-muted">Logged in — the agent applies via your account.</span>
-                      <button onClick={() => disconnectPlatform("internshala")} className="text-xs text-muted hover:text-danger transition">Disconnect</button>
-                    </div>
-                  ) : isConnecting ? (
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-brand-2">Opening your secure login window…</span>
-                      <button onClick={() => disconnectPlatform("internshala")} className="text-xs text-muted hover:text-danger transition">Cancel</button>
-                    </div>
-                  ) : !me.user.internshalaLoginEnabled ? (
-                    <div className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-2.5 text-xs text-muted">
-                      <span className="font-medium text-brand-2">Rolling out.</span>{" "}
-                      Internshala auto-apply is being enabled for accounts in waves — yours isn&apos;t live yet.
-                      We&apos;ll switch it on for you soon. Nothing to do here for now.
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <p className="text-xs text-muted">
-                        You&apos;ll get a live view of a real browser to log into Internshala yourself —
-                        enter your password, solve any captcha, and any one-time code the same way you
-                        normally would. Grindly never sees or stores your password.
-                      </p>
-                      <button
-                        onClick={() => connectPlatform("internshala")}
-                        className="w-full press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
-                      >
-                        Connect Internshala
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+                );
+              })}
+            </div>
 
             {/* Slack daily reports */}
             <div className="mt-5 rounded-xl border border-border bg-surface p-4">
@@ -1749,10 +1774,11 @@ export default function Dashboard() {
             <div className="mt-5 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
               <p className="font-medium text-foreground mb-1">How live applications work</p>
               <ol className="list-decimal pl-5 space-y-1 text-sm">
-                <li>Click <strong>Connect Internshala</strong> above and log in yourself in the live browser window — handles any captcha or one-time code the same way you normally would.</li>
+                <li>Connect any supported platform above and log in yourself in the live browser window.</li>
                 <li>Once connected, the agent reuses that session to log in on our server.</li>
-                <li>Click <strong>Run agent</strong> on this dashboard to start applying.</li>
-                <li>The agent applies up to <strong>{cap}</strong> internships/day on Internshala.</li>
+                <li>Click <strong>Run agent</strong> to find matches. External and unsupported complex applications are skipped.</li>
+                <li>Review each prepared application and tap <strong>Approve</strong> to submit it.</li>
+                <li>{me.quota.kind === "trial" ? <>The free trial includes <strong>{me.quota.cap}</strong> successful applications total.</> : <>The agent sends up to <strong>{cap}</strong> applications/day across connected platforms.</>}</li>
               </ol>
             </div>
 

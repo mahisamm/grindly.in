@@ -340,13 +340,13 @@ def test_in_human_hours_boundaries_are_inclusive_start_exclusive_end():
 
 def test_daily_cap_for_today_scales_with_the_plan():
     # The human-pace band is half the plan cap up to the plan cap — it used to be
-    # a flat randint(5, 10) for everyone, which meant the Pro upgrade (30/day)
+    # a flat randint(5, 10) for everyone, which meant the Pro upgrade
     # bought exactly nothing. This test was still asserting the old flat band.
     for i in range(50):
-        starter = worker._daily_cap_for_today(f"user{i}", plan_cap=10, today="2026-07-09")
-        pro = worker._daily_cap_for_today(f"user{i}", plan_cap=30, today="2026-07-09")
-        assert 5 <= starter <= 10
-        assert 15 <= pro <= 30
+        starter = worker._daily_cap_for_today(f"user{i}", plan_cap=5, today="2026-07-09")
+        pro = worker._daily_cap_for_today(f"user{i}", plan_cap=15, today="2026-07-09")
+        assert 3 <= starter <= 5
+        assert 7 <= pro <= 15
 
 
 def test_daily_cap_for_today_never_exceeds_plan_cap():
@@ -355,14 +355,14 @@ def test_daily_cap_for_today_never_exceeds_plan_cap():
 
 
 def test_daily_cap_for_today_stable_within_same_day():
-    a = worker._daily_cap_for_today("u1", plan_cap=30, today="2026-07-09")
-    b = worker._daily_cap_for_today("u1", plan_cap=30, today="2026-07-09")
+    a = worker._daily_cap_for_today("u1", plan_cap=15, today="2026-07-09")
+    b = worker._daily_cap_for_today("u1", plan_cap=15, today="2026-07-09")
     assert a == b
 
 
 def test_daily_cap_for_today_varies_across_dates():
     caps = {
-        worker._daily_cap_for_today("u1", plan_cap=30, today=f"2026-07-{d:02d}")
+        worker._daily_cap_for_today("u1", plan_cap=15, today=f"2026-07-{d:02d}")
         for d in range(1, 29)
     }
     assert len(caps) > 1  # not the same number every single day
@@ -370,7 +370,7 @@ def test_daily_cap_for_today_varies_across_dates():
 
 def test_daily_cap_for_today_differs_per_user_on_same_day():
     caps = {
-        worker._daily_cap_for_today(f"user{i}", plan_cap=30, today="2026-07-09")
+        worker._daily_cap_for_today(f"user{i}", plan_cap=15, today="2026-07-09")
         for i in range(20)
     }
     assert len(caps) > 1  # not every user gets the same number

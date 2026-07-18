@@ -11,8 +11,8 @@ import { audit } from "@/lib/audit";
  * Called by the Razorpay modal success handler with the payment proof.
  * Verifies the HMAC signature before granting the plan.
  *
- * Stub mode (no RAZORPAY_KEY_ID) is the free beta: it skips verification and
- * grants the plan directly. That is only safe because nobody is paying — so
+ * Stub mode (no RAZORPAY_KEY_ID) is development-only: it skips verification and
+ * grants the plan directly. Production rejects this path, so
  * whether we are in stub mode is decided by SERVER ENV ALONE. It was previously
  * also readable from a `stub` flag in the request body, which meant that the
  * moment RAZORPAY_KEY_ID was set, any logged-in user could POST {"stub":true}
@@ -30,6 +30,10 @@ export async function POST(req: Request) {
   };
 
   const plan: Plan = body.plan === "pro" ? "pro" : "plus";
+
+  if (process.env.NODE_ENV === "production" && !process.env.RAZORPAY_KEY_ID) {
+    return NextResponse.json({ error: "Paid plan activation is unavailable." }, { status: 503 });
+  }
 
   // Real Razorpay mode — verify signature before any DB write
   if (process.env.RAZORPAY_KEY_ID) {

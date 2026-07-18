@@ -43,12 +43,12 @@ export function googleOAuthBrandVerified(): boolean {
 // interview tracker is live. See src/lib/googleOAuth.ts.
 export { gmailScanEnabled } from "./googleOAuth";
 
-// Payment is Razorpay (see src/lib/adapters/payment.ts). "stub" = no keys set,
-// which is the intentional free-beta checkout. This only REPORTS the mode for
-// /api/health; it deliberately does not gate prod-readiness (free beta is a
-// valid deploy), so Razorpay keys are NOT in missingProdConfig().
-export function paymentMode(): "razorpay" | "stub" {
-  return process.env.RAZORPAY_KEY_ID ? "razorpay" : "stub";
+// Payment is Razorpay (see src/lib/adapters/payment.ts). Stub checkout is
+// development-only; production needs both keys so trial users can upgrade.
+export function paymentMode(): "razorpay" | "unconfigured" {
+  return process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET
+    ? "razorpay"
+    : "unconfigured";
 }
 
 export function encryptionKeyValid(): boolean {
@@ -72,7 +72,7 @@ export function serviceStatus() {
     llm: llmConfigured(),
     googleOAuth: googleOAuthConfigured(),
     gmailScan: gmailScanEnabled(),      // false until gmail.readonly is verified
-    payment: paymentMode(),             // "razorpay" | "stub"
+    payment: paymentMode(),             // "razorpay" | "unconfigured"
     encryptionKey: encryptionKeyValid(),
     baseUrl: baseUrlConfigured(),
   };
@@ -92,6 +92,7 @@ export function missingProdConfig(): string[] {
   if (!googleOAuthConfigured()) miss.push("GOOGLE_CLIENT_ID/SECRET — the only login method");
   if (!googleOAuthBrandVerified()) miss.push("GOOGLE_OAUTH_BRAND_VERIFIED — consent screen must show Grindly");
   if (!baseUrlConfigured()) miss.push("NEXT_PUBLIC_APP_URL — OAuth redirect + email links");
+  if (paymentMode() !== "razorpay") miss.push("RAZORPAY_KEY_ID/SECRET — paid upgrades are unavailable");
   // NOT required: EMAIL_SMTP_HOST/USER/PASS. This line was previously here and
   // contradicted the comment above — Google-only auth means there's no password
   // to reset, so a missing SMTP config can't legitimately block a production

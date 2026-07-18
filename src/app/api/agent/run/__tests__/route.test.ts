@@ -8,6 +8,7 @@ const {
   mockAgentRunCreate,
   mockUserIntegrationCount,
   mockSpawnWorkerKick,
+  mockGetQuota,
 } = vi.hoisted(() => ({
   mockGetUid: vi.fn(),
   mockAccess: vi.fn(),
@@ -16,6 +17,7 @@ const {
   mockAgentRunCreate: vi.fn(),
   mockUserIntegrationCount: vi.fn(),
   mockSpawnWorkerKick: vi.fn(),
+  mockGetQuota: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getUid: mockGetUid }));
@@ -30,6 +32,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/workerKick", () => ({ spawnWorkerKick: mockSpawnWorkerKick }));
+vi.mock("@/lib/quota", () => ({ getQuota: mockGetQuota }));
 vi.mock("node:fs/promises", () => ({ default: { access: mockAccess } }));
 
 import { POST, GET } from "@/app/api/agent/run/route";
@@ -55,6 +58,7 @@ beforeEach(() => {
   mockUserIntegrationCount.mockResolvedValue(1);
   mockAgentRunFindFirst.mockResolvedValue(null);
   mockAgentRunCreate.mockResolvedValue({ id: "run1" });
+  mockGetQuota.mockResolvedValue({ kind: "trial", cap: 5, used: 0, remaining: 5 });
 });
 
 describe("POST /api/agent/run", () => {
@@ -69,6 +73,15 @@ describe("POST /api/agent/run", () => {
     mockUserFindUnique.mockResolvedValue(null);
     const res = await POST(postReq());
     expect(res.status).toBe(404);
+  });
+
+  it("blocks a live run after the free trial is exhausted", async () => {
+    mockGetUid.mockResolvedValue("u1");
+    mockGetQuota.mockResolvedValue({ kind: "trial", cap: 5, used: 5, remaining: 0 });
+    const res = await POST(postReq());
+    expect(res.status).toBe(402);
+    expect((await res.json()).code).toBe("trial_exhausted");
+    expect(mockAgentRunCreate).not.toHaveBeenCalled();
   });
 
   it("returns 500 when worker.py isn't installed", async () => {

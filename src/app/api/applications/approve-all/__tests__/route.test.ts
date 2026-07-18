@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const {
   mockGetUid, mockFindMany, mockUpdate, mockTransaction,
   mockRunFindFirst, mockRunCreate, mockSpawnWorkerKick,
+  mockUserFindUnique, mockGetQuota,
 } = vi.hoisted(() => ({
   mockGetUid: vi.fn(),
   mockFindMany: vi.fn(),
@@ -11,17 +12,21 @@ const {
   mockRunFindFirst: vi.fn(),
   mockRunCreate: vi.fn(),
   mockSpawnWorkerKick: vi.fn(),
+  mockUserFindUnique: vi.fn(),
+  mockGetQuota: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getUid: mockGetUid }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    user: { findUnique: mockUserFindUnique },
     application: { findMany: mockFindMany, update: mockUpdate },
     agentRun: { findFirst: mockRunFindFirst, create: mockRunCreate },
     $transaction: mockTransaction,
   },
 }));
 vi.mock("@/lib/workerKick", () => ({ spawnWorkerKick: mockSpawnWorkerKick }));
+vi.mock("@/lib/quota", () => ({ getQuota: mockGetQuota }));
 
 import { POST } from "@/app/api/applications/approve-all/route";
 
@@ -30,6 +35,8 @@ beforeEach(() => {
   mockTransaction.mockResolvedValue([]);
   mockRunFindFirst.mockResolvedValue(null);
   mockRunCreate.mockResolvedValue({ id: "run1" });
+  mockUserFindUnique.mockResolvedValue({ plan: "free" });
+  mockGetQuota.mockResolvedValue({ kind: "trial", cap: 5, used: 0, remaining: 5 });
 });
 
 describe("POST /api/applications/approve-all", () => {

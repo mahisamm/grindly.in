@@ -54,7 +54,7 @@ export async function sendMessage(msg: SlackMessage): Promise<{ ok: boolean; stu
 /** The onboarding questions the bot DMs the user right after payment. */
 export function onboardingDM(name: string): string {
   return [
-    `:wave: Hey ${name || "there"} — I'm *Grindly*, your auto-apply agent.`,
+    `:wave: Hey ${name || "there"} — I'm *Grindly*, your application assistant.`,
     ``,
     `Payment confirmed :white_check_mark:. I'll start applying to internships that match your resume.`,
     `Before I do, reply here (or finish setup on the dashboard) so I apply *smart*:`,

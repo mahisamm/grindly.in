@@ -16,7 +16,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/adapters/payment", () => ({
-  PLANS: { plus: { perDay: 10 }, pro: { perDay: 30 } },
+  PLANS: { plus: { perDay: 5 }, pro: { perDay: 15 } },
   verifyWebhookSignature: vi.fn(() => true), // default: valid sig
 }));
 vi.mock("@/lib/audit", () => ({ audit: mockAuditLogCreate }));
@@ -73,7 +73,7 @@ describe("POST /api/pay/webhook", () => {
         expect.objectContaining({ data: expect.objectContaining({ paid: true, plan: "pro" }) })
       );
       expect(mockProfileUpsert).toHaveBeenCalledWith(
-        expect.objectContaining({ update: { maxPerDay: 30 } })
+        expect.objectContaining({ update: { maxPerDay: 15 } })
       );
     });
 

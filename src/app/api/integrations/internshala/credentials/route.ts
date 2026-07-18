@@ -84,14 +84,13 @@ export async function POST(req: Request) {
   // Best-effort local worker kick (no-op in the slim prod web image; the worker
   // fleet drains the queue regardless).
   try {
-    const root = process.cwd();
-    const worker = path.join(root, "agent", "worker.py");
+    const worker = path.join(process.cwd(), "agent", "worker.py");
     if (fs.existsSync(worker)) {
-      const logDir = path.join(root, "data", "logs");
+      const logDir = path.join(process.cwd(), "data", "logs");
       fs.mkdirSync(logDir, { recursive: true });
       const out = openWorkerLog(logDir, `${uid}-connect`);
       const py = process.env.PYTHON_BIN || "python";
-      const child = spawn(py, [worker, "--drain"], { cwd: root, detached: true, stdio: ["ignore", out, out] });
+      const child = spawn(py, [worker, "--drain"], { cwd: process.cwd(), detached: true, stdio: ["ignore", out, out] });
       fs.closeSync(out);
       child.on("error", () => {});
       child.unref();

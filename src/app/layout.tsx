@@ -34,7 +34,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: "Grindly — your AI applies to internships while you sleep",
   description:
-    "Grindly reads your resume, finds matching internships, and auto-applies for you. Daily progress updates via Slack or email.",
+    "Grindly reads your resume, finds matching internships, and prepares supported applications for your approval. Daily updates via Slack or email.",
   verification: {
     google: "-dvm3t95vbpe8XdI2ddbTpQG5lK5pPKgY_X3ZBzLp7Q",
   },

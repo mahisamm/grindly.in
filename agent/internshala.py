@@ -335,7 +335,7 @@ def apply(
             if _listing_closed(page):
                 return "skipped", "listing closed — no longer accepting applications"
             safety.screenshot(page, uid, f"no_apply_btn_{job.get('external_id','')}")
-            return "failed", "apply button not found (selector_missing)"
+            return "skipped", "unsupported Internshala application flow (no direct apply button)"
 
         _human_click(page, btn)
         _read_pause(page, 1000, 2200)
@@ -416,7 +416,7 @@ def apply(
         ])
         if not submit:
             safety.screenshot(page, uid, f"no_submit_btn_{job.get('external_id','')}")
-            return "failed", "submit button not found (selector_missing)"
+            return "skipped", "complex Internshala application requires manual completion"
 
         _human_click(page, submit)
         page.wait_for_timeout(random.randint(2000, 3500))

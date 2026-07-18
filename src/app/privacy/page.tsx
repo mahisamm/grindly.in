@@ -28,7 +28,7 @@ export default function PrivacyPage() {
         <h2 className="mb-3 text-base font-semibold text-ink">2. How we use your data</h2>
         <ul className="list-disc space-y-1 pl-5 text-sm">
           <li>To match your resume to relevant internship listings</li>
-          <li>To submit job applications on your behalf (only when you enable auto-apply)</li>
+          <li>To prepare applications and submit them only after your approval</li>
           <li>To generate tailored cover letters using AI language models</li>
           <li>To send you progress reports via Slack or notification channels you configure</li>
         </ul>
@@ -39,8 +39,7 @@ export default function PrivacyPage() {
         <ul className="list-disc space-y-1 pl-5 text-sm">
           <li><strong>Google OAuth</strong> — used for sign-in only; we receive your name and email</li>
           <li><strong>AI providers (Groq, Cerebras, Mistral, Gemini)</strong> — resume and cover letter text is sent to generate AI responses; no personally identifying data beyond job context is included</li>
-          <li><strong>Internshala</strong> — the currently available auto-apply integration uses your encrypted credentials and resume in an automated browser</li>
-          <li>LinkedIn, Naukri, Unstop, and Indeed integrations are planned but are not currently available to users</li>
+          <li><strong>LinkedIn, Internshala, Naukri, Unstop, and Indeed</strong> — integrations use the browser session created when you log in yourself; Grindly does not ask for or store your platform password</li>
           <li>We do not sell your data to third parties</li>
         </ul>
       </section>
