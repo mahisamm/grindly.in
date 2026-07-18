@@ -1,13 +1,20 @@
+import Link from "next/link";
+import { Logo } from "@/components/Brand";
+
 export const metadata = { title: "Privacy Policy – Grindly" };
 
 export default function PrivacyPage() {
   return (
-    <main className="mx-auto max-w-3xl px-6 py-16 font-mono text-[#c9cdd4]">
-      <h1 className="mb-2 text-2xl font-bold text-[#e6e8eb]">Privacy Policy</h1>
+    <main className="mx-auto max-w-3xl px-6 py-12 font-mono text-ink">
+      <nav className="mb-10 flex items-center justify-between font-sans" aria-label="Legal page navigation">
+        <Link href="/" aria-label="Grindly home"><Logo size={30} /></Link>
+        <Link href="/" className="text-sm font-semibold text-brand hover:underline">Back to home</Link>
+      </nav>
+      <h1 className="mb-2 text-2xl font-bold text-ink">Privacy Policy</h1>
       <p className="mb-10 text-sm text-[#5a606b]">Last updated: June 2026</p>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-[#e6e8eb]">1. What we collect</h2>
+        <h2 className="mb-3 text-base font-semibold text-ink">1. What we collect</h2>
         <ul className="list-disc space-y-1 pl-5 text-sm">
           <li>Name and email address (via Google Sign-In)</li>
           <li>Resume content (uploaded or pasted by you)</li>
@@ -18,7 +25,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-[#e6e8eb]">2. How we use your data</h2>
+        <h2 className="mb-3 text-base font-semibold text-ink">2. How we use your data</h2>
         <ul className="list-disc space-y-1 pl-5 text-sm">
           <li>To match your resume to relevant internship listings</li>
           <li>To submit job applications on your behalf (only when you enable auto-apply)</li>
@@ -28,7 +35,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-[#e6e8eb]">3. Third-party services</h2>
+        <h2 className="mb-3 text-base font-semibold text-ink">3. Third-party services</h2>
         <ul className="list-disc space-y-1 pl-5 text-sm">
           <li><strong>Google OAuth</strong> — used for sign-in only; we receive your name and email</li>
           <li><strong>AI providers (Groq, Cerebras, Mistral, Gemini)</strong> — resume and cover letter text is sent to generate AI responses; no personally identifying data beyond job context is included</li>
@@ -38,7 +45,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-[#e6e8eb]">4. Data storage and security</h2>
+        <h2 className="mb-3 text-base font-semibold text-ink">4. Data storage and security</h2>
         <ul className="list-disc space-y-1 pl-5 text-sm">
           <li>All data is stored in a PostgreSQL database on a private server</li>
           <li>Platform credentials are encrypted at rest with AES-256-GCM</li>
@@ -48,7 +55,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-[#e6e8eb]">5. Your rights</h2>
+        <h2 className="mb-3 text-base font-semibold text-ink">5. Your rights</h2>
         <ul className="list-disc space-y-1 pl-5 text-sm">
           <li>You can delete your account and all associated data at any time from the dashboard</li>
           <li>You can revoke platform connections at any time from the Integrations tab</li>
@@ -58,7 +65,7 @@ export default function PrivacyPage() {
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-[#e6e8eb]">6. Contact</h2>
+        <h2 className="mb-3 text-base font-semibold text-ink">6. Contact</h2>
         <p className="text-sm">
           For privacy questions or data deletion requests, email:{" "}
           <a href="mailto:mahendharsammeta21@gmail.com" className="text-[#6c8cf4] hover:underline">
