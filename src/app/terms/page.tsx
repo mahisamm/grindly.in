@@ -90,6 +90,10 @@ export default function TermsPage() {
           </a>
         </p>
       </section>
+      <footer className="mt-12 flex flex-wrap gap-5 border-t border-border pt-6 font-sans text-sm">
+        <Link href="/privacy" className="font-semibold text-brand hover:underline">Privacy Policy</Link>
+        <Link href="/login" className="font-semibold text-brand hover:underline">Sign in</Link>
+      </footer>
     </main>
   );
 }

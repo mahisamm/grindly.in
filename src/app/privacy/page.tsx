@@ -74,6 +74,10 @@ export default function PrivacyPage() {
           </a>
         </p>
       </section>
+      <footer className="mt-12 flex flex-wrap gap-5 border-t border-border pt-6 font-sans text-sm">
+        <Link href="/terms" className="font-semibold text-brand hover:underline">Terms of Service</Link>
+        <Link href="/login" className="font-semibold text-brand hover:underline">Sign in</Link>
+      </footer>
     </main>
   );
 }
