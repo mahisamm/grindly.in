@@ -9,6 +9,48 @@ import { PLANS, type Plan } from "@/lib/adapters/payment";
 
 type Form = Record<string, unknown>;
 
+type RazorpayProof = {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+};
+
+type RazorpayOptions = {
+  key: string;
+  amount: number;
+  currency: string;
+  name: string;
+  description: string;
+  order_id: string;
+  handler: (proof: RazorpayProof) => void;
+  theme: { color: string };
+  modal: { ondismiss: () => void };
+};
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: RazorpayOptions) => {
+      open: () => void;
+      on: (event: string, callback: () => void) => void;
+    };
+  }
+}
+
+function loadRazorpayCheckout(): Promise<void> {
+  if (window.Razorpay) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+    const script = existing ?? document.createElement("script");
+    script.addEventListener("load", () => resolve(), { once: true });
+    script.addEventListener("error", () => reject(new Error("Razorpay Checkout failed to load")), { once: true });
+    if (!existing) {
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.async = true;
+      document.head.appendChild(script);
+    }
+  });
+}
+
 const STEPS = ["Resume", "Profile questions", "Notifications", "Activate"];
 
 export default function OnboardingPage() {
@@ -157,21 +199,63 @@ export default function OnboardingPage() {
       body: JSON.stringify({ autoApply: Boolean(form.autoApply ?? true) }),
     }).catch(() => {});
 
-    // Free beta: no checkout modal yet, so this activates the plan directly.
-    // The server decides whether that's allowed (stub mode = no RAZORPAY_KEY_ID);
-    // it does not take our word for it. Once Razorpay keys are set this call
-    // starts failing 400 by design — build the checkout modal, call /api/pay to
-    // create an order, and pass the real payment proof through here.
-    const r = await fetch("/api/pay/confirm", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan }),
-    });
-    if (r.ok) {
+    const confirmPayment = async (proof?: RazorpayProof) => {
+      const response = await fetch("/api/pay/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan, ...proof }),
+      });
+      if (!response.ok) throw new Error("Payment confirmation failed");
       window.location.href = "/dashboard";
-    } else {
+    };
+
+    try {
+      const orderResponse = await fetch("/api/pay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan }),
+      });
+      if (!orderResponse.ok) throw new Error("Order creation failed");
+      const order = await orderResponse.json() as
+        | { stub: true }
+        | { stub: false; orderId: string; keyId: string; amount: number; currency: string };
+
+      if (order.stub) {
+        await confirmPayment();
+        return;
+      }
+
+      await loadRazorpayCheckout();
+      if (!window.Razorpay) throw new Error("Razorpay Checkout unavailable");
+      const checkout = new window.Razorpay({
+        key: order.keyId,
+        amount: order.amount,
+        currency: order.currency,
+        name: "Grindly",
+        description: `${PLANS[plan].name} plan`,
+        order_id: order.orderId,
+        handler: (proof) => {
+          void confirmPayment(proof).catch(() => {
+            setBusy(false);
+            setMsg("Payment was received but confirmation failed. Contact support before paying again.");
+          });
+        },
+        theme: { color: "#2a28f0" },
+        modal: {
+          ondismiss: () => {
+            setBusy(false);
+            setMsg("Checkout closed. Your plan was not activated.");
+          },
+        },
+      });
+      checkout.on("payment.failed", () => {
+        setBusy(false);
+        setMsg("Payment failed. Check your payment details and try again.");
+      });
+      checkout.open();
+    } catch {
       setBusy(false);
-      setMsg("Could not activate. Try again.");
+      setMsg("Could not start checkout. Please try again.");
     }
   }
 
