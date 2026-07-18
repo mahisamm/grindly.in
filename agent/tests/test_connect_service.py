@@ -6,6 +6,7 @@ next_pending_connect_request() keeps re-selecting the same dead row forever
 and no other user's connect request is ever served.
 """
 import connect_service
+import threading
 
 
 class _FakeProc:
@@ -94,3 +95,25 @@ def test_token_is_issued_only_after_vnc_processes_start(monkeypatch):
 
 def _last_index(seq, val):
     return len(seq) - 1 - seq[::-1].index(val)
+
+
+def test_concurrent_token_cleanup_preserves_other_live_session(monkeypatch, tmp_path):
+    token_file = tmp_path / "tokens.txt"
+    monkeypatch.setattr(connect_service, "TOKEN_FILE", str(token_file))
+    connect_service._token_targets.clear()
+    connect_service._session.vnc_port = 5901
+    connect_service._write_token_file("token-one")
+
+    def second_session():
+        connect_service._session.vnc_port = 5902
+        connect_service._write_token_file("token-two")
+        connect_service._write_token_file(None)
+
+    thread = threading.Thread(target=second_session)
+    thread.start()
+    thread.join()
+
+    content = token_file.read_text()
+    assert "token-one: 127.0.0.1:5901" in content
+    assert "token-two" not in content
+    connect_service._write_token_file(None)

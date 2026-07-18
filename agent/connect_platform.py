@@ -102,7 +102,7 @@ def _profile_dir(uid: str, platform: str) -> str:
     return os.path.join(_profile_base(), uid, platform)
 
 
-def connect(uid: str, platform: str, timeout: int = 300) -> bool:
+def connect(uid: str, platform: str, timeout: int = 300, display: str | None = None) -> bool:
     cfg = _PLATFORMS.get(platform)
     if not cfg:
         print(f"[connect] unknown platform: {platform}")
@@ -120,9 +120,13 @@ def connect(uid: str, platform: str, timeout: int = 300) -> bool:
     )
     connected = False
     with sync_playwright() as pw:
+        launch_options = {}
+        if display:
+            launch_options["env"] = dict(os.environ, DISPLAY=display)
         ctx = pw.chromium.launch_persistent_context(
             profile,
             headless=False,
+            **launch_options,
             args=["--disable-blink-features=AutomationControlled"],
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

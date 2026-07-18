@@ -4,6 +4,7 @@ import { getUid } from "@/lib/session";
 import { spawnWorkerKick } from "@/lib/workerKick";
 import { dueNow } from "@/lib/pipeline";
 import { getQuota } from "@/lib/quota";
+import { enqueueAgentRun } from "@/lib/agentRunQueue";
 
 /** Approve TODAY'S matches and enqueue ONE submit-only run to send them. See
  *  api/applications/approve for why the run is needed at all.
@@ -52,7 +53,7 @@ export async function POST() {
   const existing = await prisma.agentRun.findFirst({
     where: { userId: uid, status: { in: ["queued", "running"] } },
   });
-  const run = existing ?? (await prisma.agentRun.create({ data: { userId: uid, mode: "approved" } }));
+  const run = await enqueueAgentRun(uid, "approved", existing);
   spawnWorkerKick(process.cwd(), uid);
 
   return NextResponse.json({ ok: true, approved: matched.length, runId: run.id });

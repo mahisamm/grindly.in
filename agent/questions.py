@@ -199,7 +199,7 @@ def _ai_answers(
         f"Questions:\n{listed}\n\n"
         "Answer each. Return the JSON object only."
     )
-    out = llm_mod.chat_json_ensemble(prompt, system=_SYS, n=1, timeout=75)
+    out = llm_mod.chat_json_ensemble(prompt, system=_SYS, n=3, timeout=75)
     if not isinstance(out, dict):
         return {}
 

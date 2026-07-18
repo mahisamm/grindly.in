@@ -940,9 +940,10 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
         return _snapshot(pdf, edited, True, "tailored (Skills/Hobbies only)")
 
     # 4a. Handle pre-approved applications (auto_apply=False users who manually approved)
+    requeue_after_seconds = 0
     approved_apps = db.get_approved_applications(uid)
     if live and approved_apps:
-        for app_row in approved_apps:
+        for approved_index, app_row in enumerate(approved_apps):
             if remaining <= 0:
                 break
             src = app_row.get("source") or ""
@@ -1014,12 +1015,49 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 remaining -= 1
                 per_src_applied[src] = per_src_applied.get(src, 0) + 1
                 applied_keys.add((job["company"].lower(), job["title"].lower()[:40]))
+                if (
+                    _SPREAD_APPLIES
+                    and remaining > 0
+                    and approved_index + 1 < len(approved_apps)
+                ):
+                    requeue_after_seconds = random.randint(*_SPREAD_GAP_SEC)
+                    log.info(
+                        "spread mode: yielding worker for %ds before next approved apply",
+                        requeue_after_seconds,
+                    )
+                    break
+            elif status == "needs_review" and (
+                _SPREAD_APPLIES
+                and remaining > 0
+                and approved_index + 1 < len(approved_apps)
+            ):
+                remaining -= 1
+                requeue_after_seconds = random.randint(*_SPREAD_GAP_SEC)
+                log.info(
+                    "spread mode: yielding worker for %ds after ambiguous submit",
+                    requeue_after_seconds,
+                )
+                break
             elif status == "failed":
                 # Count approve-queue failures too, so the daily report and the
                 # per-platform fail-rate monitor reflect reality.
                 failed += 1
                 per_src_failed[src] = per_src_failed.get(src, 0) + 1
             time.sleep(random.uniform(*_BASE_PACE_SEC))
+
+    if requeue_after_seconds:
+        for src, mod in source_modules.items():
+            try:
+                mod.close(uid)
+            except Exception:  # noqa: BLE001
+                pass
+        return {
+            "applied": applied,
+            "matched": 0,
+            "failed": failed,
+            "mode": mode,
+            "_requeue_after_seconds": requeue_after_seconds,
+        }
 
     # 4b. Score fresh listings
     scored = []
@@ -1195,9 +1233,12 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             )
             db.add_audit("apply", user_id=uid, target=job.get("url"), detail=f"{src}:applied")
             if _SPREAD_APPLIES and remaining > 0:
-                gap = random.randint(*_SPREAD_GAP_SEC)
-                log.info("spread mode: sleeping %ds before next apply", gap)
-                time.sleep(gap)
+                requeue_after_seconds = random.randint(*_SPREAD_GAP_SEC)
+                log.info(
+                    "spread mode: yielding worker for %ds before next apply",
+                    requeue_after_seconds,
+                )
+                break
         elif status == "login_required":
             db.set_integration_status(uid, src, "needs_login")
             needs_login_srcs.add(src)
@@ -1230,6 +1271,13 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 answers_json=rec.get("answers"),
             )
             db.add_audit("apply_needs_review", user_id=uid, target=job.get("url"), detail=why[:120])
+            if _SPREAD_APPLIES and remaining > 0:
+                requeue_after_seconds = random.randint(*_SPREAD_GAP_SEC)
+                log.info(
+                    "spread mode: yielding worker for %ds after ambiguous submit",
+                    requeue_after_seconds,
+                )
+                break
         else:
             failed += 1
             per_src_failed[src] = per_src_failed.get(src, 0) + 1
@@ -1273,6 +1321,15 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
                 mod.close(uid)
             except Exception:  # noqa: BLE001
                 pass
+
+    if requeue_after_seconds:
+        return {
+            "applied": applied,
+            "matched": matched,
+            "failed": failed,
+            "mode": mode,
+            "_requeue_after_seconds": requeue_after_seconds,
+        }
 
     # urgent: session(s) died mid-run — user must reconnect or the agent stalls
     if needs_login_srcs:

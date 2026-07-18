@@ -147,6 +147,8 @@ services:
       GRINDLY_SPREAD_APPLIES: "1"   # human-pacing: 5-15 min gap between applies
       GROQ_API_KEY: ${GROQ_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
       SENTRY_DSN: ${SENTRY_DSN:-}
       # Report delivery. The worker sends each user's daily report on the channel
       # they chose (profile.report_channel). Without these the email path falls
@@ -221,8 +223,8 @@ services:
 
   # Remote-browser connect service — lets a hosted user (no local machine, no
   # screen) log into a job platform for real by watching/driving a live
-  # browser stream in their dashboard. Single replica: one shared Xvfb
-  # display, one session at a time (see agent/connect_service.py). Only
+  # browser stream in their dashboard. A single service process owns a small
+  # isolated display/port pool (see agent/connect_service.py). Only
   # reachable from inside the compose network — Caddy proxies the public
   # /connect-ws/ path to it; it is never given a host port mapping.
   connect:
@@ -234,12 +236,13 @@ services:
       DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_ENC}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
       GRINDLY_PROFILE_BASE: /app/data/browser_profile
+      GRINDLY_CONNECT_MAX_SESSIONS: "2"
     deploy:
       replicas: 1
       resources:
         limits:
-          memory: 768M
-          cpus: "0.5"
+          memory: 1280M
+          cpus: "1.0"
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f 'connect_service.py' || exit 1"]
       interval: 30s

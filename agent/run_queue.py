@@ -10,6 +10,8 @@ a running job, so two drain workers never double-apply for the same user.
 from __future__ import annotations
 import json
 import logging
+import os
+import threading
 import time
 
 import db
@@ -18,6 +20,9 @@ log = logging.getLogger("grindly.queue")
 
 STALE_LOCK_MS = 30 * 60 * 1000  # a job locked longer than this is presumed crashed
 BACKOFF_BASE_MS = 2 * 60 * 1000  # linear backoff: 2min * attempts already made
+HEARTBEAT_INTERVAL_SECONDS = max(
+    1.0, float(os.environ.get("GRINDLY_QUEUE_HEARTBEAT_SECONDS", "60"))
+)
 
 
 def _ensure_table(c):
@@ -31,6 +36,8 @@ def _ensure_table(c):
             status TEXT NOT NULL DEFAULT 'queued',
             attempts INTEGER NOT NULL DEFAULT 0,
             max_attempts INTEGER NOT NULL DEFAULT 3,
+            active_key TEXT UNIQUE,
+            available_at INTEGER,
             locked_by TEXT,
             locked_at INTEGER,
             error TEXT,
@@ -39,6 +46,15 @@ def _ensure_table(c):
             updated_at INTEGER NOT NULL
         )
     """)
+    columns = {row[1] for row in c.execute("PRAGMA table_info(agent_runs)").fetchall()}
+    if "active_key" not in columns:
+        c.execute("ALTER TABLE agent_runs ADD COLUMN active_key TEXT")
+    if "available_at" not in columns:
+        c.execute("ALTER TABLE agent_runs ADD COLUMN available_at INTEGER")
+    c.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS agent_runs_active_key_key "
+        "ON agent_runs(active_key)"
+    )
 
 
 def enqueue(uid: str, mode: str = "live") -> str:
@@ -46,9 +62,9 @@ def enqueue(uid: str, mode: str = "live") -> str:
     return that one instead of stacking duplicates."""
     with db.conn() as c:
         _ensure_table(c)
+        active_key = f"{uid}:{mode}"
         existing = c.execute(
-            "SELECT id FROM agent_runs WHERE user_id=? AND status IN ('queued','running') LIMIT 1",
-            (uid,),
+            "SELECT id FROM agent_runs WHERE active_key=? LIMIT 1", (active_key,)
         ).fetchone()
         if existing:
             return existing["id"]
@@ -56,10 +72,14 @@ def enqueue(uid: str, mode: str = "live") -> str:
         ts = db.now_db()
         c.execute(
             "INSERT INTO agent_runs (id, user_id, mode, status, attempts, max_attempts, "
-            "created_at, updated_at) VALUES (?,?,?,'queued',0,3,?,?)",
-            (rid, uid, mode, ts, ts),
+            "active_key, created_at, updated_at) VALUES (?,?,?,'queued',0,3,?,?,?) "
+            "ON CONFLICT(active_key) DO NOTHING",
+            (rid, uid, mode, active_key, ts, ts),
         )
-        return rid
+        row = c.execute(
+            "SELECT id FROM agent_runs WHERE active_key=? LIMIT 1", (active_key,)
+        ).fetchone()
+        return row["id"] if row else rid
 
 
 def reclaim_stale(now_ms: int | None = None):
@@ -72,6 +92,33 @@ def reclaim_stale(now_ms: int | None = None):
             "WHERE status='running' AND locked_at IS NOT NULL AND locked_at < ?",
             (db.now_db(), cutoff),
         )
+
+
+def heartbeat(run_id: str, worker_id: str) -> bool:
+    """Renew a running job lease. False means this worker no longer owns it."""
+    with db.conn() as c:
+        _ensure_table(c)
+        cursor = c.execute(
+            "UPDATE agent_runs SET locked_at=?, updated_at=? "
+            "WHERE id=? AND status='running' AND locked_by=?",
+            (db.now_db(), db.now_db(), run_id, worker_id),
+        )
+        return cursor.rowcount == 1
+
+
+def reschedule(run_id: str, worker_id: str, delay_seconds: float) -> bool:
+    """Yield a human-paced job so another user's work can use this worker."""
+    available_at = db.time_from_now_db(max(1, int(delay_seconds * 1000)))
+    with db.conn() as c:
+        _ensure_table(c)
+        cursor = c.execute(
+            "UPDATE agent_runs SET status='queued', available_at=?, locked_by=NULL, "
+            "locked_at=NULL, attempts=CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END, "
+            "updated_at=? "
+            "WHERE id=? AND status='running' AND locked_by=?",
+            (available_at, db.now_db(), run_id, worker_id),
+        )
+        return cursor.rowcount == 1
 
 
 def _backoff_ok(row) -> bool:
@@ -101,6 +148,7 @@ def claim_next(worker_id: str) -> dict | None:
         if db.PG:
             candidates = c.execute(
                 "SELECT * FROM agent_runs WHERE status='queued' "
+                "AND (available_at IS NULL OR available_at <= CURRENT_TIMESTAMP) "
                 "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
                 "ORDER BY created_at ASC LIMIT 20 FOR UPDATE SKIP LOCKED"
             ).fetchall()
@@ -108,8 +156,10 @@ def claim_next(worker_id: str) -> dict | None:
             c.execute("BEGIN IMMEDIATE")
             candidates = c.execute(
                 "SELECT * FROM agent_runs WHERE status='queued' "
+                "AND (available_at IS NULL OR available_at <= ?) "
                 "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
-                "ORDER BY created_at ASC LIMIT 20"
+                "ORDER BY created_at ASC LIMIT 20",
+                (db.now_db(),),
             ).fetchall()
         row = next((r for r in candidates if _backoff_ok(r)), None)
         if not row:
@@ -127,34 +177,49 @@ def claim_next(worker_id: str) -> dict | None:
         return d
 
 
-def mark_done(run_id: str, result: dict):
+def mark_done(run_id: str, worker_id: str, result: dict) -> bool:
     with db.conn() as c:
         _ensure_table(c)
-        c.execute(
-            "UPDATE agent_runs SET status='done', result=?, locked_by=NULL, updated_at=? WHERE id=?",
-            (json.dumps(result), db.now_db(), run_id),
+        cursor = c.execute(
+            "UPDATE agent_runs SET status='done', result=?, active_key=NULL, "
+            "locked_by=NULL, locked_at=NULL, updated_at=? "
+            "WHERE id=? AND status='running' AND locked_by=?",
+            (json.dumps(result), db.now_db(), run_id, worker_id),
         )
+        return cursor.rowcount == 1
 
 
-def mark_failed(run_id: str, error: str):
+def mark_failed(run_id: str, worker_id: str, error: str) -> bool:
     """Requeue with backoff if attempts remain, else mark failed permanently."""
     with db.conn() as c:
         _ensure_table(c)
         row = c.execute(
-            "SELECT attempts, max_attempts FROM agent_runs WHERE id=?", (run_id,)
+            "SELECT attempts, max_attempts FROM agent_runs "
+            "WHERE id=? AND status='running' AND locked_by=?", (run_id, worker_id)
         ).fetchone()
+        if not row:
+            return False
         ts = db.now_db()
         if row and row["attempts"] < row["max_attempts"]:
             c.execute(
                 "UPDATE agent_runs SET status='queued', error=?, locked_by=NULL, "
-                "locked_at=NULL, updated_at=? WHERE id=?",
-                (error[:500], ts, run_id),
+                "locked_at=NULL, updated_at=? WHERE id=? AND locked_by=?",
+                (error[:500], ts, run_id, worker_id),
             )
         else:
             c.execute(
-                "UPDATE agent_runs SET status='failed', error=?, locked_by=NULL, updated_at=? WHERE id=?",
-                (error[:500], ts, run_id),
+                "UPDATE agent_runs SET status='failed', error=?, active_key=NULL, "
+                "locked_by=NULL, locked_at=NULL, updated_at=? WHERE id=? AND locked_by=?",
+                (error[:500], ts, run_id, worker_id),
             )
+        return True
+
+
+def _heartbeat_loop(run_id: str, worker_id: str, stop: threading.Event) -> None:
+    while not stop.wait(HEARTBEAT_INTERVAL_SECONDS):
+        if not heartbeat(run_id, worker_id):
+            log.error("job %s lease was lost by worker %s", run_id, worker_id)
+            return
 
 
 def drain(worker_id: str, run_fn) -> int:
@@ -167,12 +232,31 @@ def drain(worker_id: str, run_fn) -> int:
         if not job:
             break
         processed += 1
+        stop_heartbeat = threading.Event()
+        heartbeat_thread = threading.Thread(
+            target=_heartbeat_loop,
+            args=(job["id"], worker_id, stop_heartbeat),
+            name=f"queue-heartbeat-{job['id']}",
+            daemon=True,
+        )
+        heartbeat_thread.start()
         try:
             result = run_fn(job["user_id"], job["mode"])
-            mark_done(job["id"], result if isinstance(result, dict) else {"result": str(result)})
+            normalized = result if isinstance(result, dict) else {"result": str(result)}
+            delay = normalized.pop("_requeue_after_seconds", 0)
+            completed = (
+                reschedule(job["id"], worker_id, float(delay))
+                if delay and float(delay) > 0
+                else mark_done(job["id"], worker_id, normalized)
+            )
+            if not completed:
+                log.error("job %s completed after its lease was lost; result discarded", job["id"])
         except Exception as e:  # noqa: BLE001
             log.error("job %s failed (attempt %d): %s", job["id"], job["attempts"], e)
-            mark_failed(job["id"], str(e))
+            mark_failed(job["id"], worker_id, str(e))
+        finally:
+            stop_heartbeat.set()
+            heartbeat_thread.join(timeout=1)
     return processed
 
 

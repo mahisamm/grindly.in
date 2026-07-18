@@ -138,6 +138,8 @@ model UserIntegration {
   // authenticated response to the owning user.
   connectToken          String?   @map("connect_token")
   connectTokenExpiresAt DateTime? @map("connect_token_expires_at")
+  connectClaimedBy      String?   @map("connect_claimed_by")
+  connectClaimedAt      DateTime? @map("connect_claimed_at")
 
   @@unique([userId, platform])
   @@map("user_integrations")
@@ -349,6 +351,12 @@ model AgentRun {
   status      String    @default("queued") // queued | running | done | failed | cancelled
   attempts    Int       @default(0)
   maxAttempts Int       @default(3) @map("max_attempts")
+  // Non-null only while queued/running. The unique key is userId:mode, making
+  // concurrent enqueue requests idempotent without dropping a different mode.
+  activeKey   String?   @unique @map("active_key")
+  // Human-paced runs yield the worker until this time instead of sleeping
+  // inside a scarce browser process for 5-15 minutes.
+  availableAt DateTime? @map("available_at")
   lockedBy    String?   @map("locked_by") // worker id holding the row
   lockedAt    DateTime? @map("locked_at")
   error       String?

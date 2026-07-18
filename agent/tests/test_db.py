@@ -311,6 +311,18 @@ def test_next_pending_connect_request_is_fifo_oldest_first(testdb):
     assert pending["platform"] == "naukri"  # set first, so oldest
 
 
+def test_connect_request_claim_cannot_be_taken_by_second_worker(testdb):
+    _insert_user(testdb, "u1")
+    db.set_integration_status("u1", "linkedin", "connecting")
+    first = db.next_pending_connect_request("worker-one")
+    second = db.next_pending_connect_request("worker-two")
+    assert first == {"user_id": "u1", "platform": "linkedin"}
+    assert second is None
+
+    db.release_connect_request("u1", "linkedin", "worker-one")
+    assert db.next_pending_connect_request("worker-two") == first
+
+
 def test_set_and_clear_connect_token_roundtrip(testdb):
     _insert_user(testdb, "u1")
     db.set_integration_status("u1", "linkedin", "connecting")

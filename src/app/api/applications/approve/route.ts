@@ -4,6 +4,7 @@ import { getUid } from "@/lib/session";
 import { spawnWorkerKick } from "@/lib/workerKick";
 import { dueNow } from "@/lib/pipeline";
 import { getQuota } from "@/lib/quota";
+import { enqueueAgentRun } from "@/lib/agentRunQueue";
 
 /**
  * Approve a matched application — and actually send it.
@@ -61,7 +62,7 @@ export async function POST(req: Request) {
   const existing = await prisma.agentRun.findFirst({
     where: { userId: uid, status: { in: ["queued", "running"] } },
   });
-  const run = existing ?? (await prisma.agentRun.create({ data: { userId: uid, mode: "approved" } }));
+  const run = await enqueueAgentRun(uid, "approved", existing);
 
   // Best-effort local kick; in prod the worker fleet drains the queue anyway.
   spawnWorkerKick(process.cwd(), uid);

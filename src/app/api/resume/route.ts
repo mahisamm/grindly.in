@@ -4,6 +4,7 @@ import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { spawnWorkerKick } from "@/lib/workerKick";
+import { enqueueAgentRun } from "@/lib/agentRunQueue";
 
 const RESUME_DIR = path.join(process.cwd(), "data", "resumes");
 // The .tex lives in its OWN directory, not beside the PDF. agent/resume_parse.py's
@@ -108,7 +109,7 @@ export async function POST(req: Request) {
         },
         create: { userId: uid, resumeTexName: file.name, resumeTexStatus: "checking" },
       });
-      await prisma.agentRun.create({ data: { userId: uid, mode: "latex_check" } });
+      await enqueueAgentRun(uid, "latex_check");
     } catch (e) {
       console.error("[resume] db write failed:", e);
       return NextResponse.json({ error: "Could not save your LaTeX source — please try again." }, { status: 500 });
@@ -157,7 +158,7 @@ export async function POST(req: Request) {
     // Queue a resume-analysis job; the worker fleet drains it, so the web app
     // needs no Python. The spawn below is a best-effort local "kick" so a dev box
     // without a running worker analyzes immediately (no-ops in the slim prod image).
-    await prisma.agentRun.create({ data: { userId: uid, mode: "analyze" } });
+    await enqueueAgentRun(uid, "analyze");
   } catch (e) {
     console.error("[resume] db write failed:", e);
     return NextResponse.json({ error: "Could not save your resume — please try again." }, { status: 500 });

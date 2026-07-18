@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { spawnWorkerKick } from "@/lib/workerKick";
 import { getQuota } from "@/lib/quota";
+import { enqueueAgentRun } from "@/lib/agentRunQueue";
 
 /**
  * Triggers one agent run for the current user (resume parse → match → apply →
@@ -72,12 +73,12 @@ export async function POST(req: Request) {
   // web image) it no-ops and the worker drains the queue.
   let run;
   if (analyzeOnly) {
-    run = await prisma.agentRun.create({ data: { userId: uid, mode: "analyze" } });
+    run = await enqueueAgentRun(uid, "analyze");
   } else {
     const existing = await prisma.agentRun.findFirst({
       where: { userId: uid, status: { in: ["queued", "running"] } },
     });
-    run = existing ?? (await prisma.agentRun.create({ data: { userId: uid, mode: runMode } }));
+    run = await enqueueAgentRun(uid, runMode, existing);
   }
 
   spawnWorkerKick(root, uid);

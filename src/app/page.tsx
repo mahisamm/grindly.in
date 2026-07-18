@@ -41,7 +41,7 @@ const FEATURES = [
   ["Real applications", "Opens supported listings, fills the form, and prepares it for your approval — not just a list of links.", Doc],
   ["You approve every submission", "The agent submits only after you approve the prepared application. Pause anytime from the dashboard.", Clock],
   ["Daily reports your way", "Get progress reports via Slack DM or email — whichever you prefer. Connect Gmail to auto-detect interview calls.", Slack],
-  ["Private by design", "Resume analysis may use configured AI providers, with a local model as fallback. Your data is never sold.", Sparkle],
+  ["Private by design", "Resume analysis uses only the AI providers configured for this service and degrades safely if they are unavailable. Your data is never sold.", Sparkle],
 ] as const;
 
 export default function Home() {

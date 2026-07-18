@@ -1,44 +1,17 @@
-"""Remote-browser connect service — lets a real hosted user (no local machine,
-no screen) log into a job platform by watching/driving a live browser stream
-in their dashboard, instead of connect_platform.py's headed-browser flow which
-only works when someone is physically sitting at the machine running it.
+"""Concurrent remote-browser login service for hosted Grindly users.
 
-Why this exists: the hosted worker container has no display. Grindly must
-never see or store the user's actual platform password (that's the whole
-point of this over an encrypted-credential-storage design) — so the only way
-to let a hosted user log in themselves is to show them a real browser and let
-them type into it, the same as the local dev flow, just over the network.
-
-Flow:
-  1. src/app/api/integrations/connect/route.ts sets
-     user_integrations.status='connecting' when a user clicks Connect.
-  2. This service polls for that (db.next_pending_connect_request), one
-     session at a time — a single shared Xvfb display keeps this simple and
-     correct; upgrading to concurrent sessions later means allocating a
-     display/port per session instead of the fixed ones below.
-  3. For the claimed request: start an isolated Xvfb display + x11vnc bound
-     to a localhost-only VNC port, generate a random single-use token,
-     register it with websockify (see _write_token_file), save the token on
-     the user_integrations row so the dashboard can hand it to the noVNC
-     viewer, then run connect_platform.connect() exactly as the local flow
-     does — same persistent profile dir, same login-detection predicate.
-  4. On success or timeout: clear the token, tear down x11vnc + Xvfb.
-
-Security model: the token is the *only* thing gating access to a live,
-mid-login browser session — treat it like a password. High-entropy
-(32 random bytes via secrets.token_urlsafe), single active session at a
-time, cleared the instant the session ends, never logged. websockify and
-this service only ever bind to localhost; Caddy is the sole public-facing
-edge and must be the only thing route to the bridge port from outside the
-container network.
-
-Usage: python connect_service.py
+Each session gets its own X display, VNC port, browser profile, and short-lived
+token. Database claims and a shared token map let multiple users connect without
+seeing each other's browser or blocking behind one five-minute login window.
 """
 from __future__ import annotations
+
+import concurrent.futures
 import os
 import secrets
 import subprocess
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -48,8 +21,8 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
-import db
 import connect_platform
+import db
 
 log_prefix = "[connect_service]"
 
@@ -58,16 +31,36 @@ VNC_PORT = 5901
 TOKEN_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "vnc-tokens.txt")
 SESSION_TIMEOUT_SEC = 300
 POLL_INTERVAL_SEC = 3
+MAX_SESSIONS = max(1, int(os.environ.get("GRINDLY_CONNECT_MAX_SESSIONS", "2")))
+
+_token_lock = threading.Lock()
+_token_targets: dict[str, int] = {}
+_session = threading.local()
+
+
+def _flush_token_file() -> None:
+    os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
+    temporary = f"{TOKEN_FILE}.tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
+        for token, port in _token_targets.items():
+            handle.write(f"{token}: 127.0.0.1:{port}\n")
+    os.replace(temporary, TOKEN_FILE)
 
 
 def _write_token_file(token: str | None) -> None:
-    """websockify's TokenFile plugin re-reads this file per connection
-    attempt, so rewriting it is enough to rotate/clear access — no process
-    restart needed. Empty file = no token resolves = nothing reachable."""
-    os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
-    with open(TOKEN_FILE, "w") as f:
+    """Add/remove this thread's token while preserving every other session."""
+    with _token_lock:
         if token:
-            f.write(f"{token}: 127.0.0.1:{VNC_PORT}\n")
+            _token_targets[token] = int(getattr(_session, "vnc_port", VNC_PORT))
+            _session.token = token
+        else:
+            current = getattr(_session, "token", None)
+            if current:
+                _token_targets.pop(current, None)
+                _session.token = None
+            else:
+                _token_targets.clear()
+        _flush_token_file()
 
 
 def _terminate(proc: subprocess.Popen | None) -> None:
@@ -83,64 +76,112 @@ def _terminate(proc: subprocess.Popen | None) -> None:
             pass
 
 
-def _run_session(uid: str, platform: str) -> None:
+def _run_session(
+    uid: str,
+    platform: str,
+    slot: int = 0,
+    worker_id: str | None = None,
+) -> None:
+    display_num = DISPLAY_NUM + slot
+    display = f":{display_num}"
+    vnc_port = VNC_PORT + slot
+    _session.vnc_port = vnc_port
+    _session.token = None
     xvfb = x11vnc = None
     connected = False
     try:
-        # Bring the display + VNC server up BEFORE issuing the token. If the
-        # token were published while port 5901 wasn't listening yet, a fast
-        # frontend poll could grab it and fail the first noVNC connect.
-        xvfb = subprocess.Popen([
-            "Xvfb", f":{DISPLAY_NUM}", "-screen", "0", "1280x860x24",
-            "-ac", "+extension", "GLX", "+render", "-noreset",
-        ])
-        time.sleep(1)  # let Xvfb bind the display before anything uses it
-
+        xvfb = subprocess.Popen(
+            [
+                "Xvfb",
+                display,
+                "-screen",
+                "0",
+                "1280x860x24",
+                "-ac",
+                "+extension",
+                "GLX",
+                "+render",
+                "-noreset",
+            ]
+        )
+        time.sleep(1)
         x11vnc = subprocess.Popen(
             [
-                "x11vnc", "-display", f":{DISPLAY_NUM}", "-rfbport", str(VNC_PORT),
-                "-localhost", "-forever", "-shared", "-nopw", "-quiet",
+                "x11vnc",
+                "-display",
+                display,
+                "-rfbport",
+                str(vnc_port),
+                "-localhost",
+                "-forever",
+                "-shared",
+                "-nopw",
+                "-quiet",
             ],
-            env=dict(os.environ, DISPLAY=f":{DISPLAY_NUM}"),
+            env=dict(os.environ, DISPLAY=display),
         )
         time.sleep(1)
 
-        # VNC is up — now it's safe to publish the token.
         token = secrets.token_urlsafe(32)
         expires_at = db.time_from_now_db(SESSION_TIMEOUT_SEC * 1000)
         db.set_connect_token(uid, platform, token, expires_at)
         _write_token_file(token)
-
-        os.environ["DISPLAY"] = f":{DISPLAY_NUM}"
-        print(f"{log_prefix} session started: {uid} / {platform} (token issued, expires in {SESSION_TIMEOUT_SEC}s)")
-        connected = connect_platform.connect(uid, platform, timeout=SESSION_TIMEOUT_SEC)
-    except Exception as e:  # noqa: BLE001
-        print(f"{log_prefix} session error for {uid}/{platform}: {e}")
+        print(
+            f"{log_prefix} session started: {uid} / {platform} "
+            f"(slot={slot}, token expires in {SESSION_TIMEOUT_SEC}s)"
+        )
+        connected = connect_platform.connect(
+            uid, platform, timeout=SESSION_TIMEOUT_SEC, display=display
+        )
+    except Exception as error:  # noqa: BLE001
+        print(f"{log_prefix} session error for {uid}/{platform}: {error}")
     finally:
         db.clear_connect_token(uid, platform)
         _write_token_file(None)
         _terminate(x11vnc)
         _terminate(xvfb)
-        # Terminal state is mandatory. connect_platform.connect() only sets
-        # 'connected' on success and leaves the row untouched on
-        # timeout/abandon — without this, a request the user walked away from
-        # stays 'connecting' forever, and next_pending_connect_request() keeps
-        # re-selecting that same dead row, blocking every other user's connect
-        # request permanently (head-of-line deadlock).
         if not connected:
             db.set_integration_status(uid, platform, "disconnected")
+        if worker_id is not None:
+            db.release_connect_request(uid, platform, worker_id)
         print(f"{log_prefix} session ended: {uid} / {platform} (connected={connected})")
 
 
 def serve() -> None:
-    print(f"{log_prefix} polling for connect requests every {POLL_INTERVAL_SEC}s...")
-    _write_token_file(None)  # nothing should be reachable until a session actually starts
-    while True:
-        pending = db.next_pending_connect_request()
-        if pending:
-            _run_session(pending["user_id"], pending["platform"])
-        else:
-            time.sleep(POLL_INTERVAL_SEC)
+    print(
+        f"{log_prefix} polling every {POLL_INTERVAL_SEC}s "
+        f"with {MAX_SESSIONS} concurrent session slot(s)..."
+    )
+    _write_token_file(None)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_SESSIONS) as executor:
+        active: dict[int, concurrent.futures.Future] = {}
+        while True:
+            for slot, future in list(active.items()):
+                if future.done():
+                    try:
+                        future.result()
+                    except Exception as error:  # noqa: BLE001
+                        print(f"{log_prefix} slot {slot} failed: {error}")
+                    del active[slot]
+
+            claimed = False
+            for slot in range(MAX_SESSIONS):
+                if slot in active:
+                    continue
+                worker_id = f"connect-{os.getpid()}-{slot}"
+                pending = db.next_pending_connect_request(worker_id)
+                if not pending:
+                    break
+                active[slot] = executor.submit(
+                    _run_session,
+                    pending["user_id"],
+                    pending["platform"],
+                    slot,
+                    worker_id,
+                )
+                claimed = True
+            if not claimed:
+                time.sleep(POLL_INTERVAL_SEC)
 
 
 if __name__ == "__main__":

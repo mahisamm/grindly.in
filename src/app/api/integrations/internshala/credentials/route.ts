@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { encryptSecret } from "@/lib/crypto";
 import { internshalaLoginEnabled } from "@/lib/featureFlags";
+import { enqueueAgentRun } from "@/lib/agentRunQueue";
 
 const PLATFORM = "internshala";
 
@@ -73,9 +74,7 @@ export async function POST(req: Request) {
   const existing = await prisma.agentRun.findFirst({
     where: { userId: uid, mode: "connect_internshala", status: { in: ["queued", "running"] } },
   });
-  const run = existing ?? (await prisma.agentRun.create({
-    data: { userId: uid, mode: "connect_internshala" },
-  }));
+  const run = await enqueueAgentRun(uid, "connect_internshala", existing);
 
   return NextResponse.json({ ok: true, runId: run.id });
 }

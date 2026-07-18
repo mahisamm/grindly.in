@@ -39,7 +39,8 @@ export default function PrivacyPage() {
         <ul className="list-disc space-y-1 pl-5 text-sm">
           <li><strong>Google OAuth</strong> — used for sign-in only; we receive your name and email</li>
           <li><strong>AI providers (Groq, Cerebras, Mistral, Gemini)</strong> — resume and cover letter text is sent to generate AI responses; no personally identifying data beyond job context is included</li>
-          <li><strong>LinkedIn, Internshala, Naukri, Unstop, and Indeed</strong> — integrations use the browser session created when you log in yourself; Grindly does not ask for or store your platform password</li>
+          <li><strong>LinkedIn, Naukri, Unstop, and Indeed</strong> — integrations use the browser session created when you log in yourself; Grindly does not receive or store those platform passwords</li>
+          <li><strong>Internshala</strong> — if you choose the hosted credential-login flow, the credential is encrypted with AES-256-GCM before storage and used only to establish your browser session; plaintext is never stored</li>
           <li>We do not sell your data to third parties</li>
         </ul>
       </section>

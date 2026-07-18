@@ -322,6 +322,8 @@ def _ensure_integrations_table(c):
             last_error TEXT,
             connect_token TEXT,
             connect_token_expires_at INTEGER,
+            connect_claimed_by TEXT,
+            connect_claimed_at INTEGER,
             updated_at INTEGER NOT NULL,
             UNIQUE(user_id, platform)
         )
@@ -338,6 +340,10 @@ def _ensure_integrations_table(c):
         c.execute("ALTER TABLE user_integrations ADD COLUMN connect_token TEXT")
     if "connect_token_expires_at" not in cols:
         c.execute("ALTER TABLE user_integrations ADD COLUMN connect_token_expires_at INTEGER")
+    if "connect_claimed_by" not in cols:
+        c.execute("ALTER TABLE user_integrations ADD COLUMN connect_claimed_by TEXT")
+    if "connect_claimed_at" not in cols:
+        c.execute("ALTER TABLE user_integrations ADD COLUMN connect_claimed_at INTEGER")
 
 
 def _ensure_credentials_table(c):
@@ -409,7 +415,8 @@ def set_integration_status(uid: str, platform: str, status: str, error: str | No
         if existing:
             c.execute(
                 "UPDATE user_integrations SET status=?, connected_at=?, "
-                "otp_required=?, otp_code=NULL, last_error=?, updated_at=? "
+                "otp_required=?, otp_code=NULL, last_error=?, connect_claimed_by=NULL, "
+                "connect_claimed_at=NULL, updated_at=? "
                 "WHERE user_id=? AND platform=?",
                 (status, connected_at, False, err, ts, uid, platform),
             )
@@ -471,17 +478,46 @@ def get_platform_credential(uid: str, platform: str) -> str | None:
         return row["ciphertext"] if row else None
 
 
-def next_pending_connect_request() -> dict | None:
-    """Oldest still-pending 'connecting' request — connect_service.py handles
-    one remote-browser session at a time (single shared Xvfb display), so
-    this is a FIFO queue, not a fan-out."""
+def next_pending_connect_request(worker_id: str = "connect-service") -> dict | None:
+    """Atomically claim the oldest pending or abandoned connect request."""
+    stale_before = time_ago_db(10 * 60 * 1000)
     with conn() as c:
         _ensure_integrations_table(c)
-        row = c.execute(
-            "SELECT user_id, platform FROM user_integrations "
-            "WHERE status='connecting' ORDER BY updated_at ASC LIMIT 1"
-        ).fetchone()
-    return dict(row) if row else None
+        if PG:
+            row = c.execute(
+                "SELECT user_id, platform FROM user_integrations "
+                "WHERE status='connecting' "
+                "AND (connect_claimed_at IS NULL OR connect_claimed_at < ?) "
+                "ORDER BY updated_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
+                (stale_before,),
+            ).fetchone()
+        else:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                "SELECT user_id, platform FROM user_integrations "
+                "WHERE status='connecting' "
+                "AND (connect_claimed_at IS NULL OR connect_claimed_at < ?) "
+                "ORDER BY updated_at ASC LIMIT 1",
+                (stale_before,),
+            ).fetchone()
+        if not row:
+            return None
+        c.execute(
+            "UPDATE user_integrations SET connect_claimed_by=?, connect_claimed_at=? "
+            "WHERE user_id=? AND platform=?",
+            (worker_id, now_db(), row["user_id"], row["platform"]),
+        )
+        return dict(row)
+
+
+def release_connect_request(uid: str, platform: str, worker_id: str) -> None:
+    with conn() as c:
+        _ensure_integrations_table(c)
+        c.execute(
+            "UPDATE user_integrations SET connect_claimed_by=NULL, connect_claimed_at=NULL "
+            "WHERE user_id=? AND platform=? AND connect_claimed_by=?",
+            (uid, platform, worker_id),
+        )
 
 
 def set_connect_token(uid: str, platform: str, token: str, expires_at_ms: int):

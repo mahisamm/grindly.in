@@ -75,10 +75,16 @@ def test_enqueue_idempotent_returns_existing_id():
 def test_enqueue_allows_new_run_after_previous_done():
     rid1 = run_queue.enqueue("user_1")
     c = _get_conn()
-    c.execute("UPDATE agent_runs SET status='done' WHERE id=?", (rid1,))
+    c.execute("UPDATE agent_runs SET status='done', active_key=NULL WHERE id=?", (rid1,))
     c.commit()
     rid2 = run_queue.enqueue("user_1")
     assert rid2 != rid1
+
+
+def test_enqueue_allows_different_modes_for_same_user():
+    live = run_queue.enqueue("user_1", "live")
+    analyze = run_queue.enqueue("user_1", "analyze")
+    assert live != analyze
 
 
 # ─── claim_next ───────────────────────────────────────────────────────────
@@ -124,7 +130,7 @@ def test_two_workers_never_claim_same_job():
 def test_mark_done_sets_status():
     rid = run_queue.enqueue("user_1")
     run_queue.claim_next("w1")
-    run_queue.mark_done(rid, {"applied": 3})
+    assert run_queue.mark_done(rid, "w1", {"applied": 3})
     c = _get_conn()
     row = c.execute("SELECT status, result FROM agent_runs WHERE id=?", (rid,)).fetchone()
     assert row["status"] == "done"
@@ -134,7 +140,7 @@ def test_mark_done_sets_status():
 def test_mark_failed_requeues_when_attempts_remain():
     rid = run_queue.enqueue("user_1")
     run_queue.claim_next("w1")   # attempts=1, max=3
-    run_queue.mark_failed(rid, "transient error")
+    assert run_queue.mark_failed(rid, "w1", "transient error")
     c = _get_conn()
     row = c.execute("SELECT status FROM agent_runs WHERE id=?", (rid,)).fetchone()
     assert row["status"] == "queued"   # requeued for retry
@@ -142,15 +148,16 @@ def test_mark_failed_requeues_when_attempts_remain():
 
 def test_mark_failed_permanently_after_max_attempts():
     rid = run_queue.enqueue("user_1")
-    for _ in range(3):
+    for attempt in range(3):
         run_queue.claim_next("w1")
         c = _get_conn()
         # Reset to queued and clear updated_at so the next claim_next() isn't
         # blocked by the post-failure backoff window — that's covered
         # separately below, not what this test is about.
-        c.execute("UPDATE agent_runs SET status='queued', updated_at=0 WHERE id=?", (rid,))
-        c.commit()
-    run_queue.mark_failed(rid, "persistent error")
+        if attempt < 2:
+            c.execute("UPDATE agent_runs SET status='queued', updated_at=0 WHERE id=?", (rid,))
+            c.commit()
+    assert run_queue.mark_failed(rid, "w1", "persistent error")
     c = _get_conn()
     row = c.execute("SELECT status FROM agent_runs WHERE id=?", (rid,)).fetchone()
     assert row["status"] == "failed"
@@ -161,7 +168,7 @@ def test_mark_failed_permanently_after_max_attempts():
 def test_claim_next_skips_job_within_backoff_window():
     rid = run_queue.enqueue("user_1")
     run_queue.claim_next("w1")                      # attempts=1
-    run_queue.mark_failed(rid, "transient error")    # requeued, updated_at=now
+    run_queue.mark_failed(rid, "w1", "transient error")    # requeued, updated_at=now
     job = run_queue.claim_next("w2")
     assert job is None   # 2min * 1 attempt backoff hasn't elapsed yet
 
@@ -169,7 +176,7 @@ def test_claim_next_skips_job_within_backoff_window():
 def test_claim_next_reclaims_job_after_backoff_elapses():
     rid = run_queue.enqueue("user_1")
     run_queue.claim_next("w1")                      # attempts=1
-    run_queue.mark_failed(rid, "transient error")
+    run_queue.mark_failed(rid, "w1", "transient error")
     c = _get_conn()
     c.execute(
         "UPDATE agent_runs SET updated_at=? WHERE id=?",
@@ -203,3 +210,85 @@ def test_reclaim_stale_requeues_crashed_jobs():
     row = c.execute("SELECT status, locked_by FROM agent_runs WHERE id=?", (rid,)).fetchone()
     assert row["status"] == "queued"
     assert row["locked_by"] is None
+
+
+def test_heartbeat_renews_only_the_owners_lease():
+    rid = run_queue.enqueue("user_1")
+    run_queue.claim_next("w1")
+    c = _get_conn()
+    old = _db_module.now_db() - run_queue.STALE_LOCK_MS - 1000
+    c.execute("UPDATE agent_runs SET locked_at=? WHERE id=?", (old, rid))
+    c.commit()
+
+    assert run_queue.heartbeat(rid, "other-worker") is False
+    assert run_queue.heartbeat(rid, "w1") is True
+    row = c.execute("SELECT locked_at FROM agent_runs WHERE id=?", (rid,)).fetchone()
+    assert row["locked_at"] > old
+
+
+def test_stale_worker_cannot_finish_or_fail_a_reclaimed_job():
+    rid = run_queue.enqueue("user_1")
+    run_queue.claim_next("old-worker")
+    c = _get_conn()
+    stale = _db_module.now_db() - run_queue.STALE_LOCK_MS - 1000
+    c.execute("UPDATE agent_runs SET locked_at=? WHERE id=?", (stale, rid))
+    c.commit()
+    run_queue.reclaim_stale()
+    c.execute("UPDATE agent_runs SET updated_at=0 WHERE id=?", (rid,))
+    c.commit()
+    run_queue.claim_next("new-worker")
+
+    assert run_queue.mark_done(rid, "old-worker", {"applied": 99}) is False
+    assert run_queue.mark_failed(rid, "old-worker", "late error") is False
+    row = c.execute("SELECT status, locked_by FROM agent_runs WHERE id=?", (rid,)).fetchone()
+    assert row["status"] == "running"
+    assert row["locked_by"] == "new-worker"
+
+
+def test_drain_heartbeats_during_long_job(monkeypatch):
+    rid = run_queue.enqueue("user_1")
+    monkeypatch.setattr(run_queue, "HEARTBEAT_INTERVAL_SECONDS", 0.01)
+
+    def slow_job(_uid, _mode):
+        time.sleep(0.04)
+        return {"applied": 1}
+
+    assert run_queue.drain("worker", slow_job) == 1
+    row = _get_conn().execute(
+        "SELECT status, active_key FROM agent_runs WHERE id=?", (rid,)
+    ).fetchone()
+    assert row["status"] == "done"
+    assert row["active_key"] is None
+
+
+def test_drain_reschedules_paced_work_without_holding_worker():
+    rid = run_queue.enqueue("user_1")
+
+    result = run_queue.drain(
+        "worker",
+        lambda _uid, _mode: {"applied": 1, "_requeue_after_seconds": 60},
+    )
+
+    assert result == 1
+    row = _get_conn().execute(
+        "SELECT status, active_key, available_at, locked_by, attempts FROM agent_runs WHERE id=?",
+        (rid,),
+    ).fetchone()
+    assert row["status"] == "queued"
+    assert row["active_key"] == "user_1:live"
+    assert row["available_at"] > _db_module.now_db()
+    assert row["locked_by"] is None
+    assert row["attempts"] == 0
+    assert run_queue.claim_next("another-worker") is None
+
+
+def test_delayed_job_becomes_claimable_when_due():
+    rid = run_queue.enqueue("user_1")
+    run_queue.claim_next("worker")
+    assert run_queue.reschedule(rid, "worker", 60)
+    c = _get_conn()
+    c.execute("UPDATE agent_runs SET available_at=0, updated_at=0 WHERE id=?", (rid,))
+    c.commit()
+    claimed = run_queue.claim_next("next-worker")
+    assert claimed is not None
+    assert claimed["id"] == rid

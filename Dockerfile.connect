@@ -36,7 +36,7 @@ USER worker
 # Next.js app ships @novnc/novnc itself), so websockify here is bridge-only.
 # --token-plugin=TokenFile resolves each connection's ?token= against
 # connect_service.py's vnc-tokens.txt, so one long-lived websockify process
-# can serve whichever single session connect_service.py currently has open.
+# can route each live token to its isolated VNC session.
 # Binds to 0.0.0.0 *inside the container network only* — Caddy is the only
 # thing that should ever be able to reach this port from outside.
 #

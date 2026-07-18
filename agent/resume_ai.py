@@ -287,7 +287,7 @@ def tailor_latex(
         + "\n\nReturn the JSON object described in your instructions."
     )
 
-    out = llm_mod.chat_json_ensemble(prompt, system=_LATEX_SYS, n=1, timeout=90)
+    out = llm_mod.chat_json_ensemble(prompt, system=_LATEX_SYS, n=3, timeout=90)
     if not isinstance(out, dict):
         return None
 
