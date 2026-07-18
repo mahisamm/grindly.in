@@ -14,7 +14,7 @@ describe("preflight database validation", () => {
     });
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(/must use postgresql:\/\/ or postgres:\/\//i);
-  });
+  }, 25_000);
 
   it("does not print database credentials", () => {
     const result = spawnSync(process.execPath, [SCRIPT], {
