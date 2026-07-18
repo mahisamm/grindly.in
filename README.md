@@ -35,15 +35,15 @@ Browser ─── Caddy (TLS) ─── Next.js 16 (web)
 ```
 
 ```
-NexPath/
+Grindly/
 ├─ src/app/                 Next.js App Router (TS, Tailwind v4)
 │  ├─ page.tsx              Landing page
-│  ├─ signup/               Account creation + OTP verify
-│  ├─ login/                Google OAuth + email+password
-│  ├─ onboarding/           Resume → proff questions → Slack → payment
+│  ├─ signup/               Redirects to Google-only login
+│  ├─ login/                Google OAuth
+│  ├─ onboarding/           Resume → profile questions → notifications → activation
 │  ├─ dashboard/            Live applications, reports, run trigger
 │  ├─ applications/         Application history + resume download
-│  └─ api/                  register · login · profile · resume · pay · slack · agent/run · me
+│  └─ api/                  auth/google · profile · resume · pay · slack · agent/run · me
 ├─ src/lib/
 │  ├─ prisma.ts             DB client (Postgres)
 │  ├─ otp.ts                OTP issue + verify + brute-force guard
@@ -72,8 +72,8 @@ NexPath/
 
 ## How it flows
 
-1. **Sign up** → Google OAuth or email+password → phone OTP verify → cookie session.
-2. **Onboarding** → upload resume → proff questions (domains, locations, stipend floor,
+1. **Sign up** → Google OAuth → signed httpOnly cookie session.
+2. **Onboarding** → upload resume → profile questions (domains, locations, stipend floor,
    min match score, max/day, excluded companies, auto-apply) → connect Slack → pay.
 3. **Payment confirm** → user marked `active`, Slack onboarding DM fired.
 4. **Agent run** (dashboard button or scheduled) → `agent/worker.py`:
@@ -157,9 +157,10 @@ INTERNSHALA_BETA_OPEN=1          # open Internshala auto-apply to all users
 
 ## Auth
 
-Google OAuth (primary) + email/password (scrypt-hashed, no external dep). Phone OTP
-for signup verification. Sessions are HMAC-signed httpOnly cookies (AES key from
-`APP_ENCRYPTION_KEY`).
+Google OAuth is the only user-facing sign-in method in the current beta. Sessions
+are HMAC-signed httpOnly cookies; `APP_ENCRYPTION_KEY` protects stored platform
+credentials. Legacy password and OTP helpers remain internal and are not exposed
+as signup or password-reset flows.
 
 ---
 
@@ -182,9 +183,7 @@ Pause from the dashboard anytime — the scheduler skips paused users (only swee
 | Problem | Check |
 |---------|-------|
 | `GET /api/health` returns `prodReady: false` | Run `curl /api/health` — `missing` array lists what's absent |
-| OTP not arriving | `FAST2SMS_API_KEY` or `MSG91_*` or `TWILIO_*` must be set; check `sms` in health response |
 | Agent job stuck | Check worker logs for `[nexpath.queue]` stale-lock messages; reclaim runs after 30 min automatically |
-| Login fails after password change | Clear `nexpath_onboarded` from localStorage |
 | Worker can't connect to DB | `DATABASE_URL` must point to Postgres; check `database` in health response |
 | Playwright `browser not found` | Run `python -m playwright install chromium` |
 | Platform login required | On dashboard → Integrations → reconnect the platform |
