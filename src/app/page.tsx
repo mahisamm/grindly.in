@@ -42,7 +42,7 @@ const FEATURES = [
   ["Real applications", "Drives the platform like a human: opens the listing, fills the form, submits. Not just a list of links.", Doc],
   ["Runs on your terms", "Auto-submit, or shortlist-and-ask. Pause anytime from the dashboard.", Clock],
   ["Daily reports your way", "Get progress reports via Slack DM or email — whichever you prefer. Connect Gmail to auto-detect interview calls.", Slack],
-  ["Private brain", "Resume analysis runs on a local LLM. Your resume isn't shipped to a third-party model.", Sparkle],
+  ["Private by design", "Resume analysis may use configured AI providers, with a local model as fallback. Your data is never sold.", Sparkle],
 ] as const;
 
 export default function Home() {

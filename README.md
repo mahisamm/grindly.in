@@ -8,8 +8,10 @@ pay, connect Slack — then an agent reads the resume, finds matching internship
 Auto-apply currently runs on **Internshala** (LinkedIn, Naukri, Indeed, Unstop
 adapters exist but are gated off in the UI). Payment + Slack run in **stub mode**
 locally (no keys needed) and flip to real Razorpay/Slack by setting env vars.
-Resume analysis + match scoring use a **fusion LLM ensemble** (Groq,
-Gemini, Cerebras, Mistral) with local Ollama as fallback — free and private.
+Resume analysis + match scoring can use a **fusion LLM ensemble** (Groq,
+Gemini, Cerebras, Mistral), with local Ollama as fallback. When external AI
+providers are configured, relevant resume and job text is sent to them as
+described in the Privacy Policy.
 
 ---
 
