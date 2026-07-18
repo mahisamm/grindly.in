@@ -74,6 +74,7 @@ services:
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_OAUTH_BRAND_VERIFIED: ${GOOGLE_OAUTH_BRAND_VERIFIED:-}
       # Gmail runs on its own OAuth client so its restricted scope can't hold
       # login hostage behind Google verification (see .env.example).
       GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
