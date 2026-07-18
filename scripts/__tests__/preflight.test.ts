@@ -24,5 +24,5 @@ describe("preflight database validation", () => {
       timeout: 20_000,
     });
     expect(result.stdout).not.toContain("supersecret");
-  });
+  }, 25_000);
 });

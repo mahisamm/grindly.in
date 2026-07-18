@@ -33,6 +33,10 @@ export function googleOAuthConfigured(): boolean {
   return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 }
 
+export function googleOAuthBrandVerified(): boolean {
+  return process.env.GOOGLE_OAUTH_BRAND_VERIFIED === "1";
+}
+
 // Gmail's gmail.readonly is a restricted scope on a separate OAuth client — it
 // is NOT required for production (login doesn't touch it), so it stays out of
 // missingProdConfig(). Surfaced here only so /api/health shows whether the
@@ -86,6 +90,7 @@ export function missingProdConfig(): string[] {
   if (!databaseUrlConfigured()) miss.push("DATABASE_URL (valid Postgres connection)");
   if (!encryptionKeyValid()) miss.push("APP_ENCRYPTION_KEY (64 hex) — platform connect throws");
   if (!googleOAuthConfigured()) miss.push("GOOGLE_CLIENT_ID/SECRET — the only login method");
+  if (!googleOAuthBrandVerified()) miss.push("GOOGLE_OAUTH_BRAND_VERIFIED — consent screen must show Grindly");
   if (!baseUrlConfigured()) miss.push("NEXT_PUBLIC_APP_URL — OAuth redirect + email links");
   // NOT required: EMAIL_SMTP_HOST/USER/PASS. This line was previously here and
   // contradicted the comment above — Google-only auth means there's no password

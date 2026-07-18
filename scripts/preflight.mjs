@@ -66,6 +66,12 @@ else {
   if (isProd) bad(m); else warn(m);
 }
 
+if (env.GOOGLE_OAUTH_BRAND_VERIFIED === "1") ok("Google OAuth consent screen brand verified as Grindly");
+else {
+  const m = "Google OAuth brand not verified — set the consent-screen app name to Grindly, then set GOOGLE_OAUTH_BRAND_VERIFIED=1";
+  if (isProd) bad(m); else warn(m);
+}
+
 const smsKind = env.FAST2SMS_API_KEY ? "fast2sms"
   : (env.MSG91_AUTH_KEY && env.MSG91_TEMPLATE_ID && env.MSG91_SENDER_ID) ? "msg91"
   : (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_NUMBER) ? "twilio"
