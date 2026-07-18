@@ -21,7 +21,7 @@ const STEPS = [
   {
     n: "03",
     title: "Activate & choose updates",
-    body: "Complete checkout, then pick how you want reports — email (no setup) or Slack DM. Connect Gmail to auto-detect interview calls.",
+    body: "Start with 5 free applications or choose a paid plan, then pick email or Slack reports. Connect Gmail to auto-detect interview calls.",
   },
   {
     n: "04",
@@ -38,8 +38,8 @@ const STEPS = [
 const FEATURES = [
   ["Resume-aware matching", "Skills extracted from your resume score every role 0–100. Only real fits get an application.", Target],
   ["You set the firewall", "Min match score, max/day, excluded companies, stipend floor — hard constraints the agent can't cross.", Bolt],
-  ["Real applications", "Drives the platform like a human: opens the listing, fills the form, submits. Not just a list of links.", Doc],
-  ["Runs on your terms", "Auto-submit, or shortlist-and-ask. Pause anytime from the dashboard.", Clock],
+  ["Real applications", "Opens supported listings, fills the form, and prepares it for your approval — not just a list of links.", Doc],
+  ["You approve every submission", "The agent submits only after you approve the prepared application. Pause anytime from the dashboard.", Clock],
   ["Daily reports your way", "Get progress reports via Slack DM or email — whichever you prefer. Connect Gmail to auto-detect interview calls.", Slack],
   ["Private by design", "Resume analysis may use configured AI providers, with a local model as fallback. Your data is never sold.", Sparkle],
 ] as const;

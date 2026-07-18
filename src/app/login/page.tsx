@@ -74,7 +74,7 @@ export default function LoginPage() {
           <span className="flex text-[#ffd9b8]">
             {[0, 1, 2, 3, 4].map((i) => <Star key={i} size={15} />)}
           </span>
-          Built for the intern grind on Internshala
+          Built for the intern grind across five leading job platforms
         </div>
       </aside>
 
@@ -106,7 +106,7 @@ export default function LoginPage() {
               {err && <p className="mt-4 text-sm text-danger">{err}</p>}
 
               <p className="mt-6 text-xs text-muted">
-                By continuing you agree to let Grindly apply to jobs on your behalf within the limits you set.
+                By continuing you agree to let Grindly prepare supported job applications within the limits you set and submit only after your approval.
                 This sign-in only verifies your identity (name and email). Connecting Gmail for
                 application tracking is a separate, optional step with its own permission request later on.
                 See our{" "}
