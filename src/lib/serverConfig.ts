@@ -55,6 +55,11 @@ export function baseUrlConfigured(): boolean {
   return !!(process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_BASE_URL);
 }
 
+/** The checked-in Prisma schema is PostgreSQL-only. */
+export function databaseUrlConfigured(): boolean {
+  return /^postgres(?:ql)?:\/\//i.test(process.env.DATABASE_URL || "");
+}
+
 /** Non-secret snapshot of service wiring — safe to expose on /api/health. */
 export function serviceStatus() {
   return {
@@ -78,7 +83,7 @@ export function serviceStatus() {
  *  re-enabled, move SMS + SMTP back into this list. */
 export function missingProdConfig(): string[] {
   const miss: string[] = [];
-  if (!process.env.DATABASE_URL) miss.push("DATABASE_URL (Postgres connection)");
+  if (!databaseUrlConfigured()) miss.push("DATABASE_URL (valid Postgres connection)");
   if (!encryptionKeyValid()) miss.push("APP_ENCRYPTION_KEY (64 hex) — platform connect throws");
   if (!googleOAuthConfigured()) miss.push("GOOGLE_CLIENT_ID/SECRET — the only login method");
   if (!baseUrlConfigured()) miss.push("NEXT_PUBLIC_APP_URL — OAuth redirect + email links");

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { smsProvider, missingProdConfig, paymentMode } from "./serverConfig";
+import { databaseUrlConfigured, smsProvider, missingProdConfig, paymentMode } from "./serverConfig";
 
 const TOUCHED = [
   "FAST2SMS_API_KEY", "MSG91_AUTH_KEY", "MSG91_TEMPLATE_ID", "MSG91_SENDER_ID",
@@ -73,6 +73,14 @@ describe("missingProdConfig — Google-only beta", () => {
     process.env.GOOGLE_CLIENT_SECRET = "sec";
     process.env.NEXT_PUBLIC_APP_URL = "https://d";
     expect(missingProdConfig().join(" | ")).toMatch(/APP_ENCRYPTION_KEY/);
+  });
+});
+
+describe("databaseUrlConfigured", () => {
+  it("rejects SQLite because the Prisma schema is PostgreSQL", () => {
+    process.env.DATABASE_URL = "file:./dev.db";
+    expect(databaseUrlConfigured()).toBe(false);
+    expect(missingProdConfig().join(" | ")).toMatch(/DATABASE_URL/);
   });
 });
 

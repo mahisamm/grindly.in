@@ -39,7 +39,16 @@ if (envFile) ok(".env present"); else bad(".env missing — run: cp .env.example
 const env = readEnv();
 
 if (!env.DATABASE_URL) bad("DATABASE_URL not set in .env");
-else ok(`DATABASE_URL = ${env.DATABASE_URL}`);
+else if (!/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
+  bad("DATABASE_URL must use postgresql:// or postgres:// because prisma/schema.prisma uses PostgreSQL");
+} else {
+  try {
+    const parsed = new URL(env.DATABASE_URL);
+    ok(`DATABASE_URL = ${parsed.protocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ""}/${parsed.pathname.replace(/^\//, "")}`);
+  } catch {
+    bad("DATABASE_URL is not a valid PostgreSQL connection URL");
+  }
+}
 
 const key = env.APP_ENCRYPTION_KEY || "";
 if (!/^[0-9a-fA-F]{64}$/.test(key)) {
