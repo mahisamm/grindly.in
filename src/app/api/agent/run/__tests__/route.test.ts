@@ -54,7 +54,7 @@ beforeEach(() => {
   mockAccess.mockResolvedValue(undefined); // worker.py present by default
   // Connected platform by default so live runs are allowed; individual tests
   // override to exercise the no-platform gate.
-  mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: true });
+  mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: true, accessStatus: "approved", role: "user", email: "u1@example.com" });
   mockUserIntegrationCount.mockResolvedValue(1);
   mockAgentRunFindFirst.mockResolvedValue(null);
   mockAgentRunCreate.mockResolvedValue({ id: "run1" });
@@ -75,6 +75,15 @@ describe("POST /api/agent/run", () => {
     expect(res.status).toBe(404);
   });
 
+  it("blocks a not-yet-approved account with 403 access_pending", async () => {
+    mockGetUid.mockResolvedValue("u1");
+    mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: true, accessStatus: "pending", role: "user", email: "u1@example.com" });
+    const res = await POST(postReq());
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("access_pending");
+    expect(mockAgentRunCreate).not.toHaveBeenCalled();
+  });
+
   it("blocks a live run after the daily limit is reached", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 5, remaining: 0 });
@@ -93,7 +102,7 @@ describe("POST /api/agent/run", () => {
 
   it("returns 400 for a live run with no connected platform", async () => {
     mockGetUid.mockResolvedValue("u1");
-    mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: false });
+    mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: false, accessStatus: "approved", role: "user", email: "u1@example.com" });
     mockUserIntegrationCount.mockResolvedValue(0);
     const res = await POST(postReq());
     expect(res.status).toBe(400);
@@ -129,7 +138,7 @@ describe("POST /api/agent/run", () => {
   it("analyzeOnly creates a fresh analyze run even with no platform connected", async () => {
     mockGetUid.mockResolvedValue("u1");
     // No connected platform — analyzeOnly must still work (it touches no board).
-    mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: false });
+    mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: false, accessStatus: "approved", role: "user", email: "u1@example.com" });
     mockUserIntegrationCount.mockResolvedValue(0);
     mockAgentRunFindFirst.mockResolvedValue({ id: "existing_run" });
     const res = await POST(postReq({ analyzeOnly: true }));

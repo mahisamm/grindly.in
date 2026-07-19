@@ -8,6 +8,7 @@ import { baseUrl } from "@/lib/baseUrl";
 import { loginClient } from "@/lib/googleOAuth";
 import { DEFAULTS } from "@/lib/proffQuestions";
 import { isRateLimited, getIp } from "@/lib/rateLimit";
+import { resolveInitialAccess, hasAppAccess } from "@/lib/access";
 
 interface GoogleTokenResponse {
   access_token: string;
@@ -105,12 +106,16 @@ export async function GET(req: Request) {
   }
 
   if (!user) {
+    // Owner + pre-allowlisted emails come in approved; everyone else waits.
+    const accessStatus = await resolveInitialAccess(email);
     user = await prisma.user.create({
       data: {
         email,
         name: name ?? null,
         googleId,
         status: "onboarding",
+        accessStatus,
+        accessGrantedAt: accessStatus === "approved" ? new Date() : null,
         profile: {
           create: {
             skills: "[]",
@@ -136,6 +141,12 @@ export async function GET(req: Request) {
   }
 
   await setUid(user.id);
+
+  // Gated beta: an unapproved account can sign in but only reaches the waitlist,
+  // never onboarding or the dashboard, until an admin approves it.
+  if (!hasAppAccess(user)) {
+    return NextResponse.redirect(`${base}/waitlist`);
+  }
 
   return NextResponse.redirect(
     `${base}${user.status === "onboarding" ? "/onboarding" : "/dashboard"}`

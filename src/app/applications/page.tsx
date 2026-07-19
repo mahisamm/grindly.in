@@ -69,6 +69,17 @@ const STATUS_STYLE: Record<string, string> = {
   failed: "bg-danger/12 text-danger border-danger",
 };
 
+// Same vocabulary as the dashboard so a status never has two names across pages.
+const STATUS_LABEL: Record<string, string> = {
+  applied: "Applied",
+  matched: "Ready",
+  approved: "To submit",
+  submitting: "Submitting",
+  needs_review: "Needs review",
+  skipped: "Skipped",
+  failed: "Failed",
+};
+
 function chips(json: string): string[] {
   try {
     const a = JSON.parse(json);
@@ -210,7 +221,7 @@ export default function ApplicationsPage() {
                         STATUS_STYLE[a.status] ?? "bg-surface-2 text-muted border-border"
                       }`}
                     >
-                      {a.status.replace("_", " ")}
+                      {STATUS_LABEL[a.status] ?? a.status.replace("_", " ")}
                     </span>
                   </div>
                 </button>

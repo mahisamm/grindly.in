@@ -122,6 +122,7 @@ export async function GET() {
       paid: user.paid,
       plan: user.plan,
       status: user.status,
+      accessStatus: user.accessStatus,
       role: user.role,
       slackConnected: user.slackConnected,
       slackUserId: user.slackUserId,

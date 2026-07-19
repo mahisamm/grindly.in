@@ -29,6 +29,36 @@ async function record(userId: string, tier: Tier, channel: string, title: string
   }
 }
 
+/**
+ * Convenience wrapper: look up the user's own channels (slack + email) and
+ * notify them. Best-effort by design — a notification must never block or fail
+ * the action that triggered it, so every call site should `void notifyUser(...)`
+ * (or await inside a try). Returns { delivered } for callers that care.
+ */
+export async function notifyUser(
+  userId: string,
+  input: { tier: Tier; title: string; body: string }
+): Promise<{ delivered: boolean }> {
+  try {
+    const u = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, slackChannel: true, slackConnected: true },
+    });
+    if (!u) return { delivered: false };
+    return notify({
+      userId,
+      tier: input.tier,
+      title: input.title,
+      body: input.body,
+      slackChannel: u.slackConnected ? u.slackChannel : null,
+      email: u.email,
+    });
+  } catch (e) {
+    console.error("[notify] notifyUser failed:", (e as Error).message);
+    return { delivered: false };
+  }
+}
+
 export async function notify(input: NotifyInput): Promise<{ delivered: boolean }> {
   const { userId, tier, title, body, slackChannel, email } = input;
   const text = `*${title}*\n${body}`;

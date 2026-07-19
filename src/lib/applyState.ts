@@ -35,7 +35,7 @@ const HUMAN: Record<string, string> = {
   captcha: "Blocked by a CAPTCHA / human check",
   listing_closed: "Listing was closed before we could apply",
   upload_failed: "Resume upload was rejected",
-  firewall_blocked: "Blocked by your firewall rules",
+  firewall_blocked: "Blocked by your limits & rules",
   custom_questions: "Listing asked questions we won't answer for you",
   timeout: "Timed out mid-submit — outcome unconfirmed",
   exception: "Unexpected error during apply",

@@ -96,6 +96,7 @@ type Me = {
     paid: boolean;
     plan: string;
     status: string;
+    accessStatus?: string;
     role?: string;
     slackConnected: boolean;
     slackUserId: string | null;
@@ -169,17 +170,19 @@ const STATUS_STYLE: Record<string, string> = {
   failed:   "bg-danger/15 text-danger",
 };
 
+// One consistent vocabulary the user can actually model:
+//   Ready → (you open + submit on the platform) → To submit → (you confirm) → Applied
 const STATUS_LABEL: Record<string, string> = {
-  applied:  "applied",
-  approved: "ready for you",
-  matched:  "ready",
-  skipped:  "skipped",
-  failed:   "failed",
+  applied:  "Applied",
+  approved: "To submit",
+  matched:  "Ready",
+  skipped:  "Skipped",
+  failed:   "Failed",
 };
 
 // user-reported outcomes per applied job — the beta interview-rate signal
 const OUTCOME_OPTIONS: { value: string; label: string }[] = [
-  { value: "", label: "Outcome?" },
+  { value: "", label: "How'd it go?" },
   { value: "interview", label: "Got interview 🎉" },
   { value: "offer", label: "Got offer 🏆" },
   { value: "rejected", label: "Rejected" },
@@ -378,6 +381,11 @@ export default function Dashboard() {
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approvingAll, setApprovingAll] = useState(false);
   const [confirmingSubmittedId, setConfirmingSubmittedId] = useState<string | null>(null);
+  // The application the user just opened to submit on the platform. When they
+  // switch back to this tab we surface a one-tap "Did you submit it?" prompt so
+  // the loop closes even if they forget to come back and confirm.
+  const [pendingSubmit, setPendingSubmit] = useState<{ id: string; label: string } | null>(null);
+  const [showReturnPrompt, setShowReturnPrompt] = useState(false);
   const [analyzingResume, setAnalyzingResume] = useState(false);
   const [uploading, setUploading] = useState<"master" | "tex" | null>(null);
   const [editingSkills, setEditingSkills] = useState(false);
@@ -397,6 +405,11 @@ export default function Dashboard() {
     }
     if (res.ok) {
       const data = await res.json() as Me;
+      // Gated beta: an unapproved account never reaches the app UI. Admins pass.
+      if (data.user.role !== "admin" && data.user.accessStatus !== "approved") {
+        router.replace("/waitlist");
+        return;
+      }
       setMe(data);
       // Init profile form once (don't overwrite edits in progress)
       setProfileForm((prev) => {
@@ -417,6 +430,16 @@ export default function Dashboard() {
   // Reset page when filter changes
   // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination on filter/tab change
   useEffect(() => { setPage(0); }, [filter, tab]);
+
+  // When the user tabs back after opening a listing to submit, ask them to
+  // confirm — this is what closes the "opened it, never came back to mark it"
+  // gap that left applications stuck and skewed the response-rate metric.
+  useEffect(() => {
+    if (!pendingSubmit) return;
+    const onFocus = () => setShowReturnPrompt(true);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [pendingSubmit]);
 
   // First-run walkthrough — show once per browser after the user is loaded
   useEffect(() => {
@@ -507,7 +530,7 @@ export default function Dashboard() {
             const x = s.result || {};
             setNotice({
               kind: "ok",
-              text: `Agent finished — ${x.ready ?? 0} ready for your OK, ${x.applied ?? 0} sent`
+              text: `Agent finished — ${x.ready ?? 0} ready to send, ${x.applied ?? 0} sent`
                 + (x.failed ? `, ${x.failed} failed` : "")
                 + (x.pipeline ? `. ${x.pipeline} lined up for the coming days.` : "."),
             });
@@ -675,20 +698,39 @@ export default function Dashboard() {
     load();
   }
 
-  async function approveApplication(id: string) {
-    setApprovingId(id);
+  // One tap = consent + open. Approves the match server-side (quota + due-date
+  // enforced there), then opens the real listing so the user submits it on the
+  // platform. Replaces the old two-step "Prepare" then "Open & submit".
+  async function openAndSubmit(a: App) {
+    setApprovingId(a.id);
+    // Open the tab synchronously inside the click so the browser doesn't treat
+    // it as a popup — we point it at the listing (or a blank tab we fill in once
+    // approve returns, for rows that carry no url).
+    const tab = a.url ? window.open(a.url, "_blank", "noopener,noreferrer") : null;
     const res = await fetch("/api/applications/approve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id: a.id }),
     }).catch(() => null);
     setApprovingId(null);
     if (!res || !res.ok) {
-      setNotice({ kind: "err", text: "Couldn't prepare that application — please try again." });
+      if (tab) tab.close();
+      const msg = res?.status === 402
+        ? "You've hit today's application limit — the agent picks up again tomorrow."
+        : "Couldn't open that application — please try again.";
+      setNotice({ kind: "err", text: msg });
       return;
     }
-    setNotice({ kind: "ok", text: "Ready. Open the listing, submit it yourself, then mark it submitted here." });
+    setPendingSubmit({ id: a.id, label: `${a.jobTitle} — ${a.company}` });
+    if (!a.url) {
+      setNotice({ kind: "info", text: "This one has no direct link — open it from your job platform, then confirm below." });
+    }
     load();
+  }
+
+  async function reopen(a: App) {
+    if (a.url) window.open(a.url, "_blank", "noopener,noreferrer");
+    setPendingSubmit({ id: a.id, label: `${a.jobTitle} — ${a.company}` });
   }
 
   async function approveAllApplications() {
@@ -699,13 +741,15 @@ export default function Dashboard() {
       setNotice({ kind: "err", text: "Couldn't prepare those applications — please try again." });
       return;
     }
-    setNotice({ kind: "ok", text: "Your applications are ready. Complete final submission in your own browser." });
+    setNotice({ kind: "ok", text: `Lined up ${readyCount} to submit — each carries its link, and we emailed you the list. Open the "To submit" tab.` });
     load();
   }
 
+  // The UI now asks explicitly with a Yes/No prompt, so no native confirm() —
+  // callers only reach here when the user has said they submitted it.
   async function confirmManualSubmission(id: string) {
-    if (!window.confirm("Only continue after you submitted this application yourself in the job platform.")) return;
     setConfirmingSubmittedId(id);
+    if (pendingSubmit?.id === id) { setPendingSubmit(null); setShowReturnPrompt(false); }
     const res = await fetch("/api/applications/submitted", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -716,8 +760,13 @@ export default function Dashboard() {
       setNotice({ kind: "err", text: "Couldn't record that submission — please try again." });
       return;
     }
-    setNotice({ kind: "ok", text: "Submission recorded. You can track its outcome here later." });
+    setNotice({ kind: "ok", text: "Submission recorded. Tell us the outcome here later — it's how we know the agent works." });
     load();
+  }
+
+  function dismissReturnPrompt() {
+    setShowReturnPrompt(false);
+    setPendingSubmit(null);
   }
 
   function patchForm<K extends keyof ProfileForm>(key: K, val: ProfileForm[K]) {
@@ -876,11 +925,11 @@ export default function Dashboard() {
               </li>
               <li className="flex gap-3">
                 <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">2</span>
-                <span><span className="font-medium">Connect a job platform.</span> Choose LinkedIn, Internshala, Naukri, Unstop, or Indeed and log in yourself in the live browser window.</span>
+                <span><span className="font-medium">Connect a job platform.</span> Log in on the real LinkedIn, Internshala, Naukri, Unstop, or Indeed in a secure window — Grindly never sees your password.</span>
               </li>
               <li className="flex gap-3">
                 <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">3</span>
-                <span><span className="font-medium">Run the agent.</span> It scores and prepares matches. You complete final submission in your own browser, then track the outcome here.</span>
+                <span><span className="font-medium">Run the agent.</span> It scores and prepares matches. You tap <span className="font-medium">Open &amp; submit</span> to send each one yourself, then track the outcome here.</span>
               </li>
             </ol>
             <p className="mt-4 text-xs text-muted">Tip: <span className="text-foreground">Run agent</span> unlocks as soon as one supported platform is connected.</p>
@@ -940,7 +989,7 @@ export default function Dashboard() {
             <p className="text-muted text-sm mt-1">
               Plan: <span className="capitalize text-foreground font-medium">{me.user.plan}</span>
               {" "}· {me.quota.remaining}/{me.quota.cap} applications left today
-              {" "}· firewall ≥{me.profile?.minMatchScore ?? 55}
+              {" "}· <span title="The agent only surfaces roles that score at least this on resume fit.">min match ≥{me.profile?.minMatchScore ?? 55}</span>
               {" "}· <span className={connectedCount > 0 ? "text-accent" : "text-muted"}>
                 {connectedCount} platform{connectedCount !== 1 ? "s" : ""} connected
               </span>
@@ -1002,10 +1051,35 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* Welcome-back confirm: fires when the user tabs back after opening a
+            listing to submit. Closes the "forgot to mark it submitted" gap. */}
+        {showReturnPrompt && pendingSubmit && (
+          <div className="fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4">
+            <div className="flex w-full max-w-lg items-center gap-3 rounded-xl border border-accent/50 bg-surface px-4 py-3 text-sm shadow-[0_8px_30px_rgba(23,20,15,0.18)]">
+              <span className="flex-1">
+                Did you submit <span className="font-medium">{pendingSubmit.label}</span>?
+              </span>
+              <button
+                onClick={() => confirmManualSubmission(pendingSubmit.id)}
+                disabled={confirmingSubmittedId === pendingSubmit.id}
+                className="press rounded-md border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/20 transition disabled:opacity-50"
+              >
+                {confirmingSubmittedId === pendingSubmit.id ? "…" : "✓ Yes, submitted"}
+              </button>
+              <button
+                onClick={dismissReturnPrompt}
+                className="rounded-md px-2 py-1.5 text-xs text-muted hover:text-foreground transition"
+              >
+                Not yet
+              </button>
+            </div>
+          </div>
+        )}
+
         {me.quota.remaining === 0 && (
           <div className="mt-5 rounded-xl border border-warn/50 bg-warn/10 px-4 py-3 text-sm">
             <span className="font-medium">
-              You've used today's {me.quota.cap} applications. The agent picks up again tomorrow.
+              You&apos;ve used today&apos;s {me.quota.cap} applications. The agent picks up again tomorrow.
             </span>
           </div>
         )}
@@ -1022,19 +1096,20 @@ export default function Dashboard() {
           <div className="mt-3 flex items-center justify-between rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
             <div>
               <span className="font-medium">
-                {readyCount} application{readyCount !== 1 ? "s" : ""} ready to prepare.
+                {readyCount} match{readyCount !== 1 ? "es" : ""} ready to send.
               </span>{" "}
               <span className="text-muted">
-                Prepped with your resume — you complete final submission in your browser.
+                Open each to submit it yourself — Grindly never submits on your behalf.
               </span>{" "}
-              <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">Review & prepare →</button>
+              <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">Review them →</button>
             </div>
             <button
               onClick={approveAllApplications}
               disabled={approvingAll}
+              title="Lines up every ready match under 'To submit' and emails you the links."
               className="ml-4 shrink-0 rounded-lg border border-brand/40 px-3 py-1.5 text-xs text-brand-2 hover:bg-brand/10 transition disabled:opacity-50"
             >
-              {approvingAll ? "Preparing…" : `Prepare all ${readyCount}`}
+              {approvingAll ? "Lining up…" : `Line up all ${readyCount}`}
             </button>
           </div>
         )}
@@ -1367,9 +1442,9 @@ export default function Dashboard() {
             </div>
 
             <div>
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-4">Firewall / limits</h2>
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-4">Limits &amp; rules</h2>
               <div className="space-y-4">
-                {PROFF_FIELDS.filter((f) => f.group === "Firewall / limits").map((f) => (
+                {PROFF_FIELDS.filter((f) => f.group === "Limits & rules").map((f) => (
                   <div key={f.key}>
                     <label htmlFor={`field-${f.key}`} className="block text-sm font-medium mb-1">{f.label}</label>
                     <p className="text-xs text-muted mb-1.5">{f.help}</p>
@@ -1481,14 +1556,14 @@ export default function Dashboard() {
         {tab === "applications" && (
           <div className="mt-4">
             <div className="flex flex-wrap gap-2 mb-3 text-sm">
-              {/* "matched" is labelled "ready" — every matched row the server sends
-                  has already come due, so from the user's side it means "ready to
-                  send", not "we found this somewhere in the pipeline". */}
+              {/* One vocabulary end to end: Ready (came due, needs your go-ahead)
+                  → To submit (you opened it, confirm when done) → Applied. Same
+                  words as the row badges so nothing has two names. */}
               {([
                 ["all", "all"],
                 ["matched", "ready"],
+                ["approved", "to submit"],
                 ["applied", "applied"],
-                ["approved", "ready for you"],
                 ["failed", "failed"],
                 ["skipped", "skipped"],
               ] as const).map(([f, label]) => (
@@ -1581,33 +1656,32 @@ export default function Dashboard() {
                       )}
                       {a.status === "matched" && (
                         <button
-                          onClick={() => approveApplication(a.id)}
-                          disabled={approvingId === a.id}
-                          title="Prepare this application for your final browser submission."
-                          className="rounded-md border border-brand/40 px-2.5 py-1 text-xs text-brand-2 hover:bg-brand/10 transition disabled:opacity-50"
+                          onClick={() => openAndSubmit(a)}
+                          disabled={approvingId === a.id || me.quota.remaining === 0}
+                          title={me.quota.remaining === 0
+                            ? "You've hit today's application limit — resets tomorrow."
+                            : "Opens the listing so you submit it yourself. Grindly never submits on your behalf."}
+                          className="press rounded-md brand-gradient px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition disabled:opacity-50"
                         >
-                          {approvingId === a.id ? "…" : "Prepare"}
+                          {approvingId === a.id ? "Opening…" : "Open & submit ↗"}
                         </button>
                       )}
                       {a.status === "approved" && (
                         <div className="flex items-center gap-2">
-                          {a.url && (
-                            <a
-                              href={a.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="rounded-md border border-brand/40 px-2.5 py-1 text-xs text-brand-2 hover:bg-brand/10 transition"
-                            >
-                              Open & submit
-                            </a>
-                          )}
+                          <button
+                            onClick={() => reopen(a)}
+                            title="Open the listing again"
+                            className="rounded-md border border-border px-2.5 py-1 text-xs text-muted hover:text-foreground hover:border-brand/40 transition"
+                          >
+                            Open again ↗
+                          </button>
                           <button
                             onClick={() => confirmManualSubmission(a.id)}
                             disabled={confirmingSubmittedId === a.id}
-                            title="Use only after you submitted the application yourself in the job platform."
-                            className="rounded-md border border-accent/40 px-2.5 py-1 text-xs text-accent hover:bg-accent/10 transition disabled:opacity-50"
+                            title="Tap once you've submitted it on the platform."
+                            className="rounded-md border border-accent/50 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent hover:bg-accent/20 transition disabled:opacity-50"
                           >
-                            {confirmingSubmittedId === a.id ? "…" : "Mark submitted"}
+                            {confirmingSubmittedId === a.id ? "…" : "✓ I submitted it"}
                           </button>
                         </div>
                       )}
@@ -1645,10 +1719,14 @@ export default function Dashboard() {
         {/* ── INTEGRATIONS ── */}
         {tab === "integrations" && (
           <div className="mt-4">
-            <p className="text-sm text-muted mb-4">
-              Connect one or more job platforms. You log in yourself in a live
-              browser window — Grindly never sees or stores your password.
-            </p>
+            <div className="mb-4 rounded-xl border border-border bg-surface-2 px-4 py-3 text-sm">
+              <p className="font-medium">Connect one or more job platforms.</p>
+              <p className="mt-1 text-muted">
+                You log in on the <span className="text-foreground">real platform</span> inside a
+                secure window here — <span className="text-foreground">Grindly never sees, types, or stores your password</span>.
+                It stays signed in so the agent can find and prepare matches for you.
+              </p>
+            </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               {integrations.map((integration) => {

@@ -27,6 +27,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/workerKick", () => ({ spawnWorkerKick: mockSpawnWorkerKick }));
 vi.mock("@/lib/quota", () => ({ getQuota: mockGetQuota }));
+vi.mock("@/lib/notify", () => ({ notifyUser: vi.fn().mockResolvedValue({ delivered: false }) }));
 
 import { POST } from "@/app/api/applications/approve-all/route";
 
@@ -35,7 +36,7 @@ beforeEach(() => {
   mockTransaction.mockResolvedValue([]);
   mockRunFindFirst.mockResolvedValue(null);
   mockRunCreate.mockResolvedValue({ id: "run1" });
-  mockUserFindUnique.mockResolvedValue({ plan: "free" });
+  mockUserFindUnique.mockResolvedValue({ plan: "free", accessStatus: "approved", role: "user", email: "u1@example.com" });
   mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 0, remaining: 5 });
 });
 

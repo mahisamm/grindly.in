@@ -98,7 +98,10 @@ export default function LoginPage() {
           <div className="animate-in">
             <div className="rounded-lg border border-[var(--line-2)] bg-surface p-6 shadow-[10px_10px_0_rgba(23,20,15,0.08)] sm:p-9">
               <h1 className="display text-[clamp(1.8rem,2.6vw,2.3rem)] tracking-[-0.01em]">Welcome to Grindly</h1>
-              <p className="mt-1.5 text-sm text-[var(--ink-soft)]">Continue with Google to start your agent.</p>
+              <p className="mt-1.5 text-sm text-[var(--ink-soft)]">
+                Grindly is in a gated beta. Continue with Google to sign in — new
+                accounts join the waitlist and get switched on once approved.
+              </p>
 
               <a
                 href="/api/auth/google"

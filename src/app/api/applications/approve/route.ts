@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { dueNow } from "@/lib/pipeline";
 import { getQuota } from "@/lib/quota";
+import { notifyUser } from "@/lib/notify";
+import { hasAppAccess } from "@/lib/access";
 
 /**
  * Approve a matched application — and actually send it.
@@ -25,8 +27,17 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({})) as { id?: string };
   if (!body.id) return NextResponse.json({ error: "missing id" }, { status: 400 });
 
-  const user = await prisma.user.findUnique({ where: { id: uid }, select: { plan: true } });
+  const user = await prisma.user.findUnique({
+    where: { id: uid },
+    select: { plan: true, accessStatus: true, role: true, email: true },
+  });
   if (!user) return NextResponse.json({ error: "user not found" }, { status: 404 });
+  if (!hasAppAccess(user)) {
+    return NextResponse.json(
+      { error: "Your access is pending approval.", code: "access_pending" },
+      { status: 403 },
+    );
+  }
   const quota = await getQuota(uid, user.plan);
   if (quota.remaining === 0) {
     return NextResponse.json(
@@ -53,6 +64,17 @@ export async function POST(req: Request) {
       status: "approved",
       reason: (app.reason ?? "") + " — ready for your final browser submission",
     },
+  });
+
+  // Deliver the link to the user's own channels so they can finish the submit
+  // later without living on the dashboard. Best-effort: never block the approve.
+  void notifyUser(uid, {
+    tier: "urgent",
+    title: "Application ready to submit",
+    body:
+      `${app.jobTitle} at ${app.company} is prepared and ready for your final submit.` +
+      (app.url ? `\nOpen & submit: ${app.url}` : "") +
+      `\nOr finish it from your dashboard.`,
   });
 
   // Safe Apply Mode never queues a server-side browser session to click submit.

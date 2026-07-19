@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { FREE_TRIAL_APPLICATIONS } from "@/lib/plans";
+import { hasAppAccess } from "@/lib/access";
 
 /** Activate the free plan (free beta). Grants the free daily allowance
  * (5 applications/day); it never masquerades as a paid Plus/Pro subscription. */
@@ -14,6 +15,12 @@ export async function POST() {
     include: { profile: true },
   });
   if (!existing) return NextResponse.json({ error: "user not found" }, { status: 404 });
+  if (!hasAppAccess(existing)) {
+    return NextResponse.json(
+      { error: "Your access is pending approval.", code: "access_pending" },
+      { status: 403 },
+    );
+  }
   if (existing.paid) {
     return NextResponse.json({ error: "A paid plan is already active." }, { status: 409 });
   }

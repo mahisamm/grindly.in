@@ -68,6 +68,20 @@ export default function OnboardingPage() {
   const [msg, setMsg] = useState("");
   const [upgradeMode, setUpgradeMode] = useState(false);
 
+  // Gated beta guard: a not-yet-approved account that lands on /onboarding
+  // (e.g. by typing the URL) is bounced to the waitlist. Admins pass.
+  useEffect(() => {
+    fetch("/api/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d?.user) return;
+        if (d.user.role !== "admin" && d.user.accessStatus !== "approved") {
+          window.location.href = "/waitlist";
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // hydrate from existing profile (if user comes back)
   useEffect(() => {
     fetch("/api/profile")
@@ -381,10 +395,10 @@ export default function OnboardingPage() {
             <div>
               <h2 className="font-display text-2xl font-semibold">A few profile questions</h2>
               <p className="mt-1 text-sm text-muted">
-                These set the agent&apos;s firewall — the boundaries it plans and applies inside.
+                These are the hard limits the agent plans and applies inside — it can never cross them.
               </p>
 
-              {(["Targeting", "Firewall / limits"] as const).map((group) => (
+              {(["Targeting", "Limits & rules"] as const).map((group) => (
                 <div key={group} className="mt-6">
                   <div className="text-xs uppercase tracking-wide text-muted mb-3">{group}</div>
                   <div className="space-y-5">
@@ -566,7 +580,7 @@ export default function OnboardingPage() {
             <div>
               <h2 className="font-display text-2xl font-semibold">{upgradeMode ? "Plans are coming soon" : "Start free"}</h2>
               <p className="mt-1 text-sm text-muted">
-                You're on the free plan — up to 5 applications a day, every day. Plus and Pro are coming soon.
+                You&apos;re on the free plan — up to 5 applications a day, every day. Plus and Pro are coming soon.
               </p>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">

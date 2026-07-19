@@ -6,6 +6,7 @@ import { getUid } from "@/lib/session";
 import { spawnWorkerKick } from "@/lib/workerKick";
 import { getQuota } from "@/lib/quota";
 import { enqueueAgentRun } from "@/lib/agentRunQueue";
+import { hasAppAccess } from "@/lib/access";
 
 /**
  * Triggers one agent run for the current user (resume parse → match → apply →
@@ -23,6 +24,15 @@ export async function POST(req: Request) {
 
   const user = await prisma.user.findUnique({ where: { id: uid } });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  // Gated beta: an unapproved account can never make the agent do work, even by
+  // calling this route directly. The dashboard shows the waitlist instead.
+  if (!hasAppAccess(user)) {
+    return NextResponse.json(
+      { error: "Your access is pending approval.", code: "access_pending" },
+      { status: 403 },
+    );
+  }
 
   // Live only — there is no mock/demo mode. The agent applies to real listings
   // via the user's connected platform, so nothing fabricated reaches the UI.

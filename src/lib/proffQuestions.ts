@@ -1,7 +1,7 @@
 /**
  * "Proff questions" — the profile/preference questions the agent needs before
  * it builds a plan and starts applying. These map directly onto Profile fields
- * and become the agent's firewall constraints (what it may / may not apply to).
+ * and become the agent's hard limits (what it may / may not apply to).
  */
 
 export type FieldType = "tags" | "select" | "number" | "toggle";
@@ -14,7 +14,7 @@ export type ProffField = {
   options?: string[];
   placeholder?: string;
   suffix?: string;
-  group: "Targeting" | "Firewall / limits";
+  group: "Targeting" | "Limits & rules";
 };
 
 export const CONTACT_FIELDS = [
@@ -61,15 +61,15 @@ export const PROFF_FIELDS: ProffField[] = [
     help: "Skip anything below this. 0 = unpaid is fine.",
     type: "number",
     suffix: "₹/mo",
-    group: "Firewall / limits",
+    group: "Limits & rules",
   },
   {
     key: "minMatchScore",
-    label: "Match threshold",
-    help: "The firewall: agent only applies when resume↔role fit is at least this (0–100). Higher = pickier, fewer but better-fit applications — quality of match matters more than volume of applies.",
+    label: "Minimum match score",
+    help: "The agent only surfaces a role when resume↔role fit is at least this (0–100). Higher = pickier: fewer but better-fit applications. Quality of match matters more than volume.",
     type: "number",
     suffix: "/100",
-    group: "Firewall / limits",
+    group: "Limits & rules",
   },
   {
     key: "excludedCompanies",
@@ -77,14 +77,14 @@ export const PROFF_FIELDS: ProffField[] = [
     help: "The agent will never apply to these.",
     type: "tags",
     placeholder: "e.g. Acme Corp",
-    group: "Firewall / limits",
+    group: "Limits & rules",
   },
   {
     key: "autoApply",
     label: "Auto-prep applications",
     help: "On = the agent finds and prepares matches for you. You always complete the final submission in your own browser. Off = it only shortlists.",
     type: "toggle",
-    group: "Firewall / limits",
+    group: "Limits & rules",
   },
 ];
 

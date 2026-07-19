@@ -213,7 +213,7 @@ export default function Home() {
           <span className="text-[0.72rem] font-medium uppercase tracking-[0.16em] text-brand">03 — Pricing</span>
         </Reveal>
         <Reveal>
-          <h2 className="mt-2 text-[clamp(2.6rem,6vw,5rem)] tracking-[-0.02em] text-[var(--paper)]">Free while we're in beta</h2>
+          <h2 className="mt-2 text-[clamp(2.6rem,6vw,5rem)] tracking-[-0.02em] text-[var(--paper)]">Free while we&apos;re in beta</h2>
           <p className="mt-3 text-[0.95rem] text-[rgba(242,236,225,0.6)]">No card, no catch. Paid plans come later.</p>
         </Reveal>
 

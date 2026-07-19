@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Fraunces, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
+import Track from "@/components/Track";
 import "./globals.css";
 
 const bodySans = Space_Grotesk({
@@ -89,6 +90,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <div className="grain-fixed" aria-hidden="true" />
+        <Track />
         {children}
         <Script id="sw-register" strategy="afterInteractive">{`
           if ('serviceWorker' in navigator) {

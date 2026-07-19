@@ -46,7 +46,10 @@ export default function ParticleHero() {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     // Static poster for reduced-motion (respect the preference; skip WebGL work).
+    // Media query is only knowable client-side, so this can't move to a useState
+    // initializer without causing an SSR/hydration mismatch.
     if (reduceMotion) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFallback(true);
       return;
     }

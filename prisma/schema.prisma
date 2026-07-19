@@ -95,6 +95,18 @@ model User {
   // cookie stops working immediately — a stateless HMAC alone can't be revoked.
   tokenVersion  Int      @default(0) @map("token_version")
 
+  // Access gating (approval-gated beta). A new account is "pending" and sees the
+  // waitlist; only "approved" users reach the app and can run the agent. The
+  // owner email and any pre-allowlisted email are auto-approved at signup. Values:
+  // pending | approved | denied. Existing rows predate this column — because the
+  // live DB was empty when it shipped, the @default backfills them as pending
+  // with no one locked out; on a populated DB you would backfill approved first.
+  accessStatus      String    @default("pending") @map("access_status")
+  // When the user actively tapped "Request access" (vs just signing up and
+  // bouncing) — lets the admin queue surface real intent first.
+  accessRequestedAt DateTime? @map("access_requested_at")
+  accessGrantedAt   DateTime? @map("access_granted_at")
+
   profile        Profile?
   applications   Application[]
   reports        Report[]
@@ -485,4 +497,30 @@ model BackupHealth {
   updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz
 
   @@map("backup_health")
+}
+
+// Pre-approved emails for the gated beta. An admin can allow an email BEFORE the
+// person has signed up; the Google sign-in callback consults this on account
+// creation and auto-approves a match. Separate from User so a grant can exist
+// with no account yet.
+model AccessAllowlist {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("access_allowlist")
+}
+
+// Anonymous first-party visit log powering the owner analytics dashboard.
+// visitorId is a random first-party cookie value, never an account id — no PII.
+model PageView {
+  id        String   @id @default(cuid())
+  visitorId String   @map("visitor_id")
+  path      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([visitorId])
+  @@map("page_views")
 }
