@@ -359,6 +359,54 @@ def test_in_human_hours_boundaries_are_inclusive_start_exclusive_end():
     assert worker._in_human_hours(worker.HUMAN_HOURS_END) is False
 
 
+# ---------- manual runs bypass the human-hours defer ----------
+
+def _stub_pre_gate(monkeypatch, hour: int):
+    """Stub everything run_for_user touches before the human-hours gate, then
+    make get_connected_platforms return [] so it exits right AFTER the gate with
+    a distinct 'no_platforms_connected' error. That lets a test tell 'got past
+    the gate' (no_platforms) apart from 'blocked at the gate' (deferred)."""
+    monkeypatch.setattr(worker.db, "get_user",
+                        lambda uid: {"profile": {"skills": '["python"]'}, "name": "T", "email": "t@x"})
+    monkeypatch.setattr(worker.db, "get_user_plan", lambda uid: "free")
+    monkeypatch.setattr(worker.db, "get_plan_cap", lambda uid: 5)
+    monkeypatch.setattr(worker, "_daily_cap_for_today", lambda uid, cap, today=None: cap)
+    monkeypatch.setattr(worker.db, "todays_applied_count", lambda uid: 0)
+    monkeypatch.setattr(worker.db, "add_audit", lambda *a, **k: None)
+    monkeypatch.setattr(worker.resume_parse, "find_resume_file", lambda uid: None)
+    monkeypatch.setattr(worker.db, "set_resume_parse_failed", lambda uid, v: None)
+    monkeypatch.setattr(worker.db, "get_outcome_stats",
+                        lambda uid: {"total": 0, "rejection_rate": 0.0, "response_rate": 0.0})
+    monkeypatch.setattr(worker.db, "update_skills", lambda *a, **k: None)
+    monkeypatch.setattr(worker, "_ist_hour", lambda: hour)
+    monkeypatch.setattr(worker.notify, "to_user", lambda *a, **k: True)
+    monkeypatch.setattr(worker.db, "get_connected_platforms", lambda uid: [])
+
+
+def test_manual_run_bypasses_human_hours_gate_at_night(monkeypatch):
+    _stub_pre_gate(monkeypatch, hour=1)  # 1am IST — outside 9-21
+    out = worker.run_for_user("u1", "live", manual=True)
+    # Got PAST the gate (would be 'deferred' otherwise), then stopped on no platform.
+    assert out.get("error") == "no_platforms_connected"
+    assert "deferred" not in out
+
+
+def test_scheduled_run_still_deferred_at_night(monkeypatch):
+    _stub_pre_gate(monkeypatch, hour=1)
+    out = worker.run_for_user("u1", "live", manual=False)
+    assert out.get("deferred") == "outside_human_hours"
+
+
+def test_run_job_treats_queue_runs_as_manual(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        worker, "run_for_user",
+        lambda uid, mode, manual=False: seen.update(uid=uid, mode=mode, manual=manual) or {},
+    )
+    worker.run_job("u1", "live")
+    assert seen == {"uid": "u1", "mode": "live", "manual": True}
+
+
 # ---------- _daily_cap_for_today (human-pace volume) ----------
 
 def test_daily_cap_for_today_scales_with_the_plan():

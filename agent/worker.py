@@ -576,7 +576,7 @@ def latex_check(uid: str) -> dict:
     return {"status": "ok", "sections": sorted(sections), "pages": pages}
 
 
-def run_for_user(uid: str, mode: str = "live") -> dict:
+def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     user = db.get_user(uid)
     if not user:
         log.warning("no user %s", uid)
@@ -656,7 +656,15 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     # Running live outside a plausible daytime window is itself a bot tell,
     # independent of pacing within the run. Mock mode is unaffected (no
     # platform is actually touched).
-    if live and not _in_human_hours(ist_h):
+    #
+    # `manual` runs bypass it: the user tapped "Run agent" and is sitting on the
+    # dashboard right now. Deferring their explicit click looked identical to a
+    # broken agent ("0 ready, 0 sent" with no reason). It is also safe — Safe
+    # Apply Mode means a live run only DISCOVERS and banks matches for the user
+    # to submit themselves (see _requires_approval); nothing is auto-submitted at
+    # any hour, so odd-hour discovery carries none of the risk this gate guards.
+    # The scheduled/background sweep (manual=False) stays gated.
+    if live and not manual and not _in_human_hours(ist_h):
         msg = (
             f"It's outside normal hours right now (IST {ist_h}h) — I only search and apply "
             f"during the day ({HUMAN_HOURS_START}:00-{HUMAN_HOURS_END}:00 IST) to keep this "
@@ -1453,7 +1461,13 @@ def run_job(uid: str, mode: str) -> dict:
         platform = mode.split("_", 1)[1] if "_" in mode else "internshala"
         import connect_login
         return connect_login.login(uid, platform)
-    return run_for_user(uid, mode)
+    # Jobs drained from the queue skip the human-hours defer (manual=True). The
+    # web app enqueues these on a "Run agent" tap, and deferring an explicit
+    # click read as a broken agent. It's safe: Safe Apply Mode means a live run
+    # only discovers + banks matches for the user to submit, never auto-submits,
+    # so there is no odd-hour submission to gate. Only the legacy --loop/direct
+    # CLI paths (run_for_user called directly, manual=False) stay gated.
+    return run_for_user(uid, mode, manual=True)
 
 
 def main():

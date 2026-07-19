@@ -132,6 +132,9 @@ type Me = {
     remaining: number;
   };
   integrations: Integration[];
+  // Non-null while a user-triggered agent run is queued/running server-side.
+  // Drives the persistent "Agent working…" button so it survives reloads.
+  activeRun?: { id: string; status: string; startedAt: string } | null;
   notifications?: {
     unread: number;
     items: { id: string; tier: string; title: string; body: string; read: boolean; createdAt: string }[];
@@ -175,11 +178,11 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 // One consistent vocabulary the user can actually model:
-//   Ready → (you open + submit on the platform) → To submit → (you confirm) → Applied
+//   Matched → (you open + submit on the platform) → To submit → (you confirm) → Applied
 const STATUS_LABEL: Record<string, string> = {
   applied:  "Applied",
   approved: "To submit",
-  matched:  "Ready",
+  matched:  "Matched",
   skipped:  "Skipped",
   failed:   "Failed",
 };
@@ -367,6 +370,41 @@ function TagInput({ value, onChange, placeholder }: {
   );
 }
 
+// Turn a finished run's result into a clear, honest notice. Every terminal
+// outcome gets its own line — the old code only ever said "0 ready to send, 0
+// sent", so a run the agent DEFERRED (outside daytime hours) or REFUSED (no
+// platform) looked exactly like a broken agent. Now each says why.
+function describeRun(x: {
+  deferred?: string; error?: string; message?: string;
+  ready?: number; matched?: number; applied?: number; failed?: number; pipeline?: number;
+}): { kind: "ok" | "err" | "info"; text: string } {
+  if (x.deferred) {
+    return { kind: "info", text: "The automatic daily sweep only runs 9am–9pm IST — but your manual runs work any time. Tap Run agent again to go now." };
+  }
+  if (x.error || (x.message && x.ready == null && x.matched == null && x.applied == null)) {
+    return { kind: "info", text: x.message || "Connect a job platform, then run the agent." };
+  }
+  const matched = x.matched ?? 0;
+  const ready = x.ready ?? 0;
+  const applied = x.applied ?? 0;
+  const failed = x.failed ?? 0;
+  const pipeline = x.pipeline ?? 0;
+  if (matched === 0 && applied === 0 && ready === 0) {
+    return {
+      kind: "info",
+      text: "Agent finished — no new matches this run. It keeps looking, but you can surface more now by widening your domains/locations or lowering the match threshold in Profile.",
+    };
+  }
+  return {
+    kind: "ok",
+    text: `Agent finished — ${matched} new match${matched !== 1 ? "es" : ""} found`
+      + (ready ? `, ${ready} ready to submit now` : "")
+      + (applied ? `, ${applied} sent` : "")
+      + (failed ? `, ${failed} failed` : "")
+      + (pipeline ? `. ${pipeline} lined up for the coming days.` : "."),
+  };
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -383,6 +421,13 @@ export default function Dashboard() {
   // without this, the server token stays live for the full 5-min window and
   // each poll re-sets `viewer`, so the modal "reopens" the instant you close it.
   const connectAbort = useRef(false);
+  // Run-poll bookkeeping so the "Agent working…" state is owned by exactly one
+  // poll loop and a finished run is never re-announced. pollingRunId = the run
+  // we're actively polling; finishedRunId = the last run we already reported, so
+  // a stale activeRun from /api/me (up to one 12s tick behind) can't re-fire the
+  // completion notice.
+  const pollingRunId = useRef<string | null>(null);
+  const finishedRunId = useRef<string | null>(null);
   const [page, setPage] = useState(0);
   const [profileForm, setProfileForm] = useState<ProfileForm | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
@@ -390,6 +435,8 @@ export default function Dashboard() {
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approvingAll, setApprovingAll] = useState(false);
   const [confirmingSubmittedId, setConfirmingSubmittedId] = useState<string | null>(null);
+  // Row whose submit URL was just copied — flips the button to "Copied ✓" briefly.
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   // The application the user just opened to submit on the platform. When they
   // switch back to this tab we surface a one-tap "Did you submit it?" prompt so
   // the loop closes even if they forget to come back and confirm.
@@ -516,6 +563,38 @@ export default function Dashboard() {
     }
   }
 
+  // Poll one run to completion and report it. Owned by a single caller at a time
+  // (pollingRunId guard) so runAgent's kick and the reload-resume effect below
+  // can both point at the same run without double-announcing it.
+  const pollRun = useCallback((runId: string) => {
+    if (pollingRunId.current === runId || finishedRunId.current === runId) return;
+    pollingRunId.current = runId;
+    const started = Date.now();
+    const step = async () => {
+      try {
+        const r = await fetch(`/api/agent/run?id=${runId}`);
+        const s = await r.json();
+        if (s.status === "done" || s.status === "failed" || s.status === "cancelled") {
+          pollingRunId.current = null;
+          finishedRunId.current = runId;
+          setRunning(false);
+          if (s.status === "done") setNotice(describeRun(s.result || {}));
+          else if (s.status === "failed") setNotice({ kind: "err", text: `Agent run failed: ${s.error || "unknown error"}. Try again — if it keeps failing, reach out and we'll dig in.` });
+          load();
+          return;
+        }
+        // Still queued/running. Keep polling for the completion notice; the
+        // button stays "working" via activeRun even past this window.
+        if (Date.now() - started > 240_000) { pollingRunId.current = null; load(); return; }
+        setTimeout(step, 2500);
+      } catch {
+        pollingRunId.current = null;
+        load();
+      }
+    };
+    setTimeout(step, 2000);
+  }, [load]);
+
   async function runAgent() {
     setRunning(true);
     setNotice(null);
@@ -533,41 +612,25 @@ export default function Dashboard() {
       }
       const runId: string | null = data.runId ?? null;
       if (!runId) { setTimeout(() => setRunning(false), 4000); return; }
-
-      const started = Date.now();
-      const poll = async () => {
-        try {
-          const r = await fetch(`/api/agent/run?id=${runId}`);
-          const s = await r.json();
-          if (s.status === "done") {
-            const x = s.result || {};
-            setNotice({
-              kind: "ok",
-              text: `Agent finished — ${x.ready ?? 0} ready to send, ${x.applied ?? 0} sent`
-                + (x.failed ? `, ${x.failed} failed` : "")
-                + (x.pipeline ? `. ${x.pipeline} lined up for the coming days.` : "."),
-            });
-            setRunning(false); load(); return;
-          }
-          if (s.status === "failed") {
-            setNotice({ kind: "err", text: `Agent run failed: ${s.error || "unknown error"}` });
-            setRunning(false); return;
-          }
-          if (Date.now() - started > 120000) {
-            setNotice({ kind: "info", text: "Agent still running — results will appear shortly." });
-            setRunning(false); load(); return;
-          }
-          setTimeout(poll, 2000);
-        } catch {
-          setRunning(false);
-        }
-      };
-      setTimeout(poll, 2000);
+      finishedRunId.current = null; // fresh run — allow its completion to report
+      pollRun(runId);
     } catch {
       setNotice({ kind: "err", text: "Network error starting the agent." });
       setRunning(false);
     }
   }
+
+  // Resume tracking a run the server says is still in flight — e.g. after a
+  // reload or tab-switch. Without this the button reset to "Run agent" even
+  // though the agent was still working, and the completion notice was lost.
+  // (Declared after pollRun so it isn't referenced before its initializer.)
+  useEffect(() => {
+    const ar = me?.activeRun;
+    if (ar && (ar.status === "queued" || ar.status === "running")) pollRun(ar.id);
+    // Depend on the id/status primitives, not the activeRun object, so this only
+    // re-fires when the actual run changes — not on every /api/me poll tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.activeRun?.id, me?.activeRun?.status, pollRun]);
 
   // ── Remote-browser connect flow — every platform (including Internshala)
   // goes through this: shows the user a live view of a real login browser
@@ -803,6 +866,18 @@ export default function Dashboard() {
     setPendingSubmit(null);
   }
 
+  // Copy a listing's submit URL so the user can paste it anywhere (or hand it to
+  // someone). Falls back silently if the clipboard API is blocked.
+  async function copyUrl(id: string, url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500);
+    } catch {
+      setNotice({ kind: "info", text: "Couldn't access the clipboard — long-press the link to copy it." });
+    }
+  }
+
   async function toggleNotifications() {
     const willOpen = !notifOpen;
     setNotifOpen(willOpen);
@@ -956,6 +1031,12 @@ export default function Dashboard() {
   // month's pipeline never leaves the server (src/lib/pipeline.ts). So this is
   // "ready to send today", not "everything we found".
   const readyCount = me.stats.ready;
+  // Working = a local kick in flight OR the server still holds a queued/running
+  // run. The server signal is what keeps the button honest across reloads and
+  // stops a second click from queuing a duplicate (the run route dedups too).
+  const isRunning = running
+    || me.activeRun?.status === "queued"
+    || me.activeRun?.status === "running";
   const outcomeApps = me.applications.filter((a) => a.status === "applied" && a.outcome);
   const responseRate = outcomeApps.length > 0
     ? Math.round((outcomeApps.filter((a) => a.outcome !== "no_response").length / outcomeApps.length) * 100)
@@ -1008,12 +1089,14 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-sm">
               <span className={`size-2 rounded-full ${
-                me.user.status === "paused" ? "bg-warn"
+                isRunning ? "bg-brand pulse-dot"
+                : me.user.status === "paused" ? "bg-warn"
                 : me.user.status === "active" && connectedCount > 0 ? "bg-accent pulse-dot"
                 : "bg-muted"
               }`} />
               <span className="hidden sm:inline">
-                {me.user.status === "paused" ? "Paused"
+                {isRunning ? "Agent working…"
+                 : me.user.status === "paused" ? "Paused"
                  : me.user.status === "active" && connectedCount > 0 ? "Agent active"
                  : "Setup incomplete"}
               </span>
@@ -1106,7 +1189,19 @@ export default function Dashboard() {
             >
               Call prep ↗
             </Link>
-            {connectedCount === 0 ? (
+            {isRunning ? (
+              // Persistent while a run is in flight. Stays put across reloads
+              // (driven by activeRun) and can't be re-clicked — no duplicate run,
+              // no confusion about whether it's working.
+              <button
+                disabled
+                title="Your agent is working — finding and preparing matches. This stays until it finishes."
+                className="flex items-center gap-2 rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white opacity-90 cursor-progress"
+              >
+                <span className="size-2 rounded-full bg-white/90 pulse-dot" />
+                Agent working…
+              </button>
+            ) : connectedCount === 0 ? (
               <button
                 disabled
                 onClick={() => setTab("integrations")}
@@ -1126,11 +1221,10 @@ export default function Dashboard() {
             ) : (
               <button
               onClick={() => runAgent()}
-              disabled={running || connectedCount === 0 || me.quota.remaining === 0}
               title={connectedCount === 0 ? "Connect a job platform first" : "Find supported live matches"}
               className="press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
             >
-              {running ? "Agent running…" : "Run agent"}
+              Run agent
             </button>
             )}
           </div>
@@ -1193,12 +1287,12 @@ export default function Dashboard() {
           <div className="mt-3 flex items-center justify-between rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
             <div>
               <span className="font-medium">
-                {readyCount} match{readyCount !== 1 ? "es" : ""} ready to send.
+                {readyCount} match{readyCount !== 1 ? "es" : ""} matched to you.
               </span>{" "}
               <span className="text-muted">
                 Open each to submit it yourself — Grindly never submits on your behalf.
               </span>{" "}
-              <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">Review them →</button>
+              <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">See matched list →</button>
             </div>
             <button
               onClick={approveAllApplications}
@@ -1232,7 +1326,7 @@ export default function Dashboard() {
             the work exists but is never handed the list (src/lib/pipeline.ts). */}
         <div className="mt-6 grid grid-cols-3 sm:grid-cols-5 gap-3">
           {([
-            ["Ready", me.stats.ready, "text-foreground", "Prepped and waiting for your OK — tap to send"],
+            ["Matched", me.stats.ready, "text-foreground", "Matched to you and ready to open + submit — tap Open & submit on each"],
             ["Queued", me.stats.queued, "text-muted", "Lined up for the coming days, released a batch at a time"],
             ["Applied", me.stats.applied, "text-accent", "Actually submitted"],
             ["Failed", me.stats.failed, "text-danger", "Submission failed"],
@@ -1566,15 +1660,17 @@ export default function Dashboard() {
                       </div>
                     )}
                     {f.type === "toggle" && (
-                      <label className="flex items-center gap-3 cursor-pointer">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        {/* Knob centered with inline-flex (not absolute) so it can
+                            never spill past the track and overlap the label. */}
                         <button
                           type="button"
                           role="switch"
                           aria-checked={profileForm.autoApply}
                           onClick={() => patchForm("autoApply", !profileForm.autoApply)}
-                          className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-brand ${profileForm.autoApply ? "bg-accent" : "bg-surface-2 border border-border"}`}
+                          className={`shrink-0 inline-flex h-6 w-11 items-center rounded-full px-0.5 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-brand ${profileForm.autoApply ? "bg-accent" : "bg-surface-2 border border-border"}`}
                         >
-                          <span className={`absolute top-1 size-4 rounded-full bg-white transition-transform ${profileForm.autoApply ? "translate-x-6" : "translate-x-1"}`} />
+                          <span className={`size-5 rounded-full bg-white shadow-sm transition-transform ${profileForm.autoApply ? "translate-x-5" : "translate-x-0"}`} />
                         </button>
                         <span className="text-sm">{profileForm.autoApply ? "On — agent preps every match, you tap Approve to send" : "Off — agent only shortlists, nothing gets prepped until you turn this on"}</span>
                       </label>
@@ -1653,12 +1749,12 @@ export default function Dashboard() {
         {tab === "applications" && (
           <div className="mt-4">
             <div className="flex flex-wrap gap-2 mb-3 text-sm">
-              {/* One vocabulary end to end: Ready (came due, needs your go-ahead)
+              {/* One vocabulary end to end: Matched (came due, needs your go-ahead)
                   → To submit (you opened it, confirm when done) → Applied. Same
                   words as the row badges so nothing has two names. */}
               {([
                 ["all", "all"],
-                ["matched", "ready"],
+                ["matched", "matched"],
                 ["approved", "to submit"],
                 ["applied", "applied"],
                 ["failed", "failed"],
@@ -1696,13 +1792,30 @@ export default function Dashboard() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium truncate">{a.jobTitle}</span>
-                        {a.url && (
-                          <a href={a.url} target="_blank" rel="noreferrer" className="text-xs text-brand-2 hover:underline shrink-0">
-                            view ↗
-                          </a>
-                        )}
                       </div>
                       <div className="text-sm text-muted mt-0.5">{a.company}</div>
+                      {/* The submit URL, in plain sight and copyable — the link
+                          you open on the platform to actually apply. */}
+                      {a.url && (
+                        <div className="mt-1 flex items-center gap-2 min-w-0">
+                          <a
+                            href={a.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={a.url}
+                            className="truncate text-xs font-mono text-brand-2 hover:underline max-w-[min(28rem,60vw)]"
+                          >
+                            {a.url}
+                          </a>
+                          <button
+                            onClick={() => copyUrl(a.id, a.url!)}
+                            title="Copy this application link"
+                            className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:text-foreground hover:border-brand/40 transition"
+                          >
+                            {copiedId === a.id ? "Copied ✓" : "Copy"}
+                          </button>
+                        </div>
+                      )}
                       {a.reason && (
                         <div className="text-xs text-muted mt-1 truncate max-w-md" title={a.reason}>
                           {a.reason}

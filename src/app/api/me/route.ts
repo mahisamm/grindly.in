@@ -40,6 +40,22 @@ export async function GET() {
     where: { userId: uid, status: "matched", scheduledFor: { gt: new Date() } },
   });
 
+  // Is a "Run agent" job in flight right now? The dashboard uses this so the
+  // button reads "Agent working…" and stays disabled across reloads/tab-switches
+  // until the run actually finishes — instead of resetting to "Run agent" the
+  // moment the local timer lapses, which looked like nothing was happening.
+  // Analyze/latex/connect jobs aren't user-facing agent runs, so exclude them.
+  const activeRunRow = await prisma.agentRun
+    .findFirst({
+      where: { userId: uid, status: { in: ["queued", "running"] }, mode: { in: ["live", "approved"] } },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, status: true, createdAt: true },
+    })
+    .catch(() => null);
+  const activeRun = activeRunRow
+    ? { id: activeRunRow.id, status: activeRunRow.status, startedAt: activeRunRow.createdAt }
+    : null;
+
   // In-app notifications feed — folded into /api/me (already polled) so the
   // dashboard bell costs no extra request. Two cheap indexed queries.
   const [notifItems, notifUnread] = await Promise.all([
@@ -149,6 +165,7 @@ export async function GET() {
     stats,
     quota,
     integrations,
+    activeRun,
     notifications: {
       unread: notifUnread,
       items: notifItems.map((n) => ({ ...n, read: n.readAt !== null })),
