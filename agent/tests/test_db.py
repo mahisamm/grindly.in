@@ -164,6 +164,16 @@ def test_update_application_status_sets_applied_at(testdb):
     assert row["applied_at"] is not None
 
 
+def test_due_match_notification_is_claimed_only_once(testdb):
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="X", company="Y", url="https://x/1",
+                       score=80, status="matched", reason="r", applied=False)
+    app = db.next_due_unnotified_match("u1")
+    assert app and app["url"] == "https://x/1"
+    assert db.mark_match_notified(app["id"]) is True
+    assert db.next_due_unnotified_match("u1") is None
+
+
 def test_applied_external_ids_dedupes(testdb):
     _insert_user(testdb, "u1")
     db.add_application("u1", job_id=None, title="A", company="C", url="https://x/1",

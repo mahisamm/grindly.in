@@ -216,6 +216,9 @@ def apply(job: dict, cover_letter: str, uid: str = "",
     # the call shape uniform so the worker can pass it to all five without a branch.
 
     """Submit via LinkedIn Easy Apply. Reads phone/GPA from profile if provided."""
+    manual_final_submit, hold_reason = safety.requires_manual_final_submit("linkedin")
+    if manual_final_submit:
+        return "needs_review", hold_reason
     phone = (profile or {}).get("phone") or ""
     gpa = str((profile or {}).get("gpa") or "8.0")
 

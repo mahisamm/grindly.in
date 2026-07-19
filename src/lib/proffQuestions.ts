@@ -82,7 +82,7 @@ export const PROFF_FIELDS: ProffField[] = [
   {
     key: "autoApply",
     label: "Auto-prep applications",
-    help: "On = the agent finds and preps matches for you to approve with one tap. Off = it only shortlists — you have to turn this on before it prepares anything to send.",
+    help: "On = the agent finds and prepares matches for you. You always complete the final submission in your own browser. Off = it only shortlists.",
     type: "toggle",
     group: "Firewall / limits",
   },

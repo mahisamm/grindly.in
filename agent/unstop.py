@@ -189,6 +189,9 @@ def apply(job: dict, cover_letter: str, uid: str = "",
     # internshala.apply). This adapter does not populate it yet; accepting it keeps
     # the call shape uniform so the worker can pass it to all five without a branch.
 
+    manual_final_submit, hold_reason = safety.requires_manual_final_submit("unstop")
+    if manual_final_submit:
+        return "needs_review", hold_reason
     page = _context(uid).new_page()
     try:
         page.goto(job["url"], wait_until="domcontentloaded", timeout=45000)

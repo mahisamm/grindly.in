@@ -92,7 +92,7 @@ def due_users(now: datetime.datetime | None = None) -> list[str]:
 
 
 def tick(now: datetime.datetime | None = None) -> int:
-    """Enqueue one live run for every user who is due. Returns how many."""
+    """Enqueue daily discovery and due final-link delivery work."""
     n = 0
     for uid in due_users(now):
         try:
@@ -103,6 +103,15 @@ def tick(now: datetime.datetime | None = None) -> int:
         except Exception as e:  # noqa: BLE001
             # One user's failure must not stop the rest of the fleet being swept.
             log.error("could not enqueue %s: %s", uid, e)
+    # Delivery runs contain no browser automation. The queue's per-user, per-mode
+    # active key makes this safe to evaluate on each 10-minute sweep tick.
+    for uid in db.active_users():
+        try:
+            if db.has_due_unnotified_match(uid):
+                run_queue.enqueue(uid, "deliver")
+                n += 1
+        except Exception as e:  # noqa: BLE001
+            log.error("could not enqueue delivery for %s: %s", uid, e)
     return n
 
 

@@ -91,43 +91,30 @@ describe("POST /api/applications/approve", () => {
     ]);
   });
 
-  it("approves and appends a note to the reason", async () => {
+  it("prepares the application for the user's final browser submission", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockFindFirst.mockResolvedValue({ id: "a1", reason: "good fit" });
     const res = await POST(makeReq({ id: "a1" }));
     expect(res.status).toBe(200);
     expect(mockUpdate).toHaveBeenCalledWith({
       where: { id: "a1" },
-      data: { status: "approved", reason: "good fit — approved by you" },
+      data: { status: "approved", reason: "good fit — ready for your final browser submission" },
     });
   });
 
-  // Approving used to only flip the status; the application wasn't sent until the
-  // user happened to trigger a whole new agent run. The tap must queue the send.
-  it("enqueues a submit-only run so the approved application actually gets sent", async () => {
+  it("never queues a worker to submit on the user's behalf", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockFindFirst.mockResolvedValue({ id: "a1", reason: "good fit" });
 
     const res = await POST(makeReq({ id: "a1" }));
 
     expect(res.status).toBe(200);
-    expect(mockRunCreate).toHaveBeenCalledWith({ data: { userId: "u1", mode: "approved" } });
-    expect(mockSpawnWorkerKick).toHaveBeenCalled();
-  });
-
-  it("reuses an in-flight run instead of queueing a second one", async () => {
-    mockGetUid.mockResolvedValue("u1");
-    mockFindFirst.mockResolvedValue({ id: "a1", reason: "good fit" });
-    mockRunFindFirst.mockResolvedValue({ id: "already-running" });
-
-    const res = await POST(makeReq({ id: "a1" }));
-    const body = await res.json();
-
     expect(mockRunCreate).not.toHaveBeenCalled();
-    expect(body.runId).toBe("already-running");
+    expect(mockSpawnWorkerKick).not.toHaveBeenCalled();
+    await expect(res.json()).resolves.toMatchObject({ ok: true, requiresUserSubmit: true });
   });
 
-  it("does not enqueue a run when the application isn't approvable", async () => {
+  it("does not queue a run when the application isn't approvable", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockFindFirst.mockResolvedValue(null);
 

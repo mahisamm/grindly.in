@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
-import { spawnWorkerKick } from "@/lib/workerKick";
 import { dueNow } from "@/lib/pipeline";
 import { getQuota } from "@/lib/quota";
-import { enqueueAgentRun } from "@/lib/agentRunQueue";
 
 /** Approve TODAY'S matches and enqueue ONE submit-only run to send them. See
  *  api/applications/approve for why the run is needed at all.
@@ -45,16 +43,11 @@ export async function POST() {
     matched.map((a) =>
       prisma.application.update({
         where: { id: a.id },
-        data: { status: "approved", reason: (a.reason ?? "") + " — approved by you" },
+        data: { status: "approved", reason: (a.reason ?? "") + " — ready for your final browser submission" },
       })
     )
   );
 
-  const existing = await prisma.agentRun.findFirst({
-    where: { userId: uid, status: { in: ["queued", "running"] } },
-  });
-  const run = await enqueueAgentRun(uid, "approved", existing);
-  spawnWorkerKick(process.cwd(), uid);
-
-  return NextResponse.json({ ok: true, approved: matched.length, runId: run.id });
+  // Safe Apply Mode never queues a server-side browser session to click submit.
+  return NextResponse.json({ ok: true, approved: matched.length, requiresUserSubmit: true });
 }

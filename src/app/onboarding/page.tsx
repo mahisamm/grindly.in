@@ -594,7 +594,7 @@ export default function OnboardingPage() {
                 ))}
               </div>
 
-              {/* Platform ToS risk acknowledgement — required before auto-apply activates */}
+              {/* Safe Apply acknowledgement — final submission always remains user-controlled. */}
               <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
                 <input
                   type="checkbox"
@@ -603,9 +603,8 @@ export default function OnboardingPage() {
                   className="mt-0.5 size-4 accent-brand"
                 />
                 <span className="text-sm leading-relaxed text-muted">
-                  I understand that automated job applications may violate the Terms of Service of
-                  connected job platforms. I accept this risk and take full
-                  responsibility for my connected accounts. I have read the{" "}
+                  I understand that Grindly prepares matches but I must complete every final
+                  submission myself in the job platform. I have read the{" "}
                   <a href="/terms" target="_blank" className="text-brand-2 underline">
                     Terms of Service
                   </a>

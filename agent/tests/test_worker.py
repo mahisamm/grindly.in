@@ -1,3 +1,4 @@
+import datetime
 import re
 
 import worker
@@ -149,7 +150,7 @@ def test_every_day_gets_a_share_of_the_best_matches():
     the top matches land on DIFFERENT days."""
     cap, days = 10, 30
     top_ten_days = {worker._schedule_day(s, cap, days) for s in range(10)}
-    assert len(top_ten_days) == 10   # the ten best go to ten different days
+    assert len(top_ten_days) == 1    # first daily batch is capped at ten links
 
 
 def test_the_first_match_is_still_available_today():
@@ -164,6 +165,27 @@ def test_overflow_past_the_horizon_lands_on_the_last_day():
 
 def test_schedule_day_never_divides_by_zero():
     assert worker._schedule_day(5, 0, 0) == 0
+
+
+def test_release_times_are_evenly_spaced_inside_a_24_hour_batch():
+    now = datetime.datetime(2026, 7, 19, 0, 0)
+    releases = [worker._release_at(slot, 5, now) for slot in range(5)]
+    assert releases == [
+        now,
+        now + datetime.timedelta(hours=4, minutes=48),
+        now + datetime.timedelta(hours=9, minutes=36),
+        now + datetime.timedelta(hours=14, minutes=24),
+        now + datetime.timedelta(hours=19, minutes=12),
+    ]
+
+
+def test_delivery_sends_a_final_link_without_calling_a_platform(monkeypatch):
+    app = {"id": "a1", "job_title": "Intern", "company": "Acme", "url": "https://x/1", "match_score": 81, "source": "linkedin"}
+    monkeypatch.setattr(worker.db, "next_due_unnotified_match", lambda uid: app)
+    monkeypatch.setattr(worker.notify, "to_user", lambda user, subject, text: "https://x/1" in text)
+    monkeypatch.setattr(worker.db, "mark_match_notified", lambda app_id: app_id == "a1")
+    monkeypatch.setattr(worker.db, "add_audit", lambda *args, **kwargs: None)
+    assert worker.deliver_ready_match("u1", {"id": "u1"}) == {"delivered": 1, "application_id": "a1"}
 
 
 # ---------- pipeline refill hysteresis ----------
@@ -300,8 +322,9 @@ def test_requires_approval_true_for_adversarial_platform_with_auto_apply_off():
         assert worker._requires_approval(src, auto_apply=False) is True
 
 
-def test_requires_approval_false_for_non_adversarial_platform_with_auto_apply_on():
-    assert worker._requires_approval("mock_ats", auto_apply=True) is False
+def test_requires_approval_true_for_an_unknown_future_platform_with_auto_apply_on():
+    # New sources must not accidentally inherit unattended submit permission.
+    assert worker._requires_approval("mock_ats", auto_apply=True) is True
 
 
 def test_requires_approval_true_for_non_adversarial_platform_with_auto_apply_off():

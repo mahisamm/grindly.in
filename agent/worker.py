@@ -143,12 +143,14 @@ def _platforms_for_today(uid: str, available: list[str], today: str | None = Non
 
 
 def _requires_approval(src: str, auto_apply: bool) -> bool:
-    """True if a match must land in the matched->approve queue instead of an
-    immediate live submit. ADVERSARIAL_PLATFORMS forces this regardless of the
-    user's auto_apply setting — a bot submitting on a platform whose ToS bans
-    bots is what gets accounts banned; that risk isn't something a settings
-    toggle should be able to waive."""
-    return src in ADVERSARIAL_PLATFORMS or not auto_apply
+    """True when discovery must stop before final platform submission.
+
+    Safe Apply Mode fails closed for every browser source, including an
+    unrecognised future source.  The profile setting controls whether the agent
+    prepares matches, never whether it may impersonate a user at final submit.
+    """
+    del auto_apply
+    return safety.requires_manual_final_submit(src)[0]
 
 
 def _cooldown_active(row: dict | None, cutoff) -> bool:
@@ -402,24 +404,46 @@ def _tailor_key(title: str, company: str = "") -> str:
 
 
 def _schedule_day(slot: int, cap: int, days: int = PIPELINE_DAYS) -> int:
-    """Which day (0 = today) the match in queue position `slot` comes due.
-
-    Round-robin across the days, NOT a straight `slot // cap` fill.
-
-    The straight fill is the obvious implementation and it is wrong: `scored` is
-    sorted best-first, so it hands the user their ten strongest matches on day 1
-    and the bottom of the barrel on day 30. Every day after the first would be
-    visibly worse than the last, and the user would reasonably conclude the agent
-    had stopped working. Dealing the matches out like cards instead means each
-    day's batch spans the same quality range.
-    """
+    """Which 24-hour batch (0 = current batch) a queue position belongs to."""
     cap = max(1, cap)
     days = max(1, days)
-    # Deal one to each day in turn, then start the next round. Past the horizon
-    # (more matches than cap*days), fall back to filling the tail day.
+    # Each batch contains at most the user's plan cap. Past the horizon, retain
+    # the final batch rather than releasing an unbounded backlog.
     if slot >= cap * days:
         return days - 1
-    return slot % days
+    return slot // cap
+
+
+def _release_at(slot: int, cap: int, now: datetime.datetime | None = None):
+    """Stagger final-link release evenly within each 24-hour batch."""
+    cap = max(1, cap)
+    batch = _schedule_day(slot, cap)
+    lane = slot % cap
+    delay_ms = batch * _DAY_MS + (lane * _DAY_MS) // cap
+    if now is None:
+        return db.time_from_now_db(delay_ms)
+    return now + datetime.timedelta(milliseconds=delay_ms)
+
+
+def deliver_ready_match(uid: str, user: dict) -> dict:
+    """Send one final application link. It never contacts a job platform."""
+    app = db.next_due_unnotified_match(uid)
+    if not app:
+        return {"delivered": 0}
+    source = app.get("source") or "job platform"
+    text = (
+        f":link: *Your next match is ready*\n"
+        f"*{app['job_title']}* at *{app['company']}* ({app['match_score']} match)\n"
+        f"Open: {app['url']}\n\n"
+        f"Complete the final Apply/Submit step yourself on {source}. Then return to "
+        "Grindly and mark it submitted so your daily limit and outcome tracking stay accurate."
+    )
+    if not notify.to_user(user, "Grindly: your next application link is ready", text):
+        return {"delivered": 0, "undelivered": 1}
+    if not db.mark_match_notified(app["id"]):
+        return {"delivered": 0, "already_notified": 1}
+    db.add_audit("application_link_delivered", user_id=uid, target=app["url"], detail=source)
+    return {"delivered": 1, "application_id": app["id"]}
 
 
 def _resume_hash(text: str) -> str:
@@ -561,12 +585,9 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     profile = user.get("profile") or {}
     name = user.get("name") or (user.get("email") or "").split("@")[0]
 
-    # "approved" = submit-only. Fired when the user taps Approve in the dashboard:
-    # send the applications they just OK'd and nothing else. Skips discovery
-    # entirely (no scraping, no scoring), because tapping Approve on one job
-    # shouldn't cost a full multi-minute sweep of every board. All the safety
-    # machinery — human hours, daily cap, pacing, the challenge breaker — still
-    # applies; it is the same submit path a normal run uses in step 4a.
+    # "approved" is retained only to drain legacy queued work safely.  Safe
+    # Apply Mode never submits from this worker; current dashboard approvals do
+    # not enqueue this mode.
     submit_only = mode == "approved"
     live = mode in ("live", "approved")
 
@@ -577,20 +598,8 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     quota_kind = "trial" if user_plan == "free" else "today"
     log.info("=== run for %s (%s) mode=%s cap=%d used=%d (%s) ===", name, uid, mode, cap, quota_used, quota_kind)
     db.add_audit("run_start", user_id=uid, detail=f"mode={mode} cap={cap}")
-    # consent trace: auto-apply submits on the user's behalf — record whether
-    # they explicitly consented (profile.auto_apply_consent_at). Prototype only
-    # warns; production should refuse auto-apply without a consent timestamp.
-    if profile.get("auto_apply") and not profile.get("auto_apply_consent_at"):
-        log.warning("BLOCKED: auto_apply on without consent timestamp — refusing to submit applications")
-        db.add_audit("consent_blocked", user_id=uid, detail="auto_apply blocked: no consent timestamp")
-        notify.to_user(
-            user,
-            "Grindly: action needed — confirm your settings",
-            ":lock: *Agent blocked* — auto-apply requires explicit consent. "
-            "Re-open the dashboard, confirm your settings, and re-activate to continue.",
-        )
-        return {"error": "consent_required", "message": "auto_apply blocked: no consent timestamp on record"}
-
+    if mode == "deliver":
+        return deliver_ready_match(uid, user)
     # 1. resume -> skills
     skills = _jlist(profile.get("skills"))
     text = profile.get("resume_text") or ""
@@ -939,7 +948,10 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
 
         return _snapshot(pdf, edited, True, "tailored (Skills/Hobbies only)")
 
-    # 4a. Handle pre-approved applications (auto_apply=False users who manually approved)
+    # 4a. Keep user-approved applications ready for the user's own final submit.
+    # Safe Apply Mode never calls a platform adapter from this queue.  This guard
+    # is intentionally before module loading so an accidental queue run cannot
+    # log in, fill, or click any external application form.
     requeue_after_seconds = 0
     approved_apps = db.get_approved_applications(uid)
     if live and approved_apps:
@@ -947,6 +959,11 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             if remaining <= 0:
                 break
             src = app_row.get("source") or ""
+            manual_final_submit, hold_reason = safety.requires_manual_final_submit(src)
+            if manual_final_submit:
+                db.update_application_status(app_row["id"], "approved", hold_reason)
+                db.add_audit("safe_apply_hold", user_id=uid, target=app_row.get("url"), detail=src)
+                continue
             # A user tapped Approve on this — it MUST send, regardless of
             # today's discovery rotation. Rotation only limits which sites we
             # *scrape* for new jobs; it must never strand an already-approved
@@ -1136,19 +1153,14 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             # `pipeline` is what was already queued before this run, so a second
             # sweep keeps filling days behind the existing queue rather than
             # piling another `cap` matches onto today.
-            day = _schedule_day(pipeline + queued, plan_cap)
+            slot = pipeline + queued
             queued += 1
-            approval_reason = (
-                f"{reason} — ready to send, tap Approve (final step is manual "
-                f"on {src} to keep your account safe)"
-                if src in ADVERSARIAL_PLATFORMS
-                else f"{reason} — awaiting your OK"
-            )
+            approval_reason = f"{reason} — {safety.SAFE_APPLY_REASON}"
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
                 reason=approval_reason, applied=False,
-                scheduled_for=db.time_from_now_db(day * _DAY_MS) if day > 0 else None,
+                scheduled_for=_release_at(slot, plan_cap),
                 missing_skills=matcher.missing_skills(
                     job, skills, jd_text=job.get("jd_text", "")
                 ),
@@ -1354,18 +1366,10 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
             f"after a cooldown.",
         )
 
-    # A submit-only run sends the applications the user just approved and stops.
-    # It isn't a sweep, so it must not file a daily report (that would overwrite
-    # the day's real numbers with matched=0) or repeat the daily digest.
+    # A legacy submit-only run only preserves applications for the user's manual
+    # completion.  It isn't a sweep, so it must not overwrite the daily report.
     if submit_only:
-        log.info("done (approved submits): applied=%d failed=%d", applied, failed)
-        if applied or failed:
-            notify.to_user(
-                user,
-                "Grindly: your approved applications are in",
-                f":white_check_mark: Sent *{applied}* application(s) you approved."
-                + (f"  ({failed} couldn't be submitted — see the dashboard.)" if failed else ""),
-            )
+        log.info("done (safe-apply holds): prepared=%d", len(approved_apps))
         return {"applied": applied, "matched": 0, "failed": failed, "mode": "approved"}
 
     # 5. report + 6. notify
@@ -1377,8 +1381,8 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     ready = db.ready_today_count(uid)
     depth = db.pipeline_depth(uid)
     summary = (
-        f"Applied to {applied} internship(s) today. "
-        f"{ready} more ready for your OK. "
+        f"Recorded {applied} submitted internship(s) today. "
+        f"{ready} more ready for you to prepare. "
         f"{depth} lined up over the coming weeks."
     )
     db.add_report(uid, date=today, matched=matched, applied=applied, failed=failed,
@@ -1387,8 +1391,8 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
     sources_used = ", ".join(source_modules.keys()) if source_modules else "your queue"
     approve_nudge = (
         "\n\n:point_right: I don't click the final submit on LinkedIn/Internshala/Naukri/"
-        "Unstop/Indeed — that one human tap is what keeps your account safe. Open the "
-        "dashboard and tap *Approve* to send today's batch."
+        "Unstop/Indeed. Open the dashboard, prepare a match, then complete the "
+        "final submission in your own browser."
         if ready
         else ""
     )
@@ -1455,7 +1459,7 @@ def main():
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--user")
-    ap.add_argument("--mode", default="live", choices=["live", "approved"])
+    ap.add_argument("--mode", default="live", choices=["live", "approved", "deliver"])
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--analyze", action="store_true", help="Resume analyze only — no job scraping")
     ap.add_argument("--loop", action="store_true")

@@ -2,8 +2,8 @@
 // Mirrored on the Python side in agent/safety.py — keep both in sync.
 
 export const APPLY_STATUS = {
-  MATCHED: "matched", // scored above threshold, awaiting auto-apply or user OK
-  APPROVED: "approved", // user manually approved (auto_apply off)
+  MATCHED: "matched", // scored above threshold, awaiting user preparation
+  APPROVED: "approved", // ready for the user's final browser submission
   SUBMITTING: "submitting", // set BEFORE the click; in-flight, outcome unknown
   APPLIED: "applied", // confirmed submitted (success signal seen)
   SKIPPED: "skipped", // intentionally not applied (firewall, dup, below score)

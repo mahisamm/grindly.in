@@ -87,16 +87,15 @@ describe("POST /api/applications/approve-all", () => {
     expect(mockTransaction).toHaveBeenCalledTimes(1);
     expect(mockUpdate).toHaveBeenCalledWith({
       where: { id: "a1" },
-      data: { status: "approved", reason: "good fit — approved by you" },
+    data: { status: "approved", reason: "good fit — ready for your final browser submission" },
     });
     expect(mockUpdate).toHaveBeenCalledWith({
       where: { id: "a2" },
-      data: { status: "approved", reason: " — approved by you" },
+    data: { status: "approved", reason: " — ready for your final browser submission" },
     });
   });
 
-  // Approving 12 jobs must queue ONE send, not 12 — and must queue it at all.
-  it("enqueues exactly one submit-only run for the whole batch", async () => {
+  it("never queues a worker to submit the batch", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockFindMany.mockResolvedValue([
       { id: "a1", reason: "r" },
@@ -106,8 +105,7 @@ describe("POST /api/applications/approve-all", () => {
 
     await POST();
 
-    expect(mockRunCreate).toHaveBeenCalledTimes(1);
-    expect(mockRunCreate).toHaveBeenCalledWith({ data: { userId: "u1", mode: "approved" } });
-    expect(mockSpawnWorkerKick).toHaveBeenCalled();
+    expect(mockRunCreate).not.toHaveBeenCalled();
+    expect(mockSpawnWorkerKick).not.toHaveBeenCalled();
   });
 });

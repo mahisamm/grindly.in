@@ -159,7 +159,7 @@ export default function AdminSettings() {
             />
             <FlagRow
               label="Auto-apply"
-              desc="Allow the agent to actually submit applications. Off = analyze-only mode."
+              desc="Allow the agent to prepare applications. Final submission always remains user-controlled."
               value={s.featureFlags.autoApply}
               onChange={() => toggleFlag("autoApply")}
             />

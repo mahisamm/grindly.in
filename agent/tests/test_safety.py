@@ -1,6 +1,11 @@
 import json
 
 import safety
+import indeed
+import internshala
+import linkedin
+import naukri
+import unstop
 
 
 def test_can_apply_blocks_firewall():
@@ -24,6 +29,21 @@ def test_can_apply_allows_good_job():
     ok, reason = safety.can_apply(job, profile, score=80)
     assert ok is True
     assert reason is None
+
+
+def test_safe_apply_requires_a_manual_final_submit_for_known_and_unknown_sources():
+    for source in ("linkedin", "internshala", "naukri", "unstop", "indeed", "future_source", None):
+        required, reason = safety.requires_manual_final_submit(source)
+        assert required is True
+        assert "own browser" in reason
+
+
+def test_every_browser_adapter_fails_closed_before_opening_a_submit_form():
+    job = {"url": "https://example.test/job"}
+    for adapter in (linkedin, internshala, naukri, unstop, indeed):
+        status, reason = adapter.apply(job, "", "test-user")
+        assert status == safety.APPLY_STATUS.NEEDS_REVIEW
+        assert reason == safety.SAFE_APPLY_REASON
 
 
 def test_session_ok_detects_login_url():

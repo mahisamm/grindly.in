@@ -274,6 +274,8 @@ model Application {
   //
   // null = due immediately (legacy rows, and anything the user approved by hand).
   scheduledFor DateTime? @map("scheduled_for")
+  // Set only after Grindly successfully delivers the final application link.
+  notifiedAt  DateTime? @map("notified_at")
   appliedAt  DateTime? @map("applied_at")
   // user-reported outcome — the single most important beta signal (interview rate)
   // null (unset) until the user reports one

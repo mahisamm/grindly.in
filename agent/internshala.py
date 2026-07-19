@@ -286,6 +286,9 @@ def apply(
     - Screenshot saved on any non-trivial failure, AND on success (proof).
     - Timeout retried once before giving up.
     """
+    manual_final_submit, hold_reason = safety.requires_manual_final_submit("internshala")
+    if manual_final_submit:
+        return "needs_review", hold_reason
     page = _context(uid).new_page()
     try:
         try:

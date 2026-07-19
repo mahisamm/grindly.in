@@ -25,8 +25,8 @@ const STEPS = [
   },
   {
     n: "04",
-    title: "You approve, the agent submits",
-    body: "It reads listings, scores each against your resume, prepares supported easy applications, and skips complex or external flows.",
+    title: "You prepare, then submit",
+    body: "It reads listings, scores each against your resume, and prepares supported matches for you to complete in your own browser.",
   },
   {
     n: "05",
@@ -39,7 +39,7 @@ const FEATURES = [
   ["Resume-aware matching", "Skills extracted from your resume score every role 0–100. Only real fits get an application.", Target],
   ["You set the firewall", "Min match score, max/day, excluded companies, stipend floor — hard constraints the agent can't cross.", Bolt],
   ["Real applications", "Opens supported listings, fills the form, and prepares it for your approval — not just a list of links.", Doc],
-  ["You approve every submission", "The agent submits only after you approve the prepared application. Pause anytime from the dashboard.", Clock],
+  ["You control every submission", "The agent prepares the match; you complete the final submission in your own browser. Pause anytime from the dashboard.", Clock],
   ["Daily reports your way", "Get progress reports via Slack DM or email — whichever you prefer. Connect Gmail to auto-detect interview calls.", Slack],
   ["Private by design", "Resume analysis uses only the AI providers configured for this service and degrades safely if they are unavailable. Your data is never sold.", Sparkle],
 ] as const;
@@ -62,7 +62,7 @@ export default function Home() {
           <div className="animate-in">
             <div className="inline-flex items-center gap-2 rounded-full border-2 border-ink bg-surface px-3 py-1 text-xs font-semibold">
               <span className="size-1.5 rounded-full bg-accent pulse-dot" />
-              Your AI applies while you sleep
+              Your AI prepares your job search
             </div>
 
             <h1 className="display mt-6 text-[3.1rem] leading-[0.92] sm:text-[4.3rem]">
@@ -77,7 +77,7 @@ export default function Home() {
 
             <p className="mt-7 max-w-md text-lg text-muted">
               Grindly reads your resume, finds internships that actually match your
-              skills, prepares supported matches, and submits only after your approval.
+              skills and prepares supported matches. You complete final submission in your own browser.
               You get a daily report via email or Slack.
             </p>
 
@@ -183,7 +183,7 @@ export default function Home() {
         <div className="marquee-track">
           {[0, 1].map((dup) => (
             <span key={dup} className="display flex items-center text-4xl sm:text-5xl" aria-hidden={dup === 1}>
-              {["THE AGENT THAT GROWS WITH YOU", "APPLIES WHILE YOU SLEEP", "ONE BOT, ZERO BUSYWORK"].map((t) => (
+              {["THE AGENT THAT GROWS WITH YOU", "PREPARES MATCHES FOR YOU", "ZERO BUSYWORK"].map((t) => (
                 <span key={t} className="flex items-center">
                   <span className="px-8">{t}</span>
                   <Star className="opacity-90" size={26} />

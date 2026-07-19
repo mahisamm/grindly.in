@@ -69,7 +69,8 @@ def test_only_active_users_are_swept():
 def test_tick_enqueues_a_live_run_for_each_due_user():
     with patch.object(sweep, "due_users", return_value=["u1", "u2"]), \
          patch.object(sweep.run_queue, "enqueue") as enq, \
-         patch.object(sweep.db, "add_audit"):
+         patch.object(sweep.db, "add_audit"), \
+         patch.object(sweep.db, "active_users", return_value=[]):
         assert sweep.tick() == 2
     assert [c.args for c in enq.call_args_list] == [("u1", "live"), ("u2", "live")]
 
@@ -81,5 +82,15 @@ def test_one_users_failure_does_not_stop_the_rest_of_the_fleet():
 
     with patch.object(sweep, "due_users", return_value=["u1", "u2"]), \
          patch.object(sweep.run_queue, "enqueue", side_effect=flaky), \
-         patch.object(sweep.db, "add_audit"):
+         patch.object(sweep.db, "add_audit"), \
+         patch.object(sweep.db, "active_users", return_value=[]):
         assert sweep.tick() == 1   # u2 still got swept
+
+
+def test_tick_enqueues_a_delivery_run_for_a_due_unnotified_link():
+    with patch.object(sweep, "due_users", return_value=[]), \
+         patch.object(sweep.db, "active_users", return_value=["u1"]), \
+         patch.object(sweep.db, "has_due_unnotified_match", return_value=True), \
+         patch.object(sweep.run_queue, "enqueue") as enq:
+        assert sweep.tick() == 1
+    assert enq.call_args.args == ("u1", "deliver")

@@ -46,6 +46,26 @@ class FAILURE_REASON:
 _LOGIN_URL_HINTS = ("login", "signin", "sign-in", "/account/login", "authwall")
 _CAPTCHA_HINTS = ("captcha", "are you a human", "verify you", "recaptcha", "hcaptcha")
 
+# Safe Apply Mode is deliberately fail-closed.  The platforms currently
+# supported by Grindly are browser-driven sites, not documented partner APIs.
+# We can find and prepare a relevant application, but the user must perform the
+# final submission in their own browser.  Keeping this as a single helper gives
+# the worker and every future adapter one policy boundary to enforce.
+SAFE_APPLY_REASON = (
+    "Safe Apply Mode: open this application in your own browser and complete "
+    "the final submission yourself."
+)
+
+
+def requires_manual_final_submit(source: str | None = None) -> tuple[bool, str]:
+    """Return the mandatory final-submit policy for a source.
+
+    Unknown sources intentionally receive the same answer.  A future official
+    partner API must be explicitly designed and reviewed before it can receive
+    a different policy; a new source never inherits unattended submission.
+    """
+    return True, SAFE_APPLY_REASON
+
 
 def can_apply(job: dict, profile: dict, score: int | None = None) -> tuple[bool, str | None]:
     """Hard gate — final check before submitting. Returns (ok, reason_if_blocked).

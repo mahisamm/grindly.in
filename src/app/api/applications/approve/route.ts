@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
-import { spawnWorkerKick } from "@/lib/workerKick";
 import { dueNow } from "@/lib/pipeline";
 import { getQuota } from "@/lib/quota";
-import { enqueueAgentRun } from "@/lib/agentRunQueue";
 
 /**
  * Approve a matched application — and actually send it.
@@ -55,17 +53,10 @@ export async function POST(req: Request) {
     where: { id: body.id },
     data: {
       status: "approved",
-      reason: (app.reason ?? "") + " — approved by you",
+      reason: (app.reason ?? "") + " — ready for your final browser submission",
     },
   });
 
-  const existing = await prisma.agentRun.findFirst({
-    where: { userId: uid, status: { in: ["queued", "running"] } },
-  });
-  const run = await enqueueAgentRun(uid, "approved", existing);
-
-  // Best-effort local kick; in prod the worker fleet drains the queue anyway.
-  spawnWorkerKick(process.cwd(), uid);
-
-  return NextResponse.json({ ok: true, runId: run.id, queued: !existing });
+  // Safe Apply Mode never queues a server-side browser session to click submit.
+  return NextResponse.json({ ok: true, requiresUserSubmit: true });
 }

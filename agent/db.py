@@ -651,6 +651,8 @@ def _ensure_app_columns(c):
         c.execute("ALTER TABLE applications ADD COLUMN outcome_at INTEGER")
     if "scheduled_for" not in cols:
         c.execute("ALTER TABLE applications ADD COLUMN scheduled_for INTEGER")
+    if "notified_at" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN notified_at INTEGER")
     if "answers_json" not in cols:
         c.execute("ALTER TABLE applications ADD COLUMN answers_json TEXT")
     if "missing_skills" not in cols:
@@ -760,6 +762,37 @@ def ready_today_count(uid: str) -> int:
             (uid, now_db()),
         ).fetchone()
     return int(row["n"] if row else 0)
+
+
+def next_due_unnotified_match(uid: str) -> dict | None:
+    """Return one released match that still needs its final link delivered."""
+    with conn() as c:
+        _ensure_app_columns(c)
+        row = c.execute(
+            "SELECT a.id, a.job_title, a.company, a.url, a.match_score, "
+            "COALESCE(j.source, '') AS source "
+            "FROM applications a LEFT JOIN jobs j ON j.id=a.job_id "
+            "WHERE a.user_id=? AND a.status='matched' AND a.url IS NOT NULL "
+            "AND a.notified_at IS NULL AND (a.scheduled_for IS NULL OR a.scheduled_for <= ?) "
+            "ORDER BY a.scheduled_for ASC, a.created_at ASC LIMIT 1",
+            (uid, now_db()),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def has_due_unnotified_match(uid: str) -> bool:
+    return next_due_unnotified_match(uid) is not None
+
+
+def mark_match_notified(app_id: str) -> bool:
+    """Atomically mark a final-link notification delivered."""
+    with conn() as c:
+        _ensure_app_columns(c)
+        cursor = c.execute(
+            "UPDATE applications SET notified_at=? WHERE id=? AND notified_at IS NULL",
+            (now_db(), app_id),
+        )
+    return cursor.rowcount == 1
 
 
 def _ensure_resume_versions_table(c):

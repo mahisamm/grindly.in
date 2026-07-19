@@ -171,7 +171,7 @@ const STATUS_STYLE: Record<string, string> = {
 
 const STATUS_LABEL: Record<string, string> = {
   applied:  "applied",
-  approved: "sending…",
+  approved: "ready for you",
   matched:  "ready",
   skipped:  "skipped",
   failed:   "failed",
@@ -377,6 +377,7 @@ export default function Dashboard() {
   const [profileSaved, setProfileSaved] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approvingAll, setApprovingAll] = useState(false);
+  const [confirmingSubmittedId, setConfirmingSubmittedId] = useState<string | null>(null);
   const [analyzingResume, setAnalyzingResume] = useState(false);
   const [uploading, setUploading] = useState<"master" | "tex" | null>(null);
   const [editingSkills, setEditingSkills] = useState(false);
@@ -683,9 +684,10 @@ export default function Dashboard() {
     }).catch(() => null);
     setApprovingId(null);
     if (!res || !res.ok) {
-      setNotice({ kind: "err", text: "Couldn't send that one — please try again." });
+      setNotice({ kind: "err", text: "Couldn't prepare that application — please try again." });
       return;
     }
+    setNotice({ kind: "ok", text: "Ready. Open the listing, submit it yourself, then mark it submitted here." });
     load();
   }
 
@@ -694,9 +696,27 @@ export default function Dashboard() {
     const res = await fetch("/api/applications/approve-all", { method: "POST" }).catch(() => null);
     setApprovingAll(false);
     if (!res || !res.ok) {
-      setNotice({ kind: "err", text: "Couldn't approve all — please try again." });
+      setNotice({ kind: "err", text: "Couldn't prepare those applications — please try again." });
       return;
     }
+    setNotice({ kind: "ok", text: "Your applications are ready. Complete final submission in your own browser." });
+    load();
+  }
+
+  async function confirmManualSubmission(id: string) {
+    if (!window.confirm("Only continue after you submitted this application yourself in the job platform.")) return;
+    setConfirmingSubmittedId(id);
+    const res = await fetch("/api/applications/submitted", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    }).catch(() => null);
+    setConfirmingSubmittedId(null);
+    if (!res || !res.ok) {
+      setNotice({ kind: "err", text: "Couldn't record that submission — please try again." });
+      return;
+    }
+    setNotice({ kind: "ok", text: "Submission recorded. You can track its outcome here later." });
     load();
   }
 
@@ -860,7 +880,7 @@ export default function Dashboard() {
               </li>
               <li className="flex gap-3">
                 <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">3</span>
-                <span><span className="font-medium">Run the agent.</span> It scores and applies to matches. Then tell us the outcome on each application so we can prove it works.</span>
+                <span><span className="font-medium">Run the agent.</span> It scores and prepares matches. You complete final submission in your own browser, then track the outcome here.</span>
               </li>
             </ol>
             <p className="mt-4 text-xs text-muted">Tip: <span className="text-foreground">Run agent</span> unlocks as soon as one supported platform is connected.</p>
@@ -1008,19 +1028,19 @@ export default function Dashboard() {
           <div className="mt-3 flex items-center justify-between rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
             <div>
               <span className="font-medium">
-                {readyCount} application{readyCount !== 1 ? "s" : ""} ready to send.
+                {readyCount} application{readyCount !== 1 ? "s" : ""} ready to prepare.
               </span>{" "}
               <span className="text-muted">
-                Prepped with your resume — one tap and the agent submits.
+                Prepped with your resume — you complete final submission in your browser.
               </span>{" "}
-              <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">Review & send →</button>
+              <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">Review & prepare →</button>
             </div>
             <button
               onClick={approveAllApplications}
               disabled={approvingAll}
               className="ml-4 shrink-0 rounded-lg border border-brand/40 px-3 py-1.5 text-xs text-brand-2 hover:bg-brand/10 transition disabled:opacity-50"
             >
-              {approvingAll ? "Sending…" : `Send all ${readyCount}`}
+              {approvingAll ? "Preparing…" : `Prepare all ${readyCount}`}
             </button>
           </div>
         )}
@@ -1474,7 +1494,7 @@ export default function Dashboard() {
                 ["all", "all"],
                 ["matched", "ready"],
                 ["applied", "applied"],
-                ["approved", "sending"],
+                ["approved", "ready for you"],
                 ["failed", "failed"],
                 ["skipped", "skipped"],
               ] as const).map(([f, label]) => (
@@ -1553,7 +1573,7 @@ export default function Dashboard() {
                       <span className={`rounded-md px-2 py-1 text-xs ${STATUS_STYLE[a.status] || "bg-surface-2 text-muted"}`}>
                         {STATUS_LABEL[a.status] ?? a.status}
                       </span>
-                      {(a.status === "applied" || a.status === "approved") && (
+                      {a.status === "applied" && (
                         <select
                           value={a.outcome ?? ""}
                           onChange={(e) => setOutcome(a.id, e.target.value)}
@@ -1569,11 +1589,33 @@ export default function Dashboard() {
                         <button
                           onClick={() => approveApplication(a.id)}
                           disabled={approvingId === a.id}
-                          title="The agent fills and submits this for you. It never clicks submit without this tap."
+                          title="Prepare this application for your final browser submission."
                           className="rounded-md border border-brand/40 px-2.5 py-1 text-xs text-brand-2 hover:bg-brand/10 transition disabled:opacity-50"
                         >
-                          {approvingId === a.id ? "…" : "Send"}
+                          {approvingId === a.id ? "…" : "Prepare"}
                         </button>
+                      )}
+                      {a.status === "approved" && (
+                        <div className="flex items-center gap-2">
+                          {a.url && (
+                            <a
+                              href={a.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-md border border-brand/40 px-2.5 py-1 text-xs text-brand-2 hover:bg-brand/10 transition"
+                            >
+                              Open & submit
+                            </a>
+                          )}
+                          <button
+                            onClick={() => confirmManualSubmission(a.id)}
+                            disabled={confirmingSubmittedId === a.id}
+                            title="Use only after you submitted the application yourself in the job platform."
+                            className="rounded-md border border-accent/40 px-2.5 py-1 text-xs text-accent hover:bg-accent/10 transition disabled:opacity-50"
+                          >
+                            {confirmingSubmittedId === a.id ? "…" : "Mark submitted"}
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
