@@ -77,11 +77,18 @@ export default function ConnectViewer({ platform, token, onClose }: Props) {
           </button>
         </div>
         {status === "live" && (
-          <div className="mb-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
-            Sign in with your <span className="font-medium capitalize">{platform}</span> email &amp; password.
-            Google sign-in is turned off in this window — Google blocks it from remote browsers. If you only
-            ever used <span className="font-medium">&ldquo;Continue with Google&rdquo;</span>, set a password
-            first on {platform} via <span className="font-medium">Forgot password</span>, then use it here.
+          <div className="mb-3 space-y-1.5">
+            <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+              Sign in with your <span className="font-medium capitalize">{platform}</span> email &amp; password.
+              Google sign-in is turned off in this window — Google blocks it from remote browsers. If you only
+              ever used <span className="font-medium">&ldquo;Continue with Google&rdquo;</span>, set a password
+              first on {platform} via <span className="font-medium">Forgot password</span>, then use it here.
+            </div>
+            <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted">
+              <span className="text-foreground font-medium">Asked for a verification code?</span> That&apos;s
+              normal for a first login — {platform} emails you a code. Open your inbox, then type it into the
+              window here. You have a few minutes.
+            </div>
           </div>
         )}
         <div

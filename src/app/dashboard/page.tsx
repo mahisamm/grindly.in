@@ -596,7 +596,10 @@ export default function Dashboard() {
     // This is event-driven polling state, not render output.
     // eslint-disable-next-line react-hooks/purity
     const started = Date.now();
-    const deadline = started + 300_000;
+    // Sit a little past the server's 420s session window so the client never
+    // declares "didn't open in time" while the remote login is still live
+    // (e.g. the user is fetching an email verification code).
+    const deadline = started + 450_000;
     let opened = false;
     const pollConnect = async () => {
       // User closed the viewer — stop; never re-open a window they dismissed.

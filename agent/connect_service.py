@@ -29,7 +29,11 @@ log_prefix = "[connect_service]"
 DISPLAY_NUM = 100
 VNC_PORT = 5901
 TOKEN_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "vnc-tokens.txt")
-SESSION_TIMEOUT_SEC = 300
+# 7 min, not 5: a first login from the server IP almost always triggers an
+# email verification code (LinkedIn/Naukri "quick verification"). The user has
+# to leave, open their inbox, and type it back — 5 min ran too tight and could
+# close the window mid-verification, losing the login.
+SESSION_TIMEOUT_SEC = 420
 POLL_INTERVAL_SEC = 3
 MAX_SESSIONS = max(1, int(os.environ.get("GRINDLY_CONNECT_MAX_SESSIONS", "2")))
 
