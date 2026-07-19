@@ -127,7 +127,12 @@ def connect(uid: str, platform: str, timeout: int = 300, display: str | None = N
             profile,
             headless=False,
             **launch_options,
-            args=["--disable-blink-features=AutomationControlled"],
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--no-first-run",
+                "--disable-dev-shm-usage",
+            ],
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -135,6 +140,13 @@ def connect(uid: str, platform: str, timeout: int = 300, display: str | None = N
             ),
             viewport={"width": 1280, "height": 860},
         )
+        # Same bot-detection mitigations the apply-side drivers use. Without
+        # this the login page sees navigator.webdriver etc. and is more likely
+        # to throw a captcha/"unusual activity" wall at the user mid-login.
+        try:
+            stealth.apply_stealth(ctx)
+        except Exception:  # noqa: BLE001
+            pass
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             page.goto(cfg["login_url"], wait_until="domcontentloaded", timeout=45000)

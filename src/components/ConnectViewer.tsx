@@ -54,12 +54,12 @@ export default function ConnectViewer({ platform, token, onClose }: Props) {
     };
   }, [token]);
 
+  // No backdrop-click-to-close: a login in progress is easy to lose with a
+  // stray click, and closing tears down the whole remote session. Only the
+  // explicit Close button cancels.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4" onClick={onClose}>
-      <div
-        className="glass rounded-2xl p-4 max-w-3xl w-full glow"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+      <div className="glass rounded-2xl p-4 max-w-3xl w-full glow">
         <div className="flex items-center justify-between mb-3">
           <div>
             <h2 className="font-display text-lg font-semibold capitalize">Log into {platform}</h2>
@@ -76,6 +76,14 @@ export default function ConnectViewer({ platform, token, onClose }: Props) {
             Close
           </button>
         </div>
+        {status === "live" && (
+          <div className="mb-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+            Sign in with your <span className="font-medium capitalize">{platform}</span> email &amp; password.
+            The <span className="font-medium">&ldquo;Continue with Google&rdquo;</span> button won&apos;t work in
+            this window — Google blocks sign-in from remote browsers. If you only ever used Google to sign in,
+            set a password first via <span className="font-medium">Forgot password</span>.
+          </div>
+        )}
         <div
           ref={containerRef}
           className="w-full aspect-video rounded-xl overflow-hidden border border-border bg-black"

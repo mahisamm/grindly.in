@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -378,6 +378,11 @@ export default function Dashboard() {
   const [filter, setFilter] = useState<string>("all");
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
   const [viewer, setViewer] = useState<{ platform: string; token: string } | null>(null);
+  // Set true when the user closes the login viewer. The connect poll loop below
+  // checks it so a closed viewer is never re-opened by the next status tick —
+  // without this, the server token stays live for the full 5-min window and
+  // each poll re-sets `viewer`, so the modal "reopens" the instant you close it.
+  const connectAbort = useRef(false);
   const [page, setPage] = useState(0);
   const [profileForm, setProfileForm] = useState<ProfileForm | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
@@ -570,6 +575,7 @@ export default function Dashboard() {
   // (see agent/connect_service.py). Grindly never sees or stores the
   // password. ──
   async function connectPlatform(platform: string) {
+    connectAbort.current = false;
     setConnectingPlatform(platform);
     setNotice({ kind: "info", text: "Preparing your secure login window…" });
     const res = await fetch("/api/integrations/connect", {
@@ -593,6 +599,8 @@ export default function Dashboard() {
     const deadline = started + 300_000;
     let opened = false;
     const pollConnect = async () => {
+      // User closed the viewer — stop; never re-open a window they dismissed.
+      if (connectAbort.current) return;
       if (Date.now() > deadline) {
         setConnectingPlatform(null);
         setViewer(null);
@@ -616,6 +624,21 @@ export default function Dashboard() {
       setTimeout(pollConnect, 2000);
     };
     setTimeout(pollConnect, 2000);
+  }
+
+  // Closing the login viewer cancels the attempt: stop the poll loop from
+  // re-opening it, drop the local UI state, and tell the server to tear down
+  // the remote-browser session (best-effort) so a half-finished login isn't
+  // left running for the full timeout.
+  function cancelConnect(platform: string) {
+    connectAbort.current = true;
+    setViewer(null);
+    setConnectingPlatform(null);
+    void fetch("/api/integrations/disconnect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform }),
+    }).catch(() => {}).finally(() => load());
   }
 
   async function disconnectPlatform(platform: string) {
@@ -971,7 +994,7 @@ export default function Dashboard() {
         <ConnectViewer
           platform={viewer.platform}
           token={viewer.token}
-          onClose={() => { setViewer(null); setConnectingPlatform(null); }}
+          onClose={() => cancelConnect(viewer.platform)}
         />
       )}
 
