@@ -449,14 +449,12 @@ export default function ParticleHero() {
       }
 
       // Re-sample once the webfont is ready so the first raster is real Fraunces.
-      if (document.fonts?.ready) {
-        document.fonts
-          .load(`900 100px ${displayFamily}`)
-          .then(() => {
-            if (!disposed) selectGlyph(idx);
-          })
-          .catch(() => {});
-      }
+      document.fonts
+        .load(`900 100px ${displayFamily}`)
+        .then(() => {
+          if (!disposed) selectGlyph(idx);
+        })
+        .catch(() => {});
 
       raf = requestAnimationFrame(tick);
 
