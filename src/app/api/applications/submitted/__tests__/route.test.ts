@@ -24,7 +24,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mockFindFirst.mockResolvedValue({ id: "a1", url: "https://example.test/job", jobTitle: "Intern" });
   mockUserFindUnique.mockResolvedValue({ plan: "free" });
-  mockGetQuota.mockResolvedValue({ kind: "trial", cap: 5, used: 0, remaining: 5 });
+  mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 0, remaining: 5 });
   mockUpdate.mockResolvedValue({});
   mockAudit.mockResolvedValue(undefined);
 });

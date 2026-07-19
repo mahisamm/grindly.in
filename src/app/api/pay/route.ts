@@ -11,7 +11,7 @@ export async function POST(req: Request) {
 
   if (process.env.NODE_ENV === "production" && (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET)) {
     return NextResponse.json(
-      { error: "Paid plans are temporarily unavailable. Your free trial remains active." },
+      { error: "Paid plans are coming soon. Your free plan (5 applications/day) stays active." },
       { status: 503 },
     );
   }

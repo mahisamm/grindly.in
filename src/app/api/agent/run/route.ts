@@ -38,10 +38,8 @@ export async function POST(req: Request) {
     if (quota.remaining === 0) {
       return NextResponse.json(
         {
-          error: quota.kind === "trial"
-            ? "Your 5-application free trial is complete. Upgrade to Plus or Pro to continue."
-            : `Your ${quota.cap}-application daily limit is reached. Try again tomorrow.`,
-          code: quota.kind === "trial" ? "trial_exhausted" : "daily_limit_reached",
+          error: `You've reached today's limit of ${quota.cap} applications. The agent picks up again tomorrow.`,
+          code: "daily_limit_reached",
           quota,
         },
         { status: 402 },

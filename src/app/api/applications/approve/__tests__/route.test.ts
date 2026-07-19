@@ -42,7 +42,7 @@ beforeEach(() => {
   mockRunFindFirst.mockResolvedValue(null);
   mockRunCreate.mockResolvedValue({ id: "run1" });
   mockUserFindUnique.mockResolvedValue({ plan: "free" });
-  mockGetQuota.mockResolvedValue({ kind: "trial", cap: 5, used: 0, remaining: 5 });
+  mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 0, remaining: 5 });
 });
 
 describe("POST /api/applications/approve", () => {
@@ -58,7 +58,7 @@ describe("POST /api/applications/approve", () => {
     expect(res.status).toBe(400);
   });
 
-  it("does not approve after the free trial is exhausted", async () => {
+  it("does not approve after the daily limit is reached", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockGetQuota.mockResolvedValue({ kind: "trial", cap: 5, used: 5, remaining: 0 });
     const res = await POST(makeReq({ id: "a1" }));

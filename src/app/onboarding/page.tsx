@@ -287,7 +287,7 @@ export default function OnboardingPage() {
     }
     const body = await response.json().catch(() => ({}));
     setBusy(false);
-    setMsg(body.error || "Could not activate the free trial. Please try again.");
+    setMsg(body.error || "Could not start your free plan. Please try again.");
   }
 
   return (
@@ -564,9 +564,9 @@ export default function OnboardingPage() {
           {/* STEP 3 — Activate */}
           {step === 3 && (
             <div>
-              <h2 className="font-display text-2xl font-semibold">{upgradeMode ? "Upgrade your plan" : "Start free or choose a plan"}</h2>
+              <h2 className="font-display text-2xl font-semibold">{upgradeMode ? "Plans are coming soon" : "Start free"}</h2>
               <p className="mt-1 text-sm text-muted">
-                Try five successful applications free. Plus sends up to 5/day; Pro sends up to 15/day.
+                You're on the free plan — up to 5 applications a day, every day. Plus and Pro are coming soon.
               </p>
 
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -580,11 +580,9 @@ export default function OnboardingPage() {
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-medium">{p.name}</span>
-                      {key === "pro" && (
-                        <span className="rounded-full bg-brand/20 px-2 py-0.5 text-xs text-brand-2">
-                          Popular
-                        </span>
-                      )}
+                      <span className="rounded-full bg-surface-2 px-2 py-0.5 text-xs text-muted">
+                        Coming soon
+                      </span>
                     </div>
                     <div className="mt-1 text-2xl font-semibold text-accent">
                       ₹{p.price}<span className="text-sm font-normal text-muted">/month</span>
@@ -626,17 +624,18 @@ export default function OnboardingPage() {
                     <button
                       disabled={busy || !tosAck}
                       onClick={activateTrial}
-                      className="rounded-lg border border-brand px-5 py-2.5 font-medium text-brand-2 hover:bg-brand/10 transition disabled:opacity-60"
+                      className="rounded-lg brand-gradient px-6 py-2.5 font-medium text-white hover:opacity-90 transition disabled:opacity-60"
                     >
-                      {busy ? "Activating…" : "Start 5-application free trial"}
+                      {busy ? "Activating…" : "Start free — 5 applications a day"}
                     </button>
                   )}
                   <button
                     disabled={busy || !tosAck}
                     onClick={pay}
-                    className="rounded-lg brand-gradient px-6 py-2.5 font-medium text-white hover:opacity-90 transition disabled:opacity-60"
+                    title="Paid plans are coming soon"
+                    className="rounded-lg border border-border px-5 py-2.5 font-medium text-muted hover:border-brand/40 transition disabled:opacity-60"
                   >
-                    {busy ? "Opening checkout…" : `Choose ${PLANS[plan].name} →`}
+                    {busy ? "Please wait…" : `${PLANS[plan].name} — coming soon`}
                   </button>
                 </div>
               </div>

@@ -23,11 +23,13 @@ export const PLANS: Record<
 };
 
 export const PLAN_CAPS: Record<PlanOrFree, number> = {
-  free: 5, // lifetime trial allowance; paid plan caps reset daily
+  free: 5, // free beta: 5 applications/day (resets daily) — same cap as Plus
   plus: 5,
   pro: 15,
 };
 
+// Free-plan daily allowance. (Historically a lifetime trial; it's a daily cap
+// now — the free beta gives everyone Plus-level 5/day at no cost.)
 export const FREE_TRIAL_APPLICATIONS = PLAN_CAPS.free;
 
 // "starter" is the old name for "plus" and is still the value on live user rows.

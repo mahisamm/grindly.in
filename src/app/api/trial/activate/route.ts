@@ -3,8 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { FREE_TRIAL_APPLICATIONS } from "@/lib/plans";
 
-/** Activate the one-time free trial. It grants five successful applications
- * total; it never masquerades as a paid Plus/Pro subscription. */
+/** Activate the free plan (free beta). Grants the free daily allowance
+ * (5 applications/day); it never masquerades as a paid Plus/Pro subscription. */
 export async function POST() {
   const uid = await getUid();
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });

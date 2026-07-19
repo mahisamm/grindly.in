@@ -38,8 +38,12 @@ export type Quota = {
 export async function getQuota(userId: string, plan?: string | null): Promise<Quota> {
   const normalized = normalizePlan(plan);
   const cap = planCap(normalized);
-  const kind = normalized === "free" ? "trial" : "daily";
-  const used = kind === "trial" ? await appliedTotal(userId) : await appliedToday(userId);
+  // Free beta: every plan — free included — is a DAILY plan now (free = 5/day,
+  // same cap as Plus). There is no lifetime trial any more, so usage is always
+  // today's count and it resets each day. "trial" stays in the Quota type for
+  // legacy callers but is no longer produced here.
+  const kind: Quota["kind"] = "daily";
+  const used = await appliedToday(userId);
   return { kind, cap, used, remaining: Math.max(0, cap - used) };
 }
 

@@ -939,7 +939,7 @@ export default function Dashboard() {
             </h1>
             <p className="text-muted text-sm mt-1">
               Plan: <span className="capitalize text-foreground font-medium">{me.user.plan}</span>
-              {" "}· {me.quota.kind === "trial" ? `${me.quota.remaining}/${me.quota.cap} trial applications left` : `${cap}/day cap`}
+              {" "}· {me.quota.remaining}/{me.quota.cap} applications left today
               {" "}· firewall ≥{me.profile?.minMatchScore ?? 55}
               {" "}· <span className={connectedCount > 0 ? "text-accent" : "text-muted"}>
                 {connectedCount} platform{connectedCount !== 1 ? "s" : ""} connected
@@ -970,12 +970,13 @@ export default function Dashboard() {
                 Connect a platform first
               </button>
             ) : me.quota.remaining === 0 ? (
-              <Link
-                href="/onboarding?upgrade=plus"
-                className="press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition"
+              <button
+                disabled
+                title="You've used today's applications — resets tomorrow"
+                className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-muted cursor-not-allowed opacity-60"
               >
-                {me.quota.kind === "trial" ? "Upgrade to continue" : "Daily limit reached"}
-              </Link>
+                Daily limit reached
+              </button>
             ) : (
               <button
               onClick={() => runAgent()}
@@ -1001,18 +1002,11 @@ export default function Dashboard() {
           </div>
         )}
 
-        {me.quota.kind === "trial" && (
-          <div className={`mt-5 rounded-xl border px-4 py-3 text-sm ${
-            me.quota.remaining > 0 ? "border-accent/40 bg-accent/10" : "border-warn/50 bg-warn/10"
-          }`}>
+        {me.quota.remaining === 0 && (
+          <div className="mt-5 rounded-xl border border-warn/50 bg-warn/10 px-4 py-3 text-sm">
             <span className="font-medium">
-              {me.quota.remaining > 0
-                ? `Free trial: ${me.quota.remaining} of ${me.quota.cap} applications remaining.`
-                : "Your five-application free trial is complete."}
-            </span>{" "}
-            <Link href="/onboarding?upgrade=plus" className="underline text-brand-2 ml-1">
-              View Plus and Pro →
-            </Link>
+              You've used today's {me.quota.cap} applications. The agent picks up again tomorrow.
+            </span>
           </div>
         )}
 
@@ -1820,7 +1814,7 @@ export default function Dashboard() {
                 <li>Once connected, the agent reuses that session to log in on our server.</li>
                 <li>Click <strong>Run agent</strong> to find matches. External and unsupported complex applications are skipped.</li>
                 <li>Review each prepared application and tap <strong>Approve</strong> to submit it.</li>
-                <li>{me.quota.kind === "trial" ? <>The free trial includes <strong>{me.quota.cap}</strong> successful applications total.</> : <>The agent sends up to <strong>{cap}</strong> applications/day across connected platforms.</>}</li>
+                <li>The agent sends up to <strong>{cap}</strong> applications/day across connected platforms.</li>
               </ol>
             </div>
 

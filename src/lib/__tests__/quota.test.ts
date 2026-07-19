@@ -14,12 +14,12 @@ describe("application quotas", () => {
     expect(PLANS.pro.perDay).toBe(15);
   });
 
-  it("uses five successful applications as a lifetime free trial", async () => {
+  it("treats free as a daily plan (5/day) during the free beta", async () => {
     mockCount.mockResolvedValue(3);
-    await expect(getQuota("u1", "free")).resolves.toEqual({
-      kind: "trial", cap: PLAN_CAPS.free, used: 3, remaining: 2,
-    });
-    expect(mockCount).toHaveBeenCalledWith({ where: { userId: "u1", status: "applied" } });
+    const quota = await getQuota("u1", "free");
+    expect(quota).toEqual({ kind: "daily", cap: PLAN_CAPS.free, used: 3, remaining: 2 });
+    // daily → counts today's applications (appliedAt filter), not lifetime total.
+    expect(mockCount.mock.calls[0][0].where.appliedAt.gte).toBeInstanceOf(Date);
   });
 
   it("uses appliedAt for paid daily limits", async () => {

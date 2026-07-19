@@ -273,7 +273,7 @@ def todays_applied_count(uid: str) -> int:
 
 
 def total_applied_count(uid: str) -> int:
-    """Lifetime successful applications, used to enforce the free trial."""
+    """Lifetime successful applications (stat/reporting only; quota is per-day now)."""
     with conn() as c:
         r = c.execute(
             "SELECT COUNT(*) n FROM applications WHERE user_id=? AND status='applied'",
@@ -558,7 +558,7 @@ def normalize_plan(plan: str | None) -> str:
 
 
 def get_plan_cap(uid: str) -> int:
-    """Application allowance (free=5 total, plus=5/day, pro=15/day)."""
+    """Daily application allowance (free=5/day, plus=5/day, pro=15/day)."""
     with conn() as c:
         u = c.execute("SELECT plan FROM users WHERE id=?", (uid,)).fetchone()
     return PLAN_CAPS[normalize_plan(u["plan"] if u else None)]

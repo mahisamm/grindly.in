@@ -36,7 +36,7 @@ beforeEach(() => {
   mockRunFindFirst.mockResolvedValue(null);
   mockRunCreate.mockResolvedValue({ id: "run1" });
   mockUserFindUnique.mockResolvedValue({ plan: "free" });
-  mockGetQuota.mockResolvedValue({ kind: "trial", cap: 5, used: 0, remaining: 5 });
+  mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 0, remaining: 5 });
 });
 
 describe("POST /api/applications/approve-all", () => {

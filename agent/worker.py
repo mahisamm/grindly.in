@@ -12,7 +12,7 @@ One run for one user:
 
 Platform priority (highest first): linkedin > internshala > naukri > unstop > indeed
 
-Quota: free = 5 total   plus = 5/day   pro = 15/day
+Quota: free = 5/day   plus = 5/day   pro = 15/day   (all reset daily)
 
 Usage:
   python worker.py --user <uid> --mode live --once
@@ -593,9 +593,11 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
 
     user_plan = db.get_user_plan(uid)
     plan_cap = db.get_plan_cap(uid)
-    cap = plan_cap if user_plan == "free" else _daily_cap_for_today(uid, plan_cap)
-    quota_used = db.total_applied_count(uid) if user_plan == "free" else db.todays_applied_count(uid)
-    quota_kind = "trial" if user_plan == "free" else "today"
+    # Free beta: free is a DAILY plan (5/day), same shape as paid — human-paced
+    # and counted per day. No lifetime trial, so it resets each day like Plus/Pro.
+    cap = _daily_cap_for_today(uid, plan_cap)
+    quota_used = db.todays_applied_count(uid)
+    quota_kind = "today"
     log.info("=== run for %s (%s) mode=%s cap=%d used=%d (%s) ===", name, uid, mode, cap, quota_used, quota_kind)
     db.add_audit("run_start", user_id=uid, detail=f"mode={mode} cap={cap}")
     if mode == "deliver":
@@ -748,9 +750,9 @@ def run_for_user(uid: str, mode: str = "live") -> dict:
 
     already = db.applied_external_ids(uid)
     quota_remaining = max(0, cap - quota_used)
-    # Safety: never exceed the per-run cap even if the paid daily cap is higher.
-    # For free users quota_used is lifetime usage, so the fifth successful
-    # application exhausts the trial permanently rather than resetting tomorrow.
+    # Safety: never exceed the per-run cap even if the daily cap is higher.
+    # quota_used is today's count for every plan (free included), so the cap
+    # resets tomorrow rather than being a lifetime ceiling.
     remaining = (
         min(quota_remaining, SAFETY_CAP_PER_RUN) if SAFETY_CAP_PER_RUN > 0 else quota_remaining
     )

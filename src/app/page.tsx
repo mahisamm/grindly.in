@@ -21,7 +21,7 @@ const STEPS = [
   {
     n: "03",
     title: "Activate & choose updates",
-    body: "Start with 5 free applications or choose a paid plan, then pick email or Slack reports. Connect Gmail to auto-detect interview calls.",
+    body: "Start free — 5 applications a day, every day — then pick email or Slack reports. Connect Gmail to auto-detect interview calls.",
   },
   {
     n: "04",
@@ -126,7 +126,7 @@ export default function Home() {
                 <div className="flex items-center justify-between border-b-2 border-dashed border-border pb-3">
                   <div className="flex items-center gap-2 text-sm font-semibold">
                     <span className="size-2 rounded-full bg-accent pulse-dot" />
-                    Agent active · Pro plan
+                    Agent active · Free plan
                   </div>
                   <div className="text-xs text-muted">Today</div>
                 </div>
@@ -256,33 +256,66 @@ export default function Home() {
       {/* ───── PRICING ───── */}
       <section id="pricing" className="glow-blue relative mx-auto max-w-5xl px-5 py-20">
         <Reveal className="relative z-[1] text-center">
-          <h2 className="display text-4xl sm:text-5xl">Simple pricing</h2>
-          <p className="mt-3 text-muted">Cancel anytime.</p>
-          {/* Checkout grants the plan without charging while RAZORPAY_KEY_ID is
-              unset — so say so plainly rather than showing a price we don't take. */}
+          <h2 className="display text-4xl sm:text-5xl">Free while we're in beta</h2>
+          <p className="mt-3 text-muted">No card, no catch. Paid plans come later.</p>
           <p className="mt-4 inline-block rounded-full border-2 border-ink bg-accent/15 px-4 py-1.5 text-sm font-semibold">
-            Start with 5 successful applications free
+            5 applications every day — on us
           </p>
         </Reveal>
-        <div className="relative z-[1] mt-12 grid gap-6 sm:grid-cols-2">
+
+        {/* Free is the only plan you can pick right now. */}
+        <Reveal className="relative z-[1] mt-12">
+          <div className="sticker tilt mx-auto max-w-md rounded-3xl bg-surface p-7">
+            <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border-2 border-ink bg-accent px-3 py-0.5 text-xs font-bold text-ink">
+              <Sparkle size={13} /> Free during beta
+            </div>
+            <div className="font-display text-lg font-semibold">Free</div>
+            <div className="display mt-2 text-5xl">
+              ₹0<span className="font-display text-base font-normal text-muted">/mo</span>
+            </div>
+            <p className="mt-2 text-sm text-muted">Up to 5 applications a day, every day</p>
+            <ul className="mt-6 space-y-2.5 text-sm">
+              {[
+                "5 applications / day",
+                "Resume-aware matching",
+                "Tailors your resume per role",
+                "Community support",
+              ].map((f) => (
+                <li key={f} className="flex items-center gap-2 text-muted">
+                  <span className="text-accent">✓</span> {f}
+                </li>
+              ))}
+            </ul>
+            <Link
+              href="/login"
+              className="press brand-gradient sticker-sm mt-7 block rounded-2xl px-4 py-3 text-center font-semibold transition"
+            >
+              Get started free
+            </Link>
+          </div>
+        </Reveal>
+
+        {/* Paid tiers are not purchasable yet — shown for what's coming, no checkout. */}
+        <Reveal className="relative z-[1] mt-12 text-center">
+          <p className="text-sm font-semibold uppercase tracking-wide text-muted">Coming later</p>
+        </Reveal>
+        <div className="relative z-[1] mt-4 grid gap-6 sm:grid-cols-2">
           {(Object.entries(PLANS) as [keyof typeof PLANS, (typeof PLANS)[keyof typeof PLANS]][]).map(
             ([key, p], i) => (
               <Reveal
                 key={key}
                 delay={i * 100}
-                className={`sticker tilt rounded-3xl p-7 ${key === "pro" ? "bg-brand text-white" : "bg-surface"}`}
+                className="sticker rounded-3xl bg-surface p-7 opacity-80"
               >
-                {key === "pro" && (
-                  <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border-2 border-ink bg-[#ff7a1a] px-3 py-0.5 text-xs font-bold text-white">
-                    <Sparkle size={13} /> Most popular
-                  </div>
-                )}
+                <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border-2 border-ink bg-surface-2 px-3 py-0.5 text-xs font-bold text-muted">
+                  Coming soon
+                </div>
                 <div className="font-display text-lg font-semibold">{p.name}</div>
                 <div className="display mt-2 text-5xl">
                   ₹{p.price}
-                  <span className={`font-display text-base font-normal ${key === "pro" ? "text-white/70" : "text-muted"}`}>/mo</span>
+                  <span className="font-display text-base font-normal text-muted">/mo</span>
                 </div>
-                <p className={`mt-2 text-sm ${key === "pro" ? "text-white/80" : "text-muted"}`}>{p.blurb}</p>
+                <p className="mt-2 text-sm text-muted">{p.blurb}</p>
                 <ul className="mt-6 space-y-2.5 text-sm">
                   {[
                     `${p.perDay} applications / day`,
@@ -290,21 +323,14 @@ export default function Home() {
                     "Tailors your resume per role",
                     key === "pro" ? "Dedicated email support" : "Community support",
                   ].map((f) => (
-                    <li key={f} className={`flex items-center gap-2 ${key === "pro" ? "text-white/90" : "text-muted"}`}>
-                      <span className={key === "pro" ? "text-[#ffd9b8]" : "text-accent"}>✓</span> {f}
+                    <li key={f} className="flex items-center gap-2 text-muted">
+                      <span className="text-accent">✓</span> {f}
                     </li>
                   ))}
                 </ul>
-                <Link
-                  href={`/login?plan=${key}`}
-                  className={`press mt-7 block rounded-2xl px-4 py-3 text-center font-semibold transition ${
-                    key === "pro"
-                      ? "border-2 border-ink bg-white text-brand hover:bg-white/90"
-                      : "brand-gradient sticker-sm"
-                  }`}
-                >
-                  Choose {p.name}
-                </Link>
+                <div className="mt-7 block cursor-default rounded-2xl border-2 border-dashed border-border px-4 py-3 text-center font-semibold text-muted">
+                  Coming soon
+                </div>
               </Reveal>
             )
           )}
