@@ -79,9 +79,9 @@ export default function ConnectViewer({ platform, token, onClose }: Props) {
         {status === "live" && (
           <div className="mb-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
             Sign in with your <span className="font-medium capitalize">{platform}</span> email &amp; password.
-            The <span className="font-medium">&ldquo;Continue with Google&rdquo;</span> button won&apos;t work in
-            this window — Google blocks sign-in from remote browsers. If you only ever used Google to sign in,
-            set a password first via <span className="font-medium">Forgot password</span>.
+            Google sign-in is turned off in this window — Google blocks it from remote browsers. If you only
+            ever used <span className="font-medium">&ldquo;Continue with Google&rdquo;</span>, set a password
+            first on {platform} via <span className="font-medium">Forgot password</span>, then use it here.
           </div>
         )}
         <div

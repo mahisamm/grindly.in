@@ -147,6 +147,27 @@ def connect(uid: str, platform: str, timeout: int = 300, display: str | None = N
             stealth.apply_stealth(ctx)
         except Exception:  # noqa: BLE001
             pass
+        # Kill Google One-Tap / "Sign in with Google" in the remote browser.
+        # Sites like LinkedIn auto-pop a Google Identity (gsi) prompt over their
+        # own form; the user types their password into it, and Google rejects
+        # every login from a server browser as "Wrong password" (anti-automation)
+        # — a dead end that looks like the user's fault. Aborting the gsi
+        # requests stops the prompt from ever appearing, so the user stays on the
+        # platform's real email+password form, which does work here. Blocks only
+        # the Google widget; nothing else on the login page depends on it.
+        def _block_google_signin(route):  # noqa: ANN001
+            try:
+                route.abort()
+            except Exception:  # noqa: BLE001
+                pass
+        for _pattern in (
+            "https://accounts.google.com/gsi/**",
+            "https://accounts.google.com/o/oauth2/**",
+        ):
+            try:
+                ctx.route(_pattern, _block_google_signin)
+            except Exception:  # noqa: BLE001
+                pass
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             page.goto(cfg["login_url"], wait_until="domcontentloaded", timeout=45000)
