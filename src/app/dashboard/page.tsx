@@ -1307,9 +1307,13 @@ export default function Dashboard() {
         {readyCount === 0 && me.stats.queued > 0 && (
           <div className="mt-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-sm text-muted">
             <span className="font-medium text-foreground">You&apos;re all caught up for today.</span>{" "}
-            The agent has {me.stats.queued} more {me.stats.queued === 1 ? "role" : "roles"} lined
-            up and releases a fresh batch each day — applying to a month&apos;s worth in one
-            sitting is what gets accounts flagged.
+            The agent has already found{" "}
+            <span className="font-medium text-foreground">
+              {me.stats.queued} more {me.stats.queued === 1 ? "role" : "roles"}
+            </span>{" "}
+            for you and releases a fresh batch each day. It&apos;s working — spacing
+            applications out is what keeps your accounts from getting flagged. Check
+            back tomorrow for the next batch.
           </div>
         )}
 
@@ -1321,16 +1325,18 @@ export default function Dashboard() {
           </div>
         ))}
 
-        {/* stats — "Ready" is today's batch, waiting on one tap. "Queued" is the rest
-            of the month, which the agent releases a day at a time; the user is told
-            the work exists but is never handed the list (src/lib/pipeline.ts). */}
-        <div className="mt-6 grid grid-cols-3 sm:grid-cols-5 gap-3">
+        {/* stats — plain words only. "Matched" is today's batch, due now, waiting on
+            one tap. "Lined up" is the rest of the month, which the agent releases a
+            day at a time; the user is told the work exists but is never handed the
+            list (src/lib/pipeline.ts). We deliberately dropped the old "Avg match"
+            tile: it averaged over skipped low-score rows too, so it could read "10"
+            under a "min match ≥65" header — a contradiction that just confused. */}
+        <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
           {([
-            ["Matched", me.stats.ready, "text-foreground", "Matched to you and ready to open + submit — tap Open & submit on each"],
-            ["Queued", me.stats.queued, "text-muted", "Lined up for the coming days, released a batch at a time"],
-            ["Applied", me.stats.applied, "text-accent", "Actually submitted"],
-            ["Failed", me.stats.failed, "text-danger", "Submission failed"],
-            ["Avg match", me.stats.avgScore, "text-brand-2", "Average score across everything reviewed"],
+            ["Matched", me.stats.ready, "text-foreground", "Matched to you and ready now — open and submit each one"],
+            ["Lined up", me.stats.queued, "text-muted", "Found for you and waiting — the agent releases a fresh batch each day so your applications stay paced"],
+            ["Applied", me.stats.applied, "text-accent", "You've submitted these"],
+            ["Failed", me.stats.failed, "text-danger", "The submission didn't go through — you can retry these"],
           ] as const).map(([label, val, c, help]) => (
             <div key={label} className="sticker tilt rounded-2xl bg-surface p-4" role="region" aria-label={`${label}: ${val}. ${help}`} title={help}>
               <div className={`display text-4xl ${c}`} aria-hidden="true"><CountUp value={val} /></div>

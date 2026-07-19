@@ -26,8 +26,17 @@ if (!OWNER_EMAIL) {
 }
 
 async function loadAdmin(): Promise<AdminUser | null> {
-  if (!OWNER_EMAIL) return null;
+  // Read the session cookie FIRST, unconditionally. getUid() awaits cookies(),
+  // a Dynamic API — touching it opts the whole /admin tree out of static
+  // prerendering. If the OWNER_EMAIL short-circuit ran before this, then at
+  // BUILD time (when ADMIN_EMAIL isn't in the environment) loadAdmin would
+  // return null without ever reading cookies — no dynamic API touched — and
+  // Next would bake a static 404 for /admin and every child, which then gets
+  // served to the real logged-in admin at request time no matter what. Reading
+  // the cookie first keeps the route dynamic so the gate actually runs per
+  // request. (See also `export const dynamic` in app/admin/layout.tsx.)
   const uid = await getUid();
+  if (!OWNER_EMAIL) return null;
   if (!uid) return null;
   const user = await prisma.user.findUnique({
     where: { id: uid },

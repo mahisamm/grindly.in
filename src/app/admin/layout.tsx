@@ -2,6 +2,12 @@ import { notFound } from "next/navigation";
 import { getAdminOrNull } from "@/lib/admin";
 import { AdminNav } from "./AdminNav";
 
+// The admin gate is per-request auth — it must never be statically prerendered.
+// Without this, a build where ADMIN_EMAIL is absent can bake a static 404 for the
+// whole tree (see lib/admin.ts loadAdmin) and serve it to the real admin forever.
+// force-dynamic is the belt to loadAdmin's suspenders. Applies to every /admin/*.
+export const dynamic = "force-dynamic";
+
 // Server-side guard for the ENTIRE /admin tree. A non-admin (or logged-out)
 // visitor gets a plain 404 — the surface never reveals it exists. The dark,
 // mono, red-accented chrome is deliberately unlike the user-facing paper theme:

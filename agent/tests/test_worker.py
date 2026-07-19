@@ -167,16 +167,18 @@ def test_schedule_day_never_divides_by_zero():
     assert worker._schedule_day(5, 0, 0) == 0
 
 
-def test_release_times_are_evenly_spaced_inside_a_24_hour_batch():
+def test_a_whole_batch_comes_due_together_at_its_day_boundary():
+    """Today's batch (slots 0..cap-1) all comes due immediately, so a run yields
+    matches the user can act on right away instead of one trickling in every few
+    hours (which read as the agent having stopped). Exposure is bounded by the
+    per-DAY cap, not by an intra-day trickle — the user submits each by hand."""
     now = datetime.datetime(2026, 7, 19, 0, 0)
-    releases = [worker._release_at(slot, 5, now) for slot in range(5)]
-    assert releases == [
-        now,
-        now + datetime.timedelta(hours=4, minutes=48),
-        now + datetime.timedelta(hours=9, minutes=36),
-        now + datetime.timedelta(hours=14, minutes=24),
-        now + datetime.timedelta(hours=19, minutes=12),
-    ]
+    cap = 5
+    batch0 = [worker._release_at(slot, cap, now) for slot in range(cap)]
+    assert batch0 == [now] * cap                       # whole first batch, due now
+    # first slot of the next batch lands exactly 24h later, together with its peers
+    assert worker._release_at(cap, cap, now) == now + datetime.timedelta(days=1)
+    assert worker._release_at(2 * cap, cap, now) == now + datetime.timedelta(days=2)
 
 
 def test_delivery_sends_a_final_link_without_calling_a_platform(monkeypatch):

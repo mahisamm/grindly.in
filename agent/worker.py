@@ -415,11 +415,22 @@ def _schedule_day(slot: int, cap: int, days: int = PIPELINE_DAYS) -> int:
 
 
 def _release_at(slot: int, cap: int, now: datetime.datetime | None = None):
-    """Stagger final-link release evenly within each 24-hour batch."""
+    """When a queue position comes due. A whole batch is released together at its
+    24-hour boundary: batch 0 (today's cap) is due immediately, batch 1 in 24h,
+    and so on.
+
+    We used to also stagger the `cap` slots WITHIN a batch across its 24 hours
+    (lane * day / cap). But the agent never auto-submits — the user opens and
+    submits every match by hand — so a visibility trickle bought no anti-bot value
+    and had a real cost: for most of every day the dashboard showed "0 matched"
+    even right after a successful run, which users read as the agent having
+    stopped. Releasing the batch together means a run yields visible matches now,
+    and each new day surfaces the day's full batch at once. The per-DAY cap — the
+    thing that actually prevents a same-day mass-apply — is unchanged: still at
+    most `cap` matches become visible per day."""
     cap = max(1, cap)
     batch = _schedule_day(slot, cap)
-    lane = slot % cap
-    delay_ms = batch * _DAY_MS + (lane * _DAY_MS) // cap
+    delay_ms = batch * _DAY_MS
     if now is None:
         return db.time_from_now_db(delay_ms)
     return now + datetime.timedelta(milliseconds=delay_ms)
