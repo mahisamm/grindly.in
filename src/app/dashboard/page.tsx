@@ -921,7 +921,7 @@ export default function Dashboard() {
               {me.user.status === "paused" ? "Resume" : "Pause"}
             </button>
             {me.user.role === "admin" && (
-              <Link href="/admin" className="rounded-full border border-ink bg-ink px-3 py-1.5 text-sm font-semibold text-[#f5f3ea] transition hover:opacity-80">
+              <Link href="/admin" className="rounded-full border border-ink bg-ink px-3 py-1.5 text-sm font-semibold text-[var(--paper)] transition hover:opacity-80">
                 Admin
               </Link>
             )}

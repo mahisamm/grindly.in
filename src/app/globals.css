@@ -1,26 +1,49 @@
-﻿@import "tailwindcss";
+@import "tailwindcss";
 
 /* ───────────────────────────────────────────────────────────
-   Grindly design system — "editorial doodle"
-   Paper canvas · electric-blue + orange + mint · bold serif
+   Grindly design system — "editorial letterpress"
+   Warm paper canvas · ink black · single vermilion accent
+   Fraunces (serif display) + Space Grotesk (body)
+   Ported from grindly-proto.html so the whole app reads as one
+   printed specimen. Token NAMES are unchanged so every page's
+   Tailwind utilities (bg-surface, text-muted, border-ink,
+   text-brand, brand-gradient, sticker…) recolour automatically.
    ─────────────────────────────────────────────────────────── */
 
 :root {
-  --background: #f5f3ea;   /* warm paper */
-  --surface: #ffffff;      /* cards */
-  --surface-2: #efece0;    /* sunken / subtle fills */
-  --border: #e3ddcc;       /* hairline */
-  --ink: #16150f;          /* near-black ink */
-  --foreground: #16150f;
-  --muted: #5a5849;       /* darkened for WCAG AA on paper (was #6c6a5c) */
+  /* paper + ink neutrals */
+  --paper: #f2ece1;
+  --paper-2: #e9e1d3;
+  --panel: #faf6ee;
+  --ink: #17140f;
+  --ink-soft: #4a443b;
+  --ink-mute: #857c6e;
+  --line: rgba(23, 20, 15, 0.14);
+  --line-2: rgba(23, 20, 15, 0.30);
 
-  --brand: #2a28f0;        /* electric blue (hero, links, brand) */
-  --brand-2: #4946f5;      /* lighter blue for gradients/scores */
-  --cta: #ff7a1a;          /* orange — primary action */
-  --cta-2: #ff5a00;        /* orange gradient end */
-  --accent: #0fae7e;       /* mint/teal — success */
-  --danger: #e5484d;
-  --warn: #b5740a;
+  /* single accent */
+  --vermilion: #e3402a;
+  --vermilion-deep: #c22e1c;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-io: cubic-bezier(0.7, 0, 0.3, 1);
+
+  /* ── App tokens (names preserved from the previous system) ── */
+  --background: var(--paper);
+  --surface: var(--panel);       /* cards */
+  --surface-2: var(--paper-2);   /* sunken / subtle fills */
+  --border: #d8d0bf;             /* hairline (solid, used as border + fill) */
+  --ink-color: var(--ink);
+  --foreground: var(--ink);
+  --muted: #4a443b;              /* ink-soft — AA on paper */
+
+  --brand: #e3402a;             /* vermilion — links, brand, hero accent */
+  --brand-2: #c22e1c;           /* vermilion-deep — gradients/scores */
+  --cta: #e3402a;               /* primary action = vermilion fill */
+  --cta-2: #c22e1c;
+  --accent: #e3402a;            /* success/applied = vermilion (monochrome) */
+  --danger: #b3271a;
+  --warn: #9a6b1f;              /* ochre — sits on paper */
 }
 
 @theme inline {
@@ -37,6 +60,7 @@
   --color-accent: var(--accent);
   --color-danger: var(--danger);
   --color-warn: var(--warn);
+  --color-vermilion: var(--vermilion);
   --font-sans: var(--ff-sans);
   --font-mono: var(--ff-mono);
   --font-display: var(--ff-display);
@@ -47,170 +71,143 @@ html, body {
   color: var(--foreground);
 }
 
-/* Prevent horizontal page scroll from wide children (marquee, mesh, tilt).
-   `clip` (not `hidden`) doesn't create a scroll container — keeps the
-   sticky nav working. */
-html {
-  overflow-x: clip;
-}
+/* Prevent horizontal page scroll from wide children (marquee, mesh, tilt). */
+html { overflow-x: clip; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-behavior: smooth; }
 body {
   overflow-x: clip;
   max-width: 100%;
-}
-
-body {
-  font-family: var(--ff-sans), system-ui, sans-serif;
+  font-family: var(--ff-sans), "Space Grotesk", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
-  letter-spacing: -0.006em;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
 }
 
-/* Prevent long strings (emails, URLs, hashes) from breaking mobile layouts */
 * { overflow-wrap: break-word; }
 
-::selection { background: color-mix(in srgb, var(--brand) 22%, transparent); }
+::selection { background: var(--vermilion); color: var(--paper); }
 
 ::-webkit-scrollbar { width: 11px; height: 11px; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; border: 3px solid var(--background); }
-::-webkit-scrollbar-thumb:hover { background: #cfc8b4; }
+::-webkit-scrollbar-track { background: var(--paper-2); }
+::-webkit-scrollbar-thumb { background: var(--ink); border: 3px solid var(--paper-2); border-radius: 20px; }
+::-webkit-scrollbar-thumb:hover { background: var(--vermilion); }
 
-/* ── Display type ──────────────────────────────────────────── */
+/* ── Display type — Fraunces, heavy, tight ─────────────────── */
 .font-display {
-  font-family: var(--ff-display), "Segoe UI", system-ui, sans-serif;
-  font-weight: 700;
-  letter-spacing: 0.005em;
+  font-family: var(--ff-display), "Fraunces", Georgia, serif;
+  font-weight: 900;
+  letter-spacing: -0.01em;
 }
 .display {
-  font-family: var(--ff-display), "Segoe UI", system-ui, sans-serif;
-  font-weight: 800;
-  letter-spacing: 0.01em;
-  line-height: 1.02;
+  font-family: var(--ff-display), "Fraunces", Georgia, serif;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 0.98;
 }
+h1, h2, h3 { font-family: var(--ff-display), "Fraunces", Georgia, serif; }
+/* italic vermilion accent used across headings */
+.accent-italic { color: var(--vermilion); font-style: italic; font-weight: 900; }
 
 /* ── Helper classes (names kept so all pages cascade) ─────────── */
 
 /* sticky nav / floating panels */
 .glass {
-  background: color-mix(in srgb, var(--background) 72%, transparent);
-  backdrop-filter: blur(12px) saturate(1.2);
-  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--paper) 78%, transparent);
+  backdrop-filter: blur(10px) saturate(1.15);
+  border-bottom: 1px solid var(--line-2);
 }
 
-/* primary buttons — orange, the loud action color */
+/* primary buttons — solid vermilion, the one loud action colour */
 .brand-gradient {
-  background: linear-gradient(180deg, var(--cta) 0%, var(--cta-2) 100%);
-  color: #fff;
+  background: var(--vermilion);
+  color: var(--paper);
+  transition: background 0.35s var(--ease), transform 0.35s var(--ease);
 }
+.brand-gradient:hover { background: var(--ink); color: var(--paper); }
 
-/* brand-colored text (links, logo accent) */
-.brand-text { color: var(--brand); }
+/* brand-coloured text (links, logo accent) */
+.brand-text { color: var(--vermilion); }
 
 /* editorial soft shadow */
 .glow {
   box-shadow:
-    0 1px 0 rgba(20, 19, 15, 0.04),
-    0 28px 50px -28px rgba(20, 19, 15, 0.28);
+    0 1px 0 rgba(23, 20, 15, 0.04),
+    0 26px 48px -28px rgba(23, 20, 15, 0.30);
 }
 
-/* paper canvas with faint dot grid + soft blue bloom */
+/* paper canvas with a faint printer's grid */
 .grid-bg {
-  background-color: var(--background);
+  background-color: var(--paper);
   background-image:
-    radial-gradient(70% 55% at 50% -8%, color-mix(in srgb, var(--brand) 10%, transparent), transparent 60%),
-    radial-gradient(circle at center, color-mix(in srgb, var(--ink) 14%, transparent) 1px, transparent 1.4px);
-  background-size: 100% 100%, 22px 22px;
+    linear-gradient(rgba(23, 20, 15, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23, 20, 15, 0.05) 1px, transparent 1px);
+  background-size: 44px 44px;
 }
 
-/* sticker / hand-cut card — ink outline + hard offset shadow */
+/* card — 1px hairline + hard offset ink shadow (printed sticker) */
 .sticker {
-  border: 2px solid var(--ink);
-  box-shadow: 5px 5px 0 var(--ink);
-  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  border: 1px solid var(--line-2);
+  box-shadow: 8px 8px 0 rgba(23, 20, 15, 0.08);
+  transition: transform 0.2s var(--ease), box-shadow 0.2s var(--ease), border-color 0.2s var(--ease);
 }
 .sticker:hover {
   transform: translate(-2px, -2px);
-  box-shadow: 7px 7px 0 var(--ink);
+  box-shadow: 10px 10px 0 rgba(23, 20, 15, 0.10);
 }
-.sticker-sm { border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); }
+.sticker-sm { border: 1px solid var(--line-2); box-shadow: 4px 4px 0 rgba(23, 20, 15, 0.08); }
 
-/* hand-drawn squiggle underline */
+/* hand-drawn squiggle underline — vermilion */
 .squiggle {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='12' viewBox='0 0 80 12'%3E%3Cpath d='M2 7 Q 12 0 22 7 T 42 7 T 62 7 T 82 7' fill='none' stroke='%23ff7a1a' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='12' viewBox='0 0 80 12'%3E%3Cpath d='M2 7 Q 12 0 22 7 T 42 7 T 62 7 T 82 7' fill='none' stroke='%23e3402a' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: repeat-x;
   background-position: 0 100%;
   background-size: 80px 10px;
   padding-bottom: 0.18em;
 }
 
-/* electric-blue marquee band */
-.marquee-track {
-  display: inline-flex;
-  white-space: nowrap;
-  animation: marquee 26s linear infinite;
-}
-@keyframes marquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
+/* ink marquee bands */
+.marquee-track { display: inline-flex; white-space: nowrap; animation: marquee 30s linear infinite; }
+@keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.marquee-track-rev { display: inline-flex; white-space: nowrap; animation: marquee-rev 34s linear infinite; }
+@keyframes marquee-rev { from { transform: translateX(-50%); } to { transform: translateX(0); } }
 
-/* doodle stroke helper */
 .ink-stroke { stroke: var(--ink); }
 
-@keyframes float-up {
-  from { opacity: 0; transform: translateY(14px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.animate-in { animation: float-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@keyframes float-up { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+.animate-in { animation: float-up 0.55s var(--ease) both; }
 
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-.pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+/* pulsing brand dot (proto markpulse) */
+@keyframes pulse-dot { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(0.6); opacity: 0.55; } }
+.pulse-dot { animation: pulse-dot 2.4s var(--ease-io) infinite; }
 
-@keyframes wobble {
-  0%, 100% { transform: rotate(-3deg); }
-  50% { transform: rotate(3deg); }
-}
+@keyframes wobble { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
 .wobble { animation: wobble 4s ease-in-out infinite; }
 
 /* ── Scroll reveal — JS adds .is-visible via IntersectionObserver ──── */
 .reveal {
   opacity: 0;
-  transform: translateY(22px);
-  transition: opacity 0.6s cubic-bezier(0.16, 1, 0.3, 1),
-              transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateY(20px);
+  transition: opacity 0.7s var(--ease), transform 0.7s var(--ease);
   transition-delay: var(--reveal-delay, 0ms);
 }
-.reveal.is-visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-/* Prevent blank sections if JS fails (TWA / slow connection) */
-@media (scripting: none) {
-  .reveal { opacity: 1; transform: none; }
-}
+.reveal.is-visible { opacity: 1; transform: translateY(0); }
+@media (scripting: none) { .reveal { opacity: 1; transform: none; } }
 
-/* ── Tactile press — pair with .sticker / buttons ─────────────────── */
+/* ── Tactile press ─────────────────── */
 .press { transition: transform 0.08s ease; }
 .press:active { transform: translateY(2px) scale(0.985); }
+.sticker:active, .sticker-sm:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 rgba(23, 20, 15, 0.10); }
 
-/* sticker buttons should sink into their shadow on press */
-.sticker:active, .sticker-sm:active {
-  transform: translate(2px, 2px);
-  box-shadow: 1px 1px 0 var(--ink);
-}
-
-/* ── Accessible focus ring (keyboard nav) ─────────────────────────── */
+/* ── Accessible focus ring ─────────────────────────── */
 .focus-ring:focus-visible,
 a:focus-visible, button:focus-visible,
 input:focus-visible, textarea:focus-visible, select:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--brand) 55%, transparent);
-  outline-offset: 2px;
-  border-radius: 6px;
+  outline: 2px solid var(--vermilion);
+  outline-offset: 3px;
+  border-radius: 3px;
 }
 
-/* ── Film grain overlay — subtle paper texture, sits above bg ─────── */
+/* ── Film grain overlay — for a relatively-positioned parent ─────── */
 .grain::before {
   content: "";
   position: absolute;
@@ -219,41 +216,40 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   pointer-events: none;
   opacity: 0.5;
   mix-blend-mode: multiply;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
 }
 
-/* ── Soft radial glow behind a section (depth without clutter) ─────── */
-.glow-blue {
-  position: relative;
+/* Fixed full-page paper grain (mounted once in layout) */
+.grain-fixed {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.5;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
 }
+@media (prefers-reduced-motion: no-preference) {}
+
+/* ── Soft radial glow behind a section (subtle vermilion bloom) ─────── */
+.glow-blue { position: relative; }
 .glow-blue::after {
   content: "";
   position: absolute;
   z-index: 0;
-  width: 50rem; height: 50rem;
+  width: 46rem; height: 46rem;
   top: -20rem; left: 50%;
   transform: translateX(-50%);
   pointer-events: none;
-  background: radial-gradient(circle, color-mix(in srgb, var(--brand) 16%, transparent), transparent 62%);
-  filter: blur(8px);
+  background: radial-gradient(circle, color-mix(in srgb, var(--vermilion) 12%, transparent), transparent 62%);
+  filter: blur(10px);
 }
 
 /* ── Hover tilt for interactive cards ─────────────────────────────── */
-.tilt { transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.tilt { transition: transform 0.2s var(--ease); }
 .tilt:hover { transform: perspective(800px) rotateX(2deg) rotateY(-2deg) translateY(-3px); }
 
-/* ── Reverse-direction marquee band ───────────────────────────────── */
-.marquee-track-rev {
-  display: inline-flex;
-  white-space: nowrap;
-  animation: marquee-rev 30s linear infinite;
-}
-@keyframes marquee-rev {
-  from { transform: translateX(-50%); }
-  to { transform: translateX(0); }
-}
-
-/* ── Animated gradient mesh (hero backdrop) ───────────────────────── */
+/* ── Animated gradient mesh (hero backdrop) — warm paper bloom ─────── */
 @keyframes mesh-drift {
   0%, 100% { transform: translate(0, 0) scale(1); }
   33%      { transform: translate(3%, -2%) scale(1.05); }
@@ -265,9 +261,9 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(34% 34% at 18% 22%, color-mix(in srgb, var(--brand) 22%, transparent), transparent 60%),
-    radial-gradient(30% 30% at 82% 18%, color-mix(in srgb, var(--cta) 16%, transparent), transparent 60%),
-    radial-gradient(40% 40% at 70% 80%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 62%);
+    radial-gradient(34% 34% at 18% 22%, color-mix(in srgb, var(--vermilion) 16%, transparent), transparent 60%),
+    radial-gradient(30% 30% at 82% 18%, color-mix(in srgb, var(--ink) 8%, transparent), transparent 60%),
+    radial-gradient(40% 40% at 70% 80%, color-mix(in srgb, var(--vermilion) 9%, transparent), transparent 62%);
   animation: mesh-drift 22s ease-in-out infinite;
 }
 
@@ -280,34 +276,17 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   .wobble, .mesh { animation: none; }
   .reveal { opacity: 1; transform: none; transition: none; }
   .tilt:hover { transform: none; }
+  html { scroll-behavior: auto; }
 }
 
 /* ── Mobile / touch improvements ──────────────────────────── */
 @media (max-width: 640px) {
-  /* Larger tap targets on mobile */
-  button, a, select, input[type="checkbox"], input[type="radio"] {
-    min-height: 44px;
-  }
+  button, a, select, input[type="checkbox"], input[type="radio"] { min-height: 44px; }
   input[type="text"], input[type="email"], input[type="password"],
-  input[type="number"], textarea {
-    font-size: 16px; /* prevents iOS zoom on focus */
-    min-height: 44px;
-  }
-  /* Tighter hero on small screens */
-  .display { letter-spacing: -0.01em; }
+  input[type="number"], textarea { font-size: 16px; min-height: 44px; }
+  .display { letter-spacing: -0.02em; }
 }
 
-/* Prevent text size adjustment on orientation change (iOS) */
-html {
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
-}
-
-/* Smooth momentum scroll on iOS */
-.overflow-y-auto, .overflow-auto {
-  -webkit-overflow-scrolling: touch;
-}
-
-/* Safe area insets for iPhone notch / home bar */
+.overflow-y-auto, .overflow-auto { -webkit-overflow-scrolling: touch; }
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .safe-top { padding-top: env(safe-area-inset-top); }

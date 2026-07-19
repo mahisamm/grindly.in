@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
-import { PaperPlane, Target, Bolt, Slack, Star } from "@/components/Doodles";
+import { Target, Bolt, Slack } from "@/components/Doodles";
 
 // Beta: Google is the only sign-in method. Email/password + phone-OTP backend
 // routes still exist but are intentionally not exposed here (no SMS provider
@@ -35,34 +35,46 @@ export default function LoginPage() {
   });
 
   return (
-    <main className="min-h-screen grid lg:grid-cols-2">
-      {/* ── Left brand panel (desktop only) ── */}
-      <aside className="relative hidden overflow-hidden border-r-2 border-ink bg-brand text-white lg:flex lg:flex-col lg:justify-between p-12">
-        <div className="mesh opacity-70" aria-hidden />
-        <PaperPlane className="absolute right-10 top-24 z-[1] text-white/30 wobble" size={64} />
-        <Star className="absolute left-10 bottom-40 z-[1] text-white/25" size={40} />
+    <main className="min-h-screen grid grid-cols-1 lg:grid-cols-2">
+      {/* ── Left brand panel (desktop only) — proto ink aside ── */}
+      <aside className="relative hidden overflow-hidden border-r border-ink bg-ink text-[var(--paper)] lg:flex lg:flex-col lg:justify-between p-[clamp(28px,4vw,52px)]">
+        <div
+          className="pointer-events-none absolute inset-0"
+          aria-hidden
+          style={{
+            background:
+              "radial-gradient(60% 50% at 80% 10%, rgba(227,64,42,.18) 0%, transparent 70%), radial-gradient(50% 40% at 10% 90%, rgba(227,64,42,.10) 0%, transparent 70%)",
+          }}
+        />
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -bottom-[14%] -right-[4%] font-display leading-none text-[rgba(242,236,225,0.045)]"
+          style={{ fontSize: "clamp(16rem, 30vw, 30rem)" }}
+        >
+          G
+        </span>
 
         <Link href="/" className="relative z-[2] inline-flex">
           <Logo size={34} withWordmark light />
         </Link>
 
         <div className="relative z-[2]">
-          <h2 className="display text-4xl xl:text-5xl leading-[0.95]">
+          <h2 className="display text-[clamp(2.2rem,3.6vw,3.4rem)] leading-[0.98] text-[var(--paper)]">
             Your agent kept
             <br />
             applying while
             <br />
-            you were away.
+            <span className="accent-italic">you were away.</span>
           </h2>
-          <ul className="mt-8 space-y-3.5 text-white/90">
+          <ul className="mt-8 space-y-3.5">
             {([
               [Target, "Resume-aware matches, scored 0–100"],
               [Bolt, "Hard limits you set — the agent can't cross them"],
               [Slack, "Daily progress reports, right in Slack"],
             ] as [React.ComponentType<{ size?: number }>, string][]).map(([Icon, t], i) => (
-              <li key={i} className="flex items-center gap-3">
-                <span className="inline-flex size-9 items-center justify-center rounded-xl border-2 border-white/30 bg-white/10">
-                  <Icon size={20} />
+              <li key={i} className="flex items-center gap-3 text-[rgba(242,236,225,0.88)]">
+                <span className="inline-flex size-9 flex-none items-center justify-center rounded-xl border border-[rgba(242,236,225,0.28)] bg-[rgba(242,236,225,0.06)]">
+                  <Icon size={18} />
                 </span>
                 <span className="text-sm">{t}</span>
               </li>
@@ -70,29 +82,27 @@ export default function LoginPage() {
           </ul>
         </div>
 
-        <div className="relative z-[2] flex items-center gap-3 text-sm text-white/75">
-          <span className="flex text-[#ffd9b8]">
-            {[0, 1, 2, 3, 4].map((i) => <Star key={i} size={15} />)}
-          </span>
+        <div className="relative z-[2] flex items-center gap-3 text-sm text-[rgba(242,236,225,0.7)]">
+          <span className="tracking-[0.18em] text-brand">✦✦✦✦✦</span>
           Built for the intern grind across five leading job platforms
         </div>
       </aside>
 
-      {/* ── Right sign-in panel ── */}
-      <div className="grid-bg grain relative flex items-center justify-center px-5 py-12">
-        <div className="relative z-[1] w-full max-w-md">
-          <Link href="/" className="mb-8 flex justify-center lg:hidden">
+      {/* ── Right sign-in panel — proto grid + panel card ── */}
+      <div className="grid-bg relative flex min-w-0 items-center justify-center px-5 py-12">
+        <div className="relative z-[1] w-full min-w-0 max-w-[430px]">
+          <Link href="/" className="mb-7 flex justify-center lg:hidden">
             <Logo size={34} />
           </Link>
 
           <div className="animate-in">
-            <div className="sticker rounded-3xl bg-surface p-6 sm:p-8">
-              <h1 className="font-display text-3xl font-semibold tracking-tight">Welcome to Grindly</h1>
-              <p className="mt-1 text-sm text-muted">Continue with Google to start your agent.</p>
+            <div className="rounded-lg border border-[var(--line-2)] bg-surface p-6 shadow-[10px_10px_0_rgba(23,20,15,0.08)] sm:p-9">
+              <h1 className="display text-[clamp(1.8rem,2.6vw,2.3rem)] tracking-[-0.01em]">Welcome to Grindly</h1>
+              <p className="mt-1.5 text-sm text-[var(--ink-soft)]">Continue with Google to start your agent.</p>
 
               <a
                 href="/api/auth/google"
-                className="press mt-6 flex items-center justify-center gap-2.5 w-full rounded-xl border-2 border-ink bg-surface sticker-sm px-4 py-3 font-medium hover:bg-surface-2 transition"
+                className="press mt-6 flex w-full items-center justify-center gap-2.5 rounded-full border border-[var(--line-2)] bg-[var(--paper)] px-4 py-3.5 font-semibold transition hover:bg-ink hover:text-[var(--paper)] hover:border-ink"
               >
                 <svg width="18" height="18" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M47.532 24.552c0-1.636-.132-3.2-.388-4.704H24.48v8.896h12.956c-.568 2.952-2.22 5.456-4.692 7.132v5.912h7.572c4.432-4.072 6.988-10.072 6.988-17.236z" fill="#4285F4"/>

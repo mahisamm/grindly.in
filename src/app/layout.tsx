@@ -1,9 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { Orbitron, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Fraunces, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 
-const bodySans = Hanken_Grotesk({
+const bodySans = Space_Grotesk({
   variable: "--ff-sans",
   subsets: ["latin"],
   display: "swap",
@@ -17,9 +17,11 @@ const codeMono = JetBrains_Mono({
   preload: false,
 });
 
-const displayFont = Orbitron({
+// Editorial serif display — variable weight + italic (proto uses 900 + italic accents)
+const displayFont = Fraunces({
   variable: "--ff-display",
   subsets: ["latin"],
+  style: ["normal", "italic"],
   display: "swap",
   preload: false,
 });
@@ -28,7 +30,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
-  themeColor: "#2a28f0",
+  themeColor: "#f2ece1",
 };
 
 export const metadata: Metadata = {
@@ -86,6 +88,7 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-title" content="Grindly" />
       </head>
       <body className="min-h-full flex flex-col">
+        <div className="grain-fixed" aria-hidden="true" />
         {children}
         <Script id="sw-register" strategy="afterInteractive">{`
           if ('serviceWorker' in navigator) {

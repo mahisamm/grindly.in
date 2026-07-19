@@ -11,7 +11,7 @@ export default function TermsPage() {
         <Link href="/" className="text-sm font-semibold text-brand hover:underline">Back to home</Link>
       </nav>
       <h1 className="mb-2 text-2xl font-bold text-ink">Terms of Service</h1>
-      <p className="mb-10 text-sm text-[#5a606b]">Last updated: June 2026</p>
+      <p className="mb-10 text-sm text-muted">Last updated: June 2026</p>
 
       <section className="mb-8">
         <h2 className="mb-3 text-base font-semibold text-ink">1. What Grindly does</h2>
@@ -86,7 +86,7 @@ export default function TermsPage() {
         <h2 className="mb-3 text-base font-semibold text-ink">8. Contact</h2>
         <p className="text-sm">
           Questions about these terms:{" "}
-          <a href="mailto:mahendharsammeta21@gmail.com" className="text-[#6c8cf4] hover:underline">
+          <a href="mailto:mahendharsammeta21@gmail.com" className="text-brand hover:underline">
             mahendharsammeta21@gmail.com
           </a>
         </p>

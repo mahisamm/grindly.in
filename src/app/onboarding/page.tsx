@@ -253,7 +253,7 @@ export default function OnboardingPage() {
             setMsg("Payment was received but confirmation failed. Contact support before paying again.");
           });
         },
-        theme: { color: "#2a28f0" },
+        theme: { color: "#e3402a" },
         modal: {
           ondismiss: () => {
             setBusy(false);

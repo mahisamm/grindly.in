@@ -15,7 +15,7 @@ export function Magnifier({ className, size = 96 }: D) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 100 100" aria-hidden>
       <circle cx="42" cy="42" r="26" {...base} />
-      <circle cx="42" cy="42" r="26" fill="#0fae7e" fillOpacity="0.18" stroke="none" />
+      <circle cx="42" cy="42" r="26" fill="var(--vermilion)" fillOpacity="0.16" stroke="none" />
       <path d="M61 61 L84 84" {...base} strokeWidth={4} />
       <path d="M30 40 q 4 -12 18 -10" {...base} strokeWidth={2} />
     </svg>
@@ -39,7 +39,7 @@ export function Resume({ className, size = 84 }: D) {
       <path d="M24 10 H64 L80 26 V90 H24 Z" {...base} fill="#fff" />
       <path d="M64 10 V26 H80" {...base} />
       <path d="M34 40 H70 M34 52 H70 M34 64 H58" {...base} strokeWidth={2} />
-      <circle cx="68" cy="74" r="13" fill="#ff7a1a" stroke="#16150f" strokeWidth={2.4} />
+      <circle cx="68" cy="74" r="13" fill="var(--vermilion)" stroke="var(--ink)" strokeWidth={2.4} />
       <path d="M62 74 l4 4 l8 -9" {...base} stroke="#fff" />
     </svg>
   );
@@ -76,7 +76,7 @@ export function Clock({ className, size = 64 }: D) {
 export function Bolt({ className, size = 40 }: D) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 40 40" aria-hidden>
-      <path d="M23 3 L9 23 H19 L17 37 L31 17 H21 Z" fill="#ff7a1a" stroke="#16150f" strokeWidth={2.4} strokeLinejoin="round" />
+      <path d="M23 3 L9 23 H19 L17 37 L31 17 H21 Z" fill="currentColor" stroke="none" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -86,7 +86,7 @@ export function Target({ className, size = 80 }: D) {
     <svg className={className} width={size} height={size} viewBox="0 0 80 80" aria-hidden>
       <circle cx="40" cy="40" r="30" {...base} />
       <circle cx="40" cy="40" r="19" {...base} />
-      <circle cx="40" cy="40" r="7" fill="#2a28f0" stroke="none" />
+      <circle cx="40" cy="40" r="7" fill="currentColor" stroke="none" />
     </svg>
   );
 }
