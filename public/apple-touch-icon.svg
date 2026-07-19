@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
-  <rect width="180" height="180" rx="38" fill="#2a28f0"/>
-  <text x="90" y="130" font-family="system-ui, -apple-system, sans-serif" font-size="107" font-weight="900" text-anchor="middle" fill="#ffffff" letter-spacing="-3">G</text>
+  <rect width="180" height="180" rx="39" fill="#e3402a"/>
+  <text x="76" y="129" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="129" text-anchor="middle" fill="#f2ece1">g</text>
+  <circle cx="136" cy="120" r="14" fill="#f2ece1"/>
 </svg>

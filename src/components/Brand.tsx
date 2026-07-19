@@ -1,8 +1,10 @@
 import Link from "next/link";
 
 /**
- * Brand mark — the proto's 2×2 grid of pulsing ink + vermilion dots,
- * followed by the GRINDLY wordmark. `light` renders on a dark/ink panel.
+ * Brand mark — "Full Stop": the GRINDLY wordmark ended by a vermilion period.
+ * No pictorial glyph — the punctuation is the mark. `light` renders on a
+ * dark/ink panel. Icon-only mode (withWordmark=false) falls back to the
+ * compact "g." app-icon form used for favicons.
  */
 export function Logo({
   size = 30,
@@ -13,40 +15,34 @@ export function Logo({
   light?: boolean;
   withWordmark?: boolean;
 }) {
-  const grid = Math.round(size * 0.55);
-  const neutral = light ? "var(--paper)" : "var(--ink)";
-  const dots = [
-    "var(--vermilion)",
-    neutral,
-    neutral,
-    "var(--vermilion)",
-  ];
-  return (
-    <span className="inline-flex items-center gap-2.5">
+  if (!withWordmark) {
+    return (
       <span
-        className="grid grid-cols-2"
-        style={{ width: grid, height: grid, gap: 2 }}
+        className="font-display inline-flex shrink-0 items-center justify-center rounded-[28%] font-bold"
+        style={{
+          width: size,
+          height: size,
+          background: "var(--vermilion)",
+          color: "var(--paper)",
+          fontSize: size * 0.62,
+          lineHeight: 1,
+        }}
         aria-hidden
       >
-        {dots.map((c, i) => (
-          <span
-            key={i}
-            className="block rounded-full pulse-dot"
-            style={{ background: c, animationDelay: `${i * 0.25}s` }}
-          />
-        ))}
+        g
       </span>
-      {withWordmark && (
-        <span
-          className={`font-bold tracking-[0.14em] ${light ? "text-[var(--paper)]" : ""}`}
-          style={{ fontSize: `${size * 0.032}rem` }}
-        >
-          GRINDLY
-          <span className={light ? "font-light text-[rgba(242,236,225,0.6)]" : "font-light text-muted"}>
-            {" "}· agent
-          </span>
-        </span>
-      )}
+    );
+  }
+  return (
+    <span
+      className={`font-bold tracking-[0.14em] ${light ? "text-[var(--paper)]" : ""}`}
+      style={{ fontSize: `${size * 0.032}rem` }}
+    >
+      GRINDLY
+      <span style={{ color: "var(--vermilion)" }}>.</span>
+      <span className={light ? "font-light text-[rgba(242,236,225,0.6)]" : "font-light text-muted"}>
+        {" "}· agent
+      </span>
     </span>
   );
 }
