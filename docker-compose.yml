@@ -161,7 +161,12 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-Grindly <no-reply@grindly.in>}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
     deploy:
-      replicas: 2  # horizontal browser-worker fleet; per-user lock prevents double-apply
+      # Single browser-worker on a 1-vCPU host: two headed Chromium workers only
+      # contend for the one core (no throughput gain) and can OOM the box. The
+      # run queue serialises per user, so one worker drains 100 users' runs in
+      # sequence — correct for an async "applies in the background" product.
+      # Scale this back up the moment the host gains cores/RAM.
+      replicas: 1  # per-user lock prevents double-apply at any replica count
       resources:
         limits:
           memory: 1.5G

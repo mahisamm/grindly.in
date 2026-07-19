@@ -421,9 +421,12 @@ export default function Dashboard() {
   }, [router]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- polling: load on mount + every 4s
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- polling: load on mount + on an interval
     load();
-    const t = setInterval(load, 4000);
+    // 12s, not 4s: on a single-core host, 100 open dashboards polling /api/me
+    // (≈6 DB queries each) would starve the browser-worker of CPU. The agent is
+    // a background product — near-real-time dashboard refresh isn't worth the load.
+    const t = setInterval(load, 12000);
     return () => clearInterval(t);
   }, [load]);
 
