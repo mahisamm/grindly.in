@@ -65,6 +65,11 @@ export async function notify(input: NotifyInput): Promise<{ delivered: boolean }
   let slackOk = false;
   let emailOk = false;
 
+  // Always land an in-app notification first. It needs no external service, so
+  // the dashboard bell is the one channel that works for 100 users on day one —
+  // Slack/email are proactive add-ons layered on top when configured.
+  await record(userId, tier, "inapp", title, body, true);
+
   if (slackChannel) {
     try {
       const r = await sendMessage({ channel: slackChannel, text });

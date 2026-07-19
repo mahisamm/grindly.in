@@ -404,13 +404,17 @@ model Notification {
   userId    String   @map("user_id")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   tier      String   @default("digest") // urgent | digest
-  channel   String   // slack | email | console
+  channel   String   // inapp | slack | email | console
   title     String
   body      String
   delivered Boolean  @default(false)
+  // In-app read state. null = unread; drives the dashboard bell's unread badge.
+  // Only the "inapp" channel rows are ever surfaced to the user / marked read.
+  readAt    DateTime? @map("read_at")
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([userId])
+  @@index([userId, createdAt])
   @@map("notifications")
 }
 

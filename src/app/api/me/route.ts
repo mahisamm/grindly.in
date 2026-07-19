@@ -40,6 +40,18 @@ export async function GET() {
     where: { userId: uid, status: "matched", scheduledFor: { gt: new Date() } },
   });
 
+  // In-app notifications feed — folded into /api/me (already polled) so the
+  // dashboard bell costs no extra request. Two cheap indexed queries.
+  const [notifItems, notifUnread] = await Promise.all([
+    prisma.notification.findMany({
+      where: { userId: uid, channel: "inapp" },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: { id: true, tier: true, title: true, body: true, readAt: true, createdAt: true },
+    }).catch(() => []),
+    prisma.notification.count({ where: { userId: uid, channel: "inapp", readAt: null } }).catch(() => 0),
+  ]);
+
   // Load integrations (graceful if table not yet migrated)
   let integrationRows: {
     platform: string; status: string; connectedAt: Date | null;
@@ -137,5 +149,9 @@ export async function GET() {
     stats,
     quota,
     integrations,
+    notifications: {
+      unread: notifUnread,
+      items: notifItems.map((n) => ({ ...n, read: n.readAt !== null })),
+    },
   });
 }

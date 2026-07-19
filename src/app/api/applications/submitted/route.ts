@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { getQuota } from "@/lib/quota";
 import { audit } from "@/lib/audit";
+import { notifyUser } from "@/lib/notify";
 
 /** Records a submission only after the user completed it in their own browser.
  * This endpoint does not contact a job platform or infer that a submission
@@ -43,5 +44,12 @@ export async function POST(req: Request) {
     },
   });
   await audit("manual_submission_confirmed", { userId: uid, target: app.url ?? app.jobTitle });
+  // Lands in the in-app feed so there's a persistent record + a nudge to report
+  // the outcome later (the interview-rate signal).
+  void notifyUser(uid, {
+    tier: "digest",
+    title: "Application submitted",
+    body: `You marked "${app.jobTitle}" as submitted. When you hear back, set the outcome on the Applications tab.`,
+  });
   return NextResponse.json({ ok: true });
 }

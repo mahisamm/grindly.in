@@ -132,6 +132,10 @@ type Me = {
     remaining: number;
   };
   integrations: Integration[];
+  notifications?: {
+    unread: number;
+    items: { id: string; tier: string; title: string; body: string; read: boolean; createdAt: string }[];
+  };
 };
 
 type ProfileForm = {
@@ -386,6 +390,7 @@ export default function Dashboard() {
   // the loop closes even if they forget to come back and confirm.
   const [pendingSubmit, setPendingSubmit] = useState<{ id: string; label: string } | null>(null);
   const [showReturnPrompt, setShowReturnPrompt] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [analyzingResume, setAnalyzingResume] = useState(false);
   const [uploading, setUploading] = useState<"master" | "tex" | null>(null);
   const [editingSkills, setEditingSkills] = useState(false);
@@ -772,6 +777,24 @@ export default function Dashboard() {
     setPendingSubmit(null);
   }
 
+  async function toggleNotifications() {
+    const willOpen = !notifOpen;
+    setNotifOpen(willOpen);
+    // Opening the panel clears the unread badge. Optimistic locally, then persist.
+    if (willOpen && me?.notifications?.unread) {
+      setMe((m) =>
+        m && m.notifications
+          ? { ...m, notifications: { unread: 0, items: m.notifications.items.map((i) => ({ ...i, read: true })) } }
+          : m,
+      );
+      await fetch("/api/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true }),
+      }).catch(() => {});
+    }
+  }
+
   function patchForm<K extends keyof ProfileForm>(key: K, val: ProfileForm[K]) {
     setProfileForm((f) => f ? { ...f, [key]: val } : f);
   }
@@ -1005,6 +1028,51 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            {/* Notifications bell — the in-app update feed. Works with no email or
+                Slack configured, so it's the reliable channel for every user. */}
+            <div className="relative">
+              <button
+                onClick={toggleNotifications}
+                title="Updates from your agent"
+                aria-label="Notifications"
+                className="relative rounded-lg border border-border px-3 py-2.5 text-sm hover:border-brand/60 transition"
+              >
+                <span aria-hidden>🔔</span>
+                {(me.notifications?.unread ?? 0) > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-brand px-1 text-[10px] font-bold text-white">
+                    {me.notifications!.unread > 9 ? "9+" : me.notifications!.unread}
+                  </span>
+                )}
+              </button>
+              {notifOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
+                  <div className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-[0_10px_40px_rgba(23,20,15,0.18)]">
+                    <div className="border-b border-border px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted">
+                      Updates
+                    </div>
+                    <div className="max-h-[60vh] overflow-y-auto">
+                      {(me.notifications?.items.length ?? 0) === 0 ? (
+                        <p className="px-4 py-6 text-center text-sm text-muted">
+                          No updates yet. When your agent finds or prepares matches, they show up here.
+                        </p>
+                      ) : (
+                        me.notifications!.items.map((n) => (
+                          <div key={n.id} className="border-b border-border/60 px-4 py-3 last:border-0">
+                            <div className="flex items-center gap-2">
+                              {n.tier === "urgent" && <span className="size-1.5 shrink-0 rounded-full bg-brand" />}
+                              <span className="text-sm font-medium">{n.title}</span>
+                            </div>
+                            <p className="mt-0.5 whitespace-pre-line text-xs text-muted">{n.body}</p>
+                            <p className="mt-1 text-[10px] text-muted/70">{new Date(n.createdAt).toLocaleString()}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
             <Link
               href="/applications"
               className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium hover:border-brand/60 transition"

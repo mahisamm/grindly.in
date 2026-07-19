@@ -11,6 +11,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ audit: mockAudit }));
 vi.mock("@/lib/quota", () => ({ getQuota: mockGetQuota }));
+vi.mock("@/lib/notify", () => ({ notifyUser: vi.fn().mockResolvedValue({ delivered: false }) }));
 
 import { POST } from "@/app/api/applications/submitted/route";
 
