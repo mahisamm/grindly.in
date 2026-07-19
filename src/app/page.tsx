@@ -3,6 +3,7 @@ import { Nav, Logo } from "@/components/Brand";
 import { PLANS } from "@/lib/adapters/payment";
 import { Reveal, CountUp } from "@/components/Motion";
 import { Target, Bolt, Doc, Clock, Slack, Sparkle } from "@/components/Doodles";
+import ParticleHero from "@/components/ParticleHero";
 
 const STEPS = [
   ["01", "Drop your resume", "Create an account and upload your resume. That's the only homework you do."],
@@ -87,44 +88,9 @@ export default function Home() {
             </div>
           </div>
 
-          {/* dashboard mock — proto panel */}
+          {/* interactive particle letterform — the proto's living specimen */}
           <Reveal className="relative">
-            <div className="rounded-[6px] border border-[var(--line-2)] bg-surface p-4 sm:p-6 shadow-[8px_8px_0_rgba(23,20,15,0.08)]">
-              <div className="mb-4 flex items-center justify-between gap-3 border-b border-dashed border-[var(--line-2)] pb-3 text-[0.78rem]">
-                <span className="inline-flex items-center gap-2 font-semibold">
-                  <span className="size-[7px] rounded-full bg-brand pulse-dot" /> Agent active · Free plan
-                </span>
-                <span className="text-[0.68rem] uppercase tracking-[0.12em] text-[var(--ink-mute)]">Today</span>
-              </div>
-              <div className="mb-4 grid grid-cols-3 gap-2.5">
-                {[["Applied", 5, "brand"], ["Avg match", 78, ""], ["Ready", 3, "mute"]].map(([label, n, kind]) => (
-                  <div key={label as string} className="rounded-[6px] border border-[var(--line)] bg-[var(--paper)] px-3 py-2.5">
-                    <b className={`block font-display text-[1.9rem] leading-none tabular-nums ${kind === "brand" ? "text-brand" : kind === "mute" ? "text-[var(--ink-mute)]" : ""}`}>
-                      <CountUp value={n as number} />
-                    </b>
-                    <span className="text-[0.66rem] uppercase tracking-[0.1em] text-[var(--ink-mute)]">{label}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-col gap-2">
-                {MOCK_ROWS.map(([title, company, score, tag]) => (
-                  <div key={title} className="flex items-center justify-between gap-3 rounded-[6px] border border-[var(--line)] bg-[var(--paper)] px-3 py-2 text-[0.82rem]">
-                    <div>
-                      <b className="block font-semibold leading-tight">{title}</b>
-                      <small className="text-[0.72rem] text-[var(--ink-mute)]">{company}</small>
-                    </div>
-                    <div className="flex flex-none items-center gap-2.5">
-                      <span className="font-display font-black tabular-nums" style={{ color: tag === "skipped" ? "var(--ink-mute)" : "var(--vermilion)" }}>{score}</span>
-                      <span className={`rounded-full border px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-[0.1em] ${
-                        tag === "skipped"
-                          ? "border-[var(--line-2)] text-[var(--ink-mute)]"
-                          : "border-brand bg-[rgba(227,64,42,0.07)] text-brand"
-                      }`}>{tag}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <ParticleHero />
           </Reveal>
         </div>
       </section>
@@ -168,12 +134,43 @@ export default function Home() {
               one for your approval. You watch it happen from one dashboard.
             </p>
           </Reveal>
-          <Reveal delay={80} className="hidden lg:block">
-            <div className="rounded-[6px] border border-[var(--line-2)] bg-surface p-6 shadow-[8px_8px_0_rgba(23,20,15,0.08)]">
-              <p className="font-display text-[1.4rem] leading-tight">
-                “It applied to 5 solid matches before I woke up — and skipped the junk.”
-              </p>
-              <p className="mt-3 text-[0.8rem] uppercase tracking-[0.1em] text-[var(--ink-mute)]">— the point of Grindly</p>
+          {/* dashboard mock — proto panel (relocated here from the hero) */}
+          <Reveal delay={80} className="relative">
+            <div className="rounded-[6px] border border-[var(--line-2)] bg-surface p-4 sm:p-6 shadow-[8px_8px_0_rgba(23,20,15,0.08)]">
+              <div className="mb-4 flex items-center justify-between gap-3 border-b border-dashed border-[var(--line-2)] pb-3 text-[0.78rem]">
+                <span className="inline-flex items-center gap-2 font-semibold">
+                  <span className="size-[7px] rounded-full bg-brand pulse-dot" /> Agent active · Free plan
+                </span>
+                <span className="text-[0.68rem] uppercase tracking-[0.12em] text-[var(--ink-mute)]">Today</span>
+              </div>
+              <div className="mb-4 grid grid-cols-3 gap-2.5">
+                {[["Applied", 5, "brand"], ["Avg match", 78, ""], ["Ready", 3, "mute"]].map(([label, n, kind]) => (
+                  <div key={label as string} className="rounded-[6px] border border-[var(--line)] bg-[var(--paper)] px-3 py-2.5">
+                    <b className={`block font-display text-[1.9rem] leading-none tabular-nums ${kind === "brand" ? "text-brand" : kind === "mute" ? "text-[var(--ink-mute)]" : ""}`}>
+                      <CountUp value={n as number} />
+                    </b>
+                    <span className="text-[0.66rem] uppercase tracking-[0.1em] text-[var(--ink-mute)]">{label}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-col gap-2">
+                {MOCK_ROWS.map(([title, company, score, tag]) => (
+                  <div key={title} className="flex items-center justify-between gap-3 rounded-[6px] border border-[var(--line)] bg-[var(--paper)] px-3 py-2 text-[0.82rem]">
+                    <div>
+                      <b className="block font-semibold leading-tight">{title}</b>
+                      <small className="text-[0.72rem] text-[var(--ink-mute)]">{company}</small>
+                    </div>
+                    <div className="flex flex-none items-center gap-2.5">
+                      <span className="font-display font-black tabular-nums" style={{ color: tag === "skipped" ? "var(--ink-mute)" : "var(--vermilion)" }}>{score}</span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-[0.1em] ${
+                        tag === "skipped"
+                          ? "border-[var(--line-2)] text-[var(--ink-mute)]"
+                          : "border-brand bg-[rgba(227,64,42,0.07)] text-brand"
+                      }`}>{tag}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </Reveal>
         </div>
