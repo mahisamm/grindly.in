@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authenticateExtension } from "@/lib/extensionAuth";
+import { isRateLimited } from "@/lib/rateLimit";
 import { dueNow } from "@/lib/pipeline";
 
 // The kit the extension injects into an application form. Bearer-authed with an
@@ -48,6 +49,14 @@ export async function GET(req: Request) {
   const headers = cors(req.headers.get("origin"));
   const auth = await authenticateExtension(req);
   if (!auth) return NextResponse.json({ error: "unauthorized" }, { status: 401, headers });
+
+  // Keyed on the token, not the IP: this is a background service worker making
+  // per-page-visit calls, not a browser session — the token is the real identity.
+  // 60/5min covers rapid tab-switching across many listings; fail-open on a
+  // limiter error so an internal hiccup never blocks a legitimate fill.
+  if (await isRateLimited(`ext_kit:${auth.tokenId}`, 60, 5 * 60_000).catch(() => false)) {
+    return NextResponse.json({ error: "rate_limited" }, { status: 429, headers });
+  }
 
   const url = new URL(req.url).searchParams.get("url");
   if (!url) return NextResponse.json({ error: "url required" }, { status: 400, headers });

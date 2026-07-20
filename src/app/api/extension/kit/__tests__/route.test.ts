@@ -1,12 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockAuth, mockUserFindUnique, mockAppFindMany } = vi.hoisted(() => ({
+const { mockAuth, mockUserFindUnique, mockAppFindMany, mockRateLimited } = vi.hoisted(() => ({
   mockAuth: vi.fn(),
   mockUserFindUnique: vi.fn(),
   mockAppFindMany: vi.fn(),
+  mockRateLimited: vi.fn(),
 }));
 
 vi.mock("@/lib/extensionAuth", () => ({ authenticateExtension: mockAuth }));
+vi.mock("@/lib/rateLimit", () => ({ isRateLimited: mockRateLimited }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: { findUnique: mockUserFindUnique },
@@ -24,6 +26,7 @@ function req(url: string) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mockRateLimited.mockResolvedValue(false); // not limited, by default
   mockUserFindUnique.mockResolvedValue({
     name: "Mahendhar", email: "m@x.com", profile: { phone: "999", gpa: 8.7 },
   });
@@ -34,6 +37,16 @@ describe("GET /api/extension/kit", () => {
     mockAuth.mockResolvedValue(null);
     const res = await GET(req("https://internshala.com/x"));
     expect(res.status).toBe(401);
+  });
+
+  it("429s once the per-token rate limit is exceeded, before touching the DB", async () => {
+    mockAuth.mockResolvedValue({ userId: "u1", tokenId: "t1" });
+    mockRateLimited.mockResolvedValue(true);
+    const res = await GET(req("https://internshala.com/x"));
+    expect(res.status).toBe(429);
+    expect(mockAppFindMany).not.toHaveBeenCalled();
+    // keyed on the token identity, not the IP — this is a background worker call
+    expect(mockRateLimited.mock.calls[0][0]).toBe("ext_kit:t1");
   });
 
   it("returns the kit for a due match on the current URL", async () => {

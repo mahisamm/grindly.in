@@ -315,6 +315,17 @@ function parseJ<T>(v: string | null | undefined, fallback: T): T {
   try { return v ? JSON.parse(v) : fallback; } catch { return fallback; }
 }
 
+function fmtRelative(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const min = Math.round(ms / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.round(hr / 24);
+  return `${day}d ago`;
+}
+
 function profileToForm(p: RawProfile): ProfileForm {
   return {
     preferredDomains: parseJ<string[]>(p.preferredDomains, []),
@@ -472,6 +483,8 @@ export default function Dashboard() {
   const [notice, setNotice] = useState<{ kind: "ok" | "err" | "info"; text: string } | null>(null);
   const [slackIdDraft, setSlackIdDraft] = useState("");
   const [slackBusy, setSlackBusy] = useState(false);
+  const [extTokens, setExtTokens] = useState<{ id: string; label: string; createdAt: string; lastUsedAt: string | null }[]>([]);
+  const [extBusy, setExtBusy] = useState<string | null>(null); // token id being revoked, or "all"
 
   const load = useCallback(async () => {
     const res = await fetch("/api/me");
@@ -1010,6 +1023,31 @@ export default function Dashboard() {
     }).catch(() => {});
     setSlackBusy(false);
     load();
+  }
+
+  const loadExtTokens = useCallback(async () => {
+    const res = await fetch("/api/extension/pair").catch(() => null);
+    if (res && res.ok) {
+      const data = await res.json();
+      setExtTokens(data.tokens || []);
+    }
+  }, []);
+  // Fetched on demand (not folded into the main 12s /api/me poll) since paired
+  // devices change rarely — only load when the user actually opens this tab.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- load on tab switch, not a render-time computation
+    if (tab === "integrations") loadExtTokens();
+  }, [tab, loadExtTokens]);
+
+  async function revokeExtToken(id?: string, all?: boolean) {
+    setExtBusy(all ? "all" : id || null);
+    await fetch("/api/extension/pair", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(all ? { all: true } : { id }),
+    }).catch(() => {});
+    setExtBusy(null);
+    loadExtTokens();
   }
 
   if (loading) {
@@ -2136,6 +2174,56 @@ export default function Dashboard() {
                   <button onClick={connectSlack} disabled={slackBusy || !slackIdDraft.trim()} className="press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50">
                     {slackBusy ? "…" : "Connect Slack"}
                   </button>
+                </div>
+              )}
+            </div>
+
+            {/* Browser extension — paired devices. The extension itself is
+                connected from /extension/connect (needs the extension installed);
+                this box is purely for reviewing/revoking what's already paired. */}
+            <div className="mt-5 rounded-xl border border-border bg-surface p-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold rounded-md px-1.5 py-0.5 border border-current text-brand-2">Ext</span>
+                  <span className="font-medium">Browser extension</span>
+                </div>
+                <span className={`text-xs rounded-full px-2 py-0.5 ${extTokens.length ? "bg-accent/20 text-accent" : "bg-surface-2 text-muted"}`}>
+                  {extTokens.length ? `${extTokens.length} paired` : "Not paired"}
+                </span>
+              </div>
+              <p className="text-xs text-muted mb-3">
+                Auto-fills matched applications in your own browser — you always click Submit yourself.{" "}
+                <Link href="/extension/connect" className="text-brand-2 underline">Connect a browser →</Link>
+              </p>
+              {extTokens.length > 0 && (
+                <div className="space-y-2">
+                  {extTokens.map((t) => (
+                    <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border border-border/60 px-3 py-2 text-xs">
+                      <div className="min-w-0">
+                        <div className="truncate text-foreground">{t.label}</div>
+                        <div className="text-muted">
+                          Paired {fmtRelative(t.createdAt)}
+                          {t.lastUsedAt && <> · last used {fmtRelative(t.lastUsedAt)}</>}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => revokeExtToken(t.id)}
+                        disabled={extBusy === t.id || extBusy === "all"}
+                        className="shrink-0 text-muted hover:text-danger transition disabled:opacity-50"
+                      >
+                        {extBusy === t.id ? "…" : "Revoke"}
+                      </button>
+                    </div>
+                  ))}
+                  {extTokens.length > 1 && (
+                    <button
+                      onClick={() => revokeExtToken(undefined, true)}
+                      disabled={extBusy === "all"}
+                      className="text-xs text-muted hover:text-danger transition disabled:opacity-50"
+                    >
+                      {extBusy === "all" ? "Revoking…" : "Revoke all"}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
