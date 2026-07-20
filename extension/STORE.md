@@ -7,10 +7,13 @@
 
 ## Pre-submit checklist
 
-- [ ] Add icons: `icons/icon16.png`, `icon48.png`, `icon128.png` (see `icons/README.md`),
-      then add an `"icons"` block + `action.default_icon` to `manifest.json`.
+- [x] Icons generated (`icons/icon16.png`, `icon48.png`, `icon128.png`) and wired
+      into `manifest.json`.
+- [ ] At least one screenshot, 1280×800 or 640×400 PNG/JPEG (store requires this —
+      a screenshot of the popup or the "Fill with Grindly" button on a real job
+      page works fine).
 - [ ] `node build.mjs` → upload `dist/grindly-extension-<version>.zip`.
-- [ ] Privacy policy URL: `https://grindly.in/extension/privacy` (already live).
+- [x] Privacy policy URL: `https://grindly.in/extension/privacy` (already live).
 - [ ] Single purpose (see below) + per-permission justifications (see below).
 
 ## Store listing copy
