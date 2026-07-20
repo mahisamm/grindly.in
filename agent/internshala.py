@@ -260,6 +260,53 @@ def scrape_jd(url: str, uid: str = "") -> str:
             pass
 
 
+def harvest_questions(url: str, uid: str = "") -> list[dict]:
+    """Read-only: open the listing, click through to the apply form, and return
+    its screening questions — WITHOUT filling or submitting anything. Lets the
+    Apply Kit draft truthful answers before the user ever opens the form
+    themselves.
+
+    Internshala hides its per-listing questions behind the "Apply now" click (a
+    multi-step flow) — a bare page load, like scrape_jd() does, isn't enough to
+    see them. Clicking that button only navigates to the application form itself;
+    it is the same action a human browsing this listing would take next, and
+    nothing is typed or submitted here. Mirrors apply()'s first few steps exactly,
+    then stops well before the resume upload / cover letter / submit steps.
+    """
+    page = _context(uid).new_page()
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        _read_pause(page, 1000, 2000)
+
+        if safety.detect_challenge(page) or _is_logged_out(page):
+            return []
+
+        _scroll_down(page, random.randint(250, 500))
+        btn = selector_ai.find_element(page, "apply now button or continue button", [
+            "#continue_button",
+            "#apply_now_button",
+            "button:has-text('Apply now')",
+            "a:has-text('Apply now')",
+        ])
+        if not btn:
+            return []
+
+        _human_click(page, btn)
+        _read_pause(page, 800, 1600)
+        if safety.detect_challenge(page):
+            return []
+
+        return questions.read_fields(page)
+    except Exception as e:  # noqa: BLE001
+        print(f"[internshala] harvest_questions error: {e}")
+        return []
+    finally:
+        try:
+            page.close()
+        except Exception:
+            pass
+
+
 # ── apply ─────────────────────────────────────────────────────────
 
 def apply(

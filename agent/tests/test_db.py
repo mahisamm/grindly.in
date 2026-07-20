@@ -243,6 +243,85 @@ def test_todays_applied_count_excludes_older_rows(testdb):
     assert db.todays_applied_count("u1") == 1
 
 
+def test_due_unnotified_matches_returns_all_of_them(testdb):
+    """Feeds deliver_ready_match's batching — a user with several due at once must
+    get all of them back in one call, not just the oldest (the old behavior, from
+    before notifications were batched into a single message)."""
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="A", company="C", url="https://x/1",
+                       score=80, status="matched", reason="r", applied=False)
+    db.add_application("u1", job_id=None, title="B", company="C", url="https://x/2",
+                       score=70, status="matched", reason="r", applied=False)
+    apps = db.due_unnotified_matches("u1")
+    assert {a["url"] for a in apps} == {"https://x/1", "https://x/2"}
+
+
+# ---------- Apply Kit ----------
+
+def test_due_matches_missing_kit_finds_a_due_row_with_no_kit_yet(testdb):
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="Frontend Intern", company="Acme",
+                       url="https://x/1", score=80, status="matched", reason="r", applied=False)
+    due = db.due_matches_missing_kit("u1")
+    assert len(due) == 1
+    assert due[0]["job_title"] == "Frontend Intern"
+
+
+def test_due_matches_missing_kit_excludes_a_row_that_already_has_one(testdb):
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="X", company="Y", url="https://x/1",
+                       score=80, status="matched", reason="r", applied=False)
+    app_id = db.due_matches_missing_kit("u1")[0]["id"]
+    db.set_application_kit(app_id, resume_version_id="rv1", cover_letter_text="Dear team...")
+    assert db.due_matches_missing_kit("u1") == []
+
+
+def test_due_matches_missing_kit_ignores_not_yet_due_rows(testdb):
+    """A future-scheduled match shouldn't have its kit generated early — kit
+    generation is real cost (LaTeX tailoring, an LLM call), spent close to when
+    the user will actually see the match, same pacing philosophy as the release
+    schedule itself."""
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="X", company="Y", url="https://x/1",
+                       score=80, status="matched", reason="r", applied=False,
+                       scheduled_for=db.now_ms() + 999_000_000)
+    assert db.due_matches_missing_kit("u1") == []
+
+
+def test_set_application_kit_never_blanks_a_field_with_none(testdb):
+    """COALESCE semantics: a platform we can't harvest answers on yet must not
+    wipe out a resume/cover-letter a previous call already attached."""
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="X", company="Y", url="https://x/1",
+                       score=80, status="matched", reason="r", applied=False)
+    app_id = db.due_matches_missing_kit("u1")[0]["id"]
+    db.set_application_kit(app_id, resume_version_id="rv1", cover_letter_text="Dear team...")
+    db.set_application_kit(app_id, answers_json='[{"q":"CGPA?","a":"8.7","source":"profile"}]')
+
+    c = sqlite3.connect(testdb)
+    c.row_factory = sqlite3.Row
+    row = c.execute("SELECT * FROM applications WHERE id=?", (app_id,)).fetchone()
+    c.close()
+    assert row["resume_version_id"] == "rv1"
+    assert row["cover_letter"] == "Dear team..."
+    assert "8.7" in row["answers_json"]
+    assert row["status"] == "matched" and row["reason"] == "r"  # untouched
+
+
+def test_set_application_kit_does_not_affect_other_rows(testdb):
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="A", company="C", url="https://x/1",
+                       score=80, status="matched", reason="r", applied=False)
+    db.add_application("u1", job_id=None, title="B", company="C", url="https://x/2",
+                       score=80, status="matched", reason="r", applied=False)
+    due = db.due_matches_missing_kit("u1")
+    assert len(due) == 2
+    db.set_application_kit(due[0]["id"], resume_version_id="rv1")
+    remaining = db.due_matches_missing_kit("u1")
+    assert len(remaining) == 1
+    assert remaining[0]["id"] == due[1]["id"]
+
+
 # ---------- jobs ----------
 
 def test_upsert_job_is_idempotent(testdb):

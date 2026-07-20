@@ -183,11 +183,108 @@ def test_a_whole_batch_comes_due_together_at_its_day_boundary():
 
 def test_delivery_sends_a_final_link_without_calling_a_platform(monkeypatch):
     app = {"id": "a1", "job_title": "Intern", "company": "Acme", "url": "https://x/1", "match_score": 81, "source": "linkedin"}
-    monkeypatch.setattr(worker.db, "next_due_unnotified_match", lambda uid: app)
+    monkeypatch.setattr(worker.db, "due_unnotified_matches", lambda uid, limit=50: [app])
     monkeypatch.setattr(worker.notify, "to_user", lambda user, subject, text: "https://x/1" in text)
     monkeypatch.setattr(worker.db, "mark_match_notified", lambda app_id: app_id == "a1")
     monkeypatch.setattr(worker.db, "add_audit", lambda *args, **kwargs: None)
-    assert worker.deliver_ready_match("u1", {"id": "u1"}) == {"delivered": 1, "application_id": "a1"}
+    assert worker.deliver_ready_match("u1", {"id": "u1"}) == {"delivered": 1, "application_ids": ["a1"]}
+
+
+def test_delivery_batches_several_due_matches_into_one_message(monkeypatch):
+    """Previously this sent one notification per sweep tick (10 min apart) for
+    each due match — a user with several due at once got a trickle of pings that
+    read as the agent barely working. One call must now cover all of them."""
+    apps = [
+        {"id": "a1", "job_title": "Intern A", "company": "Acme", "url": "https://x/1", "match_score": 81, "source": "linkedin"},
+        {"id": "a2", "job_title": "Intern B", "company": "Bolt", "url": "https://x/2", "match_score": 74, "source": "naukri"},
+    ]
+    monkeypatch.setattr(worker.db, "due_unnotified_matches", lambda uid, limit=50: apps)
+    sent = {}
+    def _capture(user, subject, text):
+        sent["subject"], sent["text"] = subject, text
+        return True
+    monkeypatch.setattr(worker.notify, "to_user", _capture)
+    monkeypatch.setattr(worker.db, "mark_match_notified", lambda app_id: True)
+    monkeypatch.setattr(worker.db, "add_audit", lambda *args, **kwargs: None)
+    out = worker.deliver_ready_match("u1", {"id": "u1"})
+    assert out == {"delivered": 2, "application_ids": ["a1", "a2"]}
+    assert "2 application links" in sent["subject"]
+    assert "https://x/1" in sent["text"] and "https://x/2" in sent["text"]
+
+
+# ---------- _prepare_answers_if_available (Apply Kit: drafted screening answers) ----------
+
+class _ModNoQuestions:
+    """A platform adapter that hasn't been wired for read-only question harvest
+    yet — the common case until each platform is done one at a time."""
+
+
+class _ModEmptyQuestions:
+    def harvest_questions(self, url, uid):
+        return []
+
+
+class _ModWithQuestions:
+    def harvest_questions(self, url, uid):
+        return [{"kind": "tel", "label": "Phone number", "required": True, "options": []}]
+
+
+class _ModRaises:
+    def harvest_questions(self, url, uid):
+        raise RuntimeError("form changed, selector missing")
+
+
+def test_prepare_answers_returns_none_when_platform_not_wired_for_it():
+    out = worker._prepare_answers_if_available(
+        "linkedin", _ModNoQuestions(), "https://x/1", "u1", {}, [], {"title": "T", "company": "C"},
+    )
+    assert out is None
+
+
+def test_prepare_answers_returns_none_on_empty_fields():
+    out = worker._prepare_answers_if_available(
+        "linkedin", _ModEmptyQuestions(), "https://x/1", "u1", {}, [], {"title": "T", "company": "C"},
+    )
+    assert out is None
+
+
+def test_prepare_answers_returns_none_with_no_url():
+    out = worker._prepare_answers_if_available(
+        "linkedin", _ModWithQuestions(), "", "u1", {}, [], {"title": "T", "company": "C"},
+    )
+    assert out is None
+
+
+def test_prepare_answers_drafts_a_profile_fact_without_calling_an_llm(monkeypatch):
+    """A phone-number field is answerable straight from the profile — the LLM must
+    never be consulted for something checkable, let alone for a field that isn't
+    even open-ended (see questions._deterministic)."""
+    def _should_not_be_called(*a, **k):
+        raise AssertionError("must not call the LLM for a profile-answerable field")
+    monkeypatch.setattr(worker.llm_mod, "chat_json_ensemble", _should_not_be_called)
+
+    out = worker._prepare_answers_if_available(
+        "internshala", _ModWithQuestions(), "https://x/1", "u1",
+        {"phone": "9999999999"}, ["python"], {"title": "SDE Intern", "company": "Acme"},
+    )
+    assert out is not None
+    assert "9999999999" in out
+    assert "Phone number" in out
+
+
+def test_prepare_answers_swallows_a_harvest_exception():
+    """A platform's read-only harvest step breaking (site redesign, timeout) must
+    degrade to 'no drafted answers for this one', never blow up the run that's
+    also trying to bank the match itself."""
+    out = worker._prepare_answers_if_available(
+        "linkedin", _ModRaises(), "https://x/1", "u1", {}, [], {"title": "T", "company": "C"},
+    )
+    assert out is None
+
+
+def test_delivery_with_nothing_due_sends_nothing(monkeypatch):
+    monkeypatch.setattr(worker.db, "due_unnotified_matches", lambda uid, limit=50: [])
+    assert worker.deliver_ready_match("u1", {"id": "u1"}) == {"delivered": 0}
 
 
 # ---------- pipeline refill hysteresis ----------

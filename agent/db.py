@@ -657,6 +657,8 @@ def _ensure_app_columns(c):
         c.execute("ALTER TABLE applications ADD COLUMN answers_json TEXT")
     if "missing_skills" not in cols:
         c.execute("ALTER TABLE applications ADD COLUMN missing_skills TEXT")
+    if "cover_letter" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN cover_letter TEXT")
 
 
 def add_application(uid: str, *, job_id: str | None, title: str, company: str,
@@ -782,6 +784,71 @@ def next_due_unnotified_match(uid: str) -> dict | None:
 
 def has_due_unnotified_match(uid: str) -> bool:
     return next_due_unnotified_match(uid) is not None
+
+
+def due_unnotified_matches(uid: str, limit: int = 50) -> list[dict]:
+    """Every released-but-unnotified match, oldest first — so a user with several
+    due at once (e.g. their first batch, or one who skipped a day) gets ONE
+    notification listing all of them instead of a separate ping every sweep tick
+    for each. See deliver_ready_match, which is what this feeds."""
+    with conn() as c:
+        _ensure_app_columns(c)
+        rows = c.execute(
+            "SELECT a.id, a.job_title, a.company, a.url, a.match_score, "
+            "COALESCE(j.source, '') AS source "
+            "FROM applications a LEFT JOIN jobs j ON j.id=a.job_id "
+            "WHERE a.user_id=? AND a.status='matched' AND a.url IS NOT NULL "
+            "AND a.notified_at IS NULL AND (a.scheduled_for IS NULL OR a.scheduled_for <= ?) "
+            "ORDER BY a.scheduled_for ASC, a.created_at ASC LIMIT ?",
+            (uid, now_db(), limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def due_matches_missing_kit(uid: str, limit: int = 20) -> list[dict]:
+    """Matched rows due now (today's batch, or an older batch just come due) that
+    have no Apply Kit yet. `resume_version_id` is set together with the cover
+    letter and any drafted answers by the same kit-generation step (see
+    worker.py's post-scoring backfill), so its absence is the "not done yet"
+    signal — cheaper than tracking a separate flag.
+
+    Bounded to `limit` per run: kit generation is real work (LaTeX tailoring, an
+    LLM call, and for platforms wired for it a read-only form visit), so this
+    spreads that cost across a user's next few runs rather than one large burst
+    if many rows ever came due unkitted at once.
+    """
+    with conn() as c:
+        _ensure_app_columns(c)
+        rows = c.execute(
+            "SELECT a.id, a.job_title, a.company, a.url, "
+            "COALESCE(j.source, '') AS source, COALESCE(j.skills, '[]') AS job_skills "
+            "FROM applications a LEFT JOIN jobs j ON j.id=a.job_id "
+            "WHERE a.user_id=? AND a.status='matched' "
+            "AND (a.scheduled_for IS NULL OR a.scheduled_for <= ?) "
+            "AND a.resume_version_id IS NULL "
+            "ORDER BY a.scheduled_for ASC, a.created_at ASC LIMIT ?",
+            (uid, now_db(), limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_application_kit(app_id: str, *, resume_version_id: str | None = None,
+                        cover_letter_text: str | None = None,
+                        answers_json: str | None = None) -> None:
+    """Attach Apply Kit fields to an already-banked matched row without touching
+    its status or reason. COALESCE on every column so a partial kit (e.g. a
+    platform we can't read screening questions on yet) never blanks a field a
+    previous call already set."""
+    with conn() as c:
+        _ensure_app_columns(c)
+        c.execute(
+            "UPDATE applications SET "
+            "resume_version_id=COALESCE(?, resume_version_id), "
+            "cover_letter=COALESCE(?, cover_letter), "
+            "answers_json=COALESCE(?, answers_json) "
+            "WHERE id=?",
+            (resume_version_id, cover_letter_text, answers_json, app_id),
+        )
 
 
 def mark_match_notified(app_id: str) -> bool:

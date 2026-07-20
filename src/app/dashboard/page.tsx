@@ -31,6 +31,13 @@ type App = {
   // JSON array: what this role asks for that you don't show. The actionable half of
   // a match score, and the list you want in front of you if they call.
   missingSkills: string | null;
+  // Apply Kit — prepared before you ever open the form. Null until the agent's
+  // next pass generates it (or, for cover letter/resume, if generation failed).
+  coverLetterText: string | null;
+  resumeVersionId: string | null;
+  // JSON array [{q, a, source}] — only present on platforms the agent can read
+  // screening questions from ahead of time. See agent/questions.py.
+  answersJson: string | null;
 };
 type Report = {
   id: string;
@@ -868,9 +875,9 @@ export default function Dashboard() {
 
   // Copy a listing's submit URL so the user can paste it anywhere (or hand it to
   // someone). Falls back silently if the clipboard API is blocked.
-  async function copyUrl(id: string, url: string) {
+  async function copyText(id: string, text: string) {
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(text);
       setCopiedId(id);
       setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500);
     } catch {
@@ -1814,7 +1821,7 @@ export default function Dashboard() {
                             {a.url}
                           </a>
                           <button
-                            onClick={() => copyUrl(a.id, a.url!)}
+                            onClick={() => copyText(a.id, a.url!)}
                             title="Copy this application link"
                             className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:text-foreground hover:border-brand/40 transition"
                           >
@@ -1849,6 +1856,70 @@ export default function Dashboard() {
                           </div>
                         );
                       })()}
+                      {/* Apply Kit — resume, cover letter, and (where the platform
+                          supports it) drafted screening answers, ready before you ever
+                          open the form. Null fields mean the agent's next pass hasn't
+                          generated it yet, or (answers only) this platform doesn't
+                          support reading questions ahead of time — never a fabrication. */}
+                      {a.status === "matched" && (a.coverLetterText || a.resumeVersionId) && (
+                        <div className="mt-2 rounded-lg border border-border bg-surface-2 p-2.5 space-y-2">
+                          <div className="text-[10px] uppercase tracking-wide text-muted">Apply kit</div>
+                          {a.resumeVersionId && (
+                            <a
+                              href={`/api/applications/${a.id}/resume`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="flex items-center gap-1.5 text-xs text-brand-2 hover:underline w-fit"
+                            >
+                              📄 Tailored resume
+                            </a>
+                          )}
+                          {a.coverLetterText && (
+                            <div>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-medium text-foreground">Cover letter</span>
+                                <button
+                                  onClick={() => copyText(`${a.id}-letter`, a.coverLetterText!)}
+                                  className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:text-foreground hover:border-brand/40 transition"
+                                >
+                                  {copiedId === `${a.id}-letter` ? "Copied ✓" : "Copy"}
+                                </button>
+                              </div>
+                              <p className="mt-1 whitespace-pre-wrap text-xs text-muted">{a.coverLetterText}</p>
+                            </div>
+                          )}
+                          {(() => {
+                            const answers = parseJ<{ q: string; a: string }[]>(a.answersJson ?? "[]", []);
+                            if (!answers.length) return null;
+                            return (
+                              <div>
+                                <div className="text-xs font-medium text-foreground mb-1">Drafted answers</div>
+                                <div className="space-y-1.5">
+                                  {answers.map((qa, i) => (
+                                    <div key={i} className="rounded border border-border/60 p-1.5">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="text-[11px] text-muted truncate">{qa.q}</span>
+                                        <button
+                                          onClick={() => copyText(`${a.id}-answer-${i}`, qa.a)}
+                                          className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted hover:text-foreground hover:border-brand/40 transition"
+                                        >
+                                          {copiedId === `${a.id}-answer-${i}` ? "Copied ✓" : "Copy"}
+                                        </button>
+                                      </div>
+                                      <p className="mt-0.5 text-xs">{qa.a}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          {!a.answersJson && (a.coverLetterText || a.resumeVersionId) && (
+                            <p className="text-[11px] text-muted">
+                              This platform doesn&apos;t support drafting screening answers ahead of time yet — you&apos;ll answer any on the form itself.
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <div className="text-right">

@@ -45,6 +45,7 @@ import db
 import notify
 import latex_resume
 import matcher
+import questions
 import resume_parse
 import resume_ai
 import safety
@@ -347,6 +348,43 @@ def _scrape_jd_if_available(src: str, mod, url: str, uid: str) -> str:
         return ""
 
 
+def _prepare_answers_if_available(
+    src: str, mod, url: str, uid: str, profile: dict, skills: list[str], job: dict,
+) -> str | None:
+    """Draft a listing's screening-question answers BEFORE the user ever opens the
+    form, so the Apply Kit is ready rather than a promise. Read-only: calls
+    mod.harvest_questions() (if the platform has one — read the form, never fill
+    or submit) then the platform-agnostic questions.answer_fields(), same as every
+    adapter's live apply() flow already does. Mirrors _scrape_jd_if_available's
+    shape and safety boundary exactly.
+
+    Some platforms only reveal their questions after an initial page interaction
+    that a given adapter may not yet expose read-only (or hides them behind a
+    later step entirely) — for those this returns None and the kit ships without
+    drafted answers for that listing. Never a fabricated answer.
+    """
+    fn = getattr(mod, "harvest_questions", None)
+    if fn is None or not url:
+        return None
+    try:
+        fields = fn(url, uid)
+        if not fields:
+            return None
+        answers = questions.answer_fields(
+            fields,
+            profile=profile,
+            resume_text=profile.get("resume_text") or "",
+            skills=skills,
+            job=job,
+            name=profile.get("name") or "",
+            email=profile.get("email") or "",
+        )
+        return questions.to_record(answers)
+    except Exception as e:  # noqa: BLE001
+        log.warning("%s harvest_questions error: %s", src, e)
+        return None
+
+
 def _ist_hour() -> int:
     """Current hour in IST (UTC+5:30) — no external dependency."""
     utc = datetime.datetime.now(datetime.timezone.utc)
@@ -437,24 +475,52 @@ def _release_at(slot: int, cap: int, now: datetime.datetime | None = None):
 
 
 def deliver_ready_match(uid: str, user: dict) -> dict:
-    """Send one final application link. It never contacts a job platform."""
-    app = db.next_due_unnotified_match(uid)
-    if not app:
+    """Send every currently due-and-unnotified match in ONE message. Never
+    contacts a job platform.
+
+    Used to send exactly one match per call and rely on the next sweep tick (10
+    min later) to pick up the rest — so a user with several due at once (their
+    first batch, or one who'd skipped a day) got a separate notification every
+    ten minutes instead of one clear "N matches ready" message. That trickle
+    read as the agent barely working; batching what's due right now fixes it
+    without changing anything about the daily release pacing itself.
+    """
+    apps = db.due_unnotified_matches(uid)
+    if not apps:
         return {"delivered": 0}
-    source = app.get("source") or "job platform"
-    text = (
-        f":link: *Your next match is ready*\n"
-        f"*{app['job_title']}* at *{app['company']}* ({app['match_score']} match)\n"
-        f"Open: {app['url']}\n\n"
-        f"Complete the final Apply/Submit step yourself on {source}. Then return to "
-        "Grindly and mark it submitted so your daily limit and outcome tracking stay accurate."
+
+    if len(apps) == 1:
+        app = apps[0]
+        source = app.get("source") or "job platform"
+        text = (
+            f":link: *Your next match is ready*\n"
+            f"*{app['job_title']}* at *{app['company']}* ({app['match_score']} match)\n"
+            f"Open: {app['url']}\n\n"
+            f"Complete the final Apply/Submit step yourself on {source}. Then return to "
+            "Grindly and mark it submitted so your daily limit and outcome tracking stay accurate."
+        )
+        subject = "Grindly: your next application link is ready"
+    else:
+        lines = "\n".join(
+            f"• *{a['job_title']}* at *{a['company']}* ({a['match_score']} match) — {a['url']}"
+            for a in apps
+        )
+        text = (
+            f":link: *{len(apps)} matches are ready*\n{lines}\n\n"
+            "Open each one and complete the final Apply/Submit step yourself, then return "
+            "to Grindly and mark it submitted so your daily limit and outcome tracking stay accurate."
+        )
+        subject = f"Grindly: {len(apps)} application links are ready"
+
+    if not notify.to_user(user, subject, text):
+        return {"delivered": 0, "undelivered": len(apps)}
+
+    delivered_ids = [a["id"] for a in apps if db.mark_match_notified(a["id"])]
+    db.add_audit(
+        "application_link_delivered", user_id=uid, target=None,
+        detail=f"{len(delivered_ids)} match(es): " + ", ".join(delivered_ids),
     )
-    if not notify.to_user(user, "Grindly: your next application link is ready", text):
-        return {"delivered": 0, "undelivered": 1}
-    if not db.mark_match_notified(app["id"]):
-        return {"delivered": 0, "already_notified": 1}
-    db.add_audit("application_link_delivered", user_id=uid, target=app["url"], detail=source)
-    return {"delivered": 1, "application_id": app["id"]}
+    return {"delivered": len(delivered_ids), "application_ids": delivered_ids}
 
 
 def _resume_hash(text: str) -> str:
@@ -1345,6 +1411,46 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                     _OPS_CHANNEL,
                     f":warning: High failure rate on *{src}*: {per_src_failed.get(src, 0)}/{attempts} "
                     f"({int(rate*100)}%) for user {uid} — selectors may be broken or the site changed.",
+                )
+
+    # Apply Kit backfill — attach a tailored resume, cover letter, and (where the
+    # platform supports a read-only visit) drafted screening answers to every due
+    # match that doesn't have one yet. This runs every live run regardless of
+    # whether TODAY did fresh discovery: a batch banked weeks ago still needs its
+    # kit generated close to when the user will actually see it, not only on the
+    # day it was first found. Purely additive — never changes a row's status or
+    # reason, never fills or submits anything on the platform itself.
+    if live:
+        for row in db.due_matches_missing_kit(uid):
+            job_skills = _jlist(row.get("job_skills"))
+            job = {
+                "title": row["job_title"], "company": row["company"],
+                "url": row.get("url") or "", "skills": job_skills,
+            }
+            vid, letter = None, None
+            try:
+                _, vid = _get_resume(job["title"], job["company"], job_skills)
+                letter = cover_letter(name, job["title"], job["company"], skills, job)
+            except Exception as e:  # noqa: BLE001
+                log.warning("kit generation failed for application %s: %s", row["id"], e)
+
+            answers_json = None
+            src = row.get("source") or ""
+            if src and src in connected_platforms and not _platform_blocked(src):
+                mod = source_modules.get(src)
+                if mod is None:
+                    mod = _load_module(src)
+                    if mod is not None:
+                        source_modules[src] = mod
+                if mod is not None:
+                    answers_json = _prepare_answers_if_available(
+                        src, mod, job["url"], uid, apply_profile, skills, job,
+                    )
+
+            if vid or letter or answers_json:
+                db.set_application_kit(
+                    row["id"], resume_version_id=vid,
+                    cover_letter_text=letter, answers_json=answers_json,
                 )
 
     # close browser contexts

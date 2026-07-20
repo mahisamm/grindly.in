@@ -272,6 +272,11 @@ model Application {
   // can act on; "this role wants Docker and you don't show it" tells them what to
   // learn, and what they will be asked about if they get the call.
   missingSkills  String? @map("missing_skills")
+  // Apply Kit: the per-job cover letter, drafted before the user ever opens the
+  // form (worker.py backfills this for every due match — see due_matches_missing_kit
+  // / set_application_kit in agent/db.py). Null until generated or if generation
+  // failed — the dashboard falls back to a plain note, never a blank lie.
+  coverLetterText String? @map("cover_letter")
   // immutable snapshot of the exact resume sent for this application
   resumeVersionId String?        @map("resume_version_id")
   resumeVersion   ResumeVersion? @relation(fields: [resumeVersionId], references: [id])
