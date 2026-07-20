@@ -142,6 +142,14 @@ export async function GET() {
   };
   const quota = await getQuota(uid, user.plan);
 
+  // Trim the heavy Apply-Kit fields off rows the dashboard never renders a kit for
+  // (anything not "matched"). /api/me is polled every ~12s; shipping up to 100
+  // cover letters + answer blobs on every poll is pure waste — the kit UI only
+  // shows on matched rows, which are just today's due batch (≤ a day's cap).
+  const slimApps = apps.map((a) =>
+    a.status === "matched" ? a : { ...a, coverLetterText: null, answersJson: null },
+  );
+
   return NextResponse.json({
     user: {
       id: user.id,
@@ -160,7 +168,7 @@ export async function GET() {
       internshalaLoginEnabled: internshalaLoginEnabled(user),
     },
     profile: user.profile,
-    applications: apps,
+    applications: slimApps,
     reports: user.reports,
     stats,
     quota,

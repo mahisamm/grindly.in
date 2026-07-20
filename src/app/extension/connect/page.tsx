@@ -20,12 +20,18 @@ export default function ExtensionConnectPage() {
   // Are we logged in, and is the extension installed?
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/me")
-      .then((r) => {
-        if (cancelled) return;
-        setPhase(r.ok ? "ready" : "need_login");
-      })
-      .catch(() => !cancelled && setPhase("error"));
+    const checkSession = () =>
+      fetch("/api/me")
+        .then((r) => {
+          if (cancelled) return;
+          // Only advance login→ready; never knock a mid-pairing/done state back.
+          setPhase((p) => (p === "checking" || p === "need_login" ? (r.ok ? "ready" : "need_login") : p));
+        })
+        .catch(() => !cancelled && setPhase((p) => (p === "checking" ? "error" : p)));
+    checkSession();
+    // If they log in in another tab and come back, notice it without a manual reload.
+    const onFocus = () => checkSession();
+    window.addEventListener("focus", onFocus);
 
     // The bridge content script sets this attribute when the extension is present.
     // Wrapped in a named reader (not a bare setState in the effect body) — the
@@ -45,6 +51,7 @@ export default function ExtensionConnectPage() {
     return () => {
       cancelled = true;
       window.removeEventListener("message", onMsg);
+      window.removeEventListener("focus", onFocus);
     };
   }, []);
 

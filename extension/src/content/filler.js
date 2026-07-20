@@ -16,6 +16,7 @@
 
   var currentUrl = "";
   var lastKit = null;
+  var dismissed = false; // user hid it on this page load — don't nag back
   var host = document.createElement("div");
   var shadow = host.attachShadow ? host.attachShadow({ mode: "open" }) : null;
 
@@ -24,14 +25,21 @@
     host.style.cssText = "position:fixed;z-index:2147483647;right:16px;bottom:16px;";
     shadow.innerHTML =
       '<style>' +
+      '.row{display:flex;align-items:center;gap:6px}' +
       '.g{font:500 13px/1.4 system-ui,sans-serif;background:#e5533c;color:#fff;border:none;' +
       'border-radius:10px;padding:10px 14px;box-shadow:0 4px 16px rgba(0,0,0,.25);cursor:pointer;display:flex;gap:8px;align-items:center}' +
       '.g:hover{opacity:.92}.g[disabled]{opacity:.6;cursor:default}' +
+      '.x{background:#111;color:#fff;border:none;border-radius:8px;width:26px;height:26px;cursor:pointer;font-size:15px;line-height:1;opacity:.7}' +
+      '.x:hover{opacity:1}' +
       '.t{margin-top:8px;background:#111;color:#fff;font:400 12px/1.4 system-ui;padding:8px 12px;border-radius:8px;max-width:240px;display:none}' +
       '.dot{width:7px;height:7px;border-radius:50%;background:#fff}</style>' +
-      '<button class="g" id="btn"><span class="dot"></span><span id="lbl">Fill with Grindly</span></button>' +
-      '<div class="t" id="toast"></div>';
+      '<div class="row">' +
+      '<button class="g" id="btn" aria-label="Fill this application with Grindly"><span class="dot"></span><span id="lbl">Fill with Grindly</span></button>' +
+      '<button class="x" id="dismiss" title="Hide" aria-label="Hide Grindly for this page">×</button>' +
+      '</div>' +
+      '<div class="t" id="toast" role="status" aria-live="polite"></div>';
     shadow.getElementById("btn").addEventListener("click", onFill);
+    shadow.getElementById("dismiss").addEventListener("click", function () { dismissed = true; hide(); });
     if (!host.isConnected) document.body.appendChild(host);
   }
 
@@ -75,8 +83,10 @@
     var url = location.href;
     if (url === currentUrl) return;
     currentUrl = url;
+    dismissed = false; // a new page is a fresh chance to offer help
     chrome.runtime.sendMessage({ type: "grindly:getKit", url: url }, function (kit) {
       lastKit = kit || {};
+      if (dismissed) return;
       if (kit && kit.error === "not_connected") {
         mountUI(); setLabel("Connect Grindly", false);
         return;
