@@ -444,6 +444,18 @@ export default function Dashboard() {
   const [confirmingSubmittedId, setConfirmingSubmittedId] = useState<string | null>(null);
   // Row whose submit URL was just copied — flips the button to "Copied ✓" briefly.
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Is the browser extension installed in THIS browser? Its content script stamps
+  // data-grindly-extension on <html>. When present, the Apply Kit shows the
+  // one-click auto-fill hint; when absent, an optional install nudge. Purely a UI
+  // adaptation — the kit (copy/paste) works fully either way.
+  const [extInstalled, setExtInstalled] = useState(false);
+  useEffect(() => {
+    const check = () => setExtInstalled(!!document.documentElement.getAttribute("data-grindly-extension"));
+    check();
+    // The content script may attach just after mount; re-check briefly.
+    const t = setTimeout(check, 800);
+    return () => clearTimeout(t);
+  }, []);
   // The application the user just opened to submit on the platform. When they
   // switch back to this tab we surface a one-tap "Did you submit it?" prompt so
   // the loop closes even if they forget to come back and confirm.
@@ -1916,6 +1928,23 @@ export default function Dashboard() {
                           {!a.answersJson && (a.coverLetterText || a.resumeVersionId) && (
                             <p className="text-[11px] text-muted">
                               This platform doesn&apos;t support drafting screening answers ahead of time yet — you&apos;ll answer any on the form itself.
+                            </p>
+                          )}
+                          {/* Extension-aware footer: one-click auto-fill when the
+                              extension is here, an optional nudge when it isn't. The
+                              copy/paste kit above works regardless. */}
+                          {extInstalled ? (
+                            <p className="flex items-center gap-1.5 border-t border-border/60 pt-2 text-[11px] text-accent">
+                              <span className="size-1.5 rounded-full bg-accent" />
+                              Extension active — open this job and click “Fill with Grindly”.
+                            </p>
+                          ) : (
+                            <p className="border-t border-border/60 pt-2 text-[11px] text-muted">
+                              On desktop?{" "}
+                              <Link href="/extension/connect" className="text-brand-2 underline">
+                                Get the browser extension
+                              </Link>{" "}
+                              to auto-fill this in one click.
                             </p>
                           )}
                         </div>

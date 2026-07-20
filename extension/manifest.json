@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Grindly — Apply Assistant",
+  "version": "0.1.0",
+  "description": "Auto-fills your job applications from your Grindly account, in your own browser. You always click Submit yourself.",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "https://grindly.in/*",
+    "https://*.internshala.com/*",
+    "https://internshala.com/*",
+    "https://*.linkedin.com/*",
+    "https://*.naukri.com/*",
+    "https://*.unstop.com/*",
+    "https://*.indeed.com/*"
+  ],
+  "background": { "service_worker": "src/background.js" },
+  "action": {
+    "default_title": "Grindly Apply Assistant",
+    "default_popup": "src/popup/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://grindly.in/*"],
+      "js": ["src/content/bridge.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.internshala.com/*",
+        "https://internshala.com/*",
+        "https://*.linkedin.com/*",
+        "https://*.naukri.com/*",
+        "https://*.unstop.com/*",
+        "https://*.indeed.com/*"
+      ],
+      "js": ["src/fillEngine.js", "src/content/filler.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

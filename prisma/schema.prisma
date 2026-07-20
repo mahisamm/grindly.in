@@ -116,6 +116,7 @@ model User {
   notifications  Notification[]
   agentRuns      AgentRun[]
   credentials    PlatformCredential[]
+  extensionTokens ExtensionToken[]
 
   @@map("users")
 }
@@ -421,6 +422,28 @@ model Notification {
   @@index([userId])
   @@index([userId, createdAt])
   @@map("notifications")
+}
+
+// Long-lived, revocable credential for the browser extension. The extension
+// fills application forms inside the USER's own browser (never our servers), so
+// it can't use the httpOnly `ip_uid` session cookie — it needs its own bearer
+// token. We store only a SHA-256 hash: a DB leak can't be replayed against the
+// API, and the raw token is shown exactly once (at pairing) and never again.
+// One row per paired browser; the user can revoke any/all from the dashboard.
+model ExtensionToken {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // sha256(rawToken) hex. The raw token lives only in the extension's storage.
+  tokenHash  String   @unique @map("token_hash")
+  // Human label so the user can tell paired browsers apart when revoking.
+  label      String   @default("Browser extension")
+  createdAt  DateTime @default(now()) @map("created_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  @@index([userId])
+  @@map("extension_tokens")
 }
 
 model Report {

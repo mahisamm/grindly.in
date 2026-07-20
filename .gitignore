@@ -22,6 +22,9 @@
 # production
 /build
 
+# browser extension build artifacts
+/extension/dist/
+
 # misc
 .DS_Store
 *.pem
