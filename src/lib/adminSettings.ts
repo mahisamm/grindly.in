@@ -10,6 +10,7 @@ const SETTINGS_PATH = path.join(process.cwd(), "data", "admin-settings.json");
 export type AdminSettings = {
   maintenanceMode: boolean;
   globalDailyCap: number;
+  openSignups: boolean;
   featureFlags: { googleAuth: boolean; autoApply: boolean };
   bannedDomains: string[];
 };
@@ -17,6 +18,10 @@ export type AdminSettings = {
 const DEFAULTS: AdminSettings = {
   maintenanceMode: false,
   globalDailyCap: 0,
+  // Every Google sign-in is auto-approved rather than queued for manual
+  // review — see src/lib/access.ts resolveInitialAccess. Toggle off from
+  // /admin/settings to go back to the request queue, no redeploy needed.
+  openSignups: true,
   featureFlags: { googleAuth: true, autoApply: true },
   bannedDomains: [],
 };
@@ -28,6 +33,7 @@ export function readAdminSettings(): AdminSettings {
     return {
       maintenanceMode: typeof parsed.maintenanceMode === "boolean" ? parsed.maintenanceMode : DEFAULTS.maintenanceMode,
       globalDailyCap: typeof parsed.globalDailyCap === "number" ? parsed.globalDailyCap : DEFAULTS.globalDailyCap,
+      openSignups: typeof parsed.openSignups === "boolean" ? parsed.openSignups : DEFAULTS.openSignups,
       featureFlags: {
         googleAuth: typeof parsed.featureFlags?.googleAuth === "boolean" ? parsed.featureFlags.googleAuth : DEFAULTS.featureFlags.googleAuth,
         autoApply: typeof parsed.featureFlags?.autoApply === "boolean" ? parsed.featureFlags.autoApply : DEFAULTS.featureFlags.autoApply,

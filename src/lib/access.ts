@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "./prisma";
 import { getUid } from "./session";
+import { readAdminSettings } from "./adminSettings";
 
 export type AccessStatus = "pending" | "approved" | "denied";
 
@@ -24,10 +25,13 @@ export function hasAppAccess(u: AccessFields): boolean {
 
 /**
  * Decide a brand-new account's access at signup time. The owner and any email an
- * admin pre-allowlisted come in already approved; everyone else waits.
+ * admin pre-allowlisted come in already approved. While `openSignups` is on
+ * (the default — toggle from /admin/settings), everyone else comes in
+ * approved too; when it's off, this falls back to the allowlist/queue.
  */
 export async function resolveInitialAccess(email: string): Promise<AccessStatus> {
   if (OWNER_EMAIL && email === OWNER_EMAIL) return "approved";
+  if (readAdminSettings().openSignups) return "approved";
   try {
     // Allowlist is stored lowercased; match case-insensitively so a grant added
     // as "Foo@x.com" still clears a signup that arrives as "foo@x.com".

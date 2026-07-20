@@ -23,6 +23,7 @@ export async function POST(req: Request) {
   const updated: AdminSettings = {
     maintenanceMode: typeof body.maintenanceMode === "boolean" ? body.maintenanceMode : current.maintenanceMode,
     globalDailyCap: typeof body.globalDailyCap === "number" && body.globalDailyCap >= 0 ? body.globalDailyCap : current.globalDailyCap,
+    openSignups: typeof body.openSignups === "boolean" ? body.openSignups : current.openSignups,
     featureFlags: {
       googleAuth: typeof body.featureFlags?.googleAuth === "boolean" ? body.featureFlags.googleAuth : current.featureFlags.googleAuth,
       autoApply: typeof body.featureFlags?.autoApply === "boolean" ? body.featureFlags.autoApply : current.featureFlags.autoApply,

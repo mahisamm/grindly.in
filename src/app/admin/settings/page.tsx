@@ -6,6 +6,7 @@ import { PageTitle, Panel } from "../ui";
 type Settings = {
   maintenanceMode: boolean;
   globalDailyCap: number;
+  openSignups: boolean;
   featureFlags: { googleAuth: boolean; autoApply: boolean };
   bannedDomains: string[];
 };
@@ -115,6 +116,24 @@ export default function AdminSettings() {
           {s.maintenanceMode && (
             <div className="mt-3 rounded border border-[#ff4d4d]/30 bg-[#ff4d4d]/10 px-3 py-2 font-mono text-xs text-[#ff4d4d]">
               ⚠ Maintenance mode ON — agent runs are blocked for all users.
+            </div>
+          )}
+        </Panel>
+
+        {/* Open signups */}
+        <Panel className="p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-mono text-sm font-bold text-[#e6e8eb]">Open signups</div>
+              <div className="mt-1 font-mono text-xs text-[#8b919c]">
+                Every Google sign-in is auto-approved. Turn off to go back to the request queue at /admin/access.
+              </div>
+            </div>
+            <Toggle value={s.openSignups} onChange={() => toggle("openSignups")} />
+          </div>
+          {!s.openSignups && (
+            <div className="mt-3 rounded border border-[#fbbd23]/30 bg-[#fbbd23]/10 px-3 py-2 font-mono text-xs text-[#fbbd23]">
+              Signups are queued — new accounts wait for approval at /admin/access.
             </div>
           )}
         </Panel>
