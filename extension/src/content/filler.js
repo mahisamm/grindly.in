@@ -75,7 +75,15 @@
       toast("Filled " + res.filled + " field" + (res.filled === 1 ? "" : "s") +
         ". Review, attach your resume if asked, then click Submit yourself.", 8000);
     } else {
-      toast("No fields to auto-fill on this step — the kit is in your Grindly dashboard to copy.", 8000);
+      // Some platforms (LinkedIn Easy Apply especially) render NOTHING — not
+      // even name/email — until you open their own Apply/Easy Apply step
+      // yourself. That's your click to make, not the extension's (see the
+      // hard rule: the extension never touches a platform action button).
+      // Tell the user the actual next step instead of just deflecting to the
+      // dashboard, which is technically true but not actionable.
+      toast("No fields visible yet. If there's an Apply/Easy Apply/Continue button on " +
+        "this page, click it yourself to open the form, then click “Fill with " +
+        "Grindly” again. Kit is also in your Grindly dashboard to copy.", 10000);
     }
   }
 
