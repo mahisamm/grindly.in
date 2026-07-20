@@ -288,6 +288,28 @@ def test_due_matches_missing_kit_ignores_not_yet_due_rows(testdb):
     assert db.due_matches_missing_kit("u1") == []
 
 
+def test_due_matches_missing_kit_includes_approved_rows_unconditionally(testdb):
+    """Regression: an 'approved' row is exactly the moment the user clicked
+    'Open & submit' and the kit is most useful — it must not be excluded just
+    because it's no longer 'matched', and (unlike matched) needs no separate
+    schedule check since it could only have gotten there by already being due."""
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="X", company="Y", url="https://x/1",
+                       score=80, status="approved", reason="r", applied=False)
+    due = db.due_matches_missing_kit("u1")
+    assert len(due) == 1
+    assert due[0]["job_title"] == "X"
+
+
+def test_due_matches_missing_kit_excludes_an_approved_row_that_already_has_a_kit(testdb):
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="X", company="Y", url="https://x/1",
+                       score=80, status="approved", reason="r", applied=False)
+    app_id = db.due_matches_missing_kit("u1")[0]["id"]
+    db.set_application_kit(app_id, resume_version_id="rv1")
+    assert db.due_matches_missing_kit("u1") == []
+
+
 def test_set_application_kit_never_blanks_a_field_with_none(testdb):
     """COALESCE semantics: a platform we can't harvest answers on yet must not
     wipe out a resume/cover-letter a previous call already attached."""

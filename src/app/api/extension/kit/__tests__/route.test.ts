@@ -81,15 +81,35 @@ describe("GET /api/extension/kit", () => {
     expect(body.matched).toBe(false);
   });
 
-  it("only ever queries the user's own DUE matches (embargo respected)", async () => {
+  it("only ever queries the user's own kit-eligible rows (embargo respected)", async () => {
     mockAuth.mockResolvedValue({ userId: "u1", tokenId: "t1" });
     mockAppFindMany.mockResolvedValue([]);
     await GET(req("https://internshala.com/x"));
     const where = mockAppFindMany.mock.calls[0][0].where;
     expect(where.userId).toBe("u1");
-    expect(where.status).toBe("matched");
-    // dueNow() adds the not-embargoed OR clause
+    // kitEligible(): OR[{status:matched, embargo-checked}, {status:approved}]
     expect(Array.isArray(where.OR)).toBe(true);
+    expect(where.OR).toEqual([
+      { status: "matched", OR: expect.any(Array) },
+      { status: "approved" },
+    ]);
+  });
+
+  it("serves the kit for an already-APPROVED row ('To submit') — not just matched", async () => {
+    // Regression: approved is exactly when the user clicked "Open & submit" and
+    // the kit is most useful — it must not vanish at that moment.
+    mockAuth.mockResolvedValue({ userId: "u1", tokenId: "t1" });
+    mockAppFindMany.mockResolvedValue([
+      {
+        id: "a2", jobTitle: "Full Stack Intern", company: "Zetheta",
+        url: "https://linkedin.com/jobs/view/123",
+        coverLetterText: "Hi Zetheta team...", answersJson: null,
+      },
+    ]);
+    const res = await GET(req("https://linkedin.com/jobs/view/123"));
+    const body = await res.json();
+    expect(body.matched).toBe(true);
+    expect(body.coverLetter).toBe("Hi Zetheta team...");
   });
 
   it("tolerates malformed answersJson without throwing", async () => {

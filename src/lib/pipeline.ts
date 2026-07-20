@@ -25,6 +25,23 @@ export function dueNow(now: Date = new Date()): Prisma.ApplicationWhereInput {
   };
 }
 
+/** Rows the Apply Kit (dashboard panel + browser extension) may serve a kit
+ *  for: a due "matched" row, OR one the user has already approved ("To submit"
+ *  / clicked "Open & submit"). Deliberately NOT the same set as dueNow():
+ *  approve/approve-all gate on dueNow() because re-approving an already-
+ *  approved row is nonsensical, so approved rows must stay OUT of that set —
+ *  but they are exactly where the kit is most useful (the user is mid-submit),
+ *  so they must stay IN this one. An approved row needs no separate embargo
+ *  check here: it could only have gotten to "approved" by already being due. */
+export function kitEligible(now: Date = new Date()): Prisma.ApplicationWhereInput {
+  return {
+    OR: [
+      { status: "matched", OR: [{ scheduledFor: null }, { scheduledFor: { lte: now } }] },
+      { status: "approved" },
+    ],
+  };
+}
+
 /** The full visibility rule for a user's application list: everything that is
  *  NOT a still-embargoed future match. Applied/failed/skipped history is all
  *  visible — it's the un-due matches, and only those, that stay hidden. */

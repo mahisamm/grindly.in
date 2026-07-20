@@ -806,11 +806,18 @@ def due_unnotified_matches(uid: str, limit: int = 50) -> list[dict]:
 
 
 def due_matches_missing_kit(uid: str, limit: int = 20) -> list[dict]:
-    """Matched rows due now (today's batch, or an older batch just come due) that
-    have no Apply Kit yet. `resume_version_id` is set together with the cover
-    letter and any drafted answers by the same kit-generation step (see
-    worker.py's post-scoring backfill), so its absence is the "not done yet"
-    signal — cheaper than tracking a separate flag.
+    """Matched-and-due rows, OR already-approved ("To submit") rows, that have no
+    Apply Kit yet. `resume_version_id` is set together with the cover letter and
+    any drafted answers by the same kit-generation step (see worker.py's
+    post-scoring backfill), so its absence is the "not done yet" signal — cheaper
+    than tracking a separate flag.
+
+    Approved rows are included deliberately: that status means the user already
+    clicked "Open & submit" — the exact moment the kit is most useful — so it
+    must not be the one state where kit generation stops. (`matched` rows still
+    need the schedule check since some are future-embargoed; an approved row
+    could only have gotten there by already being due, so no separate check
+    is needed for it.)
 
     Bounded to `limit` per run: kit generation is real work (LaTeX tailoring, an
     LLM call, and for platforms wired for it a read-only form visit), so this
@@ -823,9 +830,10 @@ def due_matches_missing_kit(uid: str, limit: int = 20) -> list[dict]:
             "SELECT a.id, a.job_title, a.company, a.url, "
             "COALESCE(j.source, '') AS source, COALESCE(j.skills, '[]') AS job_skills "
             "FROM applications a LEFT JOIN jobs j ON j.id=a.job_id "
-            "WHERE a.user_id=? AND a.status='matched' "
-            "AND (a.scheduled_for IS NULL OR a.scheduled_for <= ?) "
-            "AND a.resume_version_id IS NULL "
+            "WHERE a.user_id=? AND a.resume_version_id IS NULL AND ("
+            "  (a.status='matched' AND (a.scheduled_for IS NULL OR a.scheduled_for <= ?))"
+            "  OR a.status='approved'"
+            ") "
             "ORDER BY a.scheduled_for ASC, a.created_at ASC LIMIT ?",
             (uid, now_db(), limit),
         ).fetchall()

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authenticateExtension } from "@/lib/extensionAuth";
 import { isRateLimited } from "@/lib/rateLimit";
-import { dueNow } from "@/lib/pipeline";
+import { kitEligible } from "@/lib/pipeline";
 
 // The kit the extension injects into an application form. Bearer-authed with an
 // extension token (NOT the cookie): the request comes from the extension's
@@ -66,11 +66,12 @@ export async function GET(req: Request) {
       where: { id: auth.userId },
       select: { name: true, email: true, profile: { select: { phone: true, gpa: true } } },
     }),
-    // Only due matches — never a future-embargoed one (dueNow mirrors the same
-    // visibility gate the dashboard uses; the extension must not surface a listing
-    // the user isn't meant to see yet).
+    // A due "matched" row OR one already approved ("To submit") — never a
+    // future-embargoed one. The approved case matters most in practice: it's
+    // the exact moment the user clicked "Open & submit" and is about to need
+    // the kit, so it must not disappear right when it becomes useful.
     prisma.application.findMany({
-      where: { userId: auth.userId, ...dueNow() },
+      where: { userId: auth.userId, ...kitEligible() },
       orderBy: { createdAt: "desc" },
       take: 100,
       select: { id: true, jobTitle: true, company: true, url: true, coverLetterText: true, answersJson: true },

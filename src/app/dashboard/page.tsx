@@ -1910,8 +1910,11 @@ export default function Dashboard() {
                           supports it) drafted screening answers, ready before you ever
                           open the form. Null fields mean the agent's next pass hasn't
                           generated it yet, or (answers only) this platform doesn't
-                          support reading questions ahead of time — never a fabrication. */}
-                      {a.status === "matched" && (a.coverLetterText || a.resumeVersionId) && (
+                          support reading questions ahead of time — never a fabrication.
+                          Shown for "matched" AND "approved" ("To submit") — the kit
+                          matters most right when you've clicked Open & submit, not just
+                          before it; it must not vanish at exactly that moment. */}
+                      {(a.status === "matched" || a.status === "approved") && (a.coverLetterText || a.resumeVersionId) && (
                         <div className="mt-2 rounded-lg border border-border bg-surface-2 p-2.5 space-y-2">
                           <div className="text-[10px] uppercase tracking-wide text-muted">Apply kit</div>
                           {a.resumeVersionId && (

@@ -142,12 +142,14 @@ export async function GET() {
   };
   const quota = await getQuota(uid, user.plan);
 
-  // Trim the heavy Apply-Kit fields off rows the dashboard never renders a kit for
-  // (anything not "matched"). /api/me is polled every ~12s; shipping up to 100
-  // cover letters + answer blobs on every poll is pure waste — the kit UI only
-  // shows on matched rows, which are just today's due batch (≤ a day's cap).
+  // Trim the heavy Apply-Kit fields off rows the dashboard never renders a kit
+  // for. /api/me is polled every ~12s; shipping up to 100 cover letters + answer
+  // blobs on every poll is pure waste. The kit UI shows on "matched" (today's
+  // due batch, ≤ a day's cap) AND "approved" ("To submit" — the user clicked
+  // Open & submit and is exactly when the kit is most useful); anything else
+  // (applied/failed/skipped history) never renders a kit and gets trimmed.
   const slimApps = apps.map((a) =>
-    a.status === "matched" ? a : { ...a, coverLetterText: null, answersJson: null },
+    a.status === "matched" || a.status === "approved" ? a : { ...a, coverLetterText: null, answersJson: null },
   );
 
   return NextResponse.json({
