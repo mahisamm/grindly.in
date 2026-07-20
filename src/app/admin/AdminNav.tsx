@@ -23,7 +23,7 @@ export function AdminNav({ email }: { email: string }) {
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-[#262a33] bg-[#0e1014] p-4">
       <Link href="/admin" className="mb-6 flex items-center gap-2">
-        <span className="grid size-7 place-items-center rounded bg-[#ff4d4d] text-sm font-bold text-black">N</span>
+        <span className="grid size-7 place-items-center rounded bg-[#ff4d4d] text-sm font-bold text-black">g</span>
         <span className="font-mono text-sm font-bold tracking-tight text-[#e6e8eb]">
           Grindly <span className="text-[#ff4d4d]">ADMIN</span>
         </span>

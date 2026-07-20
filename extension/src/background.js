@@ -46,10 +46,30 @@ async function fetchKit(jobUrl) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     switch (msg && msg.type) {
-      case "grindly:pair":
+      case "grindly:pair": {
         // Relayed by the grindly.in bridge content script after the user paired
-        // on the site. We trust it only because it came from a grindly.in tab.
-        if (sender.url && sender.url.startsWith(API_BASE) && msg.token) {
+        // on the site. We trust it only because it came from a grindly.in tab —
+        // checked by parsed origin, not a string prefix (a prefix match would
+        // also accept "https://grindly.in.evil.com" if the manifest's match
+        // pattern is ever loosened).
+        let originOk = false;
+        try {
+          originOk = !!sender.url && new URL(sender.url).origin === API_BASE;
+        } catch { /* malformed sender.url — treat as untrusted */ }
+        if (originOk && msg.token) {
+          await setToken(msg.token);
+          sendResponse({ ok: true });
+        } else {
+          sendResponse({ ok: false });
+        }
+        break;
+      }
+      case "grindly:pairManual":
+        // Manual "paste code" fallback in the popup, for when the automatic
+        // handshake above doesn't land. Trusted because it can only come from
+        // our own popup page, never a content script on a web page: sender.tab
+        // is only set for messages relayed from a tab's content script.
+        if (!sender.tab && msg.token) {
           await setToken(msg.token);
           sendResponse({ ok: true });
         } else {

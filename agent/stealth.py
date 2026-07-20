@@ -9,12 +9,49 @@ import os
 import random
 
 
+def _lock_owner_alive(lock_path: str) -> bool:
+    """Best-effort: is the process named in SingletonLock's target still running?
+
+    Chromium's SingletonLock on Linux is a symlink whose target looks like
+    "<hostname>-<pid>". If we can parse a pid and it's still alive, the
+    profile really is in use right now (e.g. by a concurrent apply-run
+    Chromium on the same profile dir) and removing the lock would let a
+    second Chromium instance start against it, corrupting both. Any
+    uncertainty (not a symlink, unparseable, cross-platform target format)
+    falls back to "not confirmed alive" — preserving this function's original
+    job of clearing genuinely stale locks left by a hard crash.
+    """
+    try:
+        target = os.readlink(lock_path)
+    except OSError:
+        return False  # not a symlink (or doesn't exist) — nothing to protect
+    pid_str = target.rsplit("-", 1)[-1]
+    if not pid_str.isdigit():
+        return False
+    try:
+        os.kill(int(pid_str), 0)  # signal 0: existence check, doesn't actually signal
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return False  # e.g. PermissionError — treat as "can't confirm", not "alive"
+
+
 def clear_stale_lock(profile_dir: str) -> None:
     """Remove Chrome's process-singleton markers before launching on a
     persistent profile. Automated runs get killed (redeploy, OOM, crash)
     without a graceful browser shutdown, which leaves these pointing at a
     dead process — Chromium then refuses to start at all, reporting the
-    profile "in use by another process" even though nothing is running."""
+    profile "in use by another process" even though nothing is running.
+
+    Skips removal if the lock's owning process is confirmed still alive —
+    i.e. the profile genuinely is in use right now, not just left behind by a
+    crash — so this doesn't yank the lock out from under a real concurrent
+    session on the same profile dir (e.g. connect_service racing an in-flight
+    apply run for the same user)."""
+    lock_path = os.path.join(profile_dir, "SingletonLock")
+    if _lock_owner_alive(lock_path):
+        return
     for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
         try:
             os.remove(os.path.join(profile_dir, name))

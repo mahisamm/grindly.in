@@ -47,11 +47,22 @@ export async function isRateLimited(key: string, limit: number, windowMs: number
  * Extract best-effort client IP. Trusts x-forwarded-for only when the app
  * sits behind a known reverse proxy (TRUST_PROXY=1 env var). Without it,
  * x-forwarded-for is ignored to prevent IP spoofing.
+ *
+ * With exactly one trusted proxy hop (Caddy, per Caddyfile/docker-compose.yml
+ * — TRUST_PROXY is only ever set for that deployment), the trustworthy value
+ * is the LAST entry in x-forwarded-for, not the first: Caddy's reverse_proxy
+ * appends the real client IP to whatever header the client already sent
+ * rather than replacing it, so the first entry is still attacker-controlled.
+ * Taking the first entry let anyone bypass every IP-keyed rate limit by
+ * sending a fake x-forwarded-for header.
  */
 export function getIp(req: Request): string {
   if (process.env.TRUST_PROXY === "1") {
     const xff = req.headers.get("x-forwarded-for");
-    if (xff) return xff.split(",")[0].trim();
+    if (xff) {
+      const hops = xff.split(",").map((h) => h.trim()).filter(Boolean);
+      if (hops.length) return hops[hops.length - 1];
+    }
     const xri = req.headers.get("x-real-ip");
     if (xri) return xri;
   }

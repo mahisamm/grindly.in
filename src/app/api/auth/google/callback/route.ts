@@ -9,6 +9,7 @@ import { loginClient } from "@/lib/googleOAuth";
 import { DEFAULTS } from "@/lib/proffQuestions";
 import { isRateLimited, getIp } from "@/lib/rateLimit";
 import { resolveInitialAccess, hasAppAccess } from "@/lib/access";
+import { readAdminSettings, isEmailDomainBanned } from "@/lib/adminSettings";
 
 interface GoogleTokenResponse {
   access_token: string;
@@ -37,6 +38,11 @@ export async function GET(req: Request) {
 
   if (error || !code) {
     return NextResponse.redirect(`${base}/login?error=google_denied`);
+  }
+
+  const settings = readAdminSettings();
+  if (!settings.featureFlags.googleAuth) {
+    return NextResponse.redirect(`${base}/login?error=google_disabled`);
   }
 
   // CSRF: the state echoed by Google must match the cookie we set in the
@@ -106,6 +112,9 @@ export async function GET(req: Request) {
   }
 
   if (!user) {
+    if (isEmailDomainBanned(email, settings)) {
+      return NextResponse.redirect(`${base}/login?error=domain_banned`);
+    }
     // Owner + pre-allowlisted emails come in approved; everyone else waits.
     const accessStatus = await resolveInitialAccess(email);
     user = await prisma.user.create({

@@ -48,7 +48,10 @@
       var Q = norm(answers[j].q);
       if (Q && (L.indexOf(Q) !== -1 || Q.indexOf(L) !== -1)) return answers[j].a;
     }
-    // word overlap
+    // word overlap — require 3 shared meaningful (>3 char) words, not 2. A
+    // 2-word overlap on a long label matched too easily on unrelated
+    // screening questions, risking the wrong drafted answer landing somewhere
+    // the user doesn't notice before submit.
     var lw = L.split(/\W+/).filter(Boolean);
     var best = null, bestScore = 0;
     for (var k = 0; k < answers.length; k++) {
@@ -56,7 +59,7 @@
       var overlap = lw.filter(function (w) { return w.length > 3 && qw.indexOf(w) !== -1; }).length;
       if (overlap > bestScore) { bestScore = overlap; best = answers[k].a; }
     }
-    return bestScore >= 2 ? best : null;
+    return bestScore >= 3 ? best : null;
   }
 
   /**
@@ -128,11 +131,32 @@
     return clean((el.getAttribute && (el.getAttribute("placeholder") || el.getAttribute("name"))) || "");
   }
 
+  // Not rendered / zero-size / display:none / visibility:hidden — the shape a
+  // page uses for a honeypot field or an off-screen widget the user can't see.
+  // Real forms don't hide the fields they want the user to fill, so this is a
+  // safe filter, not a guess: it stops a same-page hidden newsletter/lead-
+  // capture widget from silently soaking up PII meant for the job form (the
+  // user reviews everything they can SEE before hitting Submit — an invisible
+  // field bypasses that review entirely).
+  function isFillable(el) {
+    try {
+      if (!el || (el.isConnected === false)) return false;
+      var rects = el.getClientRects && el.getClientRects();
+      if (!rects || rects.length === 0) return false;
+      var style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+      if (style && (style.visibility === "hidden" || style.display === "none")) return false;
+      return true;
+    } catch {
+      return true; // can't tell — don't silently drop a real field over it
+    }
+  }
+
   function readFields(root, doc) {
     var els = root.querySelectorAll("textarea, input, [contenteditable='true']");
     var fields = [];
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
+      if (!isFillable(el)) continue;
       var tag = (el.tagName || "").toLowerCase();
       var editable = el.getAttribute && el.getAttribute("contenteditable") === "true";
       var type = editable ? "textarea" : ((el.getAttribute && el.getAttribute("type")) || "text").toLowerCase();
@@ -187,7 +211,7 @@
     return { filled: filled, total: fields.length, planned: plan.length };
   }
 
-  var api = { planFills: planFills, applyFills: applyFills, matchAnswer: matchAnswer, readFields: readFields };
+  var api = { planFills: planFills, applyFills: applyFills, matchAnswer: matchAnswer, readFields: readFields, isFillable: isFillable };
   root.GrindlyFill = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -16,6 +16,15 @@
       .primary { background: #e5533c; color: #fff; }
       .ghost { background: #f1f1f1; color: #333; }
       .hint { font-size: 12px; color: #666; margin-top: 10px; }
+      .paste { margin-top: 14px; padding-top: 12px; border-top: 1px solid #e5e5e5; }
+      .paste label { display: block; font-size: 12px; color: #666; margin-bottom: 6px; }
+      .paste .row { display: flex; gap: 6px; }
+      .paste input { flex: 1; min-width: 0; border: 1px solid #ddd; border-radius: 8px;
+        padding: 7px 8px; font-size: 12px; font-family: monospace; }
+      .paste button { margin-top: 0; width: auto; padding: 7px 12px; }
+      .msg { font-size: 12px; margin-top: 6px; }
+      .msg.ok { color: #16803c; }
+      .msg.err { color: #e5533c; }
     </style>
   </head>
   <body>
@@ -25,6 +34,14 @@
       <a class="btn primary" id="connect" href="https://grindly.in/extension/connect" target="_blank">Connect to Grindly</a>
       <button class="ghost" id="disconnect" style="display:none">Disconnect</button>
       <div class="hint" id="hint">Open a job on Internshala, LinkedIn, Naukri, Unstop or Indeed and click “Fill with Grindly”. You always click Submit yourself.</div>
+      <div class="paste" id="pasteBox">
+        <label for="pasteInput">Connect automatically didn't work? Paste your pairing code from the Grindly connect page:</label>
+        <div class="row">
+          <input id="pasteInput" type="text" placeholder="Pairing code" autocomplete="off" spellcheck="false" />
+          <button class="ghost" id="pasteBtn">Connect</button>
+        </div>
+        <div class="msg" id="pasteMsg"></div>
+      </div>
     </div>
     <script src="popup.js"></script>
   </body>

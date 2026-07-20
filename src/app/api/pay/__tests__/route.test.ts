@@ -23,7 +23,14 @@ function makeReq(body: unknown = {}) {
   });
 }
 
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  // These tests exercise the underlying Razorpay-adapter behavior; the
+  // separate business-level "payments are on at all" switch is tested in its
+  // own file (see paymentsEnabled.test.ts) and defaults on here so it doesn't
+  // shadow what each test is actually asserting.
+  process.env.PAYMENTS_ENABLED = "true";
+});
 
 describe("POST /api/pay", () => {
   it("returns 401 when no session", async () => {

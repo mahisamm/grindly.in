@@ -16,7 +16,14 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      `script-src 'self' 'unsafe-inline' https://checkout.razorpay.com${isDev ? " 'unsafe-eval'" : ""}`,  // unsafe-inline for SW script; unsafe-eval for React dev mode only
+      // 'unsafe-inline' is no longer needed for the app's own scripts (the SW
+      // registration moved to an external /sw-register.js — see layout.tsx).
+      // It's kept only because the Razorpay checkout modal may inject inline
+      // event handlers we can't verify without a live checkout run (payments
+      // are currently off — PAYMENTS_ENABLED — so this is dormant risk).
+      // Tightening further needs either confirming Razorpay is CSP-clean
+      // without it, or a per-request nonce threaded through proxy.ts.
+      `script-src 'self' 'unsafe-inline' https://checkout.razorpay.com${isDev ? " 'unsafe-eval'" : ""}`,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob: https://*.razorpay.com",

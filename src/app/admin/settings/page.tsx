@@ -6,7 +6,7 @@ import { PageTitle, Panel } from "../ui";
 type Settings = {
   maintenanceMode: boolean;
   globalDailyCap: number;
-  featureFlags: { googleAuth: boolean; smsOtp: boolean; autoApply: boolean };
+  featureFlags: { googleAuth: boolean; autoApply: boolean };
   bannedDomains: string[];
 };
 
@@ -150,12 +150,6 @@ export default function AdminSettings() {
               desc="Allow sign-in / sign-up via Google. Disable if OAuth credentials are revoked."
               value={s.featureFlags.googleAuth}
               onChange={() => toggleFlag("googleAuth")}
-            />
-            <FlagRow
-              label="SMS OTP"
-              desc="Require SMS OTP on login. Disable if Twilio is down or in dev mode."
-              value={s.featureFlags.smsOtp}
-              onChange={() => toggleFlag("smsOtp")}
             />
             <FlagRow
               label="Auto-apply"

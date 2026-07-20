@@ -15,6 +15,7 @@ import socket
 import threading
 import time
 
+import admin_settings
 import db
 
 log = logging.getLogger("grindly.queue")
@@ -90,14 +91,29 @@ def enqueue(uid: str, mode: str = "live") -> str:
 
 
 def reclaim_stale(now_ms: int | None = None):
-    """Requeue jobs whose worker died mid-run (lock older than STALE_LOCK_MS)."""
+    """Requeue jobs whose worker died mid-run (lock older than STALE_LOCK_MS).
+
+    A job that already used up its retry budget on the attempt that crashed is
+    marked failed instead of requeued — otherwise reclaim would hand it an
+    extra run beyond max_attempts, since claim_next's own attempts filter only
+    guards the *next* claim, not this transition back into 'queued'.
+    """
     cutoff = db.time_ago_db(STALE_LOCK_MS)
+    ts = db.now_db()
     with db.conn() as c:
         _ensure_table(c)
         c.execute(
+            "UPDATE agent_runs SET status='failed', error='stale lock: exceeded max_attempts', "
+            "active_key=NULL, locked_by=NULL, locked_at=NULL, updated_at=? "
+            "WHERE status='running' AND locked_at IS NOT NULL AND locked_at < ? "
+            "AND attempts >= max_attempts",
+            (ts, cutoff),
+        )
+        c.execute(
             "UPDATE agent_runs SET status='queued', locked_by=NULL, locked_at=NULL, updated_at=? "
-            "WHERE status='running' AND locked_at IS NOT NULL AND locked_at < ?",
-            (db.now_db(), cutoff),
+            "WHERE status='running' AND locked_at IS NOT NULL AND locked_at < ? "
+            "AND attempts < max_attempts",
+            (ts, cutoff),
         )
 
 
@@ -150,12 +166,15 @@ def claim_next(worker_id: str) -> dict | None:
     uses an immediate transaction. Either way two workers never grab the same
     row, and a user with a running job is skipped so we never double-apply.
     Jobs still inside their post-failure backoff window are skipped too."""
+    if admin_settings.maintenance_mode():
+        return None
     with db.conn() as c:
         _ensure_table(c)
         if db.PG:
             candidates = c.execute(
                 "SELECT * FROM agent_runs WHERE status='queued' "
                 "AND (available_at IS NULL OR available_at <= CURRENT_TIMESTAMP) "
+                "AND attempts < max_attempts "
                 "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
                 "ORDER BY created_at ASC LIMIT 20 FOR UPDATE SKIP LOCKED"
             ).fetchall()
@@ -164,6 +183,7 @@ def claim_next(worker_id: str) -> dict | None:
             candidates = c.execute(
                 "SELECT * FROM agent_runs WHERE status='queued' "
                 "AND (available_at IS NULL OR available_at <= ?) "
+                "AND attempts < max_attempts "
                 "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
                 "ORDER BY created_at ASC LIMIT 20",
                 (db.now_db(),),

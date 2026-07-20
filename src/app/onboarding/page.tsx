@@ -67,14 +67,32 @@ export default function OnboardingPage() {
   const [tosAck, setTosAck] = useState(false);
   const [msg, setMsg] = useState("");
   const [upgradeMode, setUpgradeMode] = useState(false);
+  // Server-computed (see /api/me), same pattern as gmailScanEnabled — not a
+  // NEXT_PUBLIC_ build-time constant, so it actually responds to the
+  // PAYMENTS_ENABLED env var at container runtime. Genuinely disables the
+  // "coming soon" button instead of only gating it via `busy`/`tosAck`, which
+  // still let a real checkout run whenever Razorpay keys happened to be
+  // present in a non-strict-production environment.
+  const [paymentsEnabled, setPaymentsEnabled] = useState(false);
 
-  // Gated beta guard: a not-yet-approved account that lands on /onboarding
-  // (e.g. by typing the URL) is bounced to the waitlist. Admins pass.
+  // Auth + gated-beta guard: a logged-out visitor (401) is bounced to /login,
+  // same as /dashboard and /applications — previously a 401 resolved to
+  // `null` here and just fell through with no redirect, so a signed-out (or
+  // session-expired) visitor could fill out the whole wizard while every save
+  // silently 401'd in the background. A not-yet-approved account is bounced
+  // to the waitlist instead. Admins pass both checks.
   useEffect(() => {
     fetch("/api/me")
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        if (!r.ok) {
+          window.location.href = "/login";
+          return null;
+        }
+        return r.json();
+      })
       .then((d) => {
         if (!d?.user) return;
+        setPaymentsEnabled(!!d.user.paymentsEnabled);
         if (d.user.role !== "admin" && d.user.accessStatus !== "approved") {
           window.location.href = "/waitlist";
         }
@@ -644,7 +662,7 @@ export default function OnboardingPage() {
                     </button>
                   )}
                   <button
-                    disabled={busy || !tosAck}
+                    disabled={busy || !tosAck || !paymentsEnabled}
                     onClick={pay}
                     title="Paid plans are coming soon"
                     className="rounded-lg border border-border px-5 py-2.5 font-medium text-muted hover:border-brand/40 transition disabled:opacity-60"

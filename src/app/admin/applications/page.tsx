@@ -65,8 +65,9 @@ export default function AdminApplications() {
       </div>
 
       {err && <p className="font-mono text-sm text-[#ff4d4d]">{err}</p>}
+      {!err && !data && <p className="font-mono text-sm text-[#8b919c]">Loading…</p>}
 
-      <Panel>
+      {data && <Panel>
         <table className="w-full text-left font-mono text-xs">
           <thead className="text-[#5a606b]">
             <tr className="border-b border-[#262a33]">
@@ -106,7 +107,7 @@ export default function AdminApplications() {
             )}
           </tbody>
         </table>
-      </Panel>
+      </Panel>}
 
       {data && data.totalPages > 1 && (
         <div className="mt-4 flex items-center gap-3 font-mono text-xs">

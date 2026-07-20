@@ -5,6 +5,7 @@ import { encryptSecret } from "@/lib/crypto";
 import { audit } from "@/lib/audit";
 import { baseUrl } from "@/lib/baseUrl";
 import { gmailClient } from "@/lib/googleOAuth";
+import { getUid } from "@/lib/session";
 
 const STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -38,6 +39,16 @@ export async function GET(req: Request) {
   const state = verifyState(rawState);
   if (!state) {
     return NextResponse.redirect(`${base}/dashboard?gmailError=csrf`);
+  }
+
+  // The HMAC only proves *someone* who once had a session minted this state —
+  // it does not prove the browser completing the flow right now is that same
+  // session. Without this check, an attacker can mint a valid state for their
+  // own account, hand the resulting consent URL to a victim, and have the
+  // victim's Gmail refresh token stored under the attacker's Grindly account.
+  const currentUid = await getUid();
+  if (!currentUid || currentUid !== state) {
+    return NextResponse.redirect(`${base}/dashboard?gmailError=session_mismatch`);
   }
 
   // Must be the same client that issued the code in /api/auth/gmail — Google

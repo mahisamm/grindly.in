@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { dueNow } from "@/lib/pipeline";
-import { getQuota } from "@/lib/quota";
+import { getQuota, remainingForApproval } from "@/lib/quota";
 import { notifyUser } from "@/lib/notify";
 import { hasAppAccess } from "@/lib/access";
 
@@ -30,7 +30,11 @@ export async function POST() {
     );
   }
   const quota = await getQuota(uid, user.plan);
-  if (quota.remaining === 0) {
+  // Counts already-approved-but-unsubmitted rows against today's cap too —
+  // otherwise approving daily with nothing submitted lets a user bank an
+  // unbounded backlog, then burst-submit past the daily limit.
+  const approvable = await remainingForApproval(uid, user.plan);
+  if (approvable === 0) {
     return NextResponse.json(
       {
         error: "Your daily application limit is reached. Try again tomorrow.",
@@ -44,7 +48,7 @@ export async function POST() {
   const matched = await prisma.application.findMany({
     where: { userId: uid, ...dueNow() },
     select: { id: true, reason: true, jobTitle: true, company: true, url: true },
-    take: quota.remaining,
+    take: approvable,
   });
   if (matched.length === 0) return NextResponse.json({ ok: true, approved: 0 });
 

@@ -20,7 +20,13 @@
     if (e.source !== window || !e.data || typeof e.data !== "object") return;
     var d = e.data;
 
-    if (d.type === "grindly-ext:pair" && typeof d.token === "string") {
+    // Pairing is restricted to the one page meant to issue it. This script
+    // itself runs on all of grindly.in/* (needed for the presence ping below,
+    // which the dashboard also uses) — without this check, any future XSS
+    // anywhere on the origin could silently re-pair the extension to an
+    // attacker-chosen token just by posting this message.
+    if (d.type === "grindly-ext:pair" && typeof d.token === "string" &&
+        window.location.pathname === "/extension/connect") {
       chrome.runtime.sendMessage({ type: "grindly:pair", token: d.token }, function (resp) {
         window.postMessage({ type: "grindly-ext:paired", ok: !!(resp && resp.ok) }, window.location.origin);
       });

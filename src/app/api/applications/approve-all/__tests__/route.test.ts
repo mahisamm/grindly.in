@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const {
   mockGetUid, mockFindMany, mockUpdate, mockTransaction,
   mockRunFindFirst, mockRunCreate, mockSpawnWorkerKick,
-  mockUserFindUnique, mockGetQuota,
+  mockUserFindUnique, mockGetQuota, mockRemainingForApproval,
 } = vi.hoisted(() => ({
   mockGetUid: vi.fn(),
   mockFindMany: vi.fn(),
@@ -14,6 +14,7 @@ const {
   mockSpawnWorkerKick: vi.fn(),
   mockUserFindUnique: vi.fn(),
   mockGetQuota: vi.fn(),
+  mockRemainingForApproval: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getUid: mockGetUid }));
@@ -26,7 +27,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/workerKick", () => ({ spawnWorkerKick: mockSpawnWorkerKick }));
-vi.mock("@/lib/quota", () => ({ getQuota: mockGetQuota }));
+vi.mock("@/lib/quota", () => ({ getQuota: mockGetQuota, remainingForApproval: mockRemainingForApproval }));
 vi.mock("@/lib/notify", () => ({ notifyUser: vi.fn().mockResolvedValue({ delivered: false }) }));
 
 import { POST } from "@/app/api/applications/approve-all/route";
@@ -38,6 +39,7 @@ beforeEach(() => {
   mockRunCreate.mockResolvedValue({ id: "run1" });
   mockUserFindUnique.mockResolvedValue({ plan: "free", accessStatus: "approved", role: "user", email: "u1@example.com" });
   mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 0, remaining: 5 });
+  mockRemainingForApproval.mockResolvedValue(5);
 });
 
 describe("POST /api/applications/approve-all", () => {
@@ -63,6 +65,17 @@ describe("POST /api/applications/approve-all", () => {
       { scheduledFor: null },
       { scheduledFor: { lte: expect.any(Date) } },
     ]);
+  });
+
+  // Regression: only appliedToday gated approve-all, not a pending-approved
+  // backlog, so a user could approve daily with nothing submitted and bank an
+  // unbounded backlog across many days.
+  it("returns 402 when today's cap is already spoken for by a pending-approved backlog", async () => {
+    mockGetUid.mockResolvedValue("u1");
+    mockRemainingForApproval.mockResolvedValue(0);
+    const res = await POST();
+    expect(res.status).toBe(402);
+    expect(mockFindMany).not.toHaveBeenCalled();
   });
 
   it("returns approved: 0 and skips the transaction when nothing is matched", async () => {

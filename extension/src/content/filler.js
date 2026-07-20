@@ -67,6 +67,14 @@
       window.open("https://grindly.in/extension/connect", "_blank");
       return;
     }
+    // A transient failure (network blip, rate limit, server hiccup) put the
+    // button in "Retry" state — re-fetch instead of trying to fill with
+    // nothing, since lastKit carries no field data on this path.
+    if (lastKit.error) {
+      setLabel("Retrying…", true);
+      fetchAndRender(location.href);
+      return;
+    }
     if (!lastKit.matched) return;
     setLabel("Filling…", true);
     var res = GF.applyFills(document, lastKit, document);
@@ -87,11 +95,7 @@
     }
   }
 
-  function refresh() {
-    var url = location.href;
-    if (url === currentUrl) return;
-    currentUrl = url;
-    dismissed = false; // a new page is a fresh chance to offer help
+  function fetchAndRender(url) {
     chrome.runtime.sendMessage({ type: "grindly:getKit", url: url }, function (kit) {
       lastKit = kit || {};
       if (dismissed) return;
@@ -103,10 +107,33 @@
         mountUI();
         setLabel("Fill with Grindly", false);
         toast(kit.jobTitle + " — kit ready", 4000);
-      } else {
-        hide(); // no match for this page — stay out of the way
+        return;
       }
+      if (kit && kit.error) {
+        // Transient failure (network blip, rate limit, server hiccup) — tell
+        // the user and let them retry, instead of silently vanishing as if
+        // there's simply no match on this page (the class of bug the
+        // "no fields found" message fixed for a different silent-failure path).
+        mountUI();
+        setLabel("Retry", false);
+        toast(
+          kit.error === "network"
+            ? "Couldn't reach Grindly — check your connection, then Retry."
+            : "Grindly hit a snag loading this kit. Click Retry in a moment.",
+          6000
+        );
+        return;
+      }
+      hide(); // genuinely no match for this page — stay out of the way
     });
+  }
+
+  function refresh() {
+    var url = location.href;
+    if (url === currentUrl) return;
+    currentUrl = url;
+    dismissed = false; // a new page is a fresh chance to offer help
+    fetchAndRender(url);
   }
 
   // SPAs (LinkedIn, Naukri) change the URL without a reload — re-check on a light poll.

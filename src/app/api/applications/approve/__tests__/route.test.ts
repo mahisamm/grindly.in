@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const {
   mockGetUid, mockFindFirst, mockUpdate,
   mockRunFindFirst, mockRunCreate, mockSpawnWorkerKick,
-  mockUserFindUnique, mockGetQuota,
+  mockUserFindUnique, mockGetQuota, mockRemainingForApproval,
 } = vi.hoisted(() => ({
   mockGetUid: vi.fn(),
   mockFindFirst: vi.fn(),
@@ -13,6 +13,7 @@ const {
   mockSpawnWorkerKick: vi.fn(),
   mockUserFindUnique: vi.fn(),
   mockGetQuota: vi.fn(),
+  mockRemainingForApproval: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getUid: mockGetUid }));
@@ -24,7 +25,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 vi.mock("@/lib/workerKick", () => ({ spawnWorkerKick: mockSpawnWorkerKick }));
-vi.mock("@/lib/quota", () => ({ getQuota: mockGetQuota }));
+vi.mock("@/lib/quota", () => ({ getQuota: mockGetQuota, remainingForApproval: mockRemainingForApproval }));
 vi.mock("@/lib/notify", () => ({ notifyUser: vi.fn().mockResolvedValue({ delivered: false }) }));
 
 import { POST } from "@/app/api/applications/approve/route";
@@ -44,6 +45,7 @@ beforeEach(() => {
   mockRunCreate.mockResolvedValue({ id: "run1" });
   mockUserFindUnique.mockResolvedValue({ plan: "free", accessStatus: "approved", role: "user", email: "u1@example.com" });
   mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 0, remaining: 5 });
+  mockRemainingForApproval.mockResolvedValue(5);
 });
 
 describe("POST /api/applications/approve", () => {
@@ -62,6 +64,19 @@ describe("POST /api/applications/approve", () => {
   it("does not approve after the daily limit is reached", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockGetQuota.mockResolvedValue({ kind: "trial", cap: 5, used: 5, remaining: 0 });
+    mockRemainingForApproval.mockResolvedValue(0);
+    const res = await POST(makeReq({ id: "a1" }));
+    expect(res.status).toBe(402);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  // Regression: approving daily with nothing submitted used to let a user bank
+  // an unbounded backlog of approved-but-unsubmitted rows across many days,
+  // since only appliedToday (not the pending-approved count) gated approval.
+  it("does not approve when today's cap is already spoken for by a pending-approved backlog", async () => {
+    mockGetUid.mockResolvedValue("u1");
+    mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 0, remaining: 5 });
+    mockRemainingForApproval.mockResolvedValue(0); // 5 cap - 5 already-approved-pending
     const res = await POST(makeReq({ id: "a1" }));
     expect(res.status).toBe(402);
     expect(mockUpdate).not.toHaveBeenCalled();

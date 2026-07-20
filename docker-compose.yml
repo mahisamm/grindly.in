@@ -51,7 +51,7 @@ services:
     image: grindly-web
     command: sh -c "npx prisma db push --skip-generate && node scripts/seed-admin.mjs"
     environment:
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_ENC}@postgres:5432/grindly
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
     depends_on:
@@ -70,7 +70,7 @@ services:
       # host) so /api/me polling from ~100 dashboards doesn't queue on the pool;
       # pool_timeout gives a request a few seconds to get a connection under a
       # burst instead of erroring. Well under Postgres max_connections (100).
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_ENC}@postgres:5432/grindly?connection_limit=15&pool_timeout=15
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly?connection_limit=15&pool_timeout=15
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
@@ -84,6 +84,9 @@ services:
       GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
       GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET:-}
       GMAIL_SCAN_ENABLED: ${GMAIL_SCAN_ENABLED:-}
+      # Single explicit payments switch — see .env.example. Must be "true" (not
+      # just Razorpay keys being present) before /api/pay will do anything.
+      PAYMENTS_ENABLED: ${PAYMENTS_ENABLED:-false}
       # Razorpay. Both keys are required for paid upgrades in production.
       # Local development without keys uses stub checkout. Setting KEY_ID flips /api/pay and
       # /api/pay/confirm into real-money mode, so KEY_SECRET must be set with it
@@ -136,7 +139,7 @@ services:
     image: grindly-worker           # tagged so `sweep` can reuse it, not rebuild it
     environment:
       INTERNPILOT_DB: ""            # unset → db.py uses the Postgres DATABASE_URL
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_ENC}@postgres:5432/grindly
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
       # "0" (headed) — NOT "1". Dockerfile.worker runs Chromium headed inside
       # an Xvfb virtual display specifically to eliminate headless-mode JS
@@ -149,6 +152,11 @@ services:
       # web app, the login worker, and every apply worker replica see the same profile.
       GRINDLY_PROFILE_BASE: /app/data/browser_profile
       GRINDLY_SPREAD_APPLIES: "1"   # human-pacing: 5-15 min gap between applies
+      # Beta-safe anti-bot-detection ceilings (see .env.example) — must be set
+      # here or worker.py falls back to its much looser code defaults (15 /
+      # unlimited) instead of these.
+      GRINDLY_CAP_PER_PLATFORM: ${GRINDLY_CAP_PER_PLATFORM:-5}
+      GRINDLY_CAP_PER_RUN: ${GRINDLY_CAP_PER_RUN:-5}
       GROQ_API_KEY: ${GROQ_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
@@ -164,13 +172,22 @@ services:
       EMAIL_SMTP_PASS: ${EMAIL_SMTP_PASS:-}
       EMAIL_FROM: ${EMAIL_FROM:-Grindly <no-reply@grindly.in>}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      OPS_SLACK_CHANNEL: ${OPS_SLACK_CHANNEL:-ops-alerts}
     deploy:
       # Single browser-worker on a 1-vCPU host: two headed Chromium workers only
       # contend for the one core (no throughput gain) and can OOM the box. The
       # run queue serialises per user, so one worker drains 100 users' runs in
       # sequence — correct for an async "applies in the background" product.
       # Scale this back up the moment the host gains cores/RAM.
-      replicas: 1  # per-user lock prevents double-apply at any replica count
+      # replicas MUST stay 1: claim_next()'s "no other running job for this
+      # user" exclusion (run_queue.py) is a plain read alongside its
+      # FOR UPDATE SKIP LOCKED claim, not itself lock-aware — two concurrent
+      # claimers (i.e. replicas > 1) could both pass it for the same user
+      # before either commits. Single-claimer-at-a-time (this) is what
+      # actually prevents double-apply today; raising replicas needs that
+      # exclusion query hardened first (e.g. SELECT ... FOR UPDATE on the
+      # user's running rows too), not just a number bump.
+      replicas: 1
       resources:
         limits:
           memory: 1.5G
@@ -206,7 +223,7 @@ services:
     command: ["python", "agent/sweep.py", "--serve"]
     environment:
       INTERNPILOT_DB: ""
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_ENC}@postgres:5432/grindly
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
     deploy:
       replicas: 1
@@ -242,7 +259,7 @@ services:
       dockerfile: Dockerfile.connect
     environment:
       INTERNPILOT_DB: ""
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_ENC}@postgres:5432/grindly
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
       GRINDLY_PROFILE_BASE: /app/data/browser_profile
       GRINDLY_CONNECT_MAX_SESSIONS: "2"

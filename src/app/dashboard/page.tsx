@@ -364,7 +364,7 @@ function TagInput({ value, onChange, placeholder }: {
       {value.map((t) => (
         <span key={t} className="flex items-center gap-1 rounded-md bg-brand/15 px-2 py-0.5 text-sm text-brand-2">
           {t}
-          <button type="button" onClick={() => onChange(value.filter((x) => x !== t))} className="text-muted hover:text-danger">×</button>
+          <button type="button" onClick={() => onChange(value.filter((x) => x !== t))} aria-label={`remove ${t}`} className="text-muted hover:text-danger">×</button>
         </span>
       ))}
       <input
@@ -446,6 +446,18 @@ export default function Dashboard() {
   // completion notice.
   const pollingRunId = useRef<string | null>(null);
   const finishedRunId = useRef<string | null>(null);
+  // Neither pollRun's nor connectPlatform's poll loop stopped itself on
+  // unmount (e.g. navigating to /applications mid-run) — the old closure kept
+  // firing fetches every 2-2.5s, and returning to /dashboard later started a
+  // second, independent poll for the same run/connect attempt. This flag —
+  // and connectAbort, reused below — is checked at the top of each loop step.
+  const unmounted = useRef(false);
+  useEffect(() => {
+    return () => {
+      unmounted.current = true;
+      connectAbort.current = true;
+    };
+  }, []);
   const [page, setPage] = useState(0);
   const [profileForm, setProfileForm] = useState<ProfileForm | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
@@ -603,9 +615,11 @@ export default function Dashboard() {
     pollingRunId.current = runId;
     const started = Date.now();
     const step = async () => {
+      if (unmounted.current) { pollingRunId.current = null; return; }
       try {
         const r = await fetch(`/api/agent/run?id=${runId}`);
         const s = await r.json();
+        if (unmounted.current) { pollingRunId.current = null; return; }
         if (s.status === "done" || s.status === "failed" || s.status === "cancelled") {
           pollingRunId.current = null;
           finishedRunId.current = runId;
@@ -621,7 +635,7 @@ export default function Dashboard() {
         setTimeout(step, 2500);
       } catch {
         pollingRunId.current = null;
-        load();
+        if (!unmounted.current) load();
       }
     };
     setTimeout(step, 2000);
@@ -706,6 +720,7 @@ export default function Dashboard() {
         return;
       }
       const r = await fetch("/api/integrations").catch(() => null);
+      if (connectAbort.current) return;
       if (r?.ok) {
         const d = await r.json().catch(() => ({}));
         const row = (d.integrations as Integration[] ?? []).find(i => i.platform === platform);

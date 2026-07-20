@@ -7,6 +7,7 @@ import { spawnWorkerKick } from "@/lib/workerKick";
 import { getQuota } from "@/lib/quota";
 import { enqueueAgentRun } from "@/lib/agentRunQueue";
 import { hasAppAccess } from "@/lib/access";
+import { readAdminSettings } from "@/lib/adminSettings";
 
 /**
  * Triggers one agent run for the current user (resume parse → match → apply →
@@ -34,6 +35,14 @@ export async function POST(req: Request) {
     );
   }
 
+  const settings = readAdminSettings();
+  if (settings.maintenanceMode) {
+    return NextResponse.json(
+      { error: "Grindly is in maintenance. Agent runs are paused — try again shortly.", code: "maintenance" },
+      { status: 503 },
+    );
+  }
+
   // Live only — there is no mock/demo mode. The agent applies to real listings
   // via the user's connected platform, so nothing fabricated reaches the UI.
   const runMode = "live";
@@ -44,6 +53,12 @@ export async function POST(req: Request) {
   // (The dashboard already disables the button; this enforces it server-side so
   // a direct API call can't queue a run with nothing connected.)
   if (!analyzeOnly) {
+    if (!settings.featureFlags.autoApply) {
+      return NextResponse.json(
+        { error: "Auto-apply is temporarily disabled by an admin.", code: "auto_apply_disabled" },
+        { status: 403 },
+      );
+    }
     const quota = await getQuota(uid, user.plan);
     if (quota.remaining === 0) {
       return NextResponse.json(
@@ -54,6 +69,19 @@ export async function POST(req: Request) {
         },
         { status: 402 },
       );
+    }
+    if (settings.globalDailyCap > 0) {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const globalToday = await prisma.application.count({
+        where: { status: "applied", appliedAt: { gte: start } },
+      });
+      if (globalToday >= settings.globalDailyCap) {
+        return NextResponse.json(
+          { error: "Grindly has hit today's global application cap. The agent picks up again tomorrow.", code: "global_limit_reached" },
+          { status: 402 },
+        );
+      }
     }
     const connected =
       user.internshalaConnected ||

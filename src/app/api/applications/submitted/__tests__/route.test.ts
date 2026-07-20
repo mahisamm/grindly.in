@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockGetUid, mockFindFirst, mockUpdate, mockAudit, mockUserFindUnique, mockGetQuota } = vi.hoisted(() => ({
+const { mockGetUid, mockFindFirst, mockUpdate, mockAudit, mockUserFindUnique, mockGetQuota, mockTryConsumeApplyQuota } = vi.hoisted(() => ({
   mockGetUid: vi.fn(), mockFindFirst: vi.fn(), mockUpdate: vi.fn(), mockAudit: vi.fn(),
-  mockUserFindUnique: vi.fn(), mockGetQuota: vi.fn(),
+  mockUserFindUnique: vi.fn(), mockGetQuota: vi.fn(), mockTryConsumeApplyQuota: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getUid: mockGetUid }));
@@ -10,7 +10,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { application: { findFirst: mockFindFirst, update: mockUpdate }, user: { findUnique: mockUserFindUnique } },
 }));
 vi.mock("@/lib/audit", () => ({ audit: mockAudit }));
-vi.mock("@/lib/quota", () => ({ getQuota: mockGetQuota }));
+vi.mock("@/lib/quota", () => ({ getQuota: mockGetQuota, tryConsumeApplyQuota: mockTryConsumeApplyQuota }));
 vi.mock("@/lib/notify", () => ({ notifyUser: vi.fn().mockResolvedValue({ delivered: false }) }));
 
 import { POST } from "@/app/api/applications/submitted/route";
@@ -26,6 +26,7 @@ beforeEach(() => {
   mockFindFirst.mockResolvedValue({ id: "a1", url: "https://example.test/job", jobTitle: "Intern" });
   mockUserFindUnique.mockResolvedValue({ plan: "free" });
   mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 0, remaining: 5 });
+  mockTryConsumeApplyQuota.mockResolvedValue(true);
   mockUpdate.mockResolvedValue({});
   mockAudit.mockResolvedValue(undefined);
 });
@@ -62,7 +63,20 @@ describe("POST /api/applications/submitted", () => {
   it("enforces quota when the user confirms a submission", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 5, remaining: 0 });
+    mockTryConsumeApplyQuota.mockResolvedValue(false);
     expect((await POST(makeReq({ id: "a1" }))).status).toBe(402);
     expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  // Regression: the old check-then-write (read quota.remaining, then a
+  // separate unguarded update) let a burst of concurrent requests for the
+  // same user all observe "quota available" before any of them committed,
+  // pushing the day's applied count past the plan cap. tryConsumeApplyQuota
+  // is the atomic guard that closes that race.
+  it("uses the atomic quota guard (tryConsumeApplyQuota), not a plain remaining check", async () => {
+    mockGetUid.mockResolvedValue("u1");
+    mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 0, remaining: 5 });
+    await POST(makeReq({ id: "a1" }));
+    expect(mockTryConsumeApplyQuota).toHaveBeenCalledWith("u1", 5);
   });
 });

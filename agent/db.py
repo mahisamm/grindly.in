@@ -479,15 +479,29 @@ def get_platform_credential(uid: str, platform: str) -> str | None:
 
 
 def next_pending_connect_request(worker_id: str = "connect-service") -> dict | None:
-    """Atomically claim the oldest pending or abandoned connect request."""
+    """Atomically claim the oldest pending or abandoned connect request.
+
+    Skips (does not claim) a user with an apply run currently `running` in the
+    agent_runs queue. Without this, connect_service ran on its own 3s poll,
+    entirely independent of run_queue.claim_next()'s per-user exclusion, so a
+    user mid-apply-run could have a *second* Chromium launched against the
+    identical persistent-profile directory — and stealth.clear_stale_lock()
+    unconditionally deletes the first (live) process's singleton lock rather
+    than protecting it, risking a crash/corruption in both. The row stays
+    'connecting' and is picked up on a later tick once the run finishes.
+    """
+    import run_queue  # local import: run_queue already imports db, avoid a cycle
+
     stale_before = time_ago_db(10 * 60 * 1000)
     with conn() as c:
         _ensure_integrations_table(c)
+        run_queue._ensure_table(c)
         if PG:
             row = c.execute(
                 "SELECT user_id, platform FROM user_integrations "
                 "WHERE status='connecting' "
                 "AND (connect_claimed_at IS NULL OR connect_claimed_at < ?) "
+                "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
                 "ORDER BY updated_at ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
                 (stale_before,),
             ).fetchone()
@@ -497,6 +511,7 @@ def next_pending_connect_request(worker_id: str = "connect-service") -> dict | N
                 "SELECT user_id, platform FROM user_integrations "
                 "WHERE status='connecting' "
                 "AND (connect_claimed_at IS NULL OR connect_claimed_at < ?) "
+                "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
                 "ORDER BY updated_at ASC LIMIT 1",
                 (stale_before,),
             ).fetchone()

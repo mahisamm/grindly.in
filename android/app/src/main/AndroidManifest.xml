@@ -18,7 +18,7 @@
             <!-- The URL this TWA will load -->
             <meta-data
                 android:name="android.support.customtabs.trusted.DEFAULT_URL"
-                android:value="https://grindly.vercel.app/dashboard" />
+                android:value="https://grindly.in/dashboard" />
 
             <!-- Theme colour for the status bar -->
             <meta-data
@@ -35,14 +35,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Deep link so Android handles grindly.vercel.app URLs in-app -->
+            <!-- Deep link so Android handles grindly.in URLs in-app -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="https"
-                    android:host="grindly.vercel.app" />
+                    android:host="grindly.in" />
             </intent-filter>
 
         </activity>

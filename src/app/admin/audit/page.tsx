@@ -36,8 +36,9 @@ export default function AdminAudit() {
       />
 
       {err && <p className="font-mono text-sm text-[#ff4d4d]">{err}</p>}
+      {!err && !d && <p className="font-mono text-sm text-[#8b919c]">Loading…</p>}
 
-      <Panel>
+      {d && <Panel>
         <table className="w-full text-left font-mono text-xs">
           <thead className="text-[#5a606b]">
             <tr className="border-b border-[#262a33]">
@@ -61,7 +62,7 @@ export default function AdminAudit() {
             {d && d.logs.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-[#8b919c]">No entries match.</td></tr>}
           </tbody>
         </table>
-      </Panel>
+      </Panel>}
 
       {d && d.totalPages > 1 && (
         <div className="mt-4 flex items-center gap-3 font-mono text-xs">

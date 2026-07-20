@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
-import { getQuota } from "@/lib/quota";
+import { getQuota, tryConsumeApplyQuota } from "@/lib/quota";
 import { audit } from "@/lib/audit";
 import { notifyUser } from "@/lib/notify";
 
@@ -24,7 +24,16 @@ export async function POST(req: Request) {
   const user = await prisma.user.findUnique({ where: { id: uid }, select: { plan: true } });
   if (!user) return NextResponse.json({ error: "user not found" }, { status: 404 });
   const quota = await getQuota(uid, user.plan);
-  if (quota.remaining === 0) {
+
+  // Atomic check-and-consume, not read-then-write: a burst of concurrent
+  // POSTs for the same user must not all observe "quota available" before any
+  // of them commits (see quota.ts tryConsumeApplyQuota — same primitive as
+  // rateLimit.ts). NOTE: this counter only tracks flips made through this
+  // route; if Safe Apply Mode (agent/safety.py) is ever relaxed to let the
+  // Python worker mark an application "applied" directly again, that path
+  // needs its own equivalent guard or this one will under-count.
+  const consumed = await tryConsumeApplyQuota(uid, quota.cap);
+  if (!consumed) {
     return NextResponse.json(
       {
         error: "Your daily application limit is reached. Try again tomorrow.",

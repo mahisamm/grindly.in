@@ -31,6 +31,11 @@ export async function POST(req: Request) {
 
   const plan: Plan = body.plan === "pro" ? "pro" : "plus";
 
+  // Single explicit switch — see NEXT_PUBLIC_PAYMENTS_ENABLED in .env.example
+  // and the matching check in /api/pay. Not an inference from NODE_ENV/keys.
+  if (process.env.PAYMENTS_ENABLED !== "true") {
+    return NextResponse.json({ error: "Paid plan activation is unavailable." }, { status: 503 });
+  }
   if (process.env.NODE_ENV === "production" && !process.env.RAZORPAY_KEY_ID) {
     return NextResponse.json({ error: "Paid plan activation is unavailable." }, { status: 503 });
   }

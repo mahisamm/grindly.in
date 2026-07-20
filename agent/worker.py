@@ -1584,7 +1584,29 @@ def run_job(uid: str, mode: str) -> dict:
     # only discovers + banks matches for the user to submit, never auto-submits,
     # so there is no odd-hour submission to gate. Only the legacy --loop/direct
     # CLI paths (run_for_user called directly, manual=False) stay gated.
-    return run_for_user(uid, mode, manual=True)
+    #
+    # try/finally here, not inside run_for_user: that function is long with
+    # many early returns, and any exception raised between opening a platform
+    # browser context (source_modules) and its own end-of-run close() block
+    # skipped cleanup entirely — leaking a headed Chromium process for the
+    # life of this long-running `worker.py --serve` process. close(uid) on
+    # each adapter is a safe no-op if that adapter has nothing open for this
+    # user (see internshala.close et al — dict.pop(key, None)), so calling all
+    # of them unconditionally here is cheap insurance regardless of which
+    # adapter(s) this run actually touched or where it failed.
+    try:
+        return run_for_user(uid, mode, manual=True)
+    finally:
+        _close_all_adapter_contexts(uid)
+
+
+def _close_all_adapter_contexts(uid: str) -> None:
+    for modname in ("internshala", "linkedin", "naukri", "unstop", "indeed"):
+        try:
+            mod = importlib.import_module(modname)
+            mod.close(uid)
+        except Exception:  # noqa: BLE001
+            log.exception("failed to close %s browser context for %s", modname, uid)
 
 
 def main():

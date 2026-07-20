@@ -80,12 +80,20 @@ describe("isRateLimited", () => {
 });
 
 describe("getIp", () => {
-  it("extracts first IP from x-forwarded-for when TRUST_PROXY=1", () => {
+  it("extracts the LAST IP from x-forwarded-for when TRUST_PROXY=1 (Caddy appends the real client IP)", () => {
     process.env.TRUST_PROXY = "1";
     const req = new Request("http://localhost", {
       headers: { "x-forwarded-for": "1.2.3.4, 5.6.7.8" },
     });
-    expect(getIp(req)).toBe("1.2.3.4");
+    expect(getIp(req)).toBe("5.6.7.8");
+  });
+
+  it("is not fooled by a spoofed leading hop — only the trusted (last) hop counts", () => {
+    process.env.TRUST_PROXY = "1";
+    const req = new Request("http://localhost", {
+      headers: { "x-forwarded-for": "evil.attacker.ip, 5.6.7.8" },
+    });
+    expect(getIp(req)).toBe("5.6.7.8");
   });
 
   it("ignores x-forwarded-for when TRUST_PROXY unset (prevents spoofing)", () => {

@@ -92,13 +92,9 @@ export default function RootLayout({
         <div className="grain-fixed" aria-hidden="true" />
         <Track />
         {children}
-        <Script id="sw-register" strategy="afterInteractive">{`
-          if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-              navigator.serviceWorker.register('/sw.js');
-            });
-          }
-        `}</Script>
+        {/* External file, not an inline body — lets script-src drop 'unsafe-inline'
+            for the app's own scripts (see next.config.ts CSP comment). */}
+        <Script src="/sw-register.js" strategy="afterInteractive" />
       </body>
     </html>
   );

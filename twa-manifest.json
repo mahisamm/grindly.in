@@ -1,6 +1,6 @@
 {
   "packageId": "com.grindly.app",
-  "host": "grindly.vercel.app",
+  "host": "grindly.in",
   "name": "Grindly",
   "launcherName": "Grindly",
   "display": "standalone",
@@ -11,9 +11,9 @@
   "navigationDividerColorDark": "#262a33",
   "backgroundColor": "#f5f3ea",
   "startUrl": "/dashboard",
-  "iconUrl": "https://grindly.vercel.app/icon-512.png",
-  "maskableIconUrl": "https://grindly.vercel.app/icon-512.png",
-  "monochromIconUrl": "https://grindly.vercel.app/icon-192.png",
+  "iconUrl": "https://grindly.in/icon-512.png",
+  "maskableIconUrl": "https://grindly.in/icon-512.png",
+  "monochromIconUrl": "https://grindly.in/icon-192.png",
   "appVersion": "1",
   "appVersionCode": 1,
   "signingKey": {
@@ -29,10 +29,10 @@
   "enableSiteSettingsShortcut": true,
   "isChromeOSOnly": false,
   "isMetaQuest": false,
-  "fullScopeUrl": "https://grindly.vercel.app/",
+  "fullScopeUrl": "https://grindly.in/",
   "minSdkVersion": 21,
   "orientation": "portrait",
   "shortcuts": [],
-  "webManifestUrl": "https://grindly.vercel.app/manifest.json",
+  "webManifestUrl": "https://grindly.in/manifest.json",
   "generatorApp": "bubblewrap-cli"
 }

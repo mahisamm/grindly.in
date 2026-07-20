@@ -168,6 +168,7 @@ export async function GET() {
       gmailConnected,
       gmailScanEnabled: gmailScanEnabled(),
       internshalaLoginEnabled: internshalaLoginEnabled(user),
+      paymentsEnabled: process.env.PAYMENTS_ENABLED === "true",
     },
     profile: user.profile,
     applications: slimApps,
