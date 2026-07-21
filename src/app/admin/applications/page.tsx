@@ -46,31 +46,31 @@ export default function AdminApplications() {
           value={q}
           onChange={(e) => { setQ(e.target.value); setPage(1); }}
           placeholder="search job, company, email…"
-          className="w-full max-w-xs rounded border border-[#262a33] bg-[#15171c] px-3 py-2 font-mono text-sm text-[#e6e8eb] outline-none placeholder:text-[#5a606b] focus:border-[#ff4d4d]"
+          className="w-full max-w-xs rounded border border-border bg-surface px-3 py-2 font-sans text-sm text-foreground outline-none placeholder:text-muted focus:border-brand"
         />
         <select
           value={status}
           onChange={(e) => { setStatus(e.target.value); setPage(1); }}
-          className="rounded border border-[#262a33] bg-[#15171c] px-3 py-2 font-mono text-sm text-[#e6e8eb] outline-none focus:border-[#ff4d4d]"
+          className="rounded border border-border bg-surface px-3 py-2 font-sans text-sm text-foreground outline-none focus:border-brand"
         >
           {STATUSES.map((s) => <option key={s} value={s}>{s || "all statuses"}</option>)}
         </select>
         <select
           value={platform}
           onChange={(e) => { setPlatform(e.target.value); setPage(1); }}
-          className="rounded border border-[#262a33] bg-[#15171c] px-3 py-2 font-mono text-sm text-[#e6e8eb] outline-none focus:border-[#ff4d4d]"
+          className="rounded border border-border bg-surface px-3 py-2 font-sans text-sm text-foreground outline-none focus:border-brand"
         >
           {PLATFORMS.map((p) => <option key={p} value={p}>{p || "all platforms"}</option>)}
         </select>
       </div>
 
-      {err && <p className="font-mono text-sm text-[#ff4d4d]">{err}</p>}
-      {!err && !data && <p className="font-mono text-sm text-[#8b919c]">Loading…</p>}
+      {err && <p className="font-sans text-sm text-brand">{err}</p>}
+      {!err && !data && <p className="font-sans text-sm text-muted">Loading…</p>}
 
       {data && <Panel>
-        <table className="w-full text-left font-mono text-xs">
-          <thead className="text-[#5a606b]">
-            <tr className="border-b border-[#262a33]">
+        <table className="w-full text-left font-sans text-xs">
+          <thead className="text-muted">
+            <tr className="border-b border-border">
               <th className="px-4 py-2 font-medium">User</th>
               <th className="px-4 py-2 font-medium">Job</th>
               <th className="px-4 py-2 font-medium">Platform</th>
@@ -82,40 +82,40 @@ export default function AdminApplications() {
           </thead>
           <tbody>
             {data?.applications.map((a) => (
-              <tr key={a.id} className="border-b border-[#1d2027] hover:bg-[#1a1d23]">
+              <tr key={a.id} className="border-b border-surface-2 hover:bg-surface-2">
                 <td className="px-4 py-2">
-                  <Link href={`/admin/users/${a.user.id}`} className="text-[#9db4ff] hover:underline">
+                  <Link href={`/admin/users/${a.user.id}`} className="text-brand hover:underline">
                     {a.user.email}
                   </Link>
                 </td>
                 <td className="max-w-[180px] truncate px-4 py-2" title={a.jobTitle}>
                   {a.jobTitle}
-                  <span className="text-[#5a606b]"> · {a.company}</span>
+                  <span className="text-muted"> · {a.company}</span>
                 </td>
-                <td className="px-4 py-2 text-[#8b919c]">{a.job?.source ?? "—"}</td>
+                <td className="px-4 py-2 text-muted">{a.job?.source ?? "—"}</td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.matchScore}</td>
                 <td className="px-4 py-2">
                   <Badge value={a.status} />
-                  {a.failureReason && <span className="ml-1 text-[#ff4d4d] text-[10px]">{a.failureReason}</span>}
+                  {a.failureReason && <span className="ml-1 text-brand text-[10px]">{a.failureReason}</span>}
                 </td>
-                <td className="px-4 py-2 text-[#8b919c]">{a.outcome ?? "—"}</td>
-                <td className="px-4 py-2 text-[#5a606b]">{fmtDate(a.appliedAt ?? a.createdAt)}</td>
+                <td className="px-4 py-2 text-muted">{a.outcome ?? "—"}</td>
+                <td className="px-4 py-2 text-muted">{fmtDate(a.appliedAt ?? a.createdAt)}</td>
               </tr>
             ))}
             {data && data.applications.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-6 text-center text-[#8b919c]">No applications match.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-6 text-center text-muted">No applications match.</td></tr>
             )}
           </tbody>
         </table>
       </Panel>}
 
       {data && data.totalPages > 1 && (
-        <div className="mt-4 flex items-center gap-3 font-mono text-xs">
+        <div className="mt-4 flex items-center gap-3 font-sans text-xs">
           <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}
-            className="rounded border border-[#262a33] px-3 py-1 disabled:opacity-40 hover:enabled:bg-[#1d2027]">← prev</button>
-          <span className="text-[#8b919c]">{page} / {data.totalPages}</span>
+            className="rounded border border-border px-3 py-1 disabled:opacity-40 hover:enabled:bg-surface-2">← prev</button>
+          <span className="text-muted">{page} / {data.totalPages}</span>
           <button disabled={page >= data.totalPages} onClick={() => setPage((p) => p + 1)}
-            className="rounded border border-[#262a33] px-3 py-1 disabled:opacity-40 hover:enabled:bg-[#1d2027]">next →</button>
+            className="rounded border border-border px-3 py-1 disabled:opacity-40 hover:enabled:bg-surface-2">next →</button>
         </div>
       )}
     </>

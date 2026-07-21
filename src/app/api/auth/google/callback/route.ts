@@ -157,6 +157,18 @@ export async function GET(req: Request) {
     return NextResponse.redirect(`${base}/waitlist`);
   }
 
+  // Owner admin gets a fork after login — enter the user app OR the admin
+  // console. Same double gate as lib/admin.ts (role + email must both match),
+  // so only the real owner ever sees /choose; /choose itself re-checks and
+  // bounces anyone else to /dashboard. Skip it mid-onboarding.
+  const isOwnerAdmin =
+    user.role === "admin" &&
+    !!process.env.ADMIN_EMAIL &&
+    user.email === process.env.ADMIN_EMAIL;
+  if (isOwnerAdmin && user.status !== "onboarding") {
+    return NextResponse.redirect(`${base}/choose`);
+  }
+
   return NextResponse.redirect(
     `${base}${user.status === "onboarding" ? "/onboarding" : "/dashboard"}`
   );

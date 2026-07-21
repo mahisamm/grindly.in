@@ -21,11 +21,11 @@ export function AdminNav({ email }: { email: string }) {
     href === "/admin" ? path === "/admin" : path.startsWith(href);
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-[#262a33] bg-[#0e1014] p-4">
+    <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-surface/70 p-4 backdrop-blur">
       <Link href="/admin" className="mb-6 flex items-center gap-2">
-        <span className="grid size-7 place-items-center rounded bg-[#ff4d4d] text-sm font-bold text-black">g</span>
-        <span className="font-mono text-sm font-bold tracking-tight text-[#e6e8eb]">
-          Grindly <span className="text-[#ff4d4d]">ADMIN</span>
+        <span className="grid size-7 place-items-center rounded bg-brand text-sm font-bold text-white">g</span>
+        <span className="font-display text-base font-bold tracking-tight text-foreground">
+          Grindly <span className="text-brand italic">ADMIN</span>
         </span>
       </Link>
 
@@ -34,10 +34,10 @@ export function AdminNav({ email }: { email: string }) {
           <Link
             key={href}
             href={href}
-            className={`rounded px-3 py-2 font-mono text-sm transition ${
+            className={`rounded-lg px-3 py-2 font-sans text-sm transition ${
               isActive(href)
-                ? "bg-[#1d2027] text-[#e6e8eb]"
-                : "text-[#8b919c] hover:bg-[#15171c] hover:text-[#e6e8eb]"
+                ? "bg-brand/10 font-medium text-brand"
+                : "text-muted hover:bg-surface-2 hover:text-foreground"
             }`}
           >
             {label}
@@ -45,11 +45,11 @@ export function AdminNav({ email }: { email: string }) {
         ))}
       </nav>
 
-      <div className="mt-auto border-t border-[#262a33] pt-4">
-        <div className="truncate font-mono text-xs text-[#8b919c]" title={email}>
+      <div className="mt-auto border-t border-border pt-4">
+        <div className="truncate font-sans text-xs text-muted" title={email}>
           {email}
         </div>
-        <Link href="/dashboard" className="mt-2 inline-block font-mono text-xs text-[#8b919c] hover:text-[#e6e8eb]">
+        <Link href="/dashboard" className="mt-2 inline-block font-sans text-xs text-muted hover:text-foreground">
           ← back to app
         </Link>
       </div>

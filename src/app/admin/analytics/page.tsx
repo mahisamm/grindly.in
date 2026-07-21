@@ -57,8 +57,8 @@ export default function AnalyticsPage() {
     return () => clearInterval(id);
   }, [load]);
 
-  if (err) return <p className="font-mono text-sm text-[#ff4d4d]">{err}</p>;
-  if (!d) return <p className="font-mono text-sm text-[#8b919c]">Loading…</p>;
+  if (err) return <p className="font-sans text-sm text-brand">{err}</p>;
+  if (!d) return <p className="font-sans text-sm text-muted">Loading…</p>;
 
   const labels = d.visitors.series.map((s) => s.date);
 
@@ -66,13 +66,13 @@ export default function AnalyticsPage() {
     <>
       <div className="mb-6 flex items-start justify-between">
         <PageTitle title="Analytics" sub={`Traffic, growth & revenue · last ${d.rangeDays} days`} />
-        <div className="flex gap-1 font-mono text-xs">
+        <div className="flex gap-1 font-sans text-xs">
           {[7, 30, 90].map((n) => (
             <button
               key={n}
               onClick={() => setDays(n)}
               className={`rounded px-2.5 py-1 transition ${
-                days === n ? "bg-[#1d2027] text-[#e6e8eb]" : "text-[#8b919c] hover:text-[#e6e8eb]"
+                days === n ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground"
               }`}
             >
               {n}d
@@ -92,41 +92,41 @@ export default function AnalyticsPage() {
       {/* Revenue split */}
       <div className="grid gap-6 lg:grid-cols-3 mb-6">
         <Panel className="p-5 lg:col-span-2">
-          <div className="mb-3 font-mono text-[11px] uppercase tracking-wide text-[#8b919c]">Revenue · {d.rangeDays}d</div>
+          <div className="mb-3 font-sans text-[11px] uppercase tracking-wide text-muted">Revenue · {d.rangeDays}d</div>
           <LineChart
             labels={labels.length ? labels : d.revenue.series.map((s) => s.date)}
-            series={[{ name: "revenue", color: "#36d399", values: d.revenue.series.map((s) => s.amount) }]}
+            series={[{ name: "revenue", color: "var(--accent)", values: d.revenue.series.map((s) => s.amount) }]}
             yFormat={rupee}
           />
-          <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[#262a33] pt-4 font-mono text-xs">
+          <div className="mt-4 grid grid-cols-3 gap-3 border-t border-border pt-4 font-sans text-xs">
             <div>
-              <div className="text-[#8b919c]">Total</div>
-              <div className="mt-0.5 text-lg font-bold text-[#e6e8eb]">{rupee(d.revenue.total)}</div>
+              <div className="text-muted">Total</div>
+              <div className="mt-0.5 text-lg font-bold text-foreground">{rupee(d.revenue.total)}</div>
             </div>
             <div>
-              <div className="text-[#8b919c]">Plus ({d.revenue.plusCount})</div>
-              <div className="mt-0.5 text-lg font-bold text-[#9db4ff]">{rupee(d.revenue.plus)}</div>
+              <div className="text-muted">Plus ({d.revenue.plusCount})</div>
+              <div className="mt-0.5 text-lg font-bold text-brand">{rupee(d.revenue.plus)}</div>
             </div>
             <div>
-              <div className="text-[#8b919c]">Pro ({d.revenue.proCount})</div>
-              <div className="mt-0.5 text-lg font-bold text-[#c792ea]">{rupee(d.revenue.pro)}</div>
+              <div className="text-muted">Pro ({d.revenue.proCount})</div>
+              <div className="mt-0.5 text-lg font-bold text-warn">{rupee(d.revenue.pro)}</div>
             </div>
           </div>
         </Panel>
 
         <Panel className="p-5">
-          <div className="mb-4 font-mono text-[11px] uppercase tracking-wide text-[#8b919c]">Revenue by plan</div>
+          <div className="mb-4 font-sans text-[11px] uppercase tracking-wide text-muted">Revenue by plan</div>
           {d.revenue.total > 0 ? (
             <DonutChart
               centerValue={rupee(d.revenue.total)}
               centerLabel="total"
               segments={[
-                { label: "Plus", value: d.revenue.plus, color: "#9db4ff" },
-                { label: "Pro", value: d.revenue.pro, color: "#c792ea" },
+                { label: "Plus", value: d.revenue.plus, color: "var(--brand)" },
+                { label: "Pro", value: d.revenue.pro, color: "var(--warn)" },
               ]}
             />
           ) : (
-            <p className="font-mono text-xs text-[#5a606b]">
+            <p className="font-sans text-xs text-muted">
               No revenue yet. Paid plans activate once Razorpay keys are set — this fills in automatically.
             </p>
           )}
@@ -137,63 +137,63 @@ export default function AnalyticsPage() {
       <div className="grid gap-6 lg:grid-cols-3 mb-6">
         <Panel className="p-5 lg:col-span-2">
           <div className="mb-3 flex items-center justify-between">
-            <div className="font-mono text-[11px] uppercase tracking-wide text-[#8b919c]">Traffic · {d.rangeDays}d</div>
-            <div className="font-mono text-[11px] text-[#5a606b]">
+            <div className="font-sans text-[11px] uppercase tracking-wide text-muted">Traffic · {d.rangeDays}d</div>
+            <div className="font-sans text-[11px] text-muted">
               today: {d.visitors.todayVisitors} visitors · {d.visitors.todayViews} views
             </div>
           </div>
           <LineChart
             labels={labels}
             series={[
-              { name: "views", color: "#9db4ff", values: d.visitors.series.map((s) => s.views) },
-              { name: "visitors", color: "#36d399", values: d.visitors.series.map((s) => s.visitors) },
+              { name: "views", color: "var(--brand)", values: d.visitors.series.map((s) => s.views) },
+              { name: "visitors", color: "var(--accent)", values: d.visitors.series.map((s) => s.visitors) },
             ]}
           />
         </Panel>
         <Panel className="p-5">
-          <div className="mb-4 font-mono text-[11px] uppercase tracking-wide text-[#8b919c]">Top pages</div>
-          <BarRows rows={d.visitors.topPaths.map((p) => ({ label: p.path, value: p.views }))} color="#9db4ff" />
+          <div className="mb-4 font-sans text-[11px] uppercase tracking-wide text-muted">Top pages</div>
+          <BarRows rows={d.visitors.topPaths.map((p) => ({ label: p.path, value: p.views }))} color="var(--brand)" />
         </Panel>
       </div>
 
       {/* Users */}
       <div className="grid gap-6 lg:grid-cols-3">
         <Panel className="p-5">
-          <div className="mb-4 font-mono text-[11px] uppercase tracking-wide text-[#8b919c]">Plan mix</div>
+          <div className="mb-4 font-sans text-[11px] uppercase tracking-wide text-muted">Plan mix</div>
           <DonutChart
             centerValue={`${d.users.total}`}
             centerLabel="users"
             segments={[
-              { label: "Free", value: d.users.byPlan.free, color: "#8b919c" },
-              { label: "Plus", value: d.users.byPlan.plus, color: "#9db4ff" },
-              { label: "Pro", value: d.users.byPlan.pro, color: "#c792ea" },
+              { label: "Free", value: d.users.byPlan.free, color: "var(--muted)" },
+              { label: "Plus", value: d.users.byPlan.plus, color: "var(--brand)" },
+              { label: "Pro", value: d.users.byPlan.pro, color: "var(--warn)" },
             ]}
           />
         </Panel>
 
         <Panel className="p-5">
-          <div className="mb-4 font-mono text-[11px] uppercase tracking-wide text-[#8b919c]">Access status</div>
+          <div className="mb-4 font-sans text-[11px] uppercase tracking-wide text-muted">Access status</div>
           <DonutChart
             centerValue={`${d.users.access.approved}`}
             centerLabel="approved"
             segments={[
-              { label: "Approved", value: d.users.access.approved, color: "#36d399" },
-              { label: "Pending", value: d.users.access.pending, color: "#fbbd23" },
-              { label: "Denied", value: d.users.access.denied, color: "#ff4d4d" },
+              { label: "Approved", value: d.users.access.approved, color: "var(--accent)" },
+              { label: "Pending", value: d.users.access.pending, color: "var(--warn)" },
+              { label: "Denied", value: d.users.access.denied, color: "var(--brand)" },
             ]}
           />
         </Panel>
 
         <Panel className="p-5">
-          <div className="mb-3 font-mono text-[11px] uppercase tracking-wide text-[#8b919c]">Signups · {d.rangeDays}d</div>
+          <div className="mb-3 font-sans text-[11px] uppercase tracking-wide text-muted">Signups · {d.rangeDays}d</div>
           <LineChart
             labels={d.users.signupSeries.map((s) => s.date)}
-            series={[{ name: "signups", color: "#fbbd23", values: d.users.signupSeries.map((s) => s.count) }]}
+            series={[{ name: "signups", color: "var(--warn)", values: d.users.signupSeries.map((s) => s.count) }]}
           />
-          <div className="mt-4 border-t border-[#262a33] pt-4 font-mono text-xs">
+          <div className="mt-4 border-t border-border pt-4 font-sans text-xs">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-[#8b919c]">Funnel</span>
-              <span className="tabular-nums text-[#36d399]">
+              <span className="text-muted">Funnel</span>
+              <span className="tabular-nums text-accent">
                 {formatPct(overallConversion([
                   { label: "Visitors", value: d.funnel.visitors },
                   { label: "Paying", value: d.funnel.paid },
@@ -208,18 +208,18 @@ export default function AnalyticsPage() {
             ]).map((row, i) => (
               <div key={row.label} className="mb-1.5">
                 <div className="flex justify-between">
-                  <span className="text-[#8b919c]">{row.label}</span>
-                  <span className="tabular-nums text-[#e6e8eb]">
+                  <span className="text-muted">{row.label}</span>
+                  <span className="tabular-nums text-foreground">
                     {row.value}
                     {i > 0 && (
-                      <span className="ml-2 text-[#5a606b]">
+                      <span className="ml-2 text-muted">
                         {formatPct(row.stepConversion, 0)} · −{row.dropOff}
                       </span>
                     )}
                   </span>
                 </div>
-                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[#1d2027]">
-                  <div className="h-full rounded-full bg-[#36d399]" style={{ width: `${Math.round(row.pctOfTop * 100)}%` }} />
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+                  <div className="h-full rounded-full bg-accent" style={{ width: `${Math.round(row.pctOfTop * 100)}%` }} />
                 </div>
               </div>
             ))}

@@ -63,14 +63,14 @@ export default function AdminUserDetail() {
     }
   }
 
-  if (err) return <p className="font-mono text-sm text-[#ff4d4d]">{err}</p>;
-  if (!d) return <p className="font-mono text-sm text-[#8b919c]">Loading…</p>;
+  if (err) return <p className="font-sans text-sm text-brand">{err}</p>;
+  if (!d) return <p className="font-sans text-sm text-muted">Loading…</p>;
 
   const u = d.user;
 
   return (
     <>
-      <Link href="/admin/users" className="font-mono text-xs text-[#8b919c] hover:text-[#e6e8eb]">← all users</Link>
+      <Link href="/admin/users" className="font-sans text-xs text-muted hover:text-foreground">← all users</Link>
       <div className="mt-2">
         <PageTitle title={u.email} sub={`${u.name ?? "no name"} · joined ${fmtDate(u.createdAt)} · ${u.phone ?? "no phone"}`} />
       </div>
@@ -78,7 +78,7 @@ export default function AdminUserDetail() {
       <div className="mb-6 flex flex-wrap items-center gap-2">
         <Badge value={u.status} />
         <Badge value={u.role === "admin" ? "admin" : "user"} />
-        <span className="font-mono text-xs text-[#8b919c]">plan: {u.plan} · {u.paid ? "paid" : "unpaid"}</span>
+        <span className="font-sans text-xs text-muted">plan: {u.plan} · {u.paid ? "paid" : "unpaid"}</span>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -92,8 +92,8 @@ export default function AdminUserDetail() {
 
       {/* Admin actions */}
       <Panel className="mt-6 p-4">
-        <div className="mb-3 font-mono text-sm font-bold text-[#ff4d4d]">Admin actions</div>
-        <div className="flex flex-wrap gap-2 font-mono text-xs">
+        <div className="mb-3 font-sans text-sm font-bold text-brand">Admin actions</div>
+        <div className="flex flex-wrap gap-2 font-sans text-xs">
           {u.status === "paused" ? (
             <ActionBtn disabled={busy} onClick={() => act({ action: "resume" }, `Resume ${u.email}?`)}>resume</ActionBtn>
           ) : (
@@ -114,8 +114,8 @@ export default function AdminUserDetail() {
             {u.internshalaBetaAccess ? "revoke integration access" : "grant integration access"}
           </ActionBtn>
         </div>
-        <p className="mt-2 font-mono text-[11px] text-[#5a606b]">
-          Integration access: <span className={u.internshalaBetaAccess ? "text-[#3ddc84]" : "text-[#8b919c]"}>{u.internshalaBetaAccess ? "granted" : "not granted"}</span>
+        <p className="mt-2 font-sans text-[11px] text-muted">
+          Integration access: <span className={u.internshalaBetaAccess ? "text-accent" : "text-muted"}>{u.internshalaBetaAccess ? "granted" : "not granted"}</span>
           {" "}— lets this user connect Internshala in the beta even when the global rollout is closed.
         </p>
       </Panel>
@@ -123,19 +123,19 @@ export default function AdminUserDetail() {
       <div className="mt-6 grid gap-6 lg:grid-cols-2">
         {/* Integrations */}
         <Panel>
-          <div className="border-b border-[#262a33] px-4 py-3 font-mono text-sm font-bold">Integrations</div>
+          <div className="border-b border-border px-4 py-3 font-sans text-sm font-bold">Integrations</div>
           {d.integrations.length === 0 ? (
-            <p className="px-4 py-4 font-mono text-xs text-[#8b919c]">None connected.</p>
+            <p className="px-4 py-4 font-sans text-xs text-muted">None connected.</p>
           ) : (
-            <ul className="divide-y divide-[#1d2027]">
+            <ul className="divide-y divide-surface-2">
               {d.integrations.map((i) => (
-                <li key={i.platform} className="flex items-center justify-between px-4 py-2 font-mono text-xs">
+                <li key={i.platform} className="flex items-center justify-between px-4 py-2 font-sans text-xs">
                   <span>{i.platform} <Badge value={i.status} /></span>
                   <div className="flex items-center gap-3">
-                    <span className="text-[#5a606b]">{fmtDate(i.connectedAt)}</span>
+                    <span className="text-muted">{fmtDate(i.connectedAt)}</span>
                     {i.status !== "disconnected" && (
                       <button disabled={busy} onClick={() => act({ action: "disconnect", platform: i.platform }, `Force-disconnect ${i.platform} for ${u.email}?`)}
-                        className="text-[#ff4d4d] hover:underline disabled:opacity-40">disconnect</button>
+                        className="text-brand hover:underline disabled:opacity-40">disconnect</button>
                     )}
                   </div>
                 </li>
@@ -146,9 +146,9 @@ export default function AdminUserDetail() {
 
         {/* Profile */}
         <Panel className="p-4">
-          <div className="mb-3 font-mono text-sm font-bold">Profile</div>
+          <div className="mb-3 font-sans text-sm font-bold">Profile</div>
           {d.profile ? (
-            <dl className="grid grid-cols-2 gap-y-1.5 font-mono text-xs">
+            <dl className="grid grid-cols-2 gap-y-1.5 font-sans text-xs">
               <Field k="experience" v={d.profile.experienceLevel ?? "—"} />
               <Field k="work mode" v={d.profile.workMode} />
               <Field k="min score" v={String(d.profile.minMatchScore)} />
@@ -157,17 +157,17 @@ export default function AdminUserDetail() {
               <Field k="resume score" v={d.profile.resumeScore == null ? "—" : String(d.profile.resumeScore)} />
             </dl>
           ) : (
-            <p className="font-mono text-xs text-[#8b919c]">No profile.</p>
+            <p className="font-sans text-xs text-muted">No profile.</p>
           )}
         </Panel>
       </div>
 
       {/* Applications */}
       <Panel className="mt-6">
-        <div className="border-b border-[#262a33] px-4 py-3 font-mono text-sm font-bold">Recent applications ({d.applications.length})</div>
-        <table className="w-full text-left font-mono text-xs">
-          <thead className="text-[#5a606b]">
-            <tr className="border-b border-[#262a33]">
+        <div className="border-b border-border px-4 py-3 font-sans text-sm font-bold">Recent applications ({d.applications.length})</div>
+        <table className="w-full text-left font-sans text-xs">
+          <thead className="text-muted">
+            <tr className="border-b border-border">
               <th className="px-4 py-2 font-medium">Job</th>
               <th className="px-4 py-2 font-medium text-right">Score</th>
               <th className="px-4 py-2 font-medium">Status</th>
@@ -177,31 +177,31 @@ export default function AdminUserDetail() {
           </thead>
           <tbody>
             {d.applications.map((a) => (
-              <tr key={a.id} className="border-b border-[#1d2027]">
-                <td className="px-4 py-2">{a.jobTitle} <span className="text-[#5a606b]">· {a.company}</span></td>
+              <tr key={a.id} className="border-b border-surface-2">
+                <td className="px-4 py-2">{a.jobTitle} <span className="text-muted">· {a.company}</span></td>
                 <td className="px-4 py-2 text-right tabular-nums">{a.matchScore}</td>
-                <td className="px-4 py-2"><Badge value={a.status} />{a.failureReason && <span className="ml-1 text-[#ff4d4d]">{a.failureReason}</span>}</td>
-                <td className="px-4 py-2 text-[#8b919c]">{a.outcome ?? "—"}</td>
-                <td className="px-4 py-2 text-[#5a606b]">{fmtDate(a.createdAt)}</td>
+                <td className="px-4 py-2"><Badge value={a.status} />{a.failureReason && <span className="ml-1 text-brand">{a.failureReason}</span>}</td>
+                <td className="px-4 py-2 text-muted">{a.outcome ?? "—"}</td>
+                <td className="px-4 py-2 text-muted">{fmtDate(a.createdAt)}</td>
               </tr>
             ))}
-            {d.applications.length === 0 && <tr><td colSpan={5} className="px-4 py-4 text-center text-[#8b919c]">No applications.</td></tr>}
+            {d.applications.length === 0 && <tr><td colSpan={5} className="px-4 py-4 text-center text-muted">No applications.</td></tr>}
           </tbody>
         </table>
       </Panel>
 
       {/* Audit */}
       <Panel className="mt-6">
-        <div className="border-b border-[#262a33] px-4 py-3 font-mono text-sm font-bold">Audit trail</div>
-        <ul className="divide-y divide-[#1d2027]">
+        <div className="border-b border-border px-4 py-3 font-sans text-sm font-bold">Audit trail</div>
+        <ul className="divide-y divide-surface-2">
           {d.auditLogs.map((l) => (
-            <li key={l.id} className="px-4 py-2 font-mono text-xs">
-              <span className="text-[#9db4ff]">{l.action}</span>
-              {l.target && <span className="text-[#8b919c]"> · {l.target}</span>}
-              <span className="float-right text-[#5a606b]">{fmtDate(l.createdAt)}</span>
+            <li key={l.id} className="px-4 py-2 font-sans text-xs">
+              <span className="text-brand">{l.action}</span>
+              {l.target && <span className="text-muted"> · {l.target}</span>}
+              <span className="float-right text-muted">{fmtDate(l.createdAt)}</span>
             </li>
           ))}
-          {d.auditLogs.length === 0 && <li className="px-4 py-4 text-center font-mono text-xs text-[#8b919c]">No audit entries.</li>}
+          {d.auditLogs.length === 0 && <li className="px-4 py-4 text-center font-sans text-xs text-muted">No audit entries.</li>}
         </ul>
       </Panel>
     </>
@@ -217,8 +217,8 @@ function ActionBtn({ children, onClick, disabled, danger }: {
       disabled={disabled}
       className={`rounded border px-3 py-1.5 transition disabled:opacity-40 ${
         danger
-          ? "border-[#ff4d4d]/40 text-[#ff4d4d] hover:enabled:bg-[#ff4d4d]/10"
-          : "border-[#262a33] text-[#e6e8eb] hover:enabled:bg-[#1d2027]"
+          ? "border-brand/40 text-brand hover:enabled:bg-brand/10"
+          : "border-border text-foreground hover:enabled:bg-surface-2"
       }`}
     >
       {children}
@@ -229,8 +229,8 @@ function ActionBtn({ children, onClick, disabled, danger }: {
 function Field({ k, v }: { k: string; v: string }) {
   return (
     <>
-      <dt className="text-[#8b919c]">{k}</dt>
-      <dd className="text-right text-[#e6e8eb]">{v}</dd>
+      <dt className="text-muted">{k}</dt>
+      <dd className="text-right text-foreground">{v}</dd>
     </>
   );
 }

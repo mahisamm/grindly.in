@@ -80,23 +80,23 @@ export default function AgentHealthPage() {
         <button
           onClick={runDiagnostics}
           disabled={running}
-          className="rounded border border-[#262a33] px-4 py-2 font-mono text-sm text-[#e6e8eb] transition hover:enabled:bg-[#1d2027] disabled:opacity-50"
+          className="rounded border border-border px-4 py-2 font-sans text-sm text-foreground transition hover:enabled:bg-surface-2 disabled:opacity-50"
         >
           {running ? "Running…" : "Re-run diagnostics"}
         </button>
         {data && (
-          <span className={`font-mono text-sm ${data.allOk ? "text-[#36d399]" : "text-[#ff4d4d]"}`}>
+          <span className={`font-sans text-sm ${data.allOk ? "text-accent" : "text-brand"}`}>
             {data.allOk ? "✓ All systems go" : "✗ Issues detected"}
           </span>
         )}
         {data && (
-          <span className="font-mono text-xs text-[#5a606b]">
+          <span className="font-sans text-xs text-muted">
             checked {new Date(data.checkedAt).toLocaleTimeString()}
           </span>
         )}
       </div>
 
-      {err && <p className="mb-4 font-mono text-sm text-[#ff4d4d]">{err}</p>}
+      {err && <p className="mb-4 font-sans text-sm text-brand">{err}</p>}
 
       {/* Flowchart */}
       <div className="flex flex-col items-start gap-0">
@@ -109,13 +109,13 @@ export default function AgentHealthPage() {
               <div className="flex items-center gap-4">
                 {/* Status circle */}
                 <div className={`relative flex size-10 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-300 ${
-                  state === "ok" ? "border-[#36d399] bg-[#36d399]/10" :
-                  state === "fail" ? "border-[#ff4d4d] bg-[#ff4d4d]/10" :
-                  state === "scanning" ? "border-[#fbbd23] bg-[#fbbd23]/10" :
-                  "border-[#262a33] bg-[#15171c]"
+                  state === "ok" ? "border-accent bg-accent/10" :
+                  state === "fail" ? "border-brand bg-brand/10" :
+                  state === "scanning" ? "border-warn bg-warn/10" :
+                  "border-border bg-surface"
                 }`}>
                   {state === "scanning" && (
-                    <span className="absolute inset-0 rounded-full border-2 border-[#fbbd23] opacity-60 animate-ping" />
+                    <span className="absolute inset-0 rounded-full border-2 border-warn opacity-60 animate-ping" />
                   )}
                   <span className="text-base leading-none">
                     {state === "ok" ? "✓" : state === "fail" ? "✗" : state === "scanning" ? "…" : ICONS[check.id] ?? "○"}
@@ -124,16 +124,16 @@ export default function AgentHealthPage() {
 
                 {/* Label + detail */}
                 <div className="min-w-0">
-                  <div className={`font-mono text-sm font-semibold ${
-                    state === "ok" ? "text-[#36d399]" :
-                    state === "fail" ? "text-[#ff4d4d]" :
-                    state === "scanning" ? "text-[#fbbd23]" :
-                    "text-[#5a606b]"
+                  <div className={`font-sans text-sm font-semibold ${
+                    state === "ok" ? "text-accent" :
+                    state === "fail" ? "text-brand" :
+                    state === "scanning" ? "text-warn" :
+                    "text-muted"
                   }`}>
                     {ICONS[check.id] ?? ""} {realCheck?.label ?? check.label}
                   </div>
                   {state !== "pending" && (
-                    <div className="mt-0.5 font-mono text-xs text-[#8b919c]">
+                    <div className="mt-0.5 font-sans text-xs text-muted">
                       {state === "scanning" ? "checking…" : (realCheck?.detail ?? "")}
                     </div>
                   )}
@@ -143,10 +143,10 @@ export default function AgentHealthPage() {
               {/* Connector line (not after last item) */}
               {idx < checks.length - 1 && (
                 <div className={`ml-5 h-8 w-0.5 transition-colors duration-500 ${
-                  state === "ok" ? "bg-[#36d399]/40" :
-                  state === "fail" ? "bg-[#ff4d4d]/30" :
-                  state === "scanning" ? "bg-[#fbbd23]/40" :
-                  "bg-[#262a33]"
+                  state === "ok" ? "bg-accent/40" :
+                  state === "fail" ? "bg-brand/30" :
+                  state === "scanning" ? "bg-warn/40" :
+                  "bg-border"
                 }`} />
               )}
             </div>
@@ -156,13 +156,13 @@ export default function AgentHealthPage() {
 
       {/* Summary box */}
       {data && !data.allOk && (
-        <div className="mt-8 rounded-lg border border-[#ff4d4d]/30 bg-[#ff4d4d]/5 p-4">
-          <div className="mb-2 font-mono text-sm font-bold text-[#ff4d4d]">Issues found</div>
+        <div className="mt-8 rounded-lg border border-brand/30 bg-brand/5 p-4">
+          <div className="mb-2 font-sans text-sm font-bold text-brand">Issues found</div>
           <ul className="space-y-1.5">
             {data.checks.filter((c) => !c.ok).map((c) => (
-              <li key={c.id} className="font-mono text-xs">
-                <span className="text-[#ff4d4d]">✗ {c.label}:</span>{" "}
-                <span className="text-[#8b919c]">{c.detail}</span>
+              <li key={c.id} className="font-sans text-xs">
+                <span className="text-brand">✗ {c.label}:</span>{" "}
+                <span className="text-muted">{c.detail}</span>
               </li>
             ))}
           </ul>
@@ -170,32 +170,32 @@ export default function AgentHealthPage() {
       )}
 
       {data?.queue && (
-      <div className="mt-6 rounded-lg border border-[#2a3a2a]/40 bg-[#1a2a1a]/30 p-4">
-        <div className="mb-2 font-mono text-sm font-bold text-[#8b919c]">Worker Queue</div>
+      <div className="mt-6 rounded-lg border border-border/40 bg-surface-2/30 p-4">
+        <div className="mb-2 font-sans text-sm font-bold text-muted">Worker Queue</div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded bg-[#0d1117]/60 px-3 py-2">
-            <div className="text-[11px] uppercase tracking-wide text-[#8b919c]">Queued</div>
-            <div className={`text-2xl font-bold font-mono ${data.queue.queueDepth > 10 ? "text-[#fbbd23]" : "text-[#e6e8eb]"}`}>{data.queue.queueDepth}</div>
+          <div className="rounded bg-surface-2/60 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-muted">Queued</div>
+            <div className={`text-2xl font-bold font-sans ${data.queue.queueDepth > 10 ? "text-warn" : "text-foreground"}`}>{data.queue.queueDepth}</div>
           </div>
-          <div className="rounded bg-[#0d1117]/60 px-3 py-2">
-            <div className="text-[11px] uppercase tracking-wide text-[#8b919c]">Running</div>
-            <div className="text-2xl font-bold font-mono text-[#36d399]">{data.queue.runningCount}</div>
+          <div className="rounded bg-surface-2/60 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-muted">Running</div>
+            <div className="text-2xl font-bold font-sans text-accent">{data.queue.runningCount}</div>
           </div>
-          <div className="rounded bg-[#0d1117]/60 px-3 py-2">
-            <div className="text-[11px] uppercase tracking-wide text-[#8b919c]">Stale (&gt;30m)</div>
-            <div className={`text-2xl font-bold font-mono ${data.queue.staleCount > 0 ? "text-[#ff4d4d]" : "text-[#e6e8eb]"}`}>{data.queue.staleCount}</div>
+          <div className="rounded bg-surface-2/60 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-muted">Stale (&gt;30m)</div>
+            <div className={`text-2xl font-bold font-sans ${data.queue.staleCount > 0 ? "text-brand" : "text-foreground"}`}>{data.queue.staleCount}</div>
           </div>
-          <div className="rounded bg-[#0d1117]/60 px-3 py-2">
-            <div className="text-[11px] uppercase tracking-wide text-[#8b919c]">Recent failed</div>
-            <div className={`text-2xl font-bold font-mono ${data.queue.recentFailed.length > 0 ? "text-[#ff4d4d]" : "text-[#e6e8eb]"}`}>{data.queue.recentFailed.length}</div>
+          <div className="rounded bg-surface-2/60 px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-muted">Recent failed</div>
+            <div className={`text-2xl font-bold font-sans ${data.queue.recentFailed.length > 0 ? "text-brand" : "text-foreground"}`}>{data.queue.recentFailed.length}</div>
           </div>
         </div>
         {data.queue.recentFailed.length > 0 && (
           <div className="mt-3 space-y-1">
-            <div className="text-[11px] uppercase tracking-wide text-[#8b919c]">Recent failures</div>
+            <div className="text-[11px] uppercase tracking-wide text-muted">Recent failures</div>
             {data.queue.recentFailed.map((r, i) => (
-              <div key={i} className="font-mono text-xs text-[#8b919c]">
-                <span className="text-[#ff4d4d]">{r.userId.slice(0, 8)}</span>{" "}{r.error ?? "unknown"}{" "}<span className="opacity-50">{new Date(r.updatedAt).toLocaleString()}</span>
+              <div key={i} className="font-sans text-xs text-muted">
+                <span className="text-brand">{r.userId.slice(0, 8)}</span>{" "}{r.error ?? "unknown"}{" "}<span className="opacity-50">{new Date(r.updatedAt).toLocaleString()}</span>
               </div>
             ))}
           </div>
@@ -204,8 +204,8 @@ export default function AgentHealthPage() {
     )}
 
     {data && data.allOk && (
-        <div className="mt-8 rounded-lg border border-[#36d399]/30 bg-[#36d399]/5 p-4">
-          <div className="font-mono text-sm text-[#36d399]">✓ Pipeline fully operational — agent is ready to run.</div>
+        <div className="mt-8 rounded-lg border border-accent/30 bg-accent/5 p-4">
+          <div className="font-sans text-sm text-accent">✓ Pipeline fully operational — agent is ready to run.</div>
         </div>
       )}
     </>

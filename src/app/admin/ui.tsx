@@ -5,15 +5,15 @@ import { ReactNode } from "react";
 export function PageTitle({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="mb-6">
-      <h1 className="font-mono text-xl font-bold tracking-tight text-[#e6e8eb]">{title}</h1>
-      {sub && <p className="mt-1 font-mono text-xs text-[#8b919c]">{sub}</p>}
+      <h1 className="font-display text-2xl font-black tracking-tight text-foreground">{title}</h1>
+      {sub && <p className="mt-1 font-sans text-xs text-muted">{sub}</p>}
     </div>
   );
 }
 
 export function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-lg border border-[#262a33] bg-[#15171c] ${className}`}>{children}</div>
+    <div className={`glow rounded-lg border border-border bg-surface ${className}`}>{children}</div>
   );
 }
 
@@ -21,32 +21,32 @@ export function StatCard({ label, value, hint, tone = "default" }: {
   label: string; value: ReactNode; hint?: string; tone?: "default" | "good" | "warn" | "bad";
 }) {
   const toneColor = {
-    default: "text-[#e6e8eb]", good: "text-[#36d399]", warn: "text-[#fbbd23]", bad: "text-[#ff4d4d]",
+    default: "text-foreground", good: "text-accent", warn: "text-warn", bad: "text-danger",
   }[tone];
   return (
     <Panel className="px-4 py-3">
-      <div className="font-mono text-[11px] uppercase tracking-wide text-[#8b919c]">{label}</div>
-      <div className={`mt-1 font-mono text-2xl font-bold tabular-nums ${toneColor}`}>{value}</div>
-      {hint && <div className="mt-0.5 font-mono text-[11px] text-[#8b919c]">{hint}</div>}
+      <div className="font-sans text-[11px] uppercase tracking-wide text-muted">{label}</div>
+      <div className={`mt-1 font-sans text-2xl font-bold tabular-nums ${toneColor}`}>{value}</div>
+      {hint && <div className="mt-0.5 font-sans text-[11px] text-muted">{hint}</div>}
     </Panel>
   );
 }
 
 const STATUS_TONE: Record<string, string> = {
-  active: "text-[#36d399] border-[#36d399]/40 bg-[#36d399]/10",
-  connected: "text-[#36d399] border-[#36d399]/40 bg-[#36d399]/10",
-  applied: "text-[#36d399] border-[#36d399]/40 bg-[#36d399]/10",
-  paused: "text-[#fbbd23] border-[#fbbd23]/40 bg-[#fbbd23]/10",
-  needs_login: "text-[#fbbd23] border-[#fbbd23]/40 bg-[#fbbd23]/10",
-  connecting: "text-[#fbbd23] border-[#fbbd23]/40 bg-[#fbbd23]/10",
-  failed: "text-[#ff4d4d] border-[#ff4d4d]/40 bg-[#ff4d4d]/10",
-  admin: "text-[#ff4d4d] border-[#ff4d4d]/40 bg-[#ff4d4d]/10",
+  active: "text-accent border-accent/40 bg-accent/10",
+  connected: "text-accent border-accent/40 bg-accent/10",
+  applied: "text-accent border-accent/40 bg-accent/10",
+  paused: "text-warn border-warn/40 bg-warn/10",
+  needs_login: "text-warn border-warn/40 bg-warn/10",
+  connecting: "text-warn border-warn/40 bg-warn/10",
+  failed: "text-danger border-danger/40 bg-danger/10",
+  admin: "text-brand border-brand/40 bg-brand/10",
 };
 
 export function Badge({ value }: { value: string }) {
-  const tone = STATUS_TONE[value] ?? "text-[#8b919c] border-[#262a33] bg-[#1d2027]";
+  const tone = STATUS_TONE[value] ?? "text-muted border-border bg-surface-2";
   return (
-    <span className={`inline-block rounded border px-1.5 py-0.5 font-mono text-[11px] ${tone}`}>
+    <span className={`inline-block rounded border px-1.5 py-0.5 font-sans text-[11px] ${tone}`}>
       {value.replace(/_/g, " ")}
     </span>
   );
@@ -59,9 +59,9 @@ export function WeekTable({ data }: { data: { date: string; count: number }[] })
   const today = new Date().toISOString().slice(0, 10);
 
   return (
-    <table className="w-full font-mono text-xs">
+    <table className="w-full font-sans text-xs">
       <thead>
-        <tr className="border-b border-[#262a33] text-[#5a606b]">
+        <tr className="border-b border-border text-muted">
           <th className="py-2 text-left font-medium">Date</th>
           <th className="py-2 text-right font-medium">Applied</th>
           <th className="py-2 text-right font-medium pr-2">Activity</th>
@@ -72,18 +72,18 @@ export function WeekTable({ data }: { data: { date: string; count: number }[] })
           const isToday = d.date === today;
           const pct = data.length ? Math.round((d.count / Math.max(1, ...data.map(x => x.count))) * 100) : 0;
           return (
-            <tr key={d.date} className={`border-b border-[#1d2027] ${isToday ? "bg-[#1a1d23]" : ""}`}>
-              <td className={`py-2 ${isToday ? "text-[#e6e8eb] font-bold" : "text-[#8b919c]"}`}>
+            <tr key={d.date} className={`border-b border-surface-2 ${isToday ? "bg-surface-2" : ""}`}>
+              <td className={`py-2 ${isToday ? "text-foreground font-bold" : "text-muted"}`}>
                 {d.date.slice(5)}{isToday ? " (today)" : ""}
               </td>
-              <td className={`py-2 text-right tabular-nums ${d.count > 0 ? "text-[#36d399]" : "text-[#5a606b]"}`}>
+              <td className={`py-2 text-right tabular-nums ${d.count > 0 ? "text-accent" : "text-muted"}`}>
                 {d.count > 0 ? `+${d.count}` : "—"}
               </td>
               <td className="py-2 pr-2">
                 <div className="flex justify-end">
-                  <div className="h-2 w-32 rounded-full bg-[#1d2027] overflow-hidden">
+                  <div className="h-2 w-32 rounded-full bg-surface-2 overflow-hidden">
                     <div
-                      className="h-full rounded-full bg-[#36d399] transition-all"
+                      className="h-full rounded-full bg-accent transition-all"
                       style={{ width: `${pct}%` }}
                     />
                   </div>
@@ -94,7 +94,7 @@ export function WeekTable({ data }: { data: { date: string; count: number }[] })
         })}
         {rows.every(r => r.count === 0) && (
           <tr>
-            <td colSpan={3} className="py-4 text-center text-[#5a606b]">No applications yet in last 7 days.</td>
+            <td colSpan={3} className="py-4 text-center text-muted">No applications yet in last 7 days.</td>
           </tr>
         )}
       </tbody>
@@ -143,7 +143,7 @@ export function LineChart({
         {/* gridlines */}
         {[0.25, 0.5, 0.75].map((f) => (
           <line key={f} x1={padX} x2={W - padX} y1={padY + f * (H - padY * 2)} y2={padY + f * (H - padY * 2)}
-            stroke="#262a33" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+            stroke="var(--border)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
         ))}
         {series[0] && (
           <path d={area(series[0].values)} fill={series[0].color} opacity="0.12" />
@@ -153,7 +153,7 @@ export function LineChart({
             strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
         ))}
       </svg>
-      <div className="mt-1 flex items-center justify-between font-mono text-[10px] text-[#5a606b]">
+      <div className="mt-1 flex items-center justify-between font-sans text-[10px] text-muted">
         <span>{labels[0]?.slice(5)}</span>
         <div className="flex gap-3">
           {series.map((s) => (
@@ -192,7 +192,7 @@ export function DonutChart({
     <div className="flex items-center gap-5">
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
         <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#1d2027" strokeWidth={thickness} />
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--surface-2)" strokeWidth={thickness} />
           {total > 0 &&
             segments.map((seg) => {
               const frac = seg.value / total;
@@ -214,22 +214,22 @@ export function DonutChart({
               return el;
             })}
         </g>
-        <text x="50%" y="47%" textAnchor="middle" className="fill-[#e6e8eb] font-mono" fontSize="22" fontWeight="700">
+        <text x="50%" y="47%" textAnchor="middle" className="fill-foreground font-sans" fontSize="22" fontWeight="700">
           {centerValue ?? total}
         </text>
         {centerLabel && (
-          <text x="50%" y="60%" textAnchor="middle" className="fill-[#8b919c] font-mono" fontSize="10">
+          <text x="50%" y="60%" textAnchor="middle" className="fill-muted font-sans" fontSize="10">
             {centerLabel}
           </text>
         )}
       </svg>
-      <ul className="space-y-1.5 font-mono text-xs">
+      <ul className="space-y-1.5 font-sans text-xs">
         {segments.map((seg) => (
           <li key={seg.label} className="flex items-center gap-2">
             <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: seg.color }} />
-            <span className="text-[#8b919c]">{seg.label}</span>
-            <span className="ml-auto tabular-nums text-[#e6e8eb]">{seg.value}</span>
-            <span className="w-9 text-right tabular-nums text-[#5a606b]">
+            <span className="text-muted">{seg.label}</span>
+            <span className="ml-auto tabular-nums text-foreground">{seg.value}</span>
+            <span className="w-9 text-right tabular-nums text-muted">
               {total > 0 ? Math.round((seg.value / total) * 100) : 0}%
             </span>
           </li>
@@ -242,7 +242,7 @@ export function DonutChart({
 /** Ranked horizontal bars — top paths, plan mix, anything label→value. */
 export function BarRows({
   rows,
-  color = "#9db4ff",
+  color = "var(--brand)",
   unit = "",
 }: {
   rows: { label: string; value: number }[];
@@ -250,17 +250,17 @@ export function BarRows({
   unit?: string;
 }) {
   const max = Math.max(1, ...rows.map((r) => r.value));
-  if (rows.length === 0) return <p className="font-mono text-xs text-[#5a606b]">No data yet.</p>;
+  if (rows.length === 0) return <p className="font-sans text-xs text-muted">No data yet.</p>;
   return (
-    <ul className="space-y-2 font-mono text-xs">
+    <ul className="space-y-2 font-sans text-xs">
       {rows.map((r) => (
         <li key={r.label} className="grid grid-cols-[1fr_auto] items-center gap-2">
           <div className="min-w-0">
             <div className="mb-1 flex justify-between gap-2">
-              <span className="truncate text-[#8b919c]" title={r.label}>{r.label}</span>
-              <span className="tabular-nums text-[#e6e8eb]">{unit}{r.value.toLocaleString()}</span>
+              <span className="truncate text-muted" title={r.label}>{r.label}</span>
+              <span className="tabular-nums text-foreground">{unit}{r.value.toLocaleString()}</span>
             </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#1d2027]">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
               <div className="h-full rounded-full" style={{ width: `${(r.value / max) * 100}%`, background: color }} />
             </div>
           </div>

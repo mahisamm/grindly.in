@@ -20,24 +20,24 @@ export default function AdminIntegrations() {
       .catch(() => setErr("Failed to load."));
   }, []);
 
-  if (err) return <p className="font-mono text-sm text-[#ff4d4d]">{err}</p>;
-  if (!d) return <p className="font-mono text-sm text-[#8b919c]">Loading…</p>;
+  if (err) return <p className="font-sans text-sm text-brand">{err}</p>;
+  if (!d) return <p className="font-sans text-sm text-muted">Loading…</p>;
 
   return (
     <>
       <PageTitle title="Integrations" sub="needs-login sessions bubble to the top — those block the agent from applying" />
 
-      <div className="mb-6 flex flex-wrap gap-2 font-mono text-xs">
+      <div className="mb-6 flex flex-wrap gap-2 font-sans text-xs">
         {Object.entries(d.summary).map(([k, v]) => (
           <span key={k} className="flex items-center gap-1.5"><Badge value={k} /> <span className="tabular-nums">{v}</span></span>
         ))}
-        {Object.keys(d.summary).length === 0 && <span className="text-[#8b919c]">No integration records.</span>}
+        {Object.keys(d.summary).length === 0 && <span className="text-muted">No integration records.</span>}
       </div>
 
       <Panel>
-        <table className="w-full text-left font-mono text-xs">
-          <thead className="text-[#5a606b]">
-            <tr className="border-b border-[#262a33]">
+        <table className="w-full text-left font-sans text-xs">
+          <thead className="text-muted">
+            <tr className="border-b border-border">
               <th className="px-4 py-2 font-medium">User</th>
               <th className="px-4 py-2 font-medium">Platform</th>
               <th className="px-4 py-2 font-medium">Status</th>
@@ -47,17 +47,17 @@ export default function AdminIntegrations() {
           </thead>
           <tbody>
             {d.integrations.map((i, idx) => (
-              <tr key={idx} className="border-b border-[#1d2027] hover:bg-[#1a1d23]">
+              <tr key={idx} className="border-b border-surface-2 hover:bg-surface-2">
                 <td className="px-4 py-2">
-                  {i.userId ? <Link href={`/admin/users/${i.userId}`} className="text-[#9db4ff] hover:underline">{i.email}</Link> : i.email}
+                  {i.userId ? <Link href={`/admin/users/${i.userId}`} className="text-brand hover:underline">{i.email}</Link> : i.email}
                 </td>
                 <td className="px-4 py-2">{i.platform}</td>
                 <td className="px-4 py-2"><Badge value={i.status} /></td>
-                <td className="px-4 py-2 text-[#5a606b]">{fmtDate(i.connectedAt)}</td>
-                <td className="px-4 py-2 text-[#5a606b]">{fmtDate(i.updatedAt)}</td>
+                <td className="px-4 py-2 text-muted">{fmtDate(i.connectedAt)}</td>
+                <td className="px-4 py-2 text-muted">{fmtDate(i.updatedAt)}</td>
               </tr>
             ))}
-            {d.integrations.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-[#8b919c]">No integrations yet.</td></tr>}
+            {d.integrations.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted">No integrations yet.</td></tr>}
           </tbody>
         </table>
       </Panel>

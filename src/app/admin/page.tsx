@@ -35,8 +35,8 @@ export default function AdminOverview() {
     return () => clearInterval(id);
   }, [load]);
 
-  if (err) return <p className="font-mono text-sm text-[#ff4d4d]">{err}</p>;
-  if (!d) return <p className="font-mono text-sm text-[#8b919c]">Loading…</p>;
+  if (err) return <p className="font-sans text-sm text-brand">{err}</p>;
+  if (!d) return <p className="font-sans text-sm text-muted">Loading…</p>;
 
   const cronOk = d.cronHealth && d.cronHealth.status === "done" && d.cronHealth.staleHours < 25;
   const cronWarn = d.cronHealth && (d.cronHealth.staleHours >= 25 || d.cronHealth.status === "failed");
@@ -46,7 +46,7 @@ export default function AdminOverview() {
       <div className="mb-6 flex items-start justify-between">
         <PageTitle title="Fleet overview" sub={`Run metrics over the last ${d.runs.windowDays} days · auto-refresh 60s`} />
         {lastRefresh && (
-          <span className="font-mono text-[11px] text-[#5a606b]">
+          <span className="font-sans text-[11px] text-muted">
             refreshed {lastRefresh.toLocaleTimeString()}
           </span>
         )}
@@ -55,14 +55,14 @@ export default function AdminOverview() {
       {/* Hero numbers */}
       <div className="grid grid-cols-2 gap-4 mb-6">
         <Panel className="px-6 py-5">
-          <div className="font-mono text-[11px] uppercase tracking-wide text-[#8b919c]">Active subscribers</div>
-          <div className="mt-1 font-mono text-5xl font-bold tabular-nums text-[#36d399]">{d.users.active}</div>
-          <div className="mt-1 font-mono text-xs text-[#5a606b]">{d.users.total} total · {d.users.paused} paused · {d.users.paid} paid</div>
+          <div className="font-sans text-[11px] uppercase tracking-wide text-muted">Active subscribers</div>
+          <div className="mt-1 font-sans text-5xl font-bold tabular-nums text-accent">{d.users.active}</div>
+          <div className="mt-1 font-sans text-xs text-muted">{d.users.total} total · {d.users.paused} paused · {d.users.paid} paid</div>
         </Panel>
         <Panel className="px-6 py-5">
-          <div className="font-mono text-[11px] uppercase tracking-wide text-[#8b919c]">Successful applications</div>
-          <div className="mt-1 font-mono text-5xl font-bold tabular-nums text-[#e6e8eb]">{d.runs.allTimeApplied}</div>
-          <div className="mt-1 font-mono text-xs text-[#5a606b]">+{d.runs.appliedToday} today · {d.runs.applied} in 14d · {d.runs.failRate}% fail rate</div>
+          <div className="font-sans text-[11px] uppercase tracking-wide text-muted">Successful applications</div>
+          <div className="mt-1 font-sans text-5xl font-bold tabular-nums text-foreground">{d.runs.allTimeApplied}</div>
+          <div className="mt-1 font-sans text-xs text-muted">+{d.runs.appliedToday} today · {d.runs.applied} in 14d · {d.runs.failRate}% fail rate</div>
         </Panel>
       </div>
 
@@ -77,14 +77,14 @@ export default function AdminOverview() {
       {/* Cron health */}
       {d.cronHealth && (
         <Panel className="mt-4 px-4 py-3">
-          <div className="flex items-center gap-3 font-mono text-xs">
-            <span className="uppercase tracking-wide text-[#8b919c]">Last agent run</span>
+          <div className="flex items-center gap-3 font-sans text-xs">
+            <span className="uppercase tracking-wide text-muted">Last agent run</span>
             <Badge value={d.cronHealth.status} />
-            <span className="text-[#8b919c]">{fmtDate(d.cronHealth.lastRunAt)}</span>
-            {cronOk && <span className="text-[#36d399]">✓ on schedule</span>}
-            {cronWarn && <span className="text-[#fbbd23]">⚠ {d.cronHealth.staleHours}h ago — check cron</span>}
-            {d.cronHealth.error && <span className="text-[#ff4d4d]">error: {d.cronHealth.error}</span>}
-            <Link href="/admin/agent-health" className="ml-auto text-[#9db4ff] hover:underline">
+            <span className="text-muted">{fmtDate(d.cronHealth.lastRunAt)}</span>
+            {cronOk && <span className="text-accent">✓ on schedule</span>}
+            {cronWarn && <span className="text-warn">⚠ {d.cronHealth.staleHours}h ago — check cron</span>}
+            {d.cronHealth.error && <span className="text-brand">error: {d.cronHealth.error}</span>}
+            <Link href="/admin/agent-health" className="ml-auto text-brand hover:underline">
               run diagnostics →
             </Link>
           </div>
@@ -92,29 +92,29 @@ export default function AdminOverview() {
       )}
       {!d.cronHealth && (
         <Panel className="mt-4 px-4 py-3">
-          <div className="flex items-center justify-between font-mono text-xs text-[#8b919c]">
+          <div className="flex items-center justify-between font-sans text-xs text-muted">
             <span>No agent runs yet.</span>
-            <Link href="/admin/agent-health" className="text-[#9db4ff] hover:underline">run diagnostics →</Link>
+            <Link href="/admin/agent-health" className="text-brand hover:underline">run diagnostics →</Link>
           </div>
         </Panel>
       )}
 
       {/* 7-day table */}
       <Panel className="mt-6 p-4">
-        <div className="mb-3 font-mono text-[11px] uppercase tracking-wide text-[#8b919c]">Applications · last 7 days</div>
+        <div className="mb-3 font-sans text-[11px] uppercase tracking-wide text-muted">Applications · last 7 days</div>
         <WeekTable data={d.trend} />
       </Panel>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         {/* Recent failures */}
         <Panel className="lg:col-span-2">
-          <div className="border-b border-[#262a33] px-4 py-3 font-mono text-sm font-bold">Recent failures</div>
+          <div className="border-b border-border px-4 py-3 font-sans text-sm font-bold">Recent failures</div>
           {d.recentFailures.length === 0 ? (
-            <p className="px-4 py-6 font-mono text-sm text-[#8b919c]">No failures. Clean.</p>
+            <p className="px-4 py-6 font-sans text-sm text-muted">No failures. Clean.</p>
           ) : (
-            <table className="w-full text-left font-mono text-xs">
-              <thead className="text-[#5a606b]">
-                <tr className="border-b border-[#262a33]">
+            <table className="w-full text-left font-sans text-xs">
+              <thead className="text-muted">
+                <tr className="border-b border-border">
                   <th className="px-4 py-2 font-medium">User</th>
                   <th className="px-4 py-2 font-medium">Job</th>
                   <th className="px-4 py-2 font-medium">Reason</th>
@@ -123,15 +123,15 @@ export default function AdminOverview() {
               </thead>
               <tbody>
                 {d.recentFailures.map((f) => (
-                  <tr key={f.id} className="border-b border-[#1d2027] hover:bg-[#1a1d23]">
+                  <tr key={f.id} className="border-b border-surface-2 hover:bg-surface-2">
                     <td className="px-4 py-2">
                       {f.userId ? (
-                        <Link href={`/admin/users/${f.userId}`} className="text-[#9db4ff] hover:underline">{f.email}</Link>
+                        <Link href={`/admin/users/${f.userId}`} className="text-brand hover:underline">{f.email}</Link>
                       ) : f.email}
                     </td>
-                    <td className="px-4 py-2 text-[#8b919c]">{f.company}</td>
+                    <td className="px-4 py-2 text-muted">{f.company}</td>
                     <td className="px-4 py-2"><Badge value={f.reason} /></td>
-                    <td className="px-4 py-2 text-[#5a606b]">{fmtDate(f.createdAt)}</td>
+                    <td className="px-4 py-2 text-muted">{fmtDate(f.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -142,15 +142,15 @@ export default function AdminOverview() {
         {/* Right column */}
         <div className="flex flex-col gap-6">
           <Panel className="p-4">
-            <div className="mb-3 font-mono text-sm font-bold">Integration health</div>
-            <ul className="space-y-2 font-mono text-xs">
-              <li className="flex justify-between"><span className="text-[#8b919c]">connected</span><span className="text-[#36d399]">{d.integrationHealth.connected}</span></li>
-              <li className="flex justify-between"><span className="text-[#8b919c]">needs login</span><span className="text-[#fbbd23]">{d.integrationHealth.needsLogin}</span></li>
-              <li className="flex justify-between"><span className="text-[#8b919c]">connecting</span><span className="text-[#fbbd23]">{d.integrationHealth.connecting}</span></li>
-              <li className="flex justify-between"><span className="text-[#8b919c]">disconnected</span><span className="text-[#5a606b]">{d.integrationHealth.disconnected}</span></li>
+            <div className="mb-3 font-sans text-sm font-bold">Integration health</div>
+            <ul className="space-y-2 font-sans text-xs">
+              <li className="flex justify-between"><span className="text-muted">connected</span><span className="text-accent">{d.integrationHealth.connected}</span></li>
+              <li className="flex justify-between"><span className="text-muted">needs login</span><span className="text-warn">{d.integrationHealth.needsLogin}</span></li>
+              <li className="flex justify-between"><span className="text-muted">connecting</span><span className="text-warn">{d.integrationHealth.connecting}</span></li>
+              <li className="flex justify-between"><span className="text-muted">disconnected</span><span className="text-muted">{d.integrationHealth.disconnected}</span></li>
             </ul>
-            <div className="mt-4 border-t border-[#262a33] pt-3 font-mono text-xs">
-              <div className="mb-2 text-[#8b919c]">plan mix</div>
+            <div className="mt-4 border-t border-border pt-3 font-sans text-xs">
+              <div className="mb-2 text-muted">plan mix</div>
               <div className="flex justify-between"><span>free</span><span>{d.users.byPlan.free}</span></div>
               <div className="flex justify-between"><span>plus</span><span>{d.users.byPlan.plus}</span></div>
               <div className="flex justify-between"><span>pro</span><span>{d.users.byPlan.pro}</span></div>
@@ -160,14 +160,14 @@ export default function AdminOverview() {
           {/* Per-platform fail rates */}
           {d.platformStats.length > 0 && (
             <Panel className="p-4">
-              <div className="mb-3 font-mono text-sm font-bold">Platform fail rates · 14d</div>
-              <ul className="space-y-2 font-mono text-xs">
+              <div className="mb-3 font-sans text-sm font-bold">Platform fail rates · 14d</div>
+              <ul className="space-y-2 font-sans text-xs">
                 {d.platformStats.map((p) => (
                   <li key={p.platform} className="flex items-center justify-between gap-2">
-                    <span className="text-[#8b919c] capitalize">{p.platform}</span>
+                    <span className="text-muted capitalize">{p.platform}</span>
                     <div className="flex items-center gap-2">
-                      <span className="text-[#5a606b]">{p.applied}✓ {p.failed}✗</span>
-                      <span className={p.failRate > 20 ? "text-[#ff4d4d]" : p.failRate > 10 ? "text-[#fbbd23]" : "text-[#36d399]"}>
+                      <span className="text-muted">{p.applied}✓ {p.failed}✗</span>
+                      <span className={p.failRate > 20 ? "text-brand" : p.failRate > 10 ? "text-warn" : "text-accent"}>
                         {p.failRate}%
                       </span>
                     </div>
@@ -182,7 +182,7 @@ export default function AdminOverview() {
       {health && (
         <div className="mt-6">
           <Panel className="p-5">
-            <div className="mb-3 font-mono text-sm font-bold text-[#8b919c] uppercase tracking-wide">System status</div>
+            <div className="mb-3 font-sans text-sm font-bold text-muted uppercase tracking-wide">System status</div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {([
                 { label: "Database", ok: !!(health as {checks?: {db?: {ok: boolean}}}).checks?.db?.ok, link: null },
@@ -190,21 +190,21 @@ export default function AdminOverview() {
                 { label: "LLM", ok: !!(health as {services?: {llm: boolean}}).services?.llm, link: null },
                 { label: "Google OAuth", ok: !!(health as {services?: {googleOAuth: boolean}}).services?.googleOAuth, link: null },
               ] as { label: string; ok: boolean; link: string | null }[]).map(({ label, ok, link }) => (
-                <div key={label} className="flex items-center gap-2 rounded bg-[#0d1117]/60 px-3 py-2">
-                  <span className={`h-2 w-2 rounded-full ${ok ? "bg-[#36d399]" : "bg-[#ff4d4d]"}`} />
-                  <span className="text-xs text-[#8b919c]">{label}</span>
+                <div key={label} className="flex items-center gap-2 rounded bg-surface-2/60 px-3 py-2">
+                  <span className={`h-2 w-2 rounded-full ${ok ? "bg-accent" : "bg-brand"}`} />
+                  <span className="text-xs text-muted">{label}</span>
                   {!ok && link && (
-                    <Link href={link} className="ml-auto text-[10px] text-[#9db4ff] hover:underline">fix</Link>
+                    <Link href={link} className="ml-auto text-[10px] text-brand hover:underline">fix</Link>
                   )}
                 </div>
               ))}
             </div>
             {((health as {missing?: string[]}).missing ?? []).length > 0 && (
               <div className="mt-3">
-                <div className="text-[11px] uppercase tracking-wide text-[#ff4d4d] mb-1">Missing config</div>
+                <div className="text-[11px] uppercase tracking-wide text-brand mb-1">Missing config</div>
                 <ul className="space-y-0.5">
                   {((health as {missing?: string[]}).missing ?? []).map((m, i) => (
-                    <li key={i} className="font-mono text-xs text-[#ff4d4d]/80">{m}</li>
+                    <li key={i} className="font-sans text-xs text-brand/80">{m}</li>
                   ))}
                 </ul>
               </div>
