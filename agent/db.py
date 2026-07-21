@@ -387,6 +387,67 @@ def _ensure_credentials_table(c):
     """)
 
 
+def _ensure_company_reputation_table(c):
+    """Scam-gate Layer 2 cache (SQLite only — Prisma owns the Postgres schema via
+    db push; see the CompanyReputation model). Columns mirror that model."""
+    if PG:
+        return
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS company_reputation (
+            id TEXT PRIMARY KEY,
+            company TEXT NOT NULL UNIQUE,
+            verdict TEXT NOT NULL DEFAULT 'ok',
+            confidence REAL NOT NULL DEFAULT 0,
+            evidence TEXT,
+            source TEXT NOT NULL DEFAULT 'llm',
+            checked_at INTEGER NOT NULL
+        )
+    """)
+
+
+def get_company_reputation(company: str, max_age_ms: int | None = None) -> dict | None:
+    """Cached reputation row for a NORMALIZED company name (see
+    company_rep.normalize), or None if there's no row — or it's older than
+    max_age_ms. checked_at is epoch-ms on SQLite and a timestamp on Postgres, so
+    the freshness bound is expressed via time_ago_db() to match each backend."""
+    if not company:
+        return None
+    with conn() as c:
+        _ensure_company_reputation_table(c)
+        if max_age_ms is not None:
+            row = c.execute(
+                "SELECT verdict, confidence, evidence, source FROM company_reputation "
+                "WHERE company=? AND checked_at >= ?",
+                (company, time_ago_db(max_age_ms)),
+            ).fetchone()
+        else:
+            row = c.execute(
+                "SELECT verdict, confidence, evidence, source FROM company_reputation "
+                "WHERE company=?",
+                (company,),
+            ).fetchone()
+        return dict(row) if row else None
+
+
+def set_company_reputation(company: str, verdict: str, confidence: float,
+                           evidence: str | None = None, source: str = "llm") -> None:
+    """Upsert a reputation verdict for a normalized company name."""
+    if not company:
+        return
+    with conn() as c:
+        _ensure_company_reputation_table(c)
+        c.execute(
+            "INSERT INTO company_reputation "
+            "(id, company, verdict, confidence, evidence, source, checked_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(company) DO UPDATE SET "
+            "verdict=excluded.verdict, confidence=excluded.confidence, "
+            "evidence=excluded.evidence, source=excluded.source, "
+            "checked_at=excluded.checked_at",
+            (cuid(), company, verdict, float(confidence), evidence, source, now_db()),
+        )
+
+
 _PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"]
 
 

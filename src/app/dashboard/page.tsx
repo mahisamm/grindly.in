@@ -500,6 +500,7 @@ export default function Dashboard() {
   const [pendingSubmit, setPendingSubmit] = useState<{ id: string; label: string } | null>(null);
   const [showReturnPrompt, setShowReturnPrompt] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [analyzingResume, setAnalyzingResume] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
   const [usingVariant, setUsingVariant] = useState<string | null>(null);
@@ -1169,9 +1170,13 @@ export default function Dashboard() {
   const resumeAts = me.profile?.resumeSuggestions
     ? parseJ<ResumeAnalysis>(me.profile.resumeSuggestions, {} as ResumeAnalysis).ats
     : undefined;
+  // "Skipped" rows are internal bookkeeping — duplicates, below-threshold matches,
+  // and firewall/scam blocks. None of it is actionable for the user, so it never
+  // shows anywhere, "all" included. Everything else is real pipeline they can act on.
+  const visibleApps = me.applications.filter((a) => a.status !== "skipped");
   const filteredApps = filter === "all"
-    ? me.applications
-    : me.applications.filter((a) => a.status === filter);
+    ? visibleApps
+    : visibleApps.filter((a) => a.status === filter);
   const totalPages = Math.ceil(filteredApps.length / PAGE_SIZE);
   const apps = filteredApps.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const integrations = (me.integrations ?? []).filter((i) => VISIBLE_PLATFORMS.includes(i.platform));
@@ -1251,15 +1256,80 @@ export default function Dashboard() {
                  : "Setup incomplete"}
               </span>
             </span>
-            <button onClick={togglePause} className="text-sm text-muted hover:text-foreground transition">
-              {me.user.status === "paused" ? "Resume" : "Pause"}
-            </button>
-            {me.user.role === "admin" && (
-              <Link href="/admin" className="rounded-full border border-ink bg-ink px-3 py-1.5 text-sm font-semibold text-[var(--paper)] transition hover:opacity-80">
-                Admin
-              </Link>
-            )}
-            <button onClick={logout} className="text-sm text-muted hover:text-foreground transition">Log out</button>
+            {/* Account menu — the avatar opens a popover holding identity, plan, and
+                the account actions (profile, pause, admin, log out) that used to
+                crowd the top bar. Same fixed-backdrop + absolute-panel pattern as the
+                notifications bell, so click-outside closes it. */}
+            <div className="relative">
+              <button
+                onClick={() => setUserMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={userMenuOpen}
+                aria-label="Account menu"
+                title="Your account"
+                className="flex size-9 items-center justify-center rounded-full brand-gradient text-sm font-semibold text-white transition hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              >
+                {(me.user.name || me.user.email).trim().charAt(0).toUpperCase() || "?"}
+              </button>
+              {userMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
+                  <div
+                    role="menu"
+                    className="absolute right-0 z-50 mt-2 w-64 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-surface shadow-[0_10px_40px_rgba(23,20,15,0.18)]"
+                  >
+                    {/* identity + plan */}
+                    <div className="border-b border-border px-4 py-3">
+                      <div className="truncate text-sm font-semibold text-foreground">
+                        {me.user.name || me.user.email.split("@")[0]}
+                      </div>
+                      <div className="truncate text-xs text-muted">{me.user.email}</div>
+                      <div className="mt-1.5 text-xs text-muted">
+                        <span className="capitalize font-medium text-foreground">{me.user.plan}</span> plan
+                        {" · "}{me.quota.remaining}/{me.quota.cap} left today
+                      </div>
+                    </div>
+                    {/* actions */}
+                    <div className="py-1">
+                      <button
+                        role="menuitem"
+                        onClick={() => { setTab("profile"); setUserMenuOpen(false); }}
+                        className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-foreground transition hover:bg-surface-2"
+                      >
+                        <span aria-hidden>👤</span> Your profile &amp; settings
+                      </button>
+                      <button
+                        role="menuitem"
+                        onClick={() => { void togglePause(); setUserMenuOpen(false); }}
+                        className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-foreground transition hover:bg-surface-2"
+                      >
+                        <span aria-hidden>{me.user.status === "paused" ? "▶️" : "⏸️"}</span>
+                        {me.user.status === "paused" ? "Resume agent" : "Pause agent"}
+                      </button>
+                      {me.user.role === "admin" && (
+                        <Link
+                          role="menuitem"
+                          href="/admin"
+                          onClick={() => setUserMenuOpen(false)}
+                          className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-foreground transition hover:bg-surface-2"
+                        >
+                          <span aria-hidden>🛡️</span> Admin console
+                        </Link>
+                      )}
+                    </div>
+                    <div className="border-t border-border py-1">
+                      <button
+                        role="menuitem"
+                        onClick={() => { void logout(); }}
+                        className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-danger transition hover:bg-danger/10"
+                      >
+                        <span aria-hidden>↩️</span> Log out
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -1481,12 +1551,16 @@ export default function Dashboard() {
             list (src/lib/pipeline.ts). We deliberately dropped the old "Avg match"
             tile: it averaged over skipped low-score rows too, so it could read "10"
             under a "min match ≥65" header — a contradiction that just confused. */}
-        <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className={`mt-6 grid grid-cols-2 gap-3 ${me.stats.failed > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
           {([
             ["Matched", me.stats.ready, "text-foreground", "Matched to you and ready now — open and submit each one"],
             ["Lined up", me.stats.queued, "text-muted", "Found for you and waiting — the agent releases a fresh batch each day so your applications stay paced"],
             ["Applied", me.stats.applied, "text-accent", "You've submitted these"],
-            ["Failed", me.stats.failed, "text-danger", "The submission didn't go through — you can retry these"],
+            // "Failed" only surfaces when there's actually a failure to act on — a
+            // resting "Failed: 0" tile just added noise and worried testers.
+            ...(me.stats.failed > 0
+              ? [["Failed", me.stats.failed, "text-danger", "The submission didn't go through — the agent retries these on its next run"] as const]
+              : []),
           ] as const).map(([label, val, c, help]) => (
             <div key={label} className="sticker tilt rounded-2xl bg-surface p-4" role="region" aria-label={`${label}: ${val}. ${help}`} title={help}>
               <div className={`display text-4xl ${c}`} aria-hidden="true"><CountUp value={val} /></div>
@@ -1625,13 +1699,23 @@ export default function Dashboard() {
                 : { score: me.profile!.resumeScore, grade: "?", strengths: [], issues: [], suggestions: [] };
               return (
                 <div className="space-y-3">
-                  {/* Score + grade row */}
+                  {/* Score + grade row. The big number is the ATS score — labelled
+                      explicitly so students know it's the recruiter-software screen,
+                      not a vague "quality" number. */}
                   <div className="flex items-center gap-4">
-                    <div className="flex items-baseline gap-1">
-                      <span className={`text-4xl font-bold ${resumeScoreColor(analysis.score)}`}>
-                        {analysis.score}
+                    <div className="flex flex-col">
+                      <span
+                        className="text-[10px] font-semibold uppercase tracking-wide text-muted cursor-help"
+                        title="ATS = Applicant Tracking System — the software recruiters use to auto-screen resumes before a human ever reads them. A higher score means yours parses cleanly and matches the role."
+                      >
+                        ATS Score
                       </span>
-                      <span className="text-muted text-sm">/100</span>
+                      <div className="flex items-baseline gap-1">
+                        <span className={`text-4xl font-bold ${resumeScoreColor(analysis.score)}`}>
+                          {analysis.score}
+                        </span>
+                        <span className="text-muted text-sm">/100</span>
+                      </div>
                     </div>
                     <span className={`rounded-md border px-2.5 py-1 text-sm font-bold ${resumeGradeBg(analysis.grade)}`}>
                       {analysis.grade}
@@ -1686,7 +1770,7 @@ export default function Dashboard() {
               <div className="text-sm text-muted">
                 {me.profile.resumeName
                   ? "Analysis in progress — check back in a moment."
-                  : "Upload your resume below to get an AI quality score and improvement suggestions."}
+                  : "Upload your resume below to get your ATS score and improvement suggestions."}
                 {skills.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {skills.map((s) => (
@@ -1799,64 +1883,92 @@ export default function Dashboard() {
               );
             })()}
 
-            {/* Resume files. Two slots, because they do different jobs: the master is
-                what a recruiter receives; the .tex is the source the agent edits when
-                a role needs a tailored version. With no .tex the agent sends the
-                master untouched rather than rebuilding a lookalike and wrecking the
+            {/* Resume file. One slot up front — the file recruiters actually receive.
+                The .tex source is a power-user extra, so it's tucked into an Advanced
+                disclosure: it was the single most confusing thing on this screen, and
+                almost no student has a .tex to give. With no .tex the agent sends the
+                resume untouched rather than rebuilding a lookalike and wrecking the
                 template the college mandated. */}
             <div className="mt-6 border-t border-border pt-5">
-              <div className="text-xs uppercase tracking-wide text-muted mb-3">Resume files</div>
-              <div className="grid sm:grid-cols-2 gap-3">
-                <ResumeSlot
-                  label="Master resume"
-                  hint="PDF, DOCX or TXT · this is what gets sent"
-                  current={me.profile.resumeName}
-                  accept=".pdf,.docx,.txt"
-                  busy={uploading === "master"}
-                  onPick={(f) => uploadResume(f, "master")}
-                />
-                <ResumeSlot
-                  label="LaTeX source (optional)"
-                  hint=".tex · lets the agent tailor without breaking your template"
-                  current={me.profile.resumeTexName}
-                  accept=".tex"
-                  busy={uploading === "tex"}
-                  onPick={(f) => uploadResume(f, "tex")}
-                  status={me.profile.resumeTexStatus}
-                  detail={me.profile.resumeTexDetail}
-                />
-              </div>
+              <div className="text-xs uppercase tracking-wide text-muted mb-3">Resume file</div>
+              <ResumeSlot
+                label="Your resume"
+                hint="PDF, DOCX or TXT · this is the exact file recruiters receive"
+                current={me.profile.resumeName}
+                accept=".pdf,.docx,.txt"
+                busy={uploading === "master"}
+                onPick={(f) => uploadResume(f, "master")}
+              />
               <p className="mt-3 text-xs text-muted">
-                Replacing your master resume re-extracts your skills and re-scores it —
-                the agent uses the new one from its next run. The agent only ever edits
-                the <span className="text-foreground">Skills</span> and{" "}
-                <span className="text-foreground">Hobbies</span> sections of your .tex,
-                and throws the edit away if it changes your page count.
+                Replacing it re-extracts your skills and re-scores your resume — the
+                agent uses the new one from its next run.
               </p>
+
+              {/* Advanced: LaTeX source — hidden by default so it stops confusing the
+                  90% of students who don't have a .tex. */}
+              <details className="mt-4">
+                <summary className="cursor-pointer select-none text-xs font-medium text-brand-2 hover:text-brand transition">
+                  Advanced: upload LaTeX source (optional)
+                </summary>
+                <div className="mt-3">
+                  <ResumeSlot
+                    label="LaTeX source (.tex)"
+                    hint="Lets the agent tailor per job without breaking your template"
+                    current={me.profile.resumeTexName}
+                    accept=".tex"
+                    busy={uploading === "tex"}
+                    onPick={(f) => uploadResume(f, "tex")}
+                    status={me.profile.resumeTexStatus}
+                    detail={me.profile.resumeTexDetail}
+                  />
+                  <p className="mt-3 text-xs text-muted">
+                    Have your resume&apos;s <span className="text-foreground">.tex</span>{" "}
+                    source? Upload it and the agent tailors a version per job without
+                    touching your layout — it only ever edits the{" "}
+                    <span className="text-foreground">Skills</span> and{" "}
+                    <span className="text-foreground">Hobbies</span> sections, and throws
+                    the edit away if it changes your page count. Most people can skip this.
+                  </p>
+                </div>
+              </details>
             </div>
           </div>
         )}
 
-        {/* tabs */}
-        <div className="mt-8 flex items-center gap-2 border-b border-border overflow-x-auto scrollbar-none">
-          {(["profile", "applications", "integrations", "reports"] as const).map((t) => (
+        {/* tabs — profile lives in the account menu (top-right avatar) now. In the
+            profile view the three-tab strip would show with nothing active (a phantom
+            tab), so we swap it for a titled header + a way back. */}
+        {tab === "profile" ? (
+          <div className="mt-8 flex items-center justify-between gap-3 border-b border-border pb-3">
+            <h2 className="font-display text-lg font-semibold tracking-tight">Profile &amp; settings</h2>
             <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`shrink-0 px-4 py-2.5 text-sm capitalize border-b-2 -mb-px transition ${
-                tab === t ? "border-brand text-foreground" : "border-transparent text-muted hover:text-foreground"
-              }`}
+              onClick={() => setTab("applications")}
+              className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm text-muted transition hover:border-brand/40 hover:text-foreground"
             >
-              {t}
-              {t === "integrations" && connectedCount > 0 && (
-                <span className="ml-1.5 rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] text-accent">{connectedCount}</span>
-              )}
-              {t === "applications" && readyCount > 0 && (
-                <span className="ml-1.5 rounded-full bg-warn/20 px-1.5 py-0.5 text-[10px] text-warn">{readyCount}</span>
-              )}
+              ← Back to applications
             </button>
-          ))}
-        </div>
+          </div>
+        ) : (
+          <div className="mt-8 flex items-center gap-2 border-b border-border overflow-x-auto scrollbar-none">
+            {(["applications", "integrations", "reports"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`shrink-0 px-4 py-2.5 text-sm capitalize border-b-2 -mb-px transition ${
+                  tab === t ? "border-brand text-foreground" : "border-transparent text-muted hover:text-foreground"
+                }`}
+              >
+                {t}
+                {t === "integrations" && connectedCount > 0 && (
+                  <span className="ml-1.5 rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] text-accent">{connectedCount}</span>
+                )}
+                {t === "applications" && readyCount > 0 && (
+                  <span className="ml-1.5 rounded-full bg-warn/20 px-1.5 py-0.5 text-[10px] text-warn">{readyCount}</span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* ── PROFILE ── */}
         {tab === "profile" && profileForm && (
@@ -2015,8 +2127,6 @@ export default function Dashboard() {
                 ["matched", "matched"],
                 ["approved", "to submit"],
                 ["applied", "applied"],
-                ["failed", "failed"],
-                ["skipped", "skipped"],
               ] as const).map(([f, label]) => (
                 <button
                   key={f}

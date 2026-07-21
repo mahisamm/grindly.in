@@ -293,6 +293,22 @@ model Job {
   @@map("jobs")
 }
 
+// Scam-gate Layer 2 cache. One row per company (normalized name), holding the
+// verdict from the LLM reputation check so it's never re-run for the same company
+// inside the TTL. Agent-only — the Next app never reads this; see
+// agent/company_rep.py. Written by the worker, keyed by normalized company name.
+model CompanyReputation {
+  id         String   @id @default(cuid())
+  company    String   @unique // normalized: lowercased, trimmed, legal suffix stripped
+  verdict    String   @default("ok") // ok | caution | scam
+  confidence Float    @default(0)
+  evidence   String? // short human-readable reason for the verdict
+  source     String   @default("llm") // llm | heuristic
+  checkedAt  DateTime @default(now()) @map("checked_at")
+
+  @@map("company_reputation")
+}
+
 model Application {
   id         String   @id @default(cuid())
   userId     String   @map("user_id")

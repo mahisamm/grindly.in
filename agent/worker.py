@@ -51,6 +51,8 @@ import resume_parse
 import resume_ai
 import resume_optimize
 import safety
+import scam
+import company_rep
 import drift
 import llm as llm_mod
 
@@ -1229,12 +1231,48 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             )
             continue
 
+        # Scam gate (Layer 1): a legitimate internship never bills the applicant.
+        # Block listings that demand a fee/deposit or are MLM/earnings traps before
+        # they can ever be queued. Filed as skipped (hidden from the dashboard) so
+        # the student is silently protected. Uses whatever JD text we already have —
+        # never scrapes extra just for this.
+        scam_reason = scam.scam_block(job, job.get("jd_text", ""))
+        if scam_reason:
+            db.add_application(
+                uid, job_id=job_id, title=job["title"], company=job["company"],
+                url=job["url"], score=score, status="skipped",
+                reason=f"scam risk: {scam_reason}", applied=False,
+            )
+            log.info("scam gate: skipped %s @ %s — %s", job.get("title"), job.get("company"), scam_reason)
+            continue
+
         if score < plan["min_match_score"]:
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="skipped",
                 reason=f"{reason} (below {plan['min_match_score']})", applied=False,
             )
+            continue
+
+        # Scam gate (Layer 2): reputation check on the company itself, only for
+        # listings that cleared every cheap gate above and are about to be queued —
+        # so the LLM runs at most ~cap times/run, and cached per company after that.
+        # Returns None when no LLM is available (fail-open); only a high-confidence
+        # scam verdict blocks. Never let a reputation-service hiccup abort the run.
+        try:
+            rep = company_rep.check_company(job["company"], job.get("jd_text", ""))
+        except Exception as e:  # noqa: BLE001
+            rep = None
+            log.warning("reputation check errored for %s: %s", job.get("company"), e)
+        if rep and rep.get("verdict") == company_rep.VERDICT_SCAM:
+            db.add_application(
+                uid, job_id=job_id, title=job["title"], company=job["company"],
+                url=job["url"], score=score, status="skipped",
+                reason=f"scam risk (reputation): {rep.get('evidence') or 'flagged by reputation check'}",
+                applied=False,
+            )
+            log.info("scam gate L2: skipped %s @ %s — %s (conf %.2f)",
+                     job.get("title"), job.get("company"), rep.get("evidence"), rep.get("confidence") or 0.0)
             continue
 
         matched += 1
