@@ -178,15 +178,13 @@ services:
       # contend for the one core (no throughput gain) and can OOM the box. The
       # run queue serialises per user, so one worker drains 100 users' runs in
       # sequence — correct for an async "applies in the background" product.
-      # Scale this back up the moment the host gains cores/RAM.
-      # replicas MUST stay 1: claim_next()'s "no other running job for this
-      # user" exclusion (run_queue.py) is a plain read alongside its
-      # FOR UPDATE SKIP LOCKED claim, not itself lock-aware — two concurrent
-      # claimers (i.e. replicas > 1) could both pass it for the same user
-      # before either commits. Single-claimer-at-a-time (this) is what
-      # actually prevents double-apply today; raising replicas needs that
-      # exclusion query hardened first (e.g. SELECT ... FOR UPDATE on the
-      # user's running rows too), not just a number bump.
+      #
+      # replicas > 1 is now CORRECTNESS-safe: claim_next()'s per-user advisory
+      # lock (run_queue.py:_claim_guarded, Postgres only) means two concurrent
+      # claimers can no longer both claim the same user and double-apply. What
+      # still gates the number is HARDWARE — each replica drives a headed
+      # Chromium (~1 core + ~1.5G). Raise replicas to match real cores/RAM as
+      # the host grows (e.g. 4 vCPU / 8G → replicas: 3–4), not before.
       replicas: 1
       resources:
         limits:

@@ -160,11 +160,45 @@ def _backoff_ok(row) -> bool:
     return updated_at < cutoff
 
 
+def _claim_guarded(c, candidate) -> bool:
+    """Safe to claim this candidate right now?
+
+    The candidate query already excludes users with a running job, but under
+    concurrent claimers (replicas > 1) that exclusion is a plain read: two
+    workers can each pick a *different* queued row for the *same* user (e.g. a
+    'live' and an 'analyze' run) and both pass it before either commits —
+    double-applying for one user.
+
+    On Postgres we close that with a per-user transaction-scoped advisory lock:
+    the first claimer to reach a given user wins the lock, and we then re-read
+    'is this user running' *under* the lock. A losing claimer (lock already
+    held, or the re-read now shows the user running) skips this candidate and
+    tries the next. The lock auto-releases when claim_next's transaction
+    commits — which is immediately, since the job itself runs outside it.
+
+    On SQLite this is a no-op: BEGIN IMMEDIATE already serialises every claim
+    against a single writer, so the race cannot occur (and there is only ever
+    one worker anyway)."""
+    if not db.PG:
+        return True
+    locked = c.execute(
+        "SELECT pg_try_advisory_xact_lock(hashtext(?)) AS ok", (candidate["user_id"],)
+    ).fetchone()["ok"]
+    if not locked:
+        return False
+    running = c.execute(
+        "SELECT 1 FROM agent_runs WHERE user_id=? AND status='running' LIMIT 1",
+        (candidate["user_id"],),
+    ).fetchone()
+    return running is None
+
+
 def claim_next(worker_id: str) -> dict | None:
     """Atomically claim the oldest eligible queued job whose user has nothing
-    running. Postgres uses row-level locking (FOR UPDATE SKIP LOCKED); SQLite
-    uses an immediate transaction. Either way two workers never grab the same
-    row, and a user with a running job is skipped so we never double-apply.
+    running. Postgres uses row-level locking (FOR UPDATE SKIP LOCKED) plus a
+    per-user advisory lock (see _claim_guarded); SQLite uses an immediate
+    transaction. Either way two workers never grab the same row, and a user
+    with a running job is never double-claimed — so replicas > 1 is safe.
     Jobs still inside their post-failure backoff window are skipped too."""
     if admin_settings.maintenance_mode():
         return None
@@ -188,7 +222,10 @@ def claim_next(worker_id: str) -> dict | None:
                 "ORDER BY created_at ASC LIMIT 20",
                 (db.now_db(),),
             ).fetchall()
-        row = next((r for r in candidates if _backoff_ok(r)), None)
+        row = next(
+            (r for r in candidates if _backoff_ok(r) and _claim_guarded(c, r)),
+            None,
+        )
         if not row:
             return None
         ts = db.now_db()

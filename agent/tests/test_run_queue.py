@@ -226,6 +226,13 @@ def test_heartbeat_renews_only_the_owners_lease():
     assert row["locked_at"] > old
 
 
+def test_claim_guarded_is_noop_on_sqlite():
+    # On SQLite (PG=False) BEGIN IMMEDIATE already serialises claims, so the
+    # per-user advisory guard must be a pass-through — never blocking a claim.
+    assert _db_module.PG is False
+    assert run_queue._claim_guarded(object(), {"user_id": "user_1"}) is True
+
+
 def test_default_worker_id_is_unique_per_container_and_process(monkeypatch):
     monkeypatch.setenv("HOSTNAME", "replica-a")
     monkeypatch.setattr(run_queue.os, "getpid", lambda: 42)
