@@ -323,6 +323,36 @@ def update_skills(uid: str, skills: list[str], plan_json: dict | None = None):
         )
 
 
+def update_contact(uid: str, phone: str | None = None, gpa: float | None = None) -> dict:
+    """Prefill BLANK form-fill fields from resume extraction — never overwrites a
+    value the user set. Phone fills only when currently empty; GPA fills only when
+    it's null or still the 8.0 default (a placeholder nobody chose). Returns the
+    dict of fields actually filled, for logging."""
+    filled: dict = {}
+    with conn() as c:
+        _ensure_profile_columns(c)
+        row = c.execute("SELECT phone, gpa FROM profiles WHERE user_id=?", (uid,)).fetchone()
+        if not row:
+            return filled
+        cur_phone = row["phone"]
+        cur_gpa = row["gpa"]
+        sets: list[str] = []
+        vals: list = []
+        if phone and not (str(cur_phone or "").strip()):
+            sets.append("phone=?")
+            vals.append(phone)
+            filled["phone"] = phone
+        if gpa is not None and (cur_gpa is None or abs(float(cur_gpa) - 8.0) < 1e-9):
+            sets.append("gpa=?")
+            vals.append(float(gpa))
+            filled["gpa"] = gpa
+        if sets:
+            vals.append(now_db())
+            vals.append(uid)
+            c.execute(f"UPDATE profiles SET {', '.join(sets)}, updated_at=? WHERE user_id=?", vals)
+    return filled
+
+
 def set_internshala_connected(uid: str, connected: bool):
     with conn() as c:
         c.execute(

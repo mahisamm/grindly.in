@@ -70,6 +70,50 @@ _ATS_MIN_CHARS = 220
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.\w+\b")
 _PHONE_RE = re.compile(r"(?:\+?\d[\d\s-]{7,}\d)")
 
+# ---------- contact prefill: phone + GPA off the resume ----------
+# Anchored to a label first ("Mobile: 98…", "CGPA: 8.4"), then a conservative loose
+# fallback. Precision over recall: these values get typed into a real application
+# form, so a wrong guess is worse than no guess — the user confirms them anyway.
+# Digits may carry internal spaces/dashes ("98765 43210", "+91-98765-43210"); we
+# capture loosely then strip and validate to a clean 10-digit Indian mobile.
+_PHONE_ANCHORED = re.compile(
+    r"(?:phone|mobile|contact|tel|call|whats\s?app|\bph\b|\bmob\b)[^\d+]{0,8}"
+    r"((?:\+?\s?91[\s-]?)?[6-9](?:[\s-]?\d){9})", re.I)
+_PHONE_LOOSE = re.compile(r"(?<!\d)((?:\+?91[\s-]?)?[6-9](?:[\s-]?\d){9})(?!\d)")
+# GPA value 0–10 only; the trailing (?!\d) stops "45.0" from being read as "4".
+_CGPA_RE = re.compile(
+    r"(?:c\.?g\.?p\.?a\.?|gpa|grade\s*point)[^\d]{0,6}(10(?:\.\d{1,2})?|[0-9](?:\.\d{1,2})?)(?!\d)", re.I)
+
+
+def _clean_phone(raw: str) -> str | None:
+    digits = re.sub(r"\D", "", raw or "")
+    if len(digits) == 12 and digits.startswith("91"):
+        digits = digits[2:]
+    if len(digits) == 10 and digits[0] in "6789":
+        return digits
+    return None
+
+
+def extract_contact(text: str) -> dict:
+    """Best-effort phone + GPA pulled off a resume, to prefill the form-fill profile
+    fields. Conservative by design — returns None for anything it isn't reasonably
+    sure of. Returns {"phone": str|None, "gpa": float|None}."""
+    t = text or ""
+    phone = None
+    m = _PHONE_ANCHORED.search(t) or _PHONE_LOOSE.search(t)
+    if m:
+        phone = _clean_phone(m.group(1))
+    gpa = None
+    gm = _CGPA_RE.search(t)
+    if gm:
+        try:
+            v = float(gm.group(1))
+            if 0 < v <= 10:
+                gpa = round(v, 2)
+        except ValueError:
+            pass
+    return {"phone": phone, "gpa": gpa}
+
 
 def ats_report(resume_text: str, skills: list[str]) -> dict:
     """What survives machine extraction — which is all an ATS ever sees.

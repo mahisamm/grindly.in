@@ -513,6 +513,7 @@ export default function Dashboard() {
   const [notice, setNotice] = useState<{ kind: "ok" | "err" | "info"; text: string } | null>(null);
   const [slackIdDraft, setSlackIdDraft] = useState("");
   const [slackBusy, setSlackBusy] = useState(false);
+  const [slackSetupOpen, setSlackSetupOpen] = useState(false);
   const [extTokens, setExtTokens] = useState<{ id: string; label: string; createdAt: string; lastUsedAt: string | null }[]>([]);
   const [extBusy, setExtBusy] = useState<string | null>(null); // token id being revoked, or "all"
 
@@ -1132,6 +1133,12 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- load on tab switch, not a render-time computation
     if (tab === "integrations") loadExtTokens();
   }, [tab, loadExtTokens]);
+  // Opening "Profile & settings" from the account menu should feel like landing on
+  // a fresh page — jump to the top so the user isn't dropped mid-scroll into a
+  // long dashboard. Paired with hiding the home content below.
+  useEffect(() => {
+    if (tab === "profile" && typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [tab]);
 
   async function revokeExtToken(id?: string, all?: boolean) {
     setExtBusy(all ? "all" : id || null);
@@ -1335,6 +1342,23 @@ export default function Dashboard() {
       </header>
 
       <div className="mx-auto max-w-6xl px-5 py-8">
+        {/* Profile & settings is a dedicated full-screen view: a back bar on top, and
+            the dashboard "home" (greeting, stats, funnel, run controls) hidden below
+            so it reads as its own page instead of a scroll target. */}
+        {tab === "profile" && (
+          <div className="mb-6 flex items-center justify-between gap-3 border-b border-border pb-4">
+            <h1 className="font-display text-2xl font-semibold tracking-tight">Profile &amp; settings</h1>
+            <button
+              onClick={() => setTab("applications")}
+              className="shrink-0 rounded-lg border border-border px-3.5 py-2 text-sm text-muted transition hover:border-brand/40 hover:text-foreground"
+            >
+              ← Back to dashboard
+            </button>
+          </div>
+        )}
+
+        {tab !== "profile" && (
+        <>
         {/* header row */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
           <div>
@@ -1459,6 +1483,21 @@ export default function Dashboard() {
           }`}>
             <span>{notice.text}</span>
             <button onClick={() => setNotice(null)} className="shrink-0 text-muted hover:text-foreground transition">×</button>
+          </div>
+        )}
+
+        {/* Readiness nudge — a platform is connected, but the profile is still thin.
+            Non-blocking (Run agent still works): the agent auto-fills phone/GPA from
+            the resume, so the main gaps left are "no resume yet" or "no phone found".
+            Points to the profile page to finish. */}
+        {connectedCount > 0 && !isRunning && me.profile && (!me.profile.resumeName || !me.profile.phone) && (
+          <div className="mt-5 rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
+            <span className="font-medium">Finish setup for better matches:</span>{" "}
+            {[
+              !me.profile.resumeName ? "upload your resume (the agent matches on it and pulls your phone & GPA from it)" : null,
+              !me.profile.phone ? "add your phone number so application forms submit" : null,
+            ].filter(Boolean).join(" · ")}.{" "}
+            <button onClick={() => setTab("profile")} className="underline font-medium">Open profile →</button>
           </div>
         )}
 
@@ -1588,13 +1627,35 @@ export default function Dashboard() {
               <span className="text-muted">→</span>
               <span><span className="text-accent font-medium">{me.stats.offers}</span> <span className="text-muted">offer{me.stats.offers !== 1 ? "s" : ""}</span></span>
             </div>
-            {me.stats.outcomeReported < me.stats.applied && (
-              <p className="mt-2 text-xs text-muted">
-                Tell us what happened on your applications — set an outcome on each row in{" "}
-                <button onClick={() => { setTab("applications"); setFilter("applied"); }} className="underline text-brand-2">Applications</button>.
-                {" "}{me.stats.applied - me.stats.outcomeReported} still need an outcome.
-              </p>
-            )}
+            {/* How outcomes actually reach here. Honest: a company contacts the
+                student directly — Grindly tracks it, either automatically from Gmail
+                (once that's connected and the scope is live) or by the student
+                marking it. Answers the very common "how will I know I got an
+                interview?" question right where the funnel lives. */}
+            <div className="mt-3 space-y-1.5 border-t border-border/60 pt-2.5">
+              {me.user.gmailScanEnabled && me.user.gmailConnected ? (
+                <p className="text-xs text-accent">
+                  ✓ Grindly reads interview, offer, and rejection emails from your inbox and updates these automatically.
+                </p>
+              ) : me.user.gmailScanEnabled ? (
+                <p className="text-xs text-muted">
+                  Companies email or call you directly.{" "}
+                  <button onClick={() => setTab("integrations")} className="underline text-brand-2">Connect Gmail</button>{" "}
+                  and Grindly auto-detects interview emails for you — otherwise mark each outcome yourself.
+                </p>
+              ) : (
+                <p className="text-xs text-muted">
+                  Companies reach out to you directly — by email or phone — so watch your inbox after applying.
+                  Grindly can&apos;t see that, so when you hear back, mark it on the application to keep your interview rate accurate.
+                </p>
+              )}
+              {me.stats.outcomeReported < me.stats.applied && (
+                <p className="text-xs text-muted">
+                  <button onClick={() => { setTab("applications"); setFilter("applied"); }} className="underline text-brand-2">Set outcomes →</button>
+                  {" "}{me.stats.applied - me.stats.outcomeReported} application{me.stats.applied - me.stats.outcomeReported !== 1 ? "s" : ""} still need one.
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -1621,6 +1682,8 @@ export default function Dashboard() {
           <div className="mt-4 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 text-sm text-accent">
             Thanks — rated {surveyRating}/5. This helps us tune the matcher.
           </div>
+        )}
+        </>
         )}
 
         {/* Resume intelligence panel */}
@@ -1672,7 +1735,11 @@ export default function Dashboard() {
             {/* Manual skills editor — fallback when parsing fails or to refine */}
             {editingSkills && (
               <div className="mb-4 rounded-lg border border-brand/40 bg-brand/5 p-3">
-                <div className="text-xs text-muted mb-2">Add or remove skills the agent should match on. Type and press Enter.</div>
+                <div className="text-xs text-muted mb-2">
+                  These are what the agent scores every job against. Add any skill your resume
+                  missed so it finds those roles; remove anything that isn&apos;t really you —
+                  a wrong skill pulls in mismatched jobs. Type and press Enter.
+                </div>
                 <TagInput value={skillsDraft} onChange={setSkillsDraft} placeholder="e.g. React, Python, SQL" />
                 <div className="mt-2 flex gap-2">
                   <button
@@ -1753,15 +1820,27 @@ export default function Dashboard() {
                     )}
                   </div>
 
-                  {/* Skills strip */}
+                  {/* Skills strip — this list IS the agent's matching fuel, so we say
+                      so plainly and put the edit affordance right here where the skills
+                      are, not only in the far-away panel header. */}
                   {skills.length > 0 && (
                     <div>
-                      <div className="text-xs text-muted mb-1.5">Extracted skills</div>
+                      <div className="text-xs text-muted mb-1.5">Skills the agent matches you on</div>
                       <div className="flex flex-wrap gap-1.5">
                         {skills.map((s) => (
                           <span key={s} className="rounded-md bg-brand/15 px-2 py-0.5 text-xs text-brand-2">{s}</span>
                         ))}
                       </div>
+                      <p className="mt-2 text-[11px] text-muted">
+                        The agent scores every job against these. Missing one you actually have?{" "}
+                        <button
+                          onClick={() => { setSkillsDraft(skills); setEditingSkills(true); }}
+                          className="underline hover:text-foreground transition"
+                        >
+                          Add it
+                        </button>{" "}
+                        so those roles show up in your matches.
+                      </p>
                     </div>
                   )}
                 </div>
@@ -1792,21 +1871,52 @@ export default function Dashboard() {
               const busy = optimizing || status === "generating";
               return (
                 <div className="mt-6 border-t border-border pt-5">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="text-xs uppercase tracking-wide text-muted">ATS-optimized versions</div>
+                  <div className="text-xs uppercase tracking-wide text-muted mb-2">ATS-optimized versions</div>
+
+                  {/* Primary CTA — this is the flagship feature (the AI rebuilds your
+                      resume into higher-scoring versions, same facts), so it gets a
+                      full-width branded card, not a tiny link. Hidden while building,
+                      once versions exist, or when nothing could beat the current score;
+                      those states have their own UI below. */}
+                  {!busy && variants.length === 0 && status !== "no_gain" && status !== "failed" && (
                     <button
                       onClick={optimizeResume}
-                      disabled={busy}
-                      className="text-xs text-brand-2 hover:text-brand transition disabled:opacity-40"
-                      title="Generate 3 higher-scoring versions of your resume — no invented skills, same facts"
+                      className="group mb-3 block w-full rounded-xl border border-brand/40 bg-gradient-to-br from-brand/10 to-accent/10 p-4 text-left transition hover:border-brand/70"
                     >
-                      {busy ? "Building…" : variants.length > 0 ? "↻ Regenerate" : "✨ Generate optimized versions"}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                            <span className="text-lg" aria-hidden>✨</span>
+                            Get 3 AI-optimized versions of your resume
+                          </div>
+                          <p className="mt-1 text-xs text-muted">
+                            Higher ATS score, <span className="text-foreground">same facts</span> — rebuilt on a
+                            recruiter-friendly template, rewritten three ways, then re-scored. Pick the best and it
+                            becomes your resume. Nothing is invented.
+                          </p>
+                        </div>
+                        <span className="shrink-0 rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white transition group-hover:opacity-90">
+                          Generate →
+                        </span>
+                      </div>
                     </button>
-                  </div>
-                  <p className="text-xs text-muted mb-3">
-                    Three rewrites of your <em>real</em> resume on a clean, ATS-friendly template —
-                    scored after compiling, so every number here is measured, not guessed. Nothing is invented.
-                  </p>
+                  )}
+
+                  {/* Compact controls once versions exist (the cards below carry the value). */}
+                  {!busy && variants.length > 0 && (
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <p className="text-xs text-muted">
+                        Rewrites of your <em>real</em> resume, scored after compiling — measured, not guessed.
+                      </p>
+                      <button
+                        onClick={optimizeResume}
+                        className="shrink-0 text-xs text-brand-2 hover:text-brand transition"
+                        title="Generate a fresh set — no invented skills, same facts"
+                      >
+                        ↻ Regenerate
+                      </button>
+                    </div>
+                  )}
 
                   {busy && (
                     <div className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-3 text-xs text-muted flex items-center gap-2">
@@ -1935,20 +2045,10 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* tabs — profile lives in the account menu (top-right avatar) now. In the
-            profile view the three-tab strip would show with nothing active (a phantom
-            tab), so we swap it for a titled header + a way back. */}
-        {tab === "profile" ? (
-          <div className="mt-8 flex items-center justify-between gap-3 border-b border-border pb-3">
-            <h2 className="font-display text-lg font-semibold tracking-tight">Profile &amp; settings</h2>
-            <button
-              onClick={() => setTab("applications")}
-              className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm text-muted transition hover:border-brand/40 hover:text-foreground"
-            >
-              ← Back to applications
-            </button>
-          </div>
-        ) : (
+        {/* Tab strip — only in dashboard mode. In the profile view the strip would
+            show with nothing active (a phantom tab); that view has its own top
+            back-bar instead, and the home content above is hidden. */}
+        {tab !== "profile" && (
           <div className="mt-8 flex items-center gap-2 border-b border-border overflow-x-auto scrollbar-none">
             {(["applications", "integrations", "reports"] as const).map((t) => (
               <button
@@ -1973,6 +2073,36 @@ export default function Dashboard() {
         {/* ── PROFILE ── */}
         {tab === "profile" && profileForm && (
           <div className="mt-6 max-w-xl space-y-6">
+            {/* Your details first — phone + GPA are what users open this page looking
+                for ("where's my CGPA?"), so they lead rather than sit at the bottom.
+                The agent prefills these from your resume; you confirm them here. */}
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-4">Your details</h2>
+              <p className="text-xs text-muted mb-4">
+                Phone and GPA — filled into platform application forms automatically. The agent
+                grabs these from your resume when it can; check they&apos;re right.
+              </p>
+              <div className="space-y-4">
+                {CONTACT_FIELDS.map((f) => (
+                  <div key={f.key}>
+                    <label htmlFor={`field-${f.key}`} className="block text-sm font-medium mb-1">{f.label}</label>
+                    <p className="text-xs text-muted mb-1.5">{f.help}</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        id={`field-${f.key}`}
+                        type={f.type}
+                        value={String(profileForm[f.key as keyof ProfileForm] ?? "")}
+                        placeholder={("placeholder" in f ? f.placeholder : undefined)}
+                        onChange={(e) => patchForm(f.key as keyof ProfileForm, e.target.value as ProfileForm[keyof ProfileForm])}
+                        className="rounded-lg border border-border bg-surface px-3 py-2 text-sm w-48 outline-none"
+                      />
+                      {"suffix" in f && f.suffix && <span className="text-sm text-muted">{f.suffix}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-4">Targeting</h2>
               <div className="space-y-4">
@@ -2079,30 +2209,6 @@ export default function Dashboard() {
                   reports will fall back to email.
                 </p>
               )}
-            </div>
-
-            <div>
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-4">Form fill</h2>
-              <p className="text-xs text-muted mb-4">These values are filled into platform application forms automatically.</p>
-              <div className="space-y-4">
-                {CONTACT_FIELDS.map((f) => (
-                  <div key={f.key}>
-                    <label htmlFor={`field-${f.key}`} className="block text-sm font-medium mb-1">{f.label}</label>
-                    <p className="text-xs text-muted mb-1.5">{f.help}</p>
-                    <div className="flex items-center gap-2">
-                      <input
-                        id={`field-${f.key}`}
-                        type={f.type}
-                        value={String(profileForm[f.key as keyof ProfileForm] ?? "")}
-                        placeholder={("placeholder" in f ? f.placeholder : undefined)}
-                        onChange={(e) => patchForm(f.key as keyof ProfileForm, e.target.value as ProfileForm[keyof ProfileForm])}
-                        className="rounded-lg border border-border bg-surface px-3 py-2 text-sm w-48 outline-none"
-                      />
-                      {"suffix" in f && f.suffix && <span className="text-sm text-muted">{f.suffix}</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
 
             <button
@@ -2450,39 +2556,54 @@ export default function Dashboard() {
               })}
             </div>
 
-            {/* Slack daily reports */}
+            {/* Updates channel. Email + the in-app 🔔 bell are the defaults everyone
+                gets with zero setup, so Slack is a tucked-away opt-in rather than an
+                always-open form — most students never want it. */}
             <div className="mt-5 rounded-xl border border-border bg-surface p-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold rounded-md px-1.5 py-0.5 border text-[#4A154B] border-current">Sl</span>
-                  <span className="font-medium">Slack reports</span>
+                  <span className="text-base" aria-hidden>🔔</span>
+                  <span className="font-medium">Updates</span>
                 </div>
-                <span className={`text-xs rounded-full px-2 py-0.5 ${me.user.slackConnected ? "bg-accent/20 text-accent" : "bg-surface-2 text-muted"}`}>
-                  {me.user.slackConnected ? "Connected" : "Not connected"}
-                </span>
+                {me.user.slackConnected && (
+                  <span className="text-xs rounded-full px-2 py-0.5 bg-accent/20 text-accent">Slack on</span>
+                )}
               </div>
               <p className="text-xs text-muted mb-3">
-                Get the daily run report and session-expiry alerts as a Slack DM. Paste your Slack
-                member ID (Slack → your profile → ⋮ → Copy member ID). Needs <code className="text-foreground">SLACK_BOT_TOKEN</code> in <code className="text-foreground">.env</code> for real delivery.
+                Every update reaches you by <span className="text-foreground">email</span> and in the{" "}
+                <span className="text-foreground">🔔 bell</span> above — nothing to set up.
               </p>
               {me.user.slackConnected ? (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-muted">Sending to <span className="text-foreground font-mono">{me.user.slackUserId}</span></span>
+                  <span className="text-sm text-muted">Also DMing Slack <span className="text-foreground font-mono">{me.user.slackUserId}</span></span>
                   <button onClick={testSlack} disabled={slackBusy} className="rounded-lg border border-border px-3 py-1.5 text-xs hover:border-brand/60 transition disabled:opacity-50">Send test</button>
                   <button onClick={disconnectSlack} disabled={slackBusy} className="text-xs text-muted hover:text-danger transition">Disconnect</button>
                 </div>
-              ) : (
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    value={slackIdDraft}
-                    onChange={(e) => setSlackIdDraft(e.target.value)}
-                    placeholder="U0XXXXXXX"
-                    className="rounded-lg border border-border bg-surface px-3 py-2 text-sm w-44 outline-none font-mono"
-                  />
-                  <button onClick={connectSlack} disabled={slackBusy || !slackIdDraft.trim()} className="press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50">
-                    {slackBusy ? "…" : "Connect Slack"}
-                  </button>
+              ) : slackSetupOpen ? (
+                <div>
+                  <p className="text-xs text-muted mb-2">
+                    Paste your Slack member ID (Slack → your profile → ⋮ → Copy member ID).
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={slackIdDraft}
+                      onChange={(e) => setSlackIdDraft(e.target.value)}
+                      placeholder="U0XXXXXXX"
+                      className="rounded-lg border border-border bg-surface px-3 py-2 text-sm w-44 outline-none font-mono"
+                    />
+                    <button onClick={connectSlack} disabled={slackBusy || !slackIdDraft.trim()} className="press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50">
+                      {slackBusy ? "…" : "Connect Slack"}
+                    </button>
+                    <button onClick={() => setSlackSetupOpen(false)} className="text-xs text-muted hover:text-foreground transition">Cancel</button>
+                  </div>
                 </div>
+              ) : (
+                <button
+                  onClick={() => setSlackSetupOpen(true)}
+                  className="text-xs text-brand-2 hover:text-brand transition"
+                >
+                  Want Slack DMs too? Set up Slack →
+                </button>
               )}
             </div>
 
