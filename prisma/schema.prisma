@@ -117,6 +117,7 @@ model User {
   agentRuns      AgentRun[]
   credentials    PlatformCredential[]
   extensionTokens ExtensionToken[]
+  resumeVariants ResumeVariant[]
 
   @@map("users")
 }
@@ -205,6 +206,16 @@ model Profile {
   // since yesterday.
   resumeHash        String?  @map("resume_hash")
 
+  // ATS-optimized variant generation (the "3 better resumes" feature). Runs only
+  // on an explicit button click, never on every sweep — it's several LLM calls +
+  // Tectonic compiles. Status drives the dashboard card:
+  //   null/none | generating | ready | failed | no_gain
+  // "no_gain" means we produced variants but none scored higher than the master,
+  // so we show nothing rather than a worse resume dressed up as an upgrade. The
+  // actual variants live in the resume_variants table (ResumeVariant).
+  resumeVariantStatus String? @map("resume_variant_status")
+  resumeVariantDetail String? @map("resume_variant_detail")
+
   // beta: one-tap "are these matches good?" survey (1-5). null = not yet asked
   matchQualityRating Int?     @map("match_quality_rating")
   // beta: surfaced to user when resume parsing produced no skills (manual fallback)
@@ -224,6 +235,38 @@ model Profile {
   updatedAt  DateTime @updatedAt @map("updated_at")
 
   @@map("profiles")
+}
+
+// One AI-generated, ATS-optimized rewrite of the user's master resume, rendered
+// on a clean single-column template and COMPILED so its score is measured, not
+// guessed. We only ever store variants that scored strictly higher than the
+// master (see agent/resume_optimize.py). No fabricated content: a truthfulness
+// gate rejects any variant that introduces a skill/tool/org/degree absent from
+// the source resume before it is ever compiled or stored.
+model ResumeVariant {
+  id       String @id @default(cuid())
+  userId   String @map("user_id")
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // resume_hash of the master text these were generated from. When the user
+  // uploads a new master (new hash), stale variants are cleared — they describe
+  // a resume that no longer exists.
+  baseHash      String @map("base_hash")
+  rank          Int                                    // 1..N display order, best score first
+  label         String                                 // short strategy name, e.g. "Keyword-optimized"
+  score         Int                                    // MEASURED ATS score of the compiled variant
+  grade         String
+  baselineScore Int    @map("baseline_score")          // master's score, for the "+N" delta shown to the user
+  // JSON array of plain-English strings: what this variant changed vs the master.
+  // Keeps the (invisible) LaTeX trustworthy — the user sees why the score moved.
+  changes  String
+  // Compiled PDF on disk: data/resume_variants/<uid>/<id>.pdf. Served only to the
+  // owning user via GET /api/resume/variants/[id]; never a public path.
+  pdfPath  String   @map("pdf_path")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("resume_variants")
 }
 
 model Job {

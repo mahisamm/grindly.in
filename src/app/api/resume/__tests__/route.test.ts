@@ -8,6 +8,7 @@ const {
   mockRm,
   mockProfileUpsert,
   mockAgentRunCreate,
+  mockVariantDeleteMany,
   mockSpawnWorkerKick,
 } = vi.hoisted(() => ({
   mockGetUid: vi.fn(),
@@ -17,6 +18,7 @@ const {
   mockRm: vi.fn(),
   mockProfileUpsert: vi.fn(),
   mockAgentRunCreate: vi.fn(),
+  mockVariantDeleteMany: vi.fn(),
   mockSpawnWorkerKick: vi.fn(),
 }));
 
@@ -25,6 +27,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     profile: { upsert: mockProfileUpsert },
     agentRun: { create: mockAgentRunCreate },
+    resumeVariant: { deleteMany: mockVariantDeleteMany },
   },
 }));
 vi.mock("@/lib/workerKick", () => ({ spawnWorkerKick: mockSpawnWorkerKick }));
@@ -53,6 +56,7 @@ beforeEach(() => {
   mockAccess.mockRejectedValue(new Error("no python here")); // default: no worker.py kick
   mockProfileUpsert.mockResolvedValue({ id: "p1" });
   mockAgentRunCreate.mockResolvedValue({ id: "r1" });
+  mockVariantDeleteMany.mockResolvedValue({ count: 0 });
 });
 
 describe("POST /api/resume", () => {

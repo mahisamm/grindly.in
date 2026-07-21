@@ -195,6 +195,10 @@ def _ensure_profile_columns(c):
         c.execute("ALTER TABLE profiles ADD COLUMN resume_tex_detail TEXT")
     if "resume_hash" not in cols:
         c.execute("ALTER TABLE profiles ADD COLUMN resume_hash TEXT")
+    if "resume_variant_status" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN resume_variant_status TEXT")
+    if "resume_variant_detail" not in cols:
+        c.execute("ALTER TABLE profiles ADD COLUMN resume_variant_detail TEXT")
 
 
 def get_user(uid: str) -> dict | None:
@@ -1074,6 +1078,75 @@ def set_resume_parse_failed(uid: str, failed: bool):
             "UPDATE profiles SET resume_parse_failed=?, updated_at=? WHERE user_id=?",
             (bool(failed), now_db(), uid),
         )
+
+
+# ---------- ATS-optimized resume variants ----------
+
+def _ensure_variants_table(c):
+    if PG:
+        return
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS resume_variants (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            base_hash TEXT NOT NULL,
+            rank INTEGER NOT NULL,
+            label TEXT NOT NULL,
+            score INTEGER NOT NULL,
+            grade TEXT NOT NULL,
+            baseline_score INTEGER NOT NULL,
+            changes TEXT NOT NULL,
+            pdf_path TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        )
+    """)
+
+
+def set_variant_status(uid: str, status: str, detail: str = ""):
+    """Drive the dashboard 'ATS-optimized versions' card:
+    generating | ready | failed | no_gain (see Profile.resumeVariantStatus)."""
+    with conn() as c:
+        _ensure_profile_columns(c)
+        c.execute(
+            "UPDATE profiles SET resume_variant_status=?, resume_variant_detail=?, "
+            "updated_at=? WHERE user_id=?",
+            (status, (detail or "")[:500], now_db(), uid),
+        )
+
+
+def clear_resume_variants(uid: str):
+    """Drop every stored variant for a user. Called before storing a fresh batch,
+    and whenever the master resume changes (old variants describe a resume that no
+    longer exists)."""
+    with conn() as c:
+        _ensure_variants_table(c)
+        c.execute("DELETE FROM resume_variants WHERE user_id=?", (uid,))
+
+
+def save_resume_variants(uid: str, base_hash: str, variants: list[dict]):
+    """Replace this user's variants with a freshly generated, ranked batch.
+
+    `variants` is already sorted best-score-first; rank is assigned from that
+    order. Each dict: {label, score, grade, baseline_score, changes: list, pdf_path}.
+    The compiled PDFs are written to disk by the caller; we store only the path.
+    """
+    with conn() as c:
+        _ensure_variants_table(c)
+        c.execute("DELETE FROM resume_variants WHERE user_id=?", (uid,))
+        for rank, v in enumerate(variants, start=1):
+            c.execute(
+                "INSERT INTO resume_variants (id, user_id, base_hash, rank, label, "
+                "score, grade, baseline_score, changes, pdf_path, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    cuid(), uid, base_hash, rank, str(v.get("label") or "")[:80],
+                    int(v.get("score") or 0), str(v.get("grade") or "?")[:2],
+                    int(v.get("baseline_score") or 0),
+                    json.dumps(v.get("changes") or []),
+                    str(v.get("pdf_path") or ""),
+                    now_db(),
+                ),
+            )
 
 
 def get_outcome_stats(uid: str) -> dict:

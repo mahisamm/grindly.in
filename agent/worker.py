@@ -29,6 +29,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import sys
 import time
 import datetime
@@ -48,7 +49,9 @@ import matcher
 import questions
 import resume_parse
 import resume_ai
+import resume_optimize
 import safety
+import drift
 import llm as llm_mod
 
 logging.basicConfig(
@@ -854,6 +857,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     applied_keys: set[tuple[str, str]] = set()
     per_src_applied: dict[str, int] = {}   # per-platform applies this run (bot-pace guard)
     per_src_failed:  dict[str, int] = {}   # per-platform failures this run (reliability monitor)
+    per_src_reasons: dict[str, list[str]] = {}  # per-platform failure-reason codes (drift signal)
     needs_login_srcs: set[str] = set()     # platforms whose session died mid-run
     challenged_srcs: set[str] = set()      # platforms that flagged a captcha/challenge this run
 
@@ -1381,6 +1385,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             failed += 1
             per_src_failed[src] = per_src_failed.get(src, 0) + 1
             fr = _classify_failure(why)
+            per_src_reasons.setdefault(src, []).append(fr)
             if fr == safety.FAILURE_REASON.CAPTCHA:
                 _flag_challenge(src)
             db.add_application(
@@ -1395,23 +1400,35 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         if live:
             time.sleep(random.uniform(*_BASE_PACE_SEC))
 
-    # per-platform failure rate check — warn if >50% of attempts on a platform fail
+    # per-platform reliability check. Split genuine selector drift (our adapter
+    # is broken — page an engineer) from transient/user-side failures (captcha,
+    # expired session — noise that a reconnect fixes). See agent/drift.py.
     for src in set(list(per_src_applied) + list(per_src_failed)):
         attempts = per_src_applied.get(src, 0) + per_src_failed.get(src, 0)
-        if attempts >= 3:
-            rate = per_src_failed.get(src, 0) / attempts
-            if rate > _FAIL_RATE_WARN:
-                log.warning(
-                    "HIGH FAILURE RATE on %s: %d/%d (%d%%) — selectors may be broken or site changed",
-                    src, per_src_failed.get(src, 0), attempts, int(rate * 100),
-                )
-                db.add_audit("high_failure_rate", user_id=uid, target=src,
-                             detail=f"{int(rate*100)}% fail rate ({attempts} attempts)")
-                notify.send(
-                    _OPS_CHANNEL,
-                    f":warning: High failure rate on *{src}*: {per_src_failed.get(src, 0)}/{attempts} "
-                    f"({int(rate*100)}%) for user {uid} — selectors may be broken or the site changed.",
-                )
+        if attempts < 3:
+            continue
+        report = drift.assess_source(src, attempts, per_src_reasons.get(src), min_attempts=3)
+        rate = per_src_failed.get(src, 0) / attempts
+        if report.alert:
+            log.error(
+                "SELECTOR DRIFT on %s: %d/%d selector-missing (%d%%) — adapter needs updating",
+                src, report.selector_failures, attempts, int(report.selector_share * 100),
+            )
+            db.add_audit("selector_drift", user_id=uid, target=src,
+                         detail=f"{report.selector_failures}/{attempts} selector-missing")
+            notify.send(_OPS_CHANNEL, report.message())
+        elif rate > _FAIL_RATE_WARN:
+            log.warning(
+                "HIGH FAILURE RATE on %s: %d/%d (%d%%) — selectors may be broken or site changed",
+                src, per_src_failed.get(src, 0), attempts, int(rate * 100),
+            )
+            db.add_audit("high_failure_rate", user_id=uid, target=src,
+                         detail=f"{int(rate*100)}% fail rate ({attempts} attempts)")
+            notify.send(
+                _OPS_CHANNEL,
+                f":warning: High failure rate on *{src}*: {per_src_failed.get(src, 0)}/{attempts} "
+                f"({int(rate*100)}%) for user {uid} — selectors may be broken or the site changed.",
+            )
 
     # Apply Kit backfill — attach a tailored resume, cover letter, and (where the
     # platform supports a read-only visit) drafted screening answers to every due
@@ -1561,16 +1578,94 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     }
 
 
+def optimize_variants(uid: str) -> dict:
+    """Generate up to 3 ATS-optimized, compiled, measured-higher-scoring versions
+    of the user's master resume. Runs ONLY on an explicit dashboard click (this is
+    several LLM calls + Tectonic compiles), never on a sweep.
+
+    Honest outcomes, all non-error:
+      ready   — one or more variants beat the master; stored + shown.
+      no_gain — we produced variants but none scored higher, OR the LLM/compiler
+                was unavailable. We show nothing rather than a worse resume.
+      failed  — no resume text to work from.
+
+    The compiled PDFs land in data/resume_variants/<uid>/; the DB rows (see
+    db.save_resume_variants) hold the score, the plain-English change list, and the
+    path. Nothing here fabricates content — resume_optimize enforces a truthfulness
+    gate before a variant is ever compiled.
+    """
+    user = db.get_user(uid)
+    if not user:
+        log.warning("optimize: no user %s", uid)
+        return {"error": "no user"}
+
+    profile = user.get("profile") or {}
+    text = profile.get("resume_text") or ""
+    if not text:
+        path = resume_parse.find_resume_file(uid)
+        if path:
+            text = resume_parse.extract_text(path)
+            if text:
+                db.set_resume_text(uid, text)
+    if not text:
+        db.set_variant_status(uid, "failed", "No readable resume text to optimize yet.")
+        return {"status": "failed", "detail": "no resume text"}
+
+    skills = _jlist(profile.get("skills"))
+    if not skills:
+        skills = resume_parse.extract_skills(text)
+
+    db.set_variant_status(uid, "generating", "Building optimized versions…")
+    try:
+        variants = resume_optimize.generate_variants(text, skills)
+    except Exception as e:  # noqa: BLE001 — a generation crash must degrade, not kill the worker
+        log.exception("optimize: generation failed for %s", uid)
+        db.set_variant_status(uid, "no_gain", "Couldn't build optimized versions this time — try again.")
+        return {"status": "error", "detail": str(e)}
+
+    if not variants:
+        db.clear_resume_variants(uid)
+        db.set_variant_status(
+            uid, "no_gain",
+            "Your resume already scores well — we couldn't produce a version that "
+            "beats it without changing the facts, so nothing was added.",
+        )
+        return {"status": "no_gain"}
+
+    # Persist the compiled PDFs to disk, then record the rows. Wipe the user's old
+    # variant dir first so a smaller new batch can't leave orphaned files behind.
+    out_dir = os.path.join(_ROOT_DIR, "data", "resume_variants", uid)
+    shutil.rmtree(out_dir, ignore_errors=True)
+    os.makedirs(out_dir, exist_ok=True)
+    for i, v in enumerate(variants, start=1):
+        fname = f"{i}.pdf"
+        with open(os.path.join(out_dir, fname), "wb") as f:
+            f.write(v.pop("pdf_bytes"))
+        # Store a project-root-relative POSIX path; the web route resolves it under
+        # process.cwd() and validates it stays inside data/resume_variants.
+        v["pdf_path"] = f"data/resume_variants/{uid}/{fname}"
+
+    base_hash = _resume_hash(text)
+    db.save_resume_variants(uid, base_hash, variants)
+    best = variants[0]["score"]
+    db.set_variant_status(uid, "ready", f"{len(variants)} version(s) ready — best scores {best}.")
+    log.info("optimize: %s stored %d variant(s), best=%d", uid, len(variants), best)
+    return {"status": "ready", "count": len(variants), "best": best}
+
+
 def run_job(uid: str, mode: str) -> dict:
     """Queue dispatcher so the web app can ENQUEUE work instead of spawning
     Python itself:
       'analyze'              → resume analysis only
+      'optimize'             → generate ATS-optimized resume variants (button-click)
       'connect_<platform>'   → credential login for that platform (hosted)
       'approved'             → submit only the applications the user approved
       anything else          → full apply pipeline.
     Used by both --drain and --serve."""
     if mode == "analyze":
         return analyze_only(uid)
+    if mode == "optimize":
+        return optimize_variants(uid)
     if mode == "latex_check":
         return latex_check(uid)
     if mode.startswith("connect"):

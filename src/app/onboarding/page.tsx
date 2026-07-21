@@ -385,6 +385,7 @@ export default function OnboardingPage() {
               </div>
               <textarea
                 value={resumeText}
+                aria-label="Paste your resume text"
                 onChange={(e) => setResumeText(e.target.value)}
                 onBlur={savePasted}
                 placeholder="Paste your resume text here…"
@@ -433,6 +434,7 @@ export default function OnboardingPage() {
                         )}
                         {f.type === "select" && (
                           <select
+                            aria-label={f.label}
                             value={String(form[f.key] ?? "")}
                             onChange={(e) => set(f.key, e.target.value)}
                             className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand transition capitalize"
@@ -448,6 +450,7 @@ export default function OnboardingPage() {
                           <div className="flex items-center gap-2">
                             <input
                               type="number"
+                              aria-label={f.label}
                               value={Number(form[f.key] ?? 0)}
                               onChange={(e) => set(f.key, Number(e.target.value))}
                               className="w-32 rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand transition"
@@ -458,12 +461,16 @@ export default function OnboardingPage() {
                         {f.type === "toggle" && (
                           <button
                             type="button"
+                            role="switch"
+                            aria-checked={Boolean(form[f.key])}
+                            aria-label={f.label}
                             onClick={() => set(f.key, !form[f.key])}
                             className={`relative h-7 w-12 rounded-full transition ${
                               form[f.key] ? "bg-accent" : "bg-surface-2 border border-border"
                             }`}
                           >
                             <span
+                              aria-hidden="true"
                               className={`absolute top-1 size-5 rounded-full bg-white transition ${
                                 form[f.key] ? "left-6" : "left-1"
                               }`}
@@ -506,6 +513,7 @@ export default function OnboardingPage() {
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <button
                   onClick={() => setNotifChannel("slack")}
+                  aria-pressed={notifChannel === "slack"}
                   className={`rounded-xl border-2 p-4 text-left transition ${notifChannel === "slack" ? "border-brand bg-brand/5" : "border-border hover:border-brand/40"}`}
                 >
                   <div className="text-xl mb-1">💬</div>
@@ -514,6 +522,7 @@ export default function OnboardingPage() {
                 </button>
                 <button
                   onClick={() => setNotifChannel("email")}
+                  aria-pressed={notifChannel === "email"}
                   className={`rounded-xl border-2 p-4 text-left transition ${notifChannel === "email" ? "border-brand bg-brand/5" : "border-border hover:border-brand/40"}`}
                 >
                   <div className="text-xl mb-1">📧</div>
@@ -535,6 +544,7 @@ export default function OnboardingPage() {
                   </div>
                   <input
                     value={slackId}
+                    aria-label="Slack member ID"
                     onChange={(e) => setSlackId(e.target.value)}
                     placeholder="U08AB12CD"
                     className="mt-4 w-full rounded-lg border border-border bg-surface px-3 py-2.5 outline-none focus:border-brand transition font-mono"

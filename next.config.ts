@@ -37,6 +37,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Hide the on-screen dev route indicator (the floating "N" badge).
+  devIndicators: false,
   // Pin the workspace root — a stray lockfile in the home dir was making Next
   // infer the wrong root, which broke route + metadata resolution.
   turbopack: {

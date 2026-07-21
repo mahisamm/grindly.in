@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { PageTitle, Panel, StatCard, LineChart, DonutChart, BarRows } from "../ui";
+import { computeFunnel, overallConversion, formatPct } from "@/lib/funnel";
 
 type Analytics = {
   rangeDays: number;
@@ -190,26 +191,38 @@ export default function AnalyticsPage() {
             series={[{ name: "signups", color: "#fbbd23", values: d.users.signupSeries.map((s) => s.count) }]}
           />
           <div className="mt-4 border-t border-[#262a33] pt-4 font-mono text-xs">
-            <div className="mb-2 text-[#8b919c]">Funnel</div>
-            {([
-              ["Visitors", d.funnel.visitors],
-              ["Signups", d.funnel.signups],
-              ["Approved", d.funnel.approved],
-              ["Paying", d.funnel.paid],
-            ] as [string, number][]).map(([label, v], i, arr) => {
-              const top = arr[0][1] || 1;
-              return (
-                <div key={label} className="mb-1.5">
-                  <div className="flex justify-between">
-                    <span className="text-[#8b919c]">{label}</span>
-                    <span className="tabular-nums text-[#e6e8eb]">{v}</span>
-                  </div>
-                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[#1d2027]">
-                    <div className="h-full rounded-full bg-[#36d399]" style={{ width: `${Math.round((v / top) * 100)}%` }} />
-                  </div>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-[#8b919c]">Funnel</span>
+              <span className="tabular-nums text-[#36d399]">
+                {formatPct(overallConversion([
+                  { label: "Visitors", value: d.funnel.visitors },
+                  { label: "Paying", value: d.funnel.paid },
+                ]))} end-to-end
+              </span>
+            </div>
+            {computeFunnel([
+              { label: "Visitors", value: d.funnel.visitors },
+              { label: "Signups", value: d.funnel.signups },
+              { label: "Approved", value: d.funnel.approved },
+              { label: "Paying", value: d.funnel.paid },
+            ]).map((row, i) => (
+              <div key={row.label} className="mb-1.5">
+                <div className="flex justify-between">
+                  <span className="text-[#8b919c]">{row.label}</span>
+                  <span className="tabular-nums text-[#e6e8eb]">
+                    {row.value}
+                    {i > 0 && (
+                      <span className="ml-2 text-[#5a606b]">
+                        {formatPct(row.stepConversion, 0)} · −{row.dropOff}
+                      </span>
+                    )}
+                  </span>
                 </div>
-              );
-            })}
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[#1d2027]">
+                  <div className="h-full rounded-full bg-[#36d399]" style={{ width: `${Math.round(row.pctOfTop * 100)}%` }} />
+                </div>
+              </div>
+            ))}
           </div>
         </Panel>
       </div>

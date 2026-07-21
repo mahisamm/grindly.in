@@ -35,7 +35,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Grindly — your AI applies to internships while you sleep",
+  title: "Grindly — your AI preps internship applications while you sleep",
   description:
     "Grindly reads your resume, finds matching internships, and prepares supported applications for your approval. Daily updates via Slack or email.",
   verification: {
@@ -57,14 +57,14 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Grindly — AI Internship Agent",
-    description: "Your AI applies to internships while you sleep. Upload your resume, set preferences, done.",
+    description: "Your AI preps internship applications while you sleep — you review and submit. Upload your resume, set preferences, done.",
     siteName: "Grindly",
     type: "website",
   },
   twitter: {
     card: "summary",
     title: "Grindly — AI Internship Agent",
-    description: "Your AI applies to internships while you sleep.",
+    description: "Your AI preps internship applications while you sleep — you review and submit.",
   },
   formatDetection: {
     telephone: false,
@@ -89,9 +89,13 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-title" content="Grindly" />
       </head>
       <body className="min-h-full flex flex-col">
+        {/* Keyboard/screen-reader users: jump straight past the nav to content. */}
+        <a href="#main-content" className="skip-link">Skip to main content</a>
         <div className="grain-fixed" aria-hidden="true" />
         <Track />
-        {children}
+        <div id="main-content" tabIndex={-1} className="flex min-h-full flex-col outline-none">
+          {children}
+        </div>
         {/* External file, not an inline body — lets script-src drop 'unsafe-inline'
             for the app's own scripts (see next.config.ts CSP comment). */}
         <Script src="/sw-register.js" strategy="afterInteractive" />

@@ -34,6 +34,7 @@ export default function Home() {
     <>
       <Nav />
 
+      <main>
       {/* ══════════ HERO ══════════ */}
       <section className="grid-bg relative overflow-hidden">
         <div className="mesh" aria-hidden />
@@ -42,7 +43,7 @@ export default function Home() {
           <div className="animate-in">
             <div className="inline-flex items-center gap-2.5 rounded-full border border-[var(--line-2)] bg-[rgba(250,246,238,0.6)] px-3.5 py-1.5 text-[0.82rem] text-[var(--ink-soft)]">
               <span className="size-[7px] rounded-full bg-brand pulse-dot" />
-              Your AI applies while you <em className="font-display not-italic text-ink italic">sleep</em>
+              Your AI preps applications while you <em className="font-display not-italic text-ink italic">sleep</em>
             </div>
 
             <h1 className="display mt-4 text-[clamp(2.5rem,5.8vw,4.1rem)] tracking-[-0.02em]">
@@ -74,13 +75,6 @@ export default function Home() {
             </div>
 
             <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[0.78rem] text-[var(--ink-mute)]">
-              <span className="inline-flex cursor-not-allowed items-center gap-2 rounded-full border border-dashed border-[var(--line-2)] px-3 py-1.5 opacity-75">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                  <path d="M7.2 9.5a1 1 0 0 1 1-1h7.6a1 1 0 0 1 1 1v6.2a2 2 0 0 1-2 2H9.2a2 2 0 0 1-2-2V9.5z" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M8.6 8.4 7.4 6.3M15.4 8.4l1.2-2.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
-                Android app — coming to Play Store soon
-              </span>
               <span className="inline-flex items-center gap-2">
                 <span className="tracking-[0.18em] text-brand">✦✦✦✦✦</span>
                 Built for the intern grind across 5 platforms
@@ -269,11 +263,13 @@ export default function Home() {
           </Link>
         </Reveal>
       </section>
+      </main>
 
       {/* ══════════ FOOTER ══════════ */}
       <footer className="relative z-[5] flex flex-wrap items-center justify-between gap-5 border-t border-[var(--line-2)] px-[clamp(18px,5vw,80px)] py-[clamp(28px,4vw,44px)] text-[0.82rem] text-[var(--ink-soft)]">
         <Logo size={26} withWordmark />
         <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
+          <Link href="/help" className="hover:text-brand transition">Help</Link>
           <Link href="/privacy" className="hover:text-brand transition">Privacy</Link>
           <Link href="/terms" className="hover:text-brand transition">Terms</Link>
           <span className="text-[var(--ink-mute)]">© {new Date().getFullYear()} Grindly · Built for the intern grind.</span>

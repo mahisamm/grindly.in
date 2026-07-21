@@ -139,6 +139,10 @@ export async function POST(req: Request) {
     resumeScore: null,
     resumeSuggestions: null,
     resumeParseFailed: false,
+    // A new master invalidates the old ATS-optimized variants — they were built
+    // from a resume that no longer exists. Clear the status; rows dropped below.
+    resumeVariantStatus: null,
+    resumeVariantDetail: null,
   };
 
   // Old resumes on disk for this uid, under a different extension, would otherwise
@@ -154,6 +158,14 @@ export async function POST(req: Request) {
       update: { resumeName: file.name, ...resetDerived },
       create: { userId: uid, resumeName: file.name, ...resetDerived },
     });
+    // Drop the stale ATS-optimized variants generated from the previous master.
+    // Best-effort and isolated: variant cleanup must never fail a resume upload
+    // (a missing delegate or a DB hiccup here would otherwise 500 the whole POST).
+    try {
+      await prisma.resumeVariant.deleteMany({ where: { userId: uid } });
+    } catch {
+      /* ignore — the variants are stale, not load-bearing */
+    }
 
     // Queue a resume-analysis job; the worker fleet drains it, so the web app
     // needs no Python. The spawn below is a best-effort local "kick" so a dev box

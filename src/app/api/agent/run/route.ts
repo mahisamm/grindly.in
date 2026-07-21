@@ -21,7 +21,10 @@ export async function POST(req: Request) {
   const uid = await getUid();
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
 
-  const { analyzeOnly } = (await req.json().catch(() => ({}))) as { analyzeOnly?: boolean };
+  const { analyzeOnly, optimize } = (await req.json().catch(() => ({}))) as {
+    analyzeOnly?: boolean;
+    optimize?: boolean;
+  };
 
   const user = await prisma.user.findUnique({ where: { id: uid } });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -33,6 +36,43 @@ export async function POST(req: Request) {
       { error: "Your access is pending approval.", code: "access_pending" },
       { status: 403 },
     );
+  }
+
+  // ATS-optimized resume variants ("show me 3 better versions"). A resume-only,
+  // platform-free background job — no quota, no connected-platform requirement,
+  // and allowed during maintenance since it never touches a job board. Enqueues
+  // the worker's "optimize" mode; the dashboard polls this run's id like analyze.
+  if (optimize) {
+    const profile = await prisma.profile.findUnique({
+      where: { userId: uid },
+      select: { resumeName: true, resumeScore: true },
+    });
+    if (!profile?.resumeName) {
+      return NextResponse.json({ error: "Upload a resume first." }, { status: 400 });
+    }
+    if (profile.resumeScore == null) {
+      return NextResponse.json(
+        { error: "Your resume is still being analyzed — try again in a moment." },
+        { status: 409 },
+      );
+    }
+    const root = process.cwd();
+    try {
+      await fsp.access(path.join(root, "agent", "worker.py"));
+    } catch {
+      return NextResponse.json({ error: "worker not installed" }, { status: 500 });
+    }
+    // Flip the status now so the card shows "Building…" instantly; the worker
+    // overwrites it with ready / no_gain / failed when it finishes.
+    await prisma.profile
+      .update({
+        where: { userId: uid },
+        data: { resumeVariantStatus: "generating", resumeVariantDetail: "Building optimized versions…" },
+      })
+      .catch(() => {});
+    const optRun = await enqueueAgentRun(uid, "optimize");
+    spawnWorkerKick(root, uid);
+    return NextResponse.json({ ok: true, mode: "optimize", runId: optRun.id });
   }
 
   const settings = readAdminSettings();

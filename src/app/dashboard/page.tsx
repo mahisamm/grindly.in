@@ -94,6 +94,20 @@ type RawProfile = {
   matchQualityRating: number | null;
   resumeParseFailed: boolean;
   reportChannel: string;
+  // ATS-optimized variant generation status: null | generating | ready | no_gain | failed
+  resumeVariantStatus: string | null;
+  resumeVariantDetail: string | null;
+};
+
+// One AI-optimized, compiled, measured-higher-scoring version of the master resume.
+type ResumeVariant = {
+  id: string;
+  rank: number;
+  label: string;
+  score: number;
+  grade: string;
+  baselineScore: number;
+  changes: string[];
 };
 type Me = {
   user: {
@@ -139,6 +153,7 @@ type Me = {
     remaining: number;
   };
   integrations: Integration[];
+  resumeVariants?: ResumeVariant[];
   // Non-null while a user-triggered agent run is queued/running server-side.
   // Drives the persistent "Agent working…" button so it survives reloads.
   activeRun?: { id: string; status: string; startedAt: string } | null;
@@ -486,6 +501,8 @@ export default function Dashboard() {
   const [showReturnPrompt, setShowReturnPrompt] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [analyzingResume, setAnalyzingResume] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
+  const [usingVariant, setUsingVariant] = useState<string | null>(null);
   const [uploading, setUploading] = useState<"master" | "tex" | null>(null);
   const [editingSkills, setEditingSkills] = useState(false);
   const [skillsDraft, setSkillsDraft] = useState<string[]>([]);
@@ -817,6 +834,67 @@ export default function Dashboard() {
       };
       setTimeout(poll, 2000);
     } catch { setAnalyzingResume(false); }
+  }
+
+  /** Kick off ATS-optimized variant generation (the "3 better resumes" feature).
+   *  Server enqueues the worker's `optimize` mode; we poll the run like analyze.
+   *  Generation is several LLM calls + LaTeX compiles, so the timeout is generous
+   *  and load() at the end pulls in the finished variants + status. */
+  async function optimizeResume() {
+    setOptimizing(true);
+    try {
+      const res = await fetch("/api/agent/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ optimize: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setOptimizing(false);
+        setNotice({ kind: "err", text: data.error || "Couldn't start optimization. Try again." });
+        return;
+      }
+      load(); // flip the card to "generating" immediately
+      const runId: string | null = data.runId ?? null;
+      if (!runId) { setTimeout(() => { setOptimizing(false); load(); }, 8000); return; }
+
+      const started = Date.now();
+      const poll = async () => {
+        try {
+          const r = await fetch(`/api/agent/run?id=${runId}`);
+          const s = await r.json();
+          if (s.status === "done" || s.status === "failed") {
+            setOptimizing(false); load(); return;
+          }
+          if (Date.now() - started > 240_000) { setOptimizing(false); load(); return; }
+          setTimeout(poll, 3000);
+        } catch { setOptimizing(false); load(); }
+      };
+      setTimeout(poll, 3000);
+    } catch {
+      setOptimizing(false);
+      setNotice({ kind: "err", text: "Couldn't start optimization. Try again." });
+    }
+  }
+
+  /** Promote one optimized variant to the master resume. Server copies the PDF,
+   *  resets derived skills/score, and re-analyzes — load() shows the new state. */
+  async function useVariant(v: ResumeVariant) {
+    setUsingVariant(v.id);
+    try {
+      const res = await fetch(`/api/resume/variants/${v.id}/use`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setNotice({ kind: "err", text: data.error || "Couldn't switch to this version." });
+        return;
+      }
+      setNotice({ kind: "ok", text: "Switched to the optimized resume — re-analyzing now." });
+      load();
+    } catch {
+      setNotice({ kind: "err", text: "Couldn't switch to this version." });
+    } finally {
+      setUsingVariant(null);
+    }
   }
 
   /** Replace the master resume or the LaTeX source. A new master clears the
@@ -1618,6 +1696,108 @@ export default function Dashboard() {
                 )}
               </div>
             )}
+
+            {/* ATS-optimized versions. Opt-in ("show me 3 better resumes"): the AI
+                rebuilds the resume on a clean, parser-friendly template and rewrites
+                the wording three ways — never inventing skills/projects — then each
+                is compiled and RE-SCORED, so only versions that measurably beat the
+                master are shown. Picking one makes it the master. */}
+            {me.profile.resumeScore != null && (() => {
+              const status = me.profile!.resumeVariantStatus;
+              const variants = me.resumeVariants ?? [];
+              const busy = optimizing || status === "generating";
+              return (
+                <div className="mt-6 border-t border-border pt-5">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-xs uppercase tracking-wide text-muted">ATS-optimized versions</div>
+                    <button
+                      onClick={optimizeResume}
+                      disabled={busy}
+                      className="text-xs text-brand-2 hover:text-brand transition disabled:opacity-40"
+                      title="Generate 3 higher-scoring versions of your resume — no invented skills, same facts"
+                    >
+                      {busy ? "Building…" : variants.length > 0 ? "↻ Regenerate" : "✨ Generate optimized versions"}
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted mb-3">
+                    Three rewrites of your <em>real</em> resume on a clean, ATS-friendly template —
+                    scored after compiling, so every number here is measured, not guessed. Nothing is invented.
+                  </p>
+
+                  {busy && (
+                    <div className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-3 text-xs text-muted flex items-center gap-2">
+                      <span className="inline-block size-3 rounded-full border-2 border-brand/40 border-t-brand animate-spin" />
+                      Building and scoring optimized versions — this takes up to a minute.
+                    </div>
+                  )}
+
+                  {!busy && status === "no_gain" && (
+                    <div className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-xs text-muted">
+                      {me.profile!.resumeVariantDetail ||
+                        "Your resume already scores well — we couldn't beat it without changing the facts, so nothing was added."}
+                    </div>
+                  )}
+
+                  {!busy && status === "failed" && (
+                    <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2.5 text-xs text-warn">
+                      {me.profile!.resumeVariantDetail || "Couldn't build optimized versions this time."}{" "}
+                      <button onClick={optimizeResume} className="underline font-medium">Try again →</button>
+                    </div>
+                  )}
+
+                  {!busy && variants.length > 0 && (
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      {variants.map((v) => {
+                        const delta = v.score - v.baselineScore;
+                        return (
+                          <div key={v.id} className="flex flex-col rounded-lg border border-border bg-surface p-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-semibold text-foreground">{v.label}</span>
+                              <span className={`rounded-md border px-1.5 py-0.5 text-[0.65rem] font-bold ${resumeGradeBg(v.grade)}`}>
+                                {v.grade}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex items-baseline gap-1.5">
+                              <span className={`text-2xl font-bold ${resumeScoreColor(v.score)}`}>{v.score}</span>
+                              <span className="text-[0.7rem] text-muted">/100</span>
+                              {delta > 0 && (
+                                <span className="text-[0.7rem] font-semibold text-accent">+{delta}</span>
+                              )}
+                            </div>
+                            {v.changes.length > 0 && (
+                              <ul className="mt-2 space-y-1">
+                                {v.changes.map((c, i) => (
+                                  <li key={i} className="text-[0.7rem] text-muted flex gap-1">
+                                    <span className="text-accent shrink-0">→</span>{c}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                            <div className="mt-3 flex items-center gap-2 pt-1">
+                              <a
+                                href={`/api/resume/variants/${v.id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="rounded-md border border-border px-2 py-1 text-[0.7rem] text-muted hover:text-foreground transition"
+                              >
+                                Preview
+                              </a>
+                              <button
+                                onClick={() => useVariant(v)}
+                                disabled={usingVariant === v.id}
+                                className="press rounded-md brand-gradient px-2.5 py-1 text-[0.7rem] font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+                              >
+                                {usingVariant === v.id ? "Switching…" : "Use as my resume"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Resume files. Two slots, because they do different jobs: the master is
                 what a recruiter receives; the .tex is the source the agent edits when

@@ -102,6 +102,34 @@ export async function GET() {
     }
   }
 
+  // ATS-optimized resume variants ("3 better versions"), best score first. Rows
+  // only exist after the user clicks Generate AND at least one variant beat the
+  // master — see agent/resume_optimize.py. `changes` is a JSON string on disk;
+  // parse it here so the client renders a plain array.
+  const variantRows = await prisma.resumeVariant
+    .findMany({
+      where: { userId: uid },
+      orderBy: { rank: "asc" },
+      select: {
+        id: true, rank: true, label: true, score: true, grade: true,
+        baselineScore: true, changes: true,
+      },
+    })
+    .catch(() => []);
+  const resumeVariants = variantRows.map((v) => {
+    let changes: string[] = [];
+    try {
+      const parsed = JSON.parse(v.changes) as unknown;
+      if (Array.isArray(parsed)) changes = parsed.map((x) => String(x));
+    } catch {
+      /* malformed — show the variant without its change list rather than 500 */
+    }
+    return {
+      id: v.id, rank: v.rank, label: v.label, score: v.score,
+      grade: v.grade, baselineScore: v.baselineScore, changes,
+    };
+  });
+
   const byPlatform = Object.fromEntries(integrationRows.map((r) => [r.platform, r]));
   const integrations = PLATFORMS.map((p) => ({
     platform: p,
@@ -176,6 +204,7 @@ export async function GET() {
     stats,
     quota,
     integrations,
+    resumeVariants,
     activeRun,
     notifications: {
       unread: notifUnread,

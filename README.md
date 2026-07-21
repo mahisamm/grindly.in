@@ -1,9 +1,11 @@
 # Grindly
 
-Your AI applies to internships while you sleep. A local-first SaaS: users sign up,
-upload a resume, answer a few **proff questions** (which become the agent's firewall),
-start a trial, connect a platform — then an agent reads the resume, finds matching
-internships, prepares supported applications for approval, and sends a **daily report**.
+Your AI preps internship applications while you sleep — you review and submit. A
+local-first SaaS: users sign up, upload a resume, answer a few **proff questions**
+(which become the agent's firewall), start a trial, connect a platform — then an
+agent reads the resume, finds matching internships, prepares supported applications
+for approval, and sends a **daily report**. The final submission is always performed
+by the user (Safe Apply Mode — see `agent/safety.py`); Grindly never auto-submits.
 
 Supported integrations are **LinkedIn, Internshala, Naukri, Unstop, and Indeed**.
 External and unsupported complex application flows are skipped. Payment + Slack run in **stub mode**
