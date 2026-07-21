@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Logo } from "@/components/Brand";
 
 const LINKS = [
   ["/admin", "Overview"],
@@ -23,7 +24,7 @@ export function AdminNav({ email }: { email: string }) {
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-surface/70 p-4 backdrop-blur">
       <Link href="/admin" className="mb-6 flex items-center gap-2">
-        <span className="grid size-7 place-items-center rounded bg-brand text-sm font-bold text-white">g</span>
+        <Logo size={26} withWordmark={false} />
         <span className="font-display text-base font-bold tracking-tight text-foreground">
           Grindly <span className="text-brand italic">ADMIN</span>
         </span>

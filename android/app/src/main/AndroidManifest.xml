@@ -23,12 +23,12 @@
             <!-- Theme colour for the status bar -->
             <meta-data
                 android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR"
-                android:value="#2a28f0" />
+                android:value="#e3402a" />
 
             <!-- Splash screen background colour -->
             <meta-data
                 android:name="android.support.customtabs.trusted.SPLASH_SCREEN_BACKGROUND_COLOR"
-                android:value="#f5f3ea" />
+                android:value="#f2ece1" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

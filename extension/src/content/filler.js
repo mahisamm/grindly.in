@@ -26,7 +26,7 @@
     shadow.innerHTML =
       '<style>' +
       '.row{display:flex;align-items:center;gap:6px}' +
-      '.g{font:500 13px/1.4 system-ui,sans-serif;background:#e5533c;color:#fff;border:none;' +
+      '.g{font:500 13px/1.4 system-ui,sans-serif;background:#e3402a;color:#fff;border:none;' +
       'border-radius:10px;padding:10px 14px;box-shadow:0 4px 16px rgba(0,0,0,.25);cursor:pointer;display:flex;gap:8px;align-items:center}' +
       '.g:hover{opacity:.92}.g[disabled]{opacity:.6;cursor:default}' +
       '.x{background:#111;color:#fff;border:none;border-radius:8px;width:26px;height:26px;cursor:pointer;font-size:15px;line-height:1;opacity:.7}' +
