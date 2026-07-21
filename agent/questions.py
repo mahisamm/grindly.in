@@ -132,10 +132,15 @@ _EMAIL = re.compile(r"\b(e-?mail)\b", re.I)
 # already declared the answer by choosing to apply to an internship at all.
 _CONFIRM = re.compile(
     r"\b(available|availability|can you (start|join|commit)|willing|able to|"
-    r"relocat|work from home|in[- ]office|full[- ]time|duration|immediately|"
+    r"relocat|work from home|in[- ]office|full[- ]time|immediately|"
     r"do you (have|agree|confirm))\b",
     re.I,
 )
+# NOTE: "duration" was deliberately removed here. A question like "For how many
+# months can you commit?" or "Internship duration you're available for" is a
+# free-text/number answer, not yes/no — matching it sent a literal "Yes" into a
+# text field (nonsense to a recruiter) or was rejected by a numeric input. It
+# now falls through to the LLM / fallback like any other open question.
 
 
 def _deterministic(field: dict, profile: dict, name: str, email: str) -> str | None:

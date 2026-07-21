@@ -147,6 +147,14 @@ OUTCOME_EMOJI = {
     "test": "📝",
 }
 
+# The only values we will ever write to applications.outcome. Anything the
+# classifier emits outside this set (no_response, unrelated, or a hallucinated
+# label from a future prompt tweak) is dropped rather than persisted: on
+# Postgres an out-of-enum value throws, on SQLite it silently corrupts the
+# column and breaks Prisma's typed read on the dashboard. Must stay a subset of
+# the Outcome enum in prisma/schema.prisma.
+PERSISTED_OUTCOMES = {"interview", "offer", "rejected", "test"}
+
 def notify_user(user_id: str, company: str, title: str, outcome: str, note: str) -> None:
     conn = get_conn()
     try:
@@ -239,7 +247,10 @@ def scan(user_id: str, refresh_token: str) -> dict:
             outcome = result.get("outcome", "no_response")
             confidence = result.get("confidence", 0.0)
 
-            if outcome in ("no_response", "unrelated") or confidence < 0.5:
+            # Only persist enum-valid, actionable outcomes. This also drops
+            # no_response / unrelated (nothing to record) without letting a
+            # coding-test detection ("test") fall through to an invalid write.
+            if outcome not in PERSISTED_OUTCOMES or confidence < 0.5:
                 continue
 
             # Update application outcome in DB

@@ -136,6 +136,28 @@ class _PgConn:
     def commit(self):
         self._raw.commit()
 
+    def close(self):
+        self._raw.close()
+
+
+def get_conn():
+    """A caller-managed DB connection — the caller owns commit() and close().
+
+    Mirrors conn()'s backend setup for code that manages the connection
+    lifecycle itself (e.g. agent/email_scanner.py) rather than through the
+    `with conn() as c:` context manager. Prefer conn() for new code; this exists
+    so the scanner's `c = get_conn(); ...; c.close()` shape has a real backend on
+    both Postgres and SQLite. Returns an object exposing the same
+    execute()/commit()/close() surface as conn() yields.
+    """
+    if PG:
+        return _PgConn(psycopg2.connect(DATABASE_URL))
+    c = sqlite3.connect(DB_PATH, timeout=15)
+    c.row_factory = sqlite3.Row
+    c.execute("PRAGMA busy_timeout = 8000")
+    c.execute("PRAGMA journal_mode = WAL")
+    return c
+
 
 @contextmanager
 def conn():

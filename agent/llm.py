@@ -292,7 +292,18 @@ def _signature(value) -> str:
 
 
 def _merge_lists(values: list[list]) -> list:
-    """Keep only items supported by a strict majority of model responses."""
+    """Keep only items supported by a strict majority of model responses.
+
+    This is a DELIBERATE precision-over-recall choice, not an oversight. An item
+    only one model produced is dropped — which does cost some recall on niche
+    skills that a single provider caught (and the skill-extraction eval gate in
+    eval_llm.py is recall-based, so the two pull against each other). It stays
+    strict on purpose: loosening it to accept single-model items would let one
+    provider's hallucinated skill onto a real resume/application, breaking the
+    "never claim a skill the candidate can't back up" guarantee that questions.py
+    and resume_optimize.py are built around. Fabrication risk outweighs a missed
+    niche skill, so the majority floor stays.
+    """
     threshold = len(values) // 2 + 1
     counts: Counter[str] = Counter()
     originals: dict[str, object] = {}

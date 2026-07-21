@@ -26,6 +26,22 @@ def _answer(fields, **kw):
     return questions.answer_fields(fields, **opts)
 
 
+# --- "duration" is a text answer, not a yes/no confirm ----------------------
+# "duration" used to be in the confirm set, so a free-text field asking how long
+# the candidate can commit got a literal "Yes" typed in — nonsense to a recruiter,
+# or rejected by a numeric input. It must fall through to the LLM instead.
+
+def test_duration_text_question_is_not_answered_yes():
+    f = _field("Internship duration you can commit to?", kind="text")
+    assert questions._deterministic(f, PROFILE, "Mahendhar", "m@example.com") is None
+
+
+def test_genuine_availability_confirm_still_answers_yes():
+    # The fix must not break real yes/no availability questions on text fields.
+    f = _field("Are you available to join immediately?", kind="text", required=True)
+    assert questions._deterministic(f, PROFILE, "Mahendhar", "m@example.com") == "Yes"
+
+
 # --- facts come from the profile, never from a model ------------------------
 # A model asked for a CGPA will happily produce a plausible one. That is a
 # fabricated credential on a real application.

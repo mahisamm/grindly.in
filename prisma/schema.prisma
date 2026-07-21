@@ -45,6 +45,11 @@ enum Outcome {
   interview
   offer
   rejected
+  // Assessment / coding-test / take-home received — an intermediate progress
+  // signal, auto-detected by agent/email_scanner.py. It is written by the
+  // scanner (raw SQL), never self-reported, so it is intentionally absent from
+  // the user-facing OUTCOMES whitelist in api/applications/outcome/route.ts.
+  test
   no_response
 }
 
