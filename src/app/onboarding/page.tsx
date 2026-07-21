@@ -74,6 +74,9 @@ export default function OnboardingPage() {
   // still let a real checkout run whenever Razorpay keys happened to be
   // present in a non-strict-production environment.
   const [paymentsEnabled, setPaymentsEnabled] = useState(false);
+  // Owner admin flag — surfaces the "Admin" jump button so the admin can leave
+  // onboarding for the console at any time (they can complete it later).
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // Auth + gated-beta guard: a logged-out visitor (401) is bounced to /login,
   // same as /dashboard and /applications — previously a 401 resolved to
@@ -93,6 +96,7 @@ export default function OnboardingPage() {
       .then((d) => {
         if (!d?.user) return;
         setPaymentsEnabled(!!d.user.paymentsEnabled);
+        setIsAdmin(d.user.role === "admin");
         if (d.user.role !== "admin" && d.user.accessStatus !== "approved") {
           window.location.href = "/waitlist";
         }
@@ -325,9 +329,19 @@ export default function OnboardingPage() {
   return (
     <main className="min-h-screen grid-bg">
       <div className="mx-auto max-w-3xl px-5 py-10">
-        <Link href="/" className="flex justify-center mb-8">
-          <Logo size={30} />
-        </Link>
+        <div className="relative mb-8 flex items-center justify-center">
+          <Link href="/">
+            <Logo size={30} />
+          </Link>
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className="absolute right-0 rounded-full border border-ink bg-ink px-3 py-1.5 text-sm font-semibold text-[var(--paper)] transition hover:opacity-80"
+            >
+              Admin
+            </Link>
+          )}
+        </div>
 
         {/* stepper */}
         <div className="flex items-center justify-center gap-2 mb-10">

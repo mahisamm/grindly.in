@@ -1,17 +1,25 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getAdminOrNull } from "@/lib/admin";
+import { prisma } from "@/lib/prisma";
 import { Logo } from "@/components/Brand";
 
 // Post-login fork, shown ONLY to the owner admin. A normal user never reaches
 // this — getAdminOrNull returns null for them and we send them straight to the
 // app. The owner picks which surface to enter; both stay one click away after
-// (admin nav has "← back to app", the dashboard has an "Admin" switch link).
+// (admin nav has "← back to app", the dashboard/onboarding show an "Admin" link).
 export const dynamic = "force-dynamic";
 
 export default async function ChoosePage() {
   const admin = await getAdminOrNull();
   if (!admin) redirect("/dashboard");
+
+  // Route the "user" card to onboarding if the owner hasn't finished it yet,
+  // otherwise to the dashboard — mirrors the normal post-login destination.
+  const row = await prisma.user
+    .findUnique({ where: { id: admin.id }, select: { status: true } })
+    .catch(() => null);
+  const userHref = row?.status === "onboarding" ? "/onboarding" : "/dashboard";
 
   return (
     <main className="grid-bg flex min-h-screen items-center justify-center px-5">
@@ -26,7 +34,7 @@ export default async function ChoosePage() {
 
         <div className="grid gap-4">
           <Link
-            href="/dashboard"
+            href={userHref}
             className="sticker group block rounded-2xl border border-border bg-surface p-5 transition"
           >
             <div className="flex items-center justify-between gap-3">
