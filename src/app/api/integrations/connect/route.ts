@@ -4,6 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { getUid } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { hasAppAccess } from "@/lib/access";
 
 const ALLOWED = ["linkedin", "internshala", "naukri", "unstop", "indeed"];
 
@@ -37,6 +38,17 @@ export async function POST(req: Request) {
 
   const user = await prisma.user.findUnique({ where: { id: uid } });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  // Approval-gated beta: a pending account must not be able to start a real
+  // connect session (the prod connect-service spins up a scarce headed browser).
+  // Same guard the agent/run + approve routes use; without it a gated user could
+  // both bypass the gate and tie up the shared login display.
+  if (!hasAppAccess(user)) {
+    return NextResponse.json(
+      { error: "Your access is pending approval.", code: "access_pending" },
+      { status: 403 },
+    );
+  }
 
   // Mark as "connecting" in DB — the sole signal both paths below rely on.
   try {

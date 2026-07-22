@@ -130,9 +130,10 @@ export default function ApplicationsPage() {
   }
 
   useEffect(() => {
+    const ac = new AbortController();
     const params = new URLSearchParams({ page: String(page), pageSize: "20" });
     if (statusFilter !== "all") params.set("status", statusFilter);
-    fetch(`/api/applications?${params}`)
+    fetch(`/api/applications?${params}`, { signal: ac.signal })
       .then((r) => {
         if (r.status === 401) { router.replace("/login"); return Promise.reject(null); }
         return r.ok ? r.json() : Promise.reject(r);
@@ -142,7 +143,14 @@ export default function ApplicationsPage() {
         setTotal(j.total ?? j.applications.length);
         setTotalPages(j.totalPages ?? 1);
       })
-      .catch((e) => { if (e !== null) setErr("Couldn't load applications."); });
+      .catch((e) => {
+        // Superseded by a newer filter/page change — not an error.
+        if (e?.name === "AbortError") return;
+        if (e !== null) setErr("Couldn't load applications.");
+      });
+    // Cancel the in-flight request when filter/page changes so a slow earlier
+    // response can't resolve last and overwrite the list with stale data.
+    return () => ac.abort();
   }, [router, page, statusFilter]);
 
   return (

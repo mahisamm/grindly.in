@@ -119,6 +119,7 @@ type Me = {
     plan: string;
     status: string;
     accessStatus?: string;
+    hasAccess?: boolean;
     role?: string;
     slackConnected: boolean;
     slackUserId: string | null;
@@ -540,8 +541,11 @@ export default function Dashboard() {
     }
     if (res.ok) {
       const data = await res.json() as Me;
-      // Gated beta: an unapproved account never reaches the app UI. Admins pass.
-      if (data.user.role !== "admin" && data.user.accessStatus !== "approved") {
+      // Gated beta: an unapproved account never reaches the app UI. Use the
+      // server's owner-aware verdict (honors OWNER_EMAIL); fall back to the old
+      // derivation only if an older payload lacks the field.
+      const allowed = data.user.hasAccess ?? (data.user.role === "admin" || data.user.accessStatus === "approved");
+      if (!allowed) {
         router.replace("/waitlist");
         return;
       }
@@ -675,9 +679,13 @@ export default function Dashboard() {
           load();
           return;
         }
-        // Still queued/running. Keep polling for the completion notice; the
-        // button stays "working" via activeRun even past this window.
-        if (Date.now() - started > 240_000) { pollingRunId.current = null; load(); return; }
+        // Still queued/running. Stop polling after the watchdog window, but drop
+        // the local optimistic flag so the button isn't frozen forever: past this
+        // point `activeRun` from /api/me is the sole source of "working", and it
+        // clears when the run finishes (or ages out, see /api/me's staleness
+        // guard). Without this a run longer than the window left `running` stuck
+        // true after activeRun cleared, freezing the CTA until a reload.
+        if (Date.now() - started > 240_000) { pollingRunId.current = null; setRunning(false); load(); return; }
         setTimeout(step, 2500);
       } catch {
         pollingRunId.current = null;
@@ -954,10 +962,16 @@ export default function Dashboard() {
   // platform. Replaces the old two-step "Prepare" then "Open & submit".
   async function openAndSubmit(a: App) {
     setApprovingId(a.id);
-    // Open the tab synchronously inside the click so the browser doesn't treat
-    // it as a popup — we point it at the listing (or a blank tab we fill in once
-    // approve returns, for rows that carry no url).
-    const tab = a.url ? window.open(a.url, "_blank", "noopener,noreferrer") : null;
+    // Open a BLANK tab synchronously (inside the click gesture, so it isn't
+    // popup-blocked) and keep the handle. window.open returns null when
+    // noopener/noreferrer is passed — which is why the old close-on-failure was
+    // dead code that leaked a stray tab on a 402. We navigate it ourselves once
+    // approve succeeds, severing the opener first so the listing can't tabnab us.
+    // Only ever navigate to a real http(s) listing — never a javascript:/data:
+    // URL, since the blank tab inherits our origin and would run it as us. a.url
+    // is agent-scraped, so treat anything non-http like a no-link row.
+    const safeUrl = a.url && /^https?:\/\//i.test(a.url) ? a.url : null;
+    const tab = safeUrl ? window.open("about:blank", "_blank") : null;
     const res = await fetch("/api/applications/approve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -972,8 +986,12 @@ export default function Dashboard() {
       setNotice({ kind: "err", text: msg });
       return;
     }
+    if (tab && safeUrl) {
+      try { tab.opener = null; } catch { /* cross-origin already */ }
+      tab.location.replace(safeUrl);
+    }
     setPendingSubmit({ id: a.id, label: `${a.jobTitle} — ${a.company}` });
-    if (!a.url) {
+    if (!safeUrl) {
       setNotice({ kind: "info", text: "This one has no direct link — open it from your job platform, then confirm below." });
     }
     load();

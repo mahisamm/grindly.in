@@ -97,7 +97,8 @@ export default function OnboardingPage() {
         if (!d?.user) return;
         setPaymentsEnabled(!!d.user.paymentsEnabled);
         setIsAdmin(d.user.role === "admin");
-        if (d.user.role !== "admin" && d.user.accessStatus !== "approved") {
+        const allowed = d.user.hasAccess ?? (d.user.role === "admin" || d.user.accessStatus === "approved");
+        if (!allowed) {
           window.location.href = "/waitlist";
         }
       })

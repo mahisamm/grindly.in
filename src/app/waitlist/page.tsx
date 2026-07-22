@@ -19,9 +19,10 @@ export default function WaitlistPage() {
         if (!alive) return;
         setEmail(d.user?.email ?? "");
         const status = d.user?.accessStatus as string | undefined;
-        if (d.user?.role === "admin" || status === "approved") {
-          // Already in — bounce to the app.
-          window.location.href = "/dashboard";
+        const allowed = d.user?.hasAccess ?? (d.user?.role === "admin" || status === "approved");
+        if (allowed) {
+          // Already in — resume onboarding if it isn't finished, else the dashboard.
+          window.location.href = d.user?.status === "onboarding" ? "/onboarding" : "/dashboard";
           return;
         }
         if (status === "denied") setState("denied");

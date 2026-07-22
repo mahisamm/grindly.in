@@ -5,6 +5,7 @@ import { getUid } from "@/lib/session";
 import { encryptSecret } from "@/lib/crypto";
 import { internshalaLoginEnabled } from "@/lib/featureFlags";
 import { enqueueAgentRun } from "@/lib/agentRunQueue";
+import { hasAppAccess } from "@/lib/access";
 
 const PLATFORM = "internshala";
 
@@ -38,6 +39,15 @@ export async function POST(req: Request) {
 
   const user = await prisma.user.findUnique({ where: { id: uid } });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  // Approval-gated beta: block a pending account from storing credentials and
+  // enqueuing a connect run, same as every other work-doing route.
+  if (!hasAppAccess(user)) {
+    return NextResponse.json(
+      { error: "Your access is pending approval.", code: "access_pending" },
+      { status: 403 },
+    );
+  }
 
   // Staged rollout gate — enforced server-side, not just hidden in the UI.
   if (!internshalaLoginEnabled(user)) {

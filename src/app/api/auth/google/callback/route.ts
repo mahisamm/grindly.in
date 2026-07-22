@@ -117,36 +117,51 @@ export async function GET(req: Request) {
     }
     // Owner + pre-allowlisted emails come in approved; everyone else waits.
     const accessStatus = await resolveInitialAccess(email);
-    user = await prisma.user.create({
-      data: {
-        email,
-        name: name ?? null,
-        googleId,
-        status: "onboarding",
-        accessStatus,
-        accessGrantedAt: accessStatus === "approved" ? new Date() : null,
-        profile: {
-          create: {
-            skills: "[]",
-            preferredDomains: JSON.stringify(DEFAULTS.preferredDomains),
-            preferredLocations: JSON.stringify(DEFAULTS.preferredLocations),
-            workMode: DEFAULTS.workMode as string,
-            experienceLevel: DEFAULTS.experienceLevel as string,
-            stipendMin: DEFAULTS.stipendMin as number,
-            minMatchScore: DEFAULTS.minMatchScore as number,
-            maxPerDay: DEFAULTS.maxPerDay as number,
-            excludedCompanies: JSON.stringify(DEFAULTS.excludedCompanies),
-            autoApply: DEFAULTS.autoApply as boolean,
+    try {
+      user = await prisma.user.create({
+        data: {
+          email,
+          name: name ?? null,
+          googleId,
+          status: "onboarding",
+          accessStatus,
+          accessGrantedAt: accessStatus === "approved" ? new Date() : null,
+          profile: {
+            create: {
+              skills: "[]",
+              preferredDomains: JSON.stringify(DEFAULTS.preferredDomains),
+              preferredLocations: JSON.stringify(DEFAULTS.preferredLocations),
+              workMode: DEFAULTS.workMode as string,
+              experienceLevel: DEFAULTS.experienceLevel as string,
+              stipendMin: DEFAULTS.stipendMin as number,
+              minMatchScore: DEFAULTS.minMatchScore as number,
+              maxPerDay: DEFAULTS.maxPerDay as number,
+              excludedCompanies: JSON.stringify(DEFAULTS.excludedCompanies),
+              autoApply: DEFAULTS.autoApply as boolean,
+            },
           },
         },
-      },
-    });
-    await audit("register_google", { userId: user.id, target: email });
+      });
+      await audit("register_google", { userId: user.id, target: email });
+    } catch (e) {
+      // Two concurrent first-logins (double-submit / provider retry) can race the
+      // create on the unique email/googleId; the loser gets Prisma P2002. Recover
+      // by loading the row the winner just created, instead of 500ing the user on
+      // their very first login.
+      if ((e as { code?: string })?.code !== "P2002") throw e;
+      user = await prisma.user.findFirst({ where: { OR: [{ googleId }, { email }] } });
+    }
   } else {
     if (!user.googleId) {
       await prisma.user.update({ where: { id: user.id }, data: { googleId } });
     }
     await audit("login_google", { userId: user.id, target: email });
+  }
+
+  if (!user) {
+    // P2002 recovery lookup came back empty (should never happen) — fail safe
+    // rather than dereference null.
+    return NextResponse.redirect(`${base}/login?error=google_failed`);
   }
 
   await setUid(user.id);

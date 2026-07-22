@@ -6,9 +6,21 @@ import { audit } from "@/lib/audit";
 export async function GET() {
   const uid = await getUid();
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
-  const user = await prisma.user.findUnique({ where: { id: uid }, include: { profile: true } });
+  // Whitelist the user fields — never spread the raw row, which carries
+  // passwordHash, googleId, tokenVersion and the Slack IDs. The profile relation
+  // is the caller's own preferences and is safe to return whole.
+  const user = await prisma.user.findUnique({
+    where: { id: uid },
+    select: {
+      id: true, email: true, name: true, plan: true, paid: true, status: true,
+      accessStatus: true, role: true, slackConnected: true, internshalaConnected: true,
+      gmailScanInterest: true, createdAt: true,
+      profile: true,
+    },
+  });
   if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
-  return NextResponse.json({ user, profile: user.profile });
+  const { profile, ...safeUser } = user;
+  return NextResponse.json({ user: safeUser, profile });
 }
 
 const ARRAY_FIELDS = new Set([

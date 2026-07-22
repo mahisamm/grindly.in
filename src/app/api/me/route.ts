@@ -5,6 +5,7 @@ import { internshalaLoginEnabled } from "@/lib/featureFlags";
 import { gmailScanEnabled, gmailScanBeta } from "@/lib/googleOAuth";
 import { visibleToUser } from "@/lib/pipeline";
 import { getQuota } from "@/lib/quota";
+import { hasAppAccess } from "@/lib/access";
 
 const PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"] as const;
 
@@ -13,6 +14,12 @@ const PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"] as c
 // forever. OTP gets a longer grace window since the user must fetch a code.
 const CONNECTING_TIMEOUT_MS = 120_000;
 const OTP_TIMEOUT_MS = 360_000;
+
+// A live run older than this is treated as no-longer-active when deriving the
+// "Agent working…" state. If a worker dies mid-run and leaves status="running"
+// in the DB, without this guard activeRun would stay non-null forever and freeze
+// the run button. Generous enough to never cut a genuinely-running job short.
+const ACTIVE_RUN_MAX_AGE_MS = 20 * 60_000;
 
 export async function GET() {
   const uid = await getUid();
@@ -47,7 +54,12 @@ export async function GET() {
   // Analyze/latex/connect jobs aren't user-facing agent runs, so exclude them.
   const activeRunRow = await prisma.agentRun
     .findFirst({
-      where: { userId: uid, status: { in: ["queued", "running"] }, mode: { in: ["live", "approved"] } },
+      where: {
+        userId: uid,
+        status: { in: ["queued", "running"] },
+        mode: { in: ["live", "approved"] },
+        createdAt: { gte: new Date(Date.now() - ACTIVE_RUN_MAX_AGE_MS) },
+      },
       orderBy: { createdAt: "desc" },
       select: { id: true, status: true, createdAt: true },
     })
@@ -189,6 +201,11 @@ export async function GET() {
       plan: user.plan,
       status: user.status,
       accessStatus: user.accessStatus,
+      // Owner-aware access verdict computed server-side (honors OWNER_EMAIL, which
+      // the client can't see) so the waitlist/onboarding/dashboard gates stop
+      // re-deriving access from role/accessStatus alone and wrongly bouncing an
+      // owner whose row is still role=user/pending.
+      hasAccess: hasAppAccess(user),
       role: user.role,
       slackConnected: user.slackConnected,
       slackUserId: user.slackUserId,
