@@ -46,5 +46,34 @@ export async function POST(req: Request) {
     // Best-effort: a missing dir (never connected on this host) is fine.
   }
 
+  // Withdraw still-pending matches that came from the platform being removed.
+  //
+  // Disconnecting already stops FUTURE discovery (agent/db.get_connected_platforms
+  // only returns status='connected'). But matches ALREADY found on this platform
+  // sit in the pipeline as status='matched' rows — including future-dated ones the
+  // user hasn't seen yet — and keep surfacing as "LinkedIn matches" on a platform
+  // the user just disconnected. With the login gone they can never be submitted
+  // anyway. So drop the not-yet-sent ones (matched / approved / needs_review).
+  // Applied, failed and skipped rows are a real history record and are kept.
+  // Platform lives on the linked Job (Application has no source column), and
+  // deleteMany can't filter across a relation — so resolve ids first, then delete.
+  try {
+    const pending = await prisma.application.findMany({
+      where: {
+        userId: uid,
+        status: { in: ["matched", "approved", "needs_review"] },
+        job: { source: platform },
+      },
+      select: { id: true },
+    });
+    if (pending.length) {
+      await prisma.application.deleteMany({
+        where: { id: { in: pending.map((p) => p.id) } },
+      });
+    }
+  } catch {
+    // Best-effort: a cleanup failure must never fail the disconnect itself.
+  }
+
   return NextResponse.json({ ok: true, platform });
 }
