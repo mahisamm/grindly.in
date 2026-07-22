@@ -425,14 +425,30 @@ def _fetch_source_all_kw(
     matches that rhythm without materially slowing the run."""
     seen_eids: set[str] = set()
     jobs: list[dict] = []
-    for i, kw_list in enumerate(kw_sets):
-        if i > 0:
-            time.sleep(random.uniform(*_BASE_PACE_SEC))
-        for j in _fetch_live(src, mod, kw_list, per_kw + 5, uid):
-            eid = j.get("external_id") or j.get("url", "")
-            if eid and eid not in seen_eids:
-                jobs.append(j)
-                seen_eids.add(eid)
+    try:
+        for i, kw_list in enumerate(kw_sets):
+            if i > 0:
+                time.sleep(random.uniform(*_BASE_PACE_SEC))
+            for j in _fetch_live(src, mod, kw_list, per_kw + 5, uid):
+                eid = j.get("external_id") or j.get("url", "")
+                if eid and eid not in seen_eids:
+                    jobs.append(j)
+                    seen_eids.add(eid)
+    finally:
+        # Close this platform's browser context on the SAME thread that opened it.
+        # The context is created lazily inside this executor thread (mod.fetch ->
+        # _context), and Playwright's sync objects are bound to their creating
+        # thread — so the later main-thread _close_all_adapter_contexts sweep could
+        # not actually close it. The Chromium lingered holding the persistent-profile
+        # lock, so the NEXT run failed to launch ("profile already in use by another
+        # instance of Chromium") and then cascaded into "Playwright Sync API inside
+        # the asyncio loop", fetching 0 listings. Closing in-thread releases the lock
+        # every run. The apply phase re-opens a fresh context on the main thread when
+        # needed; the login session lives in the on-disk profile, so nothing is lost.
+        try:
+            mod.close(uid)
+        except Exception:  # noqa: BLE001
+            log.exception("failed to close %s context in fetch thread for %s", src, uid)
     log.info("%s: fetched %d unique listings (%d keyword sets)", src, len(jobs), len(kw_sets))
     return src, jobs
 

@@ -37,30 +37,49 @@ def _profile_dir(uid: str) -> str:
 def _context(uid: str = ""):
     key = uid or "shared"
     if key in _contexts:
-        return _contexts[key]
+        return _contexts[key][1]
     from playwright.sync_api import sync_playwright
     profile = _profile_dir(uid)
     os.makedirs(profile, exist_ok=True)
     stealth.clear_stale_lock(profile)
     pw = sync_playwright().start()
-    ctx = pw.chromium.launch_persistent_context(
-        profile,
-        headless=os.environ.get("INTERNPILOT_HEADLESS", "0") == "1",
-        args=["--disable-blink-features=AutomationControlled"],
-        user_agent=stealth.random_ua(),
-        viewport=stealth.random_viewport(),
-    )
-    stealth.apply_stealth(ctx)
-    _contexts[key] = ctx
+    try:
+        ctx = pw.chromium.launch_persistent_context(
+            profile,
+            headless=os.environ.get("INTERNPILOT_HEADLESS", "0") == "1",
+            args=["--disable-blink-features=AutomationControlled"],
+            user_agent=stealth.random_ua(),
+            viewport=stealth.random_viewport(),
+        )
+        stealth.apply_stealth(ctx)
+    except Exception:  # noqa: BLE001
+        # Launch failed (most often the profile is momentarily locked). Stop the
+        # just-started Playwright driver instead of leaking it: a leaked, un-stopped
+        # sync driver poisons this thread so the NEXT sync_playwright().start()
+        # raises "Sync API inside the asyncio loop" — turning one transient lock
+        # error into a cascade that kills the whole fetch.
+        try:
+            pw.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+    _contexts[key] = (pw, ctx)
     return ctx
 
 
 def close(uid: str = ""):
     key = uid or "shared"
-    ctx = _contexts.pop(key, None)
-    if ctx:
+    entry = _contexts.pop(key, None)
+    if entry:
+        pw, ctx = entry
         try:
             ctx.close()
+        except Exception:  # noqa: BLE001
+            pass
+        # Stop the driver too — close() alone leaves the sync_playwright node
+        # process running, which accumulates over the long-lived --serve worker.
+        try:
+            pw.stop()
         except Exception:  # noqa: BLE001
             pass
 
