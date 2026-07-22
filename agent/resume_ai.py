@@ -51,7 +51,12 @@ def analyze(resume_text: str) -> dict:
         f"Resume:\n\"\"\"\n{text[:6000]}\n\"\"\"\n\n"
         "Score and analyze this resume. Return valid JSON only."
     )
-    result = llm_mod.chat_json_ensemble(prompt, system=_ANALYZE_SYS, n=3, timeout=60)
+    # temperature=0.0: scoring is an evaluation, not a creative task. The same
+    # resume must land on the same score every run — otherwise "Re-analyze" swings
+    # 80→88→90 on identical input and the number reads as noise. The median-of-3
+    # ensemble merge still smooths the small residual disagreement between models.
+    result = llm_mod.chat_json_ensemble(
+        prompt, system=_ANALYZE_SYS, n=3, timeout=60, temperature=0.0)
     if result and isinstance(result, dict) and "score" in result:
         try:
             return _coerce(result)
@@ -82,7 +87,8 @@ _PHONE_ANCHORED = re.compile(
 _PHONE_LOOSE = re.compile(r"(?<!\d)((?:\+?91[\s-]?)?[6-9](?:[\s-]?\d){9})(?!\d)")
 # GPA value 0–10 only; the trailing (?!\d) stops "45.0" from being read as "4".
 _CGPA_RE = re.compile(
-    r"(?:c\.?g\.?p\.?a\.?|gpa|grade\s*point)[^\d]{0,6}(10(?:\.\d{1,2})?|[0-9](?:\.\d{1,2})?)(?!\d)", re.I)
+    r"(?:c\.?g\.?p\.?a\.?|gpa|grade\s*point(?:\s*average)?)"
+    r"[^\d]{0,6}(10(?:\.\d{1,2})?|[0-9](?:\.\d{1,2})?)(?!\d)", re.I)
 
 
 def _clean_phone(raw: str) -> str | None:
@@ -384,7 +390,11 @@ def _coerce(d: dict) -> dict:
     score = max(0, min(100, int(d.get("score") or 0)))
     return {
         "score": score,
-        "grade": str(d.get("grade") or _grade(score)),
+        # Grade is DERIVED from the final score, never taken from the model. After
+        # the ensemble merges the median score, an LLM-supplied grade can disagree
+        # with it (score 85 arriving labelled "B"); the score→grade map is the one
+        # source of truth so the badge and the number can never contradict.
+        "grade": _grade(score),
         "strengths": _lst(d.get("strengths"), 4),
         "issues": _lst(d.get("issues"), 5),
         "suggestions": _lst(d.get("suggestions"), 5),

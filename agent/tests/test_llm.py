@@ -21,7 +21,7 @@ def reset_provider_state(monkeypatch):
 
 
 def _provider(name, backend, key, result, delay=0.0):
-    def call(_messages, _timeout):
+    def call(_messages, _timeout, _temperature=0.3):
         time.sleep(delay)
         return result
 
@@ -60,6 +60,23 @@ def test_ensemble_calls_providers_in_parallel(monkeypatch):
 
     assert set(results) == {"one", "two", "three"}
     assert elapsed < 0.35
+
+
+def test_ensemble_threads_temperature_to_providers(monkeypatch):
+    # resume_ai.analyze() scores at temperature=0.0 so a resume score doesn't swing
+    # across repeated "Re-analyze" presses. Prove the value actually reaches the
+    # provider call and isn't silently dropped at 0.3.
+    seen = []
+
+    def call(_messages, _timeout, temperature=0.3):
+        seen.append(temperature)
+        return "ok"
+
+    monkeypatch.setattr(llm, "PROVIDERS", [llm.Provider("p", call, "KEY_P", "p")])
+    monkeypatch.setenv("KEY_P", "configured")
+
+    llm.chat_ensemble("prompt", n=1, temperature=0.0)
+    assert seen == [0.0]
 
 
 def test_boolean_fusion_preserves_boolean_type():

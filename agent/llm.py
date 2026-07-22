@@ -40,7 +40,7 @@ _CIRCUIT_COOLDOWN_SECONDS = max(
 @dataclass(frozen=True)
 class Provider:
     name: str
-    fn: Callable[[list, int], str | None]
+    fn: Callable[..., str | None]
     key_env: str
     backend: str
 
@@ -80,7 +80,8 @@ def _urlopen_json(req: urllib.request.Request, timeout: int) -> dict:
 
 
 def _openai_compat(
-    base_url: str, api_key: str, model: str, messages: list, timeout: int
+    base_url: str, api_key: str, model: str, messages: list, timeout: int,
+    temperature: float = 0.3,
 ) -> str | None:
     if not api_key:
         return None
@@ -89,7 +90,7 @@ def _openai_compat(
             {
                 "model": model,
                 "messages": messages,
-                "temperature": 0.3,
+                "temperature": temperature,
                 "max_tokens": 2048,
             }
         ).encode()
@@ -109,7 +110,7 @@ def _openai_compat(
         return None
 
 
-def _gemini(messages: list, timeout: int) -> str | None:
+def _gemini(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return None
@@ -130,7 +131,7 @@ def _gemini(messages: list, timeout: int) -> str | None:
 
         payload: dict = {
             "contents": contents,
-            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 2048},
+            "generationConfig": {"temperature": temperature, "maxOutputTokens": 2048},
         }
         if system_text:
             payload["systemInstruction"] = {"parts": [{"text": system_text}]}
@@ -150,43 +151,47 @@ def _gemini(messages: list, timeout: int) -> str | None:
         return None
 
 
-def _groq_llama(messages: list, timeout: int) -> str | None:
+def _groq_llama(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
     return _openai_compat(
         "https://api.groq.com/openai/v1",
         os.environ.get("GROQ_API_KEY", ""),
         "llama-3.3-70b-versatile",
         messages,
         timeout,
+        temperature,
     )
 
 
-def _cerebras_glm(messages: list, timeout: int) -> str | None:
+def _cerebras_glm(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
     return _openai_compat(
         "https://api.cerebras.ai/v1",
         os.environ.get("CEREBRAS_API_KEY", ""),
         "zai-glm-4.7",
         messages,
         timeout,
+        temperature,
     )
 
 
-def _mistral(messages: list, timeout: int) -> str | None:
+def _mistral(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
     return _openai_compat(
         "https://api.mistral.ai/v1",
         os.environ.get("MISTRAL_API_KEY", ""),
         "mistral-small-latest",
         messages,
         timeout,
+        temperature,
     )
 
 
-def _groq_gptoss(messages: list, timeout: int) -> str | None:
+def _groq_gptoss(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
     return _openai_compat(
         "https://api.groq.com/openai/v1",
         os.environ.get("GROQ_API_KEY", ""),
         "openai/gpt-oss-120b",
         messages,
         timeout,
+        temperature,
     )
 
 
@@ -248,9 +253,10 @@ def _record_provider_result(provider: Provider, ok: bool) -> None:
             state["open_until"] = time.monotonic() + _CIRCUIT_COOLDOWN_SECONDS
 
 
-def _call_provider(provider: Provider, messages: list, timeout: int) -> str | None:
+def _call_provider(provider: Provider, messages: list, timeout: int,
+                   temperature: float = 0.3) -> str | None:
     try:
-        result = provider.fn(messages, timeout)
+        result = provider.fn(messages, timeout, temperature)
     except Exception as error:
         print(f"[llm] provider {provider.name} error: {error}")
         result = None
@@ -372,9 +378,15 @@ def chat(prompt: str, system: str = "", timeout: int = 60) -> str | None:
 
 
 def chat_ensemble(
-    prompt: str, system: str = "", n: int = 3, timeout: int = 60
+    prompt: str, system: str = "", n: int = 3, timeout: int = 60,
+    temperature: float = 0.3,
 ) -> list[str]:
-    """Call configured providers in parallel, preferring independent backends."""
+    """Call configured providers in parallel, preferring independent backends.
+
+    temperature defaults to 0.3; scoring/evaluation callers (e.g. resume_ai.analyze)
+    pass 0.0 so the SAME input yields a near-identical answer every run — a resume
+    score must not swing 80→88→90 across repeated "Re-analyze" presses.
+    """
     messages = _build_messages(prompt, system)
     providers = _select_providers(n)
     if not providers:
@@ -383,7 +395,7 @@ def chat_ensemble(
     results_by_name: dict[str, str] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(providers)) as executor:
         futures = {
-            executor.submit(_call_provider, provider, messages, timeout): provider.name
+            executor.submit(_call_provider, provider, messages, timeout, temperature): provider.name
             for provider in providers
         }
         for future in concurrent.futures.as_completed(futures):
@@ -411,9 +423,10 @@ def chat_json_ensemble(
     n: int = 3,
     timeout: int = 60,
     validator=None,
+    temperature: float = 0.3,
 ):
     """Return a consensus merge of all valid structured provider answers."""
-    responses = chat_ensemble(prompt, system, n, timeout)
+    responses = chat_ensemble(prompt, system, n, timeout, temperature)
     parsed = [_extract_json(response) for response in responses if response]
     parsed = [item for item in parsed if item is not None]
     if validator is not None:

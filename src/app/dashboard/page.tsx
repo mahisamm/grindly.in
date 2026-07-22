@@ -531,10 +531,21 @@ export default function Dashboard() {
         return;
       }
       setMe(data);
-      // Init profile form once (don't overwrite edits in progress)
       setProfileForm((prev) => {
-        if (prev) return prev;
-        return data.profile ? profileToForm(data.profile) : null;
+        if (!data.profile) return prev;
+        const fresh = profileToForm(data.profile);
+        if (!prev) return fresh;
+        // The worker auto-fills phone/GPA off the resume AFTER this form was first
+        // loaded (analysis runs in the background). Without this, those values land
+        // in the DB and /api/me but never reach the fields the user is looking at —
+        // "it's not filling anything." Adopt the server value ONLY where the user
+        // hasn't set it locally, so an edit in progress is never clobbered. Mirrors
+        // db.update_contact's "fill blanks only" rule (8.0 GPA = unset placeholder).
+        return {
+          ...prev,
+          phone: prev.phone.trim() ? prev.phone : fresh.phone,
+          gpa: prev.gpa && prev.gpa !== "8.0" ? prev.gpa : fresh.gpa,
+        };
       });
     }
     setLoading(false);
