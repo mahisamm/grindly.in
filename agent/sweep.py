@@ -91,9 +91,17 @@ def due_users(now: datetime.datetime | None = None) -> list[str]:
     return out
 
 
+def _gmail_scan_on() -> bool:
+    """Global switch for the opt-in Gmail interview scan. Off until gmail.readonly
+    clears Google verification — see src/lib/googleOAuth.gmailScanEnabled, the web
+    side of the same flag."""
+    return os.environ.get("GMAIL_SCAN_ENABLED") == "1"
+
+
 def tick(now: datetime.datetime | None = None) -> int:
     """Enqueue daily discovery and due final-link delivery work."""
     n = 0
+    scan_on = _gmail_scan_on()
     for uid in due_users(now):
         try:
             run_queue.enqueue(uid, "live")
@@ -103,6 +111,18 @@ def tick(now: datetime.datetime | None = None) -> int:
         except Exception as e:  # noqa: BLE001
             # One user's failure must not stop the rest of the fleet being swept.
             log.error("could not enqueue %s: %s", uid, e)
+            continue
+        # Opt-in Gmail interview scan, on the SAME once-a-day cadence as the sweep
+        # (due_users already dedups per user per day). Only for users who actually
+        # connected Gmail, and only when the feature is switched on. Isolated in its
+        # own guard so a scan-enqueue hiccup never disturbs the live run just queued.
+        if scan_on:
+            try:
+                if db.get_platform_credential(uid, "gmail"):
+                    run_queue.enqueue(uid, "scan_email")
+                    n += 1
+            except Exception as e:  # noqa: BLE001
+                log.error("could not enqueue gmail scan for %s: %s", uid, e)
     # Delivery runs contain no browser automation. The queue's per-user, per-mode
     # active key makes this safe to evaluate on each 10-minute sweep tick.
     for uid in db.active_users():

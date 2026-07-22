@@ -1701,11 +1701,47 @@ def optimize_variants(uid: str) -> dict:
     return {"status": "ready", "count": len(variants), "best": best}
 
 
+def scan_email(uid: str) -> dict:
+    """Read the user's Gmail for interview/offer/rejection replies and update
+    Application.outcome — the automatic half of interview tracking.
+
+    Gated on GMAIL_SCAN_ENABLED. gmail.readonly is a Google-restricted scope, so
+    until the OAuth app clears verification this stays dark in production and the
+    dashboard offers manual outcome marking instead. It runs HERE on the worker —
+    not in the web request — because the slim web image ships neither Python nor
+    an LLM, which is why the old /api/gmail/scan route 503s in prod.
+
+    Opt-in by construction: it only ever touches a user who deliberately connected
+    Gmail (a credential row exists). Best-effort throughout — a failed scan must
+    never surface as a broken agent run.
+    """
+    if os.environ.get("GMAIL_SCAN_ENABLED") != "1":
+        return {"skipped": "disabled"}
+    blob = db.get_platform_credential(uid, "gmail")
+    if not blob:
+        return {"skipped": "not_connected"}
+    try:
+        import secret_box
+        import email_scanner
+        creds = json.loads(secret_box.decrypt_secret(blob))
+        rt = creds.get("refresh_token")
+        if not rt:
+            return {"skipped": "no_refresh_token"}
+        result = email_scanner.scan(uid, rt)
+        log.info("gmail scan for %s: scanned=%s detected=%d", uid,
+                 result.get("scanned"), len(result.get("detected") or []))
+        return result
+    except Exception as e:  # noqa: BLE001
+        log.warning("gmail scan failed for %s: %s", uid, e)
+        return {"error": "scan_failed"}
+
+
 def run_job(uid: str, mode: str) -> dict:
     """Queue dispatcher so the web app can ENQUEUE work instead of spawning
     Python itself:
       'analyze'              → resume analysis only
       'optimize'             → generate ATS-optimized resume variants (button-click)
+      'scan_email'           → Gmail interview/offer/rejection detection (opt-in)
       'connect_<platform>'   → credential login for that platform (hosted)
       'approved'             → submit only the applications the user approved
       anything else          → full apply pipeline.
@@ -1716,6 +1752,8 @@ def run_job(uid: str, mode: str) -> dict:
         return optimize_variants(uid)
     if mode == "latex_check":
         return latex_check(uid)
+    if mode == "scan_email":
+        return scan_email(uid)
     if mode.startswith("connect"):
         # mode is "connect_internshala" (or legacy "connect" → internshala)
         platform = mode.split("_", 1)[1] if "_" in mode else "internshala"

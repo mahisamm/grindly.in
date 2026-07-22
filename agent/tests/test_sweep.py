@@ -94,3 +94,59 @@ def test_tick_enqueues_a_delivery_run_for_a_due_unnotified_link():
          patch.object(sweep.run_queue, "enqueue") as enq:
         assert sweep.tick() == 1
     assert enq.call_args.args == ("u1", "deliver")
+
+
+# --- opt-in gmail interview scan ---------------------------------------------
+
+def test_scan_not_enqueued_when_feature_is_off(monkeypatch):
+    """With the flag off (the production default), the sweep never even looks at a
+    user's Gmail credential, let alone queues a scan."""
+    monkeypatch.delenv("GMAIL_SCAN_ENABLED", raising=False)
+    with patch.object(sweep, "due_users", return_value=["u1"]), \
+         patch.object(sweep.run_queue, "enqueue") as enq, \
+         patch.object(sweep.db, "add_audit"), \
+         patch.object(sweep.db, "get_platform_credential") as cred, \
+         patch.object(sweep.db, "active_users", return_value=[]):
+        sweep.tick()
+        cred.assert_not_called()
+        assert [c.args[1] for c in enq.call_args_list] == ["live"]
+
+
+def test_scan_enqueued_once_for_a_gmail_user_when_enabled(monkeypatch):
+    monkeypatch.setenv("GMAIL_SCAN_ENABLED", "1")
+    with patch.object(sweep, "due_users", return_value=["u1"]), \
+         patch.object(sweep.run_queue, "enqueue") as enq, \
+         patch.object(sweep.db, "add_audit"), \
+         patch.object(sweep.db, "get_platform_credential", return_value="cipher"), \
+         patch.object(sweep.db, "active_users", return_value=[]):
+        n = sweep.tick()
+        modes = [c.args[1] for c in enq.call_args_list]
+        assert modes == ["live", "scan_email"]  # same daily cadence, one each
+        assert n == 2
+
+
+def test_scan_not_enqueued_for_a_user_without_gmail(monkeypatch):
+    monkeypatch.setenv("GMAIL_SCAN_ENABLED", "1")
+    with patch.object(sweep, "due_users", return_value=["u1"]), \
+         patch.object(sweep.run_queue, "enqueue") as enq, \
+         patch.object(sweep.db, "add_audit"), \
+         patch.object(sweep.db, "get_platform_credential", return_value=None), \
+         patch.object(sweep.db, "active_users", return_value=[]):
+        sweep.tick()
+        assert [c.args[1] for c in enq.call_args_list] == ["live"]
+
+
+def test_a_scan_enqueue_failure_does_not_break_the_sweep(monkeypatch):
+    """A hiccup queuing the scan must not disturb the live run already queued."""
+    monkeypatch.setenv("GMAIL_SCAN_ENABLED", "1")
+
+    def flaky(uid, mode):
+        if mode == "scan_email":
+            raise RuntimeError("queue blip")
+
+    with patch.object(sweep, "due_users", return_value=["u1"]), \
+         patch.object(sweep.run_queue, "enqueue", side_effect=flaky), \
+         patch.object(sweep.db, "add_audit"), \
+         patch.object(sweep.db, "get_platform_credential", return_value="cipher"), \
+         patch.object(sweep.db, "active_users", return_value=[]):
+        assert sweep.tick() == 1  # the live run still counts

@@ -2625,15 +2625,22 @@ export default function Dashboard() {
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold rounded-md px-1.5 py-0.5 border border-current text-brand-2">Ext</span>
-                  <span className="font-medium">Browser extension</span>
+                  <span className="font-medium">How you apply — your choice</span>
                 </div>
                 <span className={`text-xs rounded-full px-2 py-0.5 ${extTokens.length ? "bg-accent/20 text-accent" : "bg-surface-2 text-muted"}`}>
-                  {extTokens.length ? `${extTokens.length} paired` : "Not paired"}
+                  {extTokens.length ? `${extTokens.length} paired` : "Optional"}
                 </span>
               </div>
+              <p className="text-xs text-muted mb-2">
+                The agent finds, scores, and preps every match either way. The only choice is who fills the form:
+              </p>
+              <ul className="text-xs text-muted mb-3 space-y-1.5">
+                <li>• <span className="text-foreground font-medium">Less manual (browser extension)</span> — it auto-fills the whole form in your own browser from your Apply Kit. You review and click <span className="font-medium">Submit</span>; the extension never submits for you.</li>
+                <li>• <span className="text-foreground font-medium">Do it yourself</span> — open the listing and fill it in by hand using the cover letter and answers Grindly already prepared. Nothing to install.</li>
+              </ul>
               <p className="text-xs text-muted mb-3">
-                Auto-fills matched applications in your own browser — you always click Submit yourself.{" "}
-                <Link href="/extension/connect" className="text-brand-2 underline">Connect a browser →</Link>
+                <Link href="/extension/connect" className="text-brand-2 underline">Get / connect the extension →</Link>{" "}
+                <span className="text-muted">Optional — switch anytime.</span>
               </p>
               {extTokens.length > 0 && (
                 <div className="space-y-2">
@@ -2668,66 +2675,74 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* Gmail email scanning — hidden until gmail.readonly clears Google
-                verification (server gate: GMAIL_SCAN_ENABLED). Showing it while
-                the restricted scope is unverified sends users into a consent
-                screen Google blocks. */}
-            {me.user.gmailScanEnabled && (
+            {/* Interview alerts — ALWAYS shown so the choice is explicit: mark
+                outcomes yourself (works today), or let Grindly watch your inbox
+                (opt-in). The Connect action only appears once the capability is
+                live (GMAIL_SCAN_ENABLED); until gmail.readonly clears Google's
+                review the card explains that instead of dead-ending on a consent
+                screen Google blocks. No hidden feature, no broken button. */}
             <div className="mt-5 rounded-xl border border-border bg-surface p-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <span className="text-base">📧</span>
-                  <span className="font-medium">Gmail — interview tracker</span>
+                  <span className="font-medium">Interview alerts</span>
                 </div>
                 <span className={`text-xs rounded-full px-2 py-0.5 ${me.user.gmailConnected ? "bg-accent/20 text-accent" : "bg-surface-2 text-muted"}`}>
-                  {me.user.gmailConnected ? "Connected" : "Not connected"}
+                  {me.user.gmailConnected ? "Auto — on" : "Manual"}
                 </span>
               </div>
               <p className="text-xs text-muted mb-3">
-                Connect Gmail (read-only) so the agent automatically detects interview calls, offers, and
-                rejections from companies you applied to — and notifies you via Slack or email without you
-                having to manually update each application.
+                Grindly can&apos;t see a recruiter&apos;s reply on its own. Two ways to stay on top of it — your choice:
               </p>
-              {me.user.gmailConnected ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-accent">✓ Gmail scanning active</span>
-                  <button
-                    onClick={async () => {
-                      const r = await fetch("/api/gmail/scan", { method: "POST" });
-                      const j = await r.json().catch(() => ({}));
-                      if (r.ok) setNotice({ kind: "ok", text: `Scanned ${j.scanned ?? 0} emails · ${j.detected?.length ?? 0} new outcomes detected.` });
-                      else setNotice({ kind: "err", text: j.error ?? "Scan failed." });
-                    }}
-                    className="rounded-lg border border-border px-3 py-1.5 text-xs hover:border-brand/60 transition"
+              <ul className="text-xs text-muted mb-3 space-y-1.5">
+                <li>• <span className="text-foreground font-medium">Do it yourself</span> — when a company replies, mark the outcome on that application (one tap). Always available, nothing to set up.</li>
+                <li>• <span className="text-foreground font-medium">Let Grindly watch</span> — connect Gmail (read-only) and the agent detects interview calls, offers, and rejections, then pings you on Slack or email. Optional.</li>
+              </ul>
+              {me.user.gmailScanEnabled ? (
+                me.user.gmailConnected ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-accent">✓ Watching your inbox</span>
+                    <button
+                      onClick={async () => {
+                        const r = await fetch("/api/gmail/scan", { method: "POST" });
+                        const j = await r.json().catch(() => ({}));
+                        if (r.ok) setNotice({ kind: "ok", text: "Scanning your inbox — we'll notify you of any interview updates." });
+                        else setNotice({ kind: "err", text: j.error ?? "Couldn't start the scan." });
+                      }}
+                      className="rounded-lg border border-border px-3 py-1.5 text-xs hover:border-brand/60 transition"
+                    >
+                      Scan now
+                    </button>
+                    <button
+                      onClick={async () => {
+                        await fetch("/api/gmail/status", { method: "DELETE" });
+                        load();
+                      }}
+                      className="text-xs text-muted hover:text-danger transition"
+                    >
+                      Turn off
+                    </button>
+                  </div>
+                ) : (
+                  <a
+                    href="/api/auth/gmail"
+                    className="press inline-flex items-center gap-2 rounded-lg border-2 border-ink bg-surface sticker-sm px-4 py-2 text-sm font-medium hover:bg-surface-2 transition"
                   >
-                    Scan now
-                  </button>
-                  <button
-                    onClick={async () => {
-                      await fetch("/api/gmail/status", { method: "DELETE" });
-                      load();
-                    }}
-                    className="text-xs text-muted hover:text-danger transition"
-                  >
-                    Disconnect
-                  </button>
-                </div>
+                    <svg width="16" height="16" viewBox="0 0 48 48" fill="none">
+                      <path d="M47.532 24.552c0-1.636-.132-3.2-.388-4.704H24.48v8.896h12.956c-.568 2.952-2.22 5.456-4.692 7.132v5.912h7.572c4.432-4.072 6.988-10.072 6.988-17.236z" fill="#4285F4"/>
+                      <path d="M24.48 48c6.48 0 11.916-2.148 15.888-5.812l-7.572-5.912c-2.148 1.44-4.896 2.288-8.316 2.288-6.396 0-11.82-4.32-13.748-10.128H2.9v6.1C6.856 42.86 15.088 48 24.48 48z" fill="#34A853"/>
+                      <path d="M10.732 28.436A14.4 14.4 0 0 1 9.9 24c0-1.54.264-3.036.732-4.436v-6.1H2.9A23.952 23.952 0 0 0 .48 24c0 3.864.924 7.524 2.42 10.536l8.332-6.1z" fill="#FBBC05"/>
+                      <path d="M24.48 9.552c3.604 0 6.836 1.24 9.38 3.672l6.972-6.972C36.388 2.352 30.96 0 24.48 0 15.088 0 6.856 5.14 2.9 13.464l7.832 6.1C12.66 13.872 18.084 9.552 24.48 9.552z" fill="#EA4335"/>
+                    </svg>
+                    Connect Gmail (read-only)
+                  </a>
+                )
               ) : (
-                <a
-                  href="/api/auth/gmail"
-                  className="press inline-flex items-center gap-2 rounded-lg border-2 border-ink bg-surface sticker-sm px-4 py-2 text-sm font-medium hover:bg-surface-2 transition"
-                >
-                  <svg width="16" height="16" viewBox="0 0 48 48" fill="none">
-                    <path d="M47.532 24.552c0-1.636-.132-3.2-.388-4.704H24.48v8.896h12.956c-.568 2.952-2.22 5.456-4.692 7.132v5.912h7.572c4.432-4.072 6.988-10.072 6.988-17.236z" fill="#4285F4"/>
-                    <path d="M24.48 48c6.48 0 11.916-2.148 15.888-5.812l-7.572-5.912c-2.148 1.44-4.896 2.288-8.316 2.288-6.396 0-11.82-4.32-13.748-10.128H2.9v6.1C6.856 42.86 15.088 48 24.48 48z" fill="#34A853"/>
-                    <path d="M10.732 28.436A14.4 14.4 0 0 1 9.9 24c0-1.54.264-3.036.732-4.436v-6.1H2.9A23.952 23.952 0 0 0 .48 24c0 3.864.924 7.524 2.42 10.536l8.332-6.1z" fill="#FBBC05"/>
-                    <path d="M24.48 9.552c3.604 0 6.836 1.24 9.38 3.672l6.972-6.972C36.388 2.352 30.96 0 24.48 0 15.088 0 6.856 5.14 2.9 13.464l7.832 6.1C12.66 13.872 18.084 9.552 24.48 9.552z" fill="#EA4335"/>
-                  </svg>
-                  Connect Gmail (read-only)
-                </a>
+                <p className="text-xs text-muted">
+                  <span className="text-foreground font-medium">Automatic inbox detection is coming soon</span> — it&apos;s pending Google&apos;s security review of the read-only Gmail permission, and switches on for everyone automatically once approved. For now, just mark outcomes yourself — it takes one tap.
+                </p>
               )}
             </div>
-            )}
 
             <div className="mt-5 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
               <p className="font-medium text-foreground mb-1">How live applications work</p>

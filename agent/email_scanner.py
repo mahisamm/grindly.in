@@ -28,10 +28,15 @@ _load_dotenv()
 # ── Token refresh ──────────────────────────────────────────────────────────────
 
 def refresh_access_token(refresh_token: str) -> str | None:
-    client_id = os.environ.get("GOOGLE_CLIENT_ID")
-    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    # Must be the SAME client that minted the refresh token in
+    # src/app/api/auth/gmail/callback — that flow uses gmailClient(), i.e.
+    # GMAIL_CLIENT_ID/SECRET when set, else the login client. Refreshing with a
+    # different client_id is rejected by Google ("invalid_grant"), so prefer the
+    # Gmail-specific client and fall back to the login client exactly as the TS does.
+    client_id = os.environ.get("GMAIL_CLIENT_ID") or os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GMAIL_CLIENT_SECRET") or os.environ.get("GOOGLE_CLIENT_SECRET")
     if not client_id or not client_secret:
-        print("[email_scanner] GOOGLE_CLIENT_ID/SECRET not set", flush=True)
+        print("[email_scanner] GMAIL/GOOGLE_CLIENT_ID/SECRET not set", flush=True)
         return None
     try:
         body = urllib.parse.urlencode({

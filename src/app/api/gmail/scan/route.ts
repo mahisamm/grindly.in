@@ -1,59 +1,59 @@
 import { NextResponse } from "next/server";
+import path from "node:path";
+import fsp from "node:fs/promises";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
-import { decryptSecret } from "@/lib/crypto";
-import { execFileSync } from "child_process";
-import path from "path";
-import fs from "fs";
+import { enqueueAgentRun } from "@/lib/agentRunQueue";
+import { spawnWorkerKick } from "@/lib/workerKick";
+import { gmailScanEnabled } from "@/lib/googleOAuth";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Manual "Scan now" for Gmail interview detection.
+ *
+ * This used to shell out to Python (email_scanner.py) from the web process, which
+ * the slim production image can't do (no Python, no LLM) — so it 503'd in prod and
+ * only ever worked on a dev box. Now it just ENQUEUES a `scan_email` worker job,
+ * exactly like resume analysis: the worker fleet holds the Python + LLM the scan
+ * needs, drains the job, updates outcomes, and notifies the user. Works in dev and
+ * prod alike; the daily sweep enqueues the same job on its own, so this button is a
+ * convenience, not the only path.
+ */
 export async function POST() {
   const uid = await getUid();
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
 
-  // Gmail scan shells out to Python (email_scanner.py). The slim prod web image
-  // has no Python, so disable it in production until the scan runs on the worker
-  // (Phase 4). Outcomes can still be set manually in the dashboard.
-  if (process.env.NODE_ENV === "production") {
+  // Feature gate — gmail.readonly is a Google-restricted scope. Until it clears
+  // verification the whole flow is dark and there is nothing to scan.
+  if (!gmailScanEnabled()) {
     return NextResponse.json(
-      { error: "Gmail interview-detection isn't available in the hosted beta yet." },
+      { error: "Gmail interview detection isn't switched on yet." },
       { status: 503 },
     );
   }
 
-  // Check Gmail connected
-  const cred = await prisma.platformCredential.findUnique({
-    where: { userId_platform: { userId: uid, platform: "gmail" } },
-  });
+  const cred = await prisma.platformCredential
+    .findUnique({ where: { userId_platform: { userId: uid, platform: "gmail" } } })
+    .catch(() => null);
   if (!cred) return NextResponse.json({ error: "Gmail not connected" }, { status: 400 });
 
-  // Decrypt token
-  const tokens = JSON.parse(decryptSecret(cred.ciphertext)) as { refresh_token: string };
-
-  // Write tokens to a temp file for the Python script to read
-  const tmpPath = path.join(process.cwd(), "data", `gmail_scan_${uid}.json`);
-  fs.writeFileSync(tmpPath, JSON.stringify({ userId: uid, refresh_token: tokens.refresh_token }), "utf8");
-
   try {
-    const bin = process.env.PYTHON_BIN ?? "python";
-    const script = path.join(process.cwd(), "agent", "email_scanner.py");
-    const agentDir = path.join(process.cwd(), "agent");
-    const out = execFileSync(bin, [script, tmpPath], {
-      timeout: 60_000,
-      cwd: agentDir,
-      env: { ...process.env },
-    }).toString();
-    fs.unlinkSync(tmpPath);
-
-    let result: { scanned: number; detected: { appId: string; outcome: string; subject: string }[] } = { scanned: 0, detected: [] };
-    try { result = JSON.parse(out.trim().split("\n").filter(l => l.startsWith("{")).pop() ?? "{}"); } catch {}
-
-    return NextResponse.json({ ok: true, ...result });
+    await enqueueAgentRun(uid, "scan_email");
   } catch (e) {
-    if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-    // Log the detail server-side only — don't leak internal paths/stack to client.
-    console.error("[gmail/scan] failed:", e);
-    return NextResponse.json({ error: "Scan failed" }, { status: 500 });
+    console.error("[gmail/scan] enqueue failed:", e);
+    return NextResponse.json({ error: "Couldn't start the scan — please try again." }, { status: 500 });
   }
+
+  // Best-effort local kick so a dev box scans immediately; no-ops in the slim
+  // prod image, where the worker fleet drains the queued job.
+  const worker = path.join(process.cwd(), "agent", "worker.py");
+  try {
+    await fsp.access(worker);
+    spawnWorkerKick(process.cwd(), uid);
+  } catch {
+    // No Python here — the worker drains the queued scan.
+  }
+
+  return NextResponse.json({ ok: true, queued: true });
 }
