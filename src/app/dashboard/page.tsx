@@ -1173,6 +1173,15 @@ export default function Dashboard() {
       integrationsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, [tab]);
+  // Success toasts (platform/Gmail/Slack "connected") are transient confirmations,
+  // so auto-dismiss them — they should read as a popup, not a standing banner.
+  // Errors and info (run outcomes, "no matches — widen domains") persist until
+  // dismissed so the user can actually read them.
+  useEffect(() => {
+    if (typeof window === "undefined" || notice?.kind !== "ok") return;
+    const t = window.setTimeout(() => setNotice(null), 5000);
+    return () => window.clearTimeout(t);
+  }, [notice]);
 
   async function revokeExtToken(id?: string, all?: boolean) {
     setExtBusy(all ? "all" : id || null);
@@ -1585,15 +1594,26 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* run / connect result notice */}
+        {/* run / connect result notice — a floating corner toast, not an inline
+            banner. "Connected" confirmations auto-dismiss (see effect above); run
+            outcomes/errors stay until the × is clicked. */}
         {notice && (
-          <div className={`mt-5 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${
-            notice.kind === "ok" ? "border-accent/40 bg-accent/10 text-accent"
-            : notice.kind === "err" ? "border-danger/40 bg-danger/10 text-danger"
-            : "border-brand/40 bg-brand/10 text-brand-2"
-          }`}>
-            <span>{notice.text}</span>
-            <button onClick={() => setNotice(null)} className="shrink-0 text-muted hover:text-foreground transition">×</button>
+          <div
+            role="status"
+            aria-live="polite"
+            className={`animate-in fixed bottom-4 right-4 left-4 z-[70] flex items-start justify-between gap-3 rounded-xl border bg-surface px-4 py-3 text-sm shadow-lg sm:left-auto sm:max-w-sm ${
+              notice.kind === "ok" ? "border-accent/50"
+              : notice.kind === "err" ? "border-danger/50"
+              : "border-brand/50"
+            }`}
+          >
+            <div className="flex items-start gap-2.5">
+              <span className={`mt-1.5 size-2 shrink-0 rounded-full ${
+                notice.kind === "ok" ? "bg-accent" : notice.kind === "err" ? "bg-danger" : "bg-brand"
+              }`} />
+              <span className="text-foreground">{notice.text}</span>
+            </div>
+            <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 text-muted hover:text-foreground transition">×</button>
           </div>
         )}
 
