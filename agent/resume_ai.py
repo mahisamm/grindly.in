@@ -85,10 +85,34 @@ _PHONE_ANCHORED = re.compile(
     r"(?:phone|mobile|contact|tel|call|whats\s?app|\bph\b|\bmob\b)[^\d+]{0,8}"
     r"((?:\+?\s?91[\s-]?)?[6-9](?:[\s-]?\d){9})", re.I)
 _PHONE_LOOSE = re.compile(r"(?<!\d)((?:\+?91[\s-]?)?[6-9](?:[\s-]?\d){9})(?!\d)")
-# GPA value 0–10 only; the trailing (?!\d) stops "45.0" from being read as "4".
-_CGPA_RE = re.compile(
-    r"(?:c\.?g\.?p\.?a\.?|gpa|grade\s*point(?:\s*average)?)"
-    r"[^\d]{0,6}(10(?:\.\d{1,2})?|[0-9](?:\.\d{1,2})?)(?!\d)", re.I)
+# GPA/CGPA off a resume. Two orders appear in the wild: label-then-value
+# ("CGPA: 8.5") and value-then-label ("8.5/10 CGPA") — Indian student resumes use
+# both freely. CGPA (cumulative) is the canonical figure, so it is matched before a
+# bare GPA/SGPA when a resume lists more than one.
+# The value is 0–10 only; the trailing (?!\d) stops "45.0" being read as "4" and
+# stops a graduation year ("2025 CGPA batch") being read as a grade.
+_GPA_VAL = r"(10(?:\.\d{1,2})?|[0-9](?:\.\d{1,2})?)"
+# Reversed value carries a (?<![\d.]) so neither a graduation year's trailing digit
+# ("2025 CGPA" → "5") nor a decimal fragment ("48.5 CGPA" → "5") is read as a grade.
+_GPA_VAL_REV = r"(?<![\d.])" + _GPA_VAL + r"(?!\d)"
+_CGPA_FWD = re.compile(r"(?:c\.?g\.?p\.?a\.?)[^\d]{0,6}" + _GPA_VAL + r"(?!\d)", re.I)
+_CGPA_REV = re.compile(_GPA_VAL_REV + r"\s*(?:/\s*10)?\s*c\.?g\.?p\.?a\.?", re.I)
+_GPA_FWD = re.compile(
+    r"(?:gpa|grade\s*point(?:\s*average)?)[^\d]{0,6}" + _GPA_VAL + r"(?!\d)", re.I)
+_GPA_REV = re.compile(_GPA_VAL_REV + r"\s*(?:/\s*10)?\s*gpa\b", re.I)
+
+
+def _extract_gpa(t: str) -> float | None:
+    for rx in (_CGPA_FWD, _CGPA_REV, _GPA_FWD, _GPA_REV):
+        m = rx.search(t)
+        if m:
+            try:
+                v = float(m.group(1))
+                if 0 < v <= 10:
+                    return round(v, 2)
+            except ValueError:
+                pass
+    return None
 
 
 def _clean_phone(raw: str) -> str | None:
@@ -109,16 +133,7 @@ def extract_contact(text: str) -> dict:
     m = _PHONE_ANCHORED.search(t) or _PHONE_LOOSE.search(t)
     if m:
         phone = _clean_phone(m.group(1))
-    gpa = None
-    gm = _CGPA_RE.search(t)
-    if gm:
-        try:
-            v = float(gm.group(1))
-            if 0 < v <= 10:
-                gpa = round(v, 2)
-        except ValueError:
-            pass
-    return {"phone": phone, "gpa": gpa}
+    return {"phone": phone, "gpa": _extract_gpa(t)}
 
 
 def ats_report(resume_text: str, skills: list[str]) -> dict:

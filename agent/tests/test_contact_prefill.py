@@ -82,6 +82,27 @@ def test_out_of_range_gpa_rejected():
     assert resume_ai.extract_contact("CGPA 45.0")["gpa"] is None
 
 
+def test_extract_gpa_reversed_label():
+    # Indian resumes write both orders: label-then-value AND value-then-label.
+    assert resume_ai.extract_contact("8.5 CGPA")["gpa"] == 8.5
+    assert resume_ai.extract_contact("8.5/10 CGPA")["gpa"] == 8.5
+
+
+def test_graduation_year_not_read_as_gpa():
+    # "2025 CGPA batch" must not yield 5.0 from the year's trailing digit.
+    assert resume_ai.extract_contact("Class of 2025 CGPA project")["gpa"] is None
+
+
+def test_decimal_fragment_not_read_as_gpa():
+    # "48.5 CGPA" (out of range) must not yield 5.0 from the fraction.
+    assert resume_ai.extract_contact("48.5 CGPA")["gpa"] is None
+
+
+def test_cgpa_preferred_over_other_gpa():
+    # When a resume lists SGPA (semester) and CGPA (cumulative), take the CGPA.
+    assert resume_ai.extract_contact("SGPA 9.5, CGPA 8.2")["gpa"] == 8.2
+
+
 def test_extract_empty():
     assert resume_ai.extract_contact("") == {"phone": None, "gpa": None}
 
