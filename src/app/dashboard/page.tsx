@@ -415,7 +415,7 @@ function describeRun(x: {
   ready?: number; matched?: number; applied?: number; failed?: number; pipeline?: number;
 }): { kind: "ok" | "err" | "info"; text: string } {
   if (x.deferred) {
-    return { kind: "info", text: "The automatic daily sweep only runs 9am–9pm IST — but your manual runs work any time. Tap Run agent again to go now." };
+    return { kind: "info", text: "Your agent's automatic daily run stays inside 9am–9pm IST — but you can start one any time. Tap Run now to go immediately." };
   }
   if (x.error || (x.message && x.ready == null && x.matched == null && x.applied == null)) {
     return { kind: "info", text: x.message || "Connect a job platform, then run the agent." };
@@ -428,7 +428,7 @@ function describeRun(x: {
   if (matched === 0 && applied === 0 && ready === 0) {
     return {
       kind: "info",
-      text: "Agent finished — no new matches this run. It keeps looking, but you can surface more now by widening your domains/locations or lowering the match threshold in Profile.",
+      text: "No new matches this run — but your agent stays on and runs again automatically every day, so there's nothing to press. Want more sooner? Widen your domains/locations or lower the match threshold in Profile.",
     };
   }
   return {
@@ -1272,7 +1272,7 @@ export default function Dashboard() {
                 <span><span className="font-medium">Run the agent.</span> It scores and prepares matches. You tap <span className="font-medium">Open &amp; submit</span> to send each one yourself, then track the outcome here.</span>
               </li>
             </ol>
-            <p className="mt-4 text-xs text-muted">Tip: <span className="text-foreground">Run agent</span> unlocks as soon as one supported platform is connected.</p>
+            <p className="mt-4 text-xs text-muted">Tip: <span className="text-foreground">Run now</span> unlocks as soon as one supported platform is connected.</p>
             <button onClick={dismissOnboarding} className="mt-5 w-full press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition">
               Got it — let&apos;s go
             </button>
@@ -1585,14 +1585,24 @@ export default function Dashboard() {
             ) : (
               <button
               onClick={() => runAgent()}
-              title={connectedCount === 0 ? "Connect a job platform first" : "Find supported live matches"}
+              title="Optional — your agent already runs automatically every day. This starts one extra search right now."
               className="press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-50"
             >
-              Run agent
+              Run now
             </button>
             )}
           </div>
         </div>
+
+        {/* Always-on reassurance: the agent runs on its own daily (see agent/sweep.py),
+            so a finished manual run must not read as "the agent stopped." Shown only
+            when it's actually on duty — a platform is connected and not paused. */}
+        {connectedCount > 0 && me.user.status === "active" && !isRunning && (
+          <p className="mt-3 flex items-start gap-2 text-xs text-muted">
+            <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent pulse-dot" />
+            <span>Your agent is on duty — it searches and prepares matches automatically every day, on its own. You never have to press anything; <span className="text-foreground">Run now</span> just starts one extra search this minute.</span>
+          </p>
+        )}
 
         {/* run / connect result notice — a floating corner toast, not an inline
             banner. "Connected" confirmations auto-dismiss (see effect above); run
@@ -2408,7 +2418,7 @@ export default function Dashboard() {
 
             {apps.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-10 text-center text-muted">
-                No applications yet. Connect a job platform, then hit <span className="text-foreground">Run agent</span> to find supported matches.
+                No applications yet. Connect a job platform, then hit <span className="text-foreground">Run now</span> to find supported matches.
               </div>
             ) : (
               <div className="space-y-2">
@@ -2912,7 +2922,7 @@ export default function Dashboard() {
               <ol className="list-decimal pl-5 space-y-1 text-sm">
                 <li>Connect any supported platform above and log in yourself in the live browser window.</li>
                 <li>Once connected, the agent reuses that session to log in on our server.</li>
-                <li>Click <strong>Run agent</strong> to find matches. External and unsupported complex applications are skipped.</li>
+                <li>Click <strong>Run now</strong> to find matches. External and unsupported complex applications are skipped.</li>
                 <li>Review each prepared application and tap <strong>Approve</strong> to submit it.</li>
                 <li>The agent sends up to <strong>{cap}</strong> applications/day across connected platforms.</li>
               </ol>
