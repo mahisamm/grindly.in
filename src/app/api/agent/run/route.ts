@@ -123,17 +123,11 @@ export async function POST(req: Request) {
         );
       }
     }
-    const connected =
-      user.internshalaConnected ||
-      (await prisma.userIntegration
-        .count({ where: { userId: uid, status: "connected" } })
-        .catch(() => 0)) > 0;
-    if (!connected) {
-      return NextResponse.json(
-        { error: "Connect at least one job platform before running the agent." },
-        { status: 400 },
-      );
-    }
+    // No connected-platform requirement: discovery scrapes public listings /
+    // guest APIs with no login (see agent/worker.py DISCOVERY_PLATFORMS), and Safe
+    // Apply Mode never uses a session either. Connecting a platform is optional
+    // (it powers the Apply-Kit answer draft + a future real auto-submit), so the
+    // agent runs and finds matches for a user who has connected nothing.
   }
 
   const root = process.cwd();

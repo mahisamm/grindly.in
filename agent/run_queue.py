@@ -21,6 +21,13 @@ import db
 log = logging.getLogger("grindly.queue")
 
 STALE_LOCK_MS = 30 * 60 * 1000  # a job locked longer than this is presumed crashed
+# Absolute wall-clock cap on a single run. The heartbeat renews locked_at every
+# ~60s regardless of whether the run is making progress, so a genuinely wedged run
+# (e.g. a hung browser close) never trips STALE_LOCK_MS and would block the user's
+# queue forever. Any run still 'running' this long after it was created is failed
+# regardless of its lease. 45min is far past any real run (human-paced runs yield
+# back to 'queued' rather than holding the lock), so this won't cut a live one.
+MAX_RUN_MS = 45 * 60 * 1000
 BACKOFF_BASE_MS = 2 * 60 * 1000  # linear backoff: 2min * attempts already made
 HEARTBEAT_INTERVAL_SECONDS = max(
     1.0, float(os.environ.get("GRINDLY_QUEUE_HEARTBEAT_SECONDS", "60"))
@@ -114,6 +121,15 @@ def reclaim_stale(now_ms: int | None = None):
             "WHERE status='running' AND locked_at IS NOT NULL AND locked_at < ? "
             "AND attempts < max_attempts",
             (ts, cutoff),
+        )
+        # Absolute-duration backstop: a run wedged past MAX_RUN_MS is failed
+        # regardless of its (heartbeat-renewed) lock, freeing active_key so the
+        # user's next enqueue isn't blocked forever. See MAX_RUN_MS.
+        c.execute(
+            "UPDATE agent_runs SET status='failed', error='run exceeded max duration', "
+            "active_key=NULL, locked_by=NULL, locked_at=NULL, updated_at=? "
+            "WHERE status='running' AND created_at < ?",
+            (ts, db.time_ago_db(MAX_RUN_MS)),
         )
 
 

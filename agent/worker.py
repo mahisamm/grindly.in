@@ -183,6 +183,13 @@ def _cooldown_active(row: dict | None, cutoff) -> bool:
 # Source priority order — agent applies across platforms in this sequence.
 SOURCE_PRIORITY = ["linkedin", "internshala", "naukri", "unstop", "indeed"]
 
+# Platforms we can DISCOVER on with no login — every fetcher scrapes public search
+# / a guest API anonymously, so discovery is decoupled from "connecting" (a login
+# flow only apply and the Apply-Kit answer-draft use). internshala first so the
+# most reliable, internship-focused board is always in the daily rotation
+# (_platforms_for_today always includes index 0).
+DISCOVERY_PLATFORMS = ["internshala", "naukri", "linkedin", "unstop", "indeed"]
+
 # Platforms whose ToS prohibits automated submission (all 5 we currently
 # integrate — none of them are ATS-hosted company pages that welcome bots).
 # For these, the bot is never allowed to click the final submit button on its
@@ -543,9 +550,15 @@ def deliver_ready_match(uid: str, user: dict) -> dict:
         )
         subject = f"Grindly: {len(apps)} application links are ready"
 
-    if not notify.to_user(user, subject, text):
+    sent = notify.to_user(user, subject, text)
+    if not sent and notify.any_channel_configured():
+        # A channel is configured but the send failed (transient) — leave the
+        # matches unnotified so the next sweep retries delivery.
         return {"delivered": 0, "undelivered": len(apps)}
-
+    # Either it sent, OR no channel is configured at all. In the no-channel case
+    # the matches are already visible in-app (dashboard + bell), so mark them
+    # notified regardless — otherwise the sweep re-enqueues a delivery run every
+    # 10 minutes per user forever, chasing a channel that does not exist.
     delivered_ids = [a["id"] for a in apps if db.mark_match_notified(a["id"])]
     db.add_audit(
         "application_link_delivered", user_id=uid, target=None,
@@ -801,14 +814,10 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # account-wide challenge breaker both need every connected platform, not
     # just today's rotation, so this is hoisted to function scope.
     connected_platforms: list[str] = db.get_connected_platforms(uid)
-
-    if not connected_platforms:
-        msg = (
-            "no platforms connected. "
-            "Connect a platform in the Integrations tab before running the agent."
-        )
-        log.warning(msg)
-        return {"error": "no_platforms_connected", "message": msg}
+    # connected_platforms is only used by the (manual-hold) apply phase and the
+    # account-wide challenge pause. Discovery does NOT require it — every fetcher
+    # scrapes public listings / a guest API with no login, so the agent searches
+    # for a user who has connected nothing. See DISCOVERY_PLATFORMS.
 
     # Don't re-scrape while the queue still holds real work. Going back to five job
     # boards for listings we have no free day to send anyway is pure noise — to them
@@ -829,7 +838,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # A submit-only run does no discovery: the rotation exists to decide which
     # boards to *scrape* today, and there is nothing to scrape.
     active_sources = (
-        _platforms_for_today(uid, [s for s in SOURCE_PRIORITY if s in connected_platforms])
+        _platforms_for_today(uid, DISCOVERY_PLATFORMS)
         if discover else []
     )
     if active_sources:

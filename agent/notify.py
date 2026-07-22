@@ -23,6 +23,13 @@ def slack_configured() -> bool:
     return bool(os.environ.get("SLACK_BOT_TOKEN"))
 
 
+def any_channel_configured() -> bool:
+    """True if at least one user-facing delivery channel (email or Slack) is set
+    up. When neither is, a message to a user can never be delivered — callers use
+    this to avoid retrying delivery forever against a channel that does not exist."""
+    return slack_configured() or email_notify.configured()
+
+
 def send(channel: str, text: str) -> bool:
     """Post to Slack. True means Slack accepted it.
 

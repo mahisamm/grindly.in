@@ -484,9 +484,22 @@ def _stub_pre_gate(monkeypatch, hour: int):
 
 def test_manual_run_bypasses_human_hours_gate_at_night(monkeypatch):
     _stub_pre_gate(monkeypatch, hour=1)  # 1am IST — outside 9-21
-    out = worker.run_for_user("u1", "live", manual=True)
-    # Got PAST the gate (would be 'deferred' otherwise), then stopped on no platform.
-    assert out.get("error") == "no_platforms_connected"
+    # Discovery no longer needs a connected platform, so a manual run proceeds
+    # PAST the gate into real work. Halt it at the first post-gate call
+    # (get_connected_platforms) to prove the gate was bypassed without standing up
+    # a full DB: a deferred run returns BEFORE ever reaching that call.
+    reached = {"past_gate": False}
+
+    def _mark(uid):
+        reached["past_gate"] = True
+        raise RuntimeError("halt after gate")
+
+    monkeypatch.setattr(worker.db, "get_connected_platforms", _mark)
+    try:
+        out = worker.run_for_user("u1", "live", manual=True)
+    except RuntimeError:
+        out = {}
+    assert reached["past_gate"] is True   # manual run bypassed the 9-21 gate
     assert "deferred" not in out
 
 

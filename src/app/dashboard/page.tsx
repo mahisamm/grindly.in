@@ -1290,7 +1290,7 @@ export default function Dashboard() {
                 <span><span className="font-medium">Run the agent.</span> It scores and prepares matches. You tap <span className="font-medium">Open &amp; submit</span> to send each one yourself, then track the outcome here.</span>
               </li>
             </ol>
-            <p className="mt-4 text-xs text-muted">Tip: <span className="text-foreground">Run now</span> unlocks as soon as one supported platform is connected.</p>
+            <p className="mt-4 text-xs text-muted">Tip: <span className="text-foreground">Run now</span> searches every day for you — connecting a platform is optional (for auto-fill).</p>
             <button onClick={dismissOnboarding} className="mt-5 w-full press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition">
               Got it — let&apos;s go
             </button>
@@ -1583,15 +1583,6 @@ export default function Dashboard() {
                 <span className="size-2 rounded-full bg-white/90 pulse-dot" />
                 Agent working…
               </button>
-            ) : connectedCount === 0 ? (
-              <button
-                disabled
-                onClick={() => setTab("integrations")}
-                title="Connect a job platform first to run the agent"
-                className="rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-muted cursor-not-allowed opacity-60"
-              >
-                Connect a platform first
-              </button>
             ) : me.quota.remaining === 0 ? (
               <button
                 disabled
@@ -1696,9 +1687,9 @@ export default function Dashboard() {
         {/* banners */}
         {connectedCount === 0 && (
           <div className="mt-5 rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
-            <span className="font-medium">Connect a job platform</span>{" "}
-            <span className="text-muted">so the agent can find and apply to matches for you.</span>{" "}
-            <button onClick={() => setTab("integrations")} className="underline text-brand-2 ml-1">Set up integrations →</button>
+            <span className="font-medium">Hit “Run now” to find your first matches.</span>{" "}
+            <span className="text-muted">The agent searches for you automatically — connecting a platform is optional (it lets the agent auto-fill applications for you later).</span>{" "}
+            <button onClick={() => setTab("integrations")} className="underline text-brand-2 ml-1">Integrations →</button>
           </div>
         )}
         {readyCount > 0 && (
@@ -2436,7 +2427,7 @@ export default function Dashboard() {
 
             {apps.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-10 text-center text-muted">
-                No applications yet. Connect a job platform, then hit <span className="text-foreground">Run now</span> to find supported matches.
+                No applications yet. Hit <span className="text-foreground">Run now</span> to find your first matches.
               </div>
             ) : (
               <div className="space-y-2">
