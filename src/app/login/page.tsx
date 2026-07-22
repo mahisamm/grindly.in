@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
-import { Target, Bolt, Slack } from "@/components/Doodles";
+import { Target, Bolt, Slack, Shield } from "@/components/Doodles";
 
 // Beta: Google is the only sign-in method. Email/password + phone-OTP backend
 // routes still exist but are intentionally not exposed here (no SMS provider
@@ -70,6 +70,7 @@ export default function LoginPage() {
             {([
               [Target, "Resume-aware matches, scored 0–100"],
               [Bolt, "Hard limits you set — the agent can't cross them"],
+              [Shield, "Pay-to-apply “internships” filtered out — a real employer never charges you"],
               [Slack, "Daily progress reports, right in Slack"],
             ] as [React.ComponentType<{ size?: number }>, string][]).map(([Icon, t], i) => (
               <li key={i} className="flex items-center gap-3 text-[rgba(242,236,225,0.88)]">

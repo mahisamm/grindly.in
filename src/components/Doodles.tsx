@@ -112,6 +112,15 @@ export function Slack({ className, size = 76 }: D) {
   );
 }
 
+export function Shield({ className, size = 76 }: D) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 80 80" aria-hidden>
+      <path d="M40 8 L66 18 V38 C66 57 54 68 40 74 C26 68 14 57 14 38 V18 Z" {...base} />
+      <path d="M29 40 l7 8 l15 -18" {...base} />
+    </svg>
+  );
+}
+
 export function Star({ className, size = 28 }: D) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 28 28" aria-hidden>

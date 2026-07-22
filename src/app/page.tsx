@@ -47,8 +47,8 @@ export default function Home() {
             </div>
 
             <h1 className="display mt-4 text-[clamp(2.5rem,5.8vw,4.1rem)] tracking-[-0.02em]">
-              <span className="block">Stop filling</span>
-              <span className="block">internship forms.</span>
+              <span className="block">Stop hunting</span>
+              <span className="block">internships by hand.</span>
               <span className="block accent-italic">let an agent do it.</span>
             </h1>
 
@@ -94,7 +94,7 @@ export default function Home() {
         <div className="marquee-track">
           {[0, 1].map((k) => (
             <span key={k} className="flex items-center">
-              {["THE AGENT THAT GROWS WITH YOU", "PREPARES WHILE YOU SLEEP", "5 PLATFORMS, ONE BOT"].map((t) => (
+              {["THE AGENT THAT GROWS WITH YOU", "PREPARES WHILE YOU SLEEP", "ATS-TUNED RESUMES"].map((t) => (
                 <span key={t} className="flex items-center">
                   <span className="px-[clamp(18px,2.6vw,34px)] font-display text-[clamp(1.9rem,4vw,3rem)] tracking-[-0.01em]">{t}</span>
                   <span className="text-brand">✦</span>

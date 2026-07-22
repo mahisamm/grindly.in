@@ -7,7 +7,7 @@ import dynamic from "next/dynamic";
 import { Logo } from "@/components/Brand";
 import { CountUp } from "@/components/Motion";
 import { PROFF_FIELDS, CONTACT_FIELDS } from "@/lib/proffQuestions";
-import { planCap } from "@/lib/plans";
+import { planCap, normalizePlan } from "@/lib/plans";
 
 // @novnc/novnc touches `window`/browser globals at module load time — a
 // static import crashes Next's server-side prerender of this page ("window
@@ -513,6 +513,11 @@ export default function Dashboard() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [surveyRating, setSurveyRating] = useState<number | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "err" | "info"; text: string } | null>(null);
+  // Account-deletion modal: open state, the typed-confirmation text, and an
+  // in-flight guard so the destructive button can't be double-fired.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
   const [slackIdDraft, setSlackIdDraft] = useState("");
   const [slackBusy, setSlackBusy] = useState(false);
   const [slackSetupOpen, setSlackSetupOpen] = useState(false);
@@ -621,12 +626,11 @@ export default function Dashboard() {
     window.location.href = "/login";
   }
 
+  // Executes the deletion. The guard rails live in the modal (typed "DELETE"
+  // confirmation + spelled-out consequences); this only runs once the user has
+  // cleared them, and the API still independently requires { confirm:true }.
   async function deleteAccount() {
-    const sure = window.confirm(
-      "Delete your account permanently? This erases your profile, resumes, and every " +
-      "application record. It cannot be undone."
-    );
-    if (!sure) return;
+    setDeleting(true);
     const res = await fetch("/api/account", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
@@ -635,6 +639,8 @@ export default function Dashboard() {
     if (res.ok) {
       window.location.href = "/login";
     } else {
+      setDeleting(false);
+      setDeleteOpen(false);
       setNotice({ kind: "err", text: "Couldn't delete the account. Please try again." });
     }
   }
@@ -1202,6 +1208,8 @@ export default function Dashboard() {
   const integrations = (me.integrations ?? []).filter((i) => VISIBLE_PLATFORMS.includes(i.platform));
   const connectedCount = integrations.filter((i) => i.status === "connected").length;
   const cap = planCap(me.user.plan);
+  // Human label for the delete-account modal's subscription line.
+  const planLabel = normalizePlan(me.user.plan) === "pro" ? "Pro" : "Plus";
   // Every "matched" row the server sent us has already come due — the rest of the
   // month's pipeline never leaves the server (src/lib/pipeline.ts). So this is
   // "ready to send today", not "everything we found".
@@ -1244,6 +1252,71 @@ export default function Dashboard() {
             <button onClick={dismissOnboarding} className="mt-5 w-full press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition">
               Got it — let&apos;s go
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Account-deletion confirmation — the professional destructive-action
+          pattern (GitHub/Stripe style): every consequence is spelled out and the
+          user must TYPE "DELETE", so it can never be a stray tap. The API still
+          independently enforces { confirm:true } as a second line of defence. */}
+      {deleteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={() => !deleting && setDeleteOpen(false)}>
+          <div className="glass rounded-2xl p-6 max-w-md w-full glow" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-display text-xl font-semibold text-danger">Delete your account?</h2>
+            <p className="text-sm text-muted mt-2">This is permanent and takes effect immediately. Before you confirm:</p>
+            <ul className="mt-3 space-y-2 text-sm">
+              <li className="flex gap-2.5">
+                <span className="shrink-0 font-bold text-danger">✕</span>
+                <span>Your profile, resumes, match history, and every application record are erased — this <span className="font-medium text-foreground">cannot be undone</span>.</span>
+              </li>
+              <li className="flex gap-2.5">
+                <span className="shrink-0 font-bold text-danger">✕</span>
+                <span>
+                  {me.user.paid ? (
+                    <>Your <span className="font-medium text-foreground">{planLabel}</span> subscription is cancelled immediately. Billing stops, but the current period is <span className="font-medium text-foreground">not refunded</span>.</>
+                  ) : (
+                    <>You&apos;re on the <span className="font-medium text-foreground">free plan</span> — there&apos;s nothing to pay or cancel.</>
+                  )}
+                </span>
+              </li>
+              <li className="flex gap-2.5">
+                <span className="shrink-0 font-bold text-danger">✕</span>
+                <span>You&apos;re signed out everywhere and your connected platforms are unlinked.</span>
+              </li>
+            </ul>
+            <div className="mt-4 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-muted">
+              Just need a break? <span className="font-medium text-foreground">Pause the agent</span> from the account menu instead — it stops applying and keeps all your data.
+            </div>
+            <label htmlFor="delete-confirm" className="mt-4 block text-xs font-medium text-muted">
+              Type <span className="font-mono font-semibold text-danger">DELETE</span> to confirm
+            </label>
+            <input
+              id="delete-confirm"
+              autoFocus
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="DELETE"
+              className="mt-1.5 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-danger"
+            />
+            <div className="mt-5 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setDeleteOpen(false)}
+                disabled={deleting}
+                className="press flex-1 rounded-lg border border-border px-4 py-2.5 text-sm font-medium hover:bg-surface transition disabled:opacity-50"
+              >
+                Keep my account
+              </button>
+              <button
+                type="button"
+                onClick={deleteAccount}
+                disabled={deleting || deleteConfirmText.trim().toUpperCase() !== "DELETE"}
+                className="press flex-1 rounded-lg bg-danger px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {deleting ? "Deleting…" : "Delete permanently"}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2231,6 +2304,29 @@ export default function Dashboard() {
             >
               {profileSaving ? "Saving…" : profileSaved ? "Saved ✓" : "Save profile"}
             </button>
+
+            {/* ── Account · Danger zone ── relocated here from Integrations so
+                account deletion lives with the other account settings. The loud
+                one-tap box is gone; deletion now runs through a typed-confirmation
+                modal that spells out permanence + subscription consequences. */}
+            <div className="mt-10 border-t border-border pt-6">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-3">Danger zone</h2>
+              <div className="flex flex-col gap-3 rounded-xl border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Delete account</p>
+                  <p className="text-xs text-muted mt-0.5">
+                    Permanently erase your profile, resumes, and every application record.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setDeleteConfirmText(""); setDeleteOpen(true); }}
+                  className="press shrink-0 rounded-lg border border-danger/50 px-4 py-2 text-sm font-medium text-danger hover:bg-danger/5 transition"
+                >
+                  Delete account…
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -2777,21 +2873,8 @@ export default function Dashboard() {
               </ol>
             </div>
 
-            {/* ── DANGER ZONE ── self-serve account deletion. Kept visually
-                separated and behind a browser confirm so it's never a stray tap. */}
-            <div className="mt-5 rounded-xl border border-danger/40 bg-danger/5 p-4">
-              <p className="font-medium text-danger mb-1">Delete account</p>
-              <p className="text-sm text-muted mb-3">
-                Permanently erases your profile, resumes, and every application record.
-                This cannot be undone.
-              </p>
-              <button
-                onClick={deleteAccount}
-                className="press rounded-lg border-2 border-danger px-4 py-2 text-sm font-medium text-danger hover:bg-danger/10 transition"
-              >
-                Delete my account
-              </button>
-            </div>
+            {/* Account deletion moved to Profile ▸ Danger zone — account settings
+                belong together, and it now runs through a typed-confirmation modal. */}
           </div>
         )}
 
