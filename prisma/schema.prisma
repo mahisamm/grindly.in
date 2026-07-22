@@ -128,6 +128,7 @@ model User {
   credentials    PlatformCredential[]
   extensionTokens ExtensionToken[]
   resumeVariants ResumeVariant[]
+  supportTickets SupportTicket[]
 
   @@map("users")
 }
@@ -423,6 +424,31 @@ model AuditLog {
   @@index([userId])
   @@index([action])
   @@map("audit_logs")
+}
+
+// In-app AI support desk. A signed-in user opens the support chat, describes an
+// issue, and an assistant (src/lib/supportAI.ts) replies AND distils the thread
+// into a subject/category/severity/summary for the admin queue. ONE open ticket
+// per user is reused across the conversation; resolving it lets the next issue
+// start a fresh thread. messagesJson is a serialised [{role,content,at}] array —
+// stored as text to match this schema's JSON-as-string convention (AuditLog.detail,
+// AgentRun.result) and stay SQLite-compatible for the test DB.
+model SupportTicket {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status       String   @default("open")   // open | resolved
+  subject      String?                      // AI one-line title for the queue
+  category     String?                      // bug | account | billing | how_to | feedback | other
+  severity     String   @default("normal")  // low | normal | high
+  summary      String?                      // AI summary shown to the admin
+  messagesJson String   @default("[]") @map("messages_json") // [{role,content,at}]
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([status, updatedAt])
+  @@index([userId])
+  @@map("support_tickets")
 }
 
 // DB-backed run queue — gives retries, per-user locking, and idempotent resume

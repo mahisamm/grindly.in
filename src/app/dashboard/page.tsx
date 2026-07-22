@@ -6,6 +6,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { Logo } from "@/components/Brand";
 import { CountUp } from "@/components/Motion";
+import SupportChat from "@/components/SupportChat";
 import { PROFF_FIELDS, CONTACT_FIELDS } from "@/lib/proffQuestions";
 import { planCap, normalizePlan } from "@/lib/plans";
 
@@ -518,6 +519,8 @@ export default function Dashboard() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
+  // In-app AI support chat modal.
+  const [supportOpen, setSupportOpen] = useState(false);
   const [slackIdDraft, setSlackIdDraft] = useState("");
   const [slackBusy, setSlackBusy] = useState(false);
   const [slackSetupOpen, setSlackSetupOpen] = useState(false);
@@ -1330,6 +1333,9 @@ export default function Dashboard() {
         />
       )}
 
+      {/* In-app AI support chat — opened from the account menu */}
+      {supportOpen && <SupportChat onClose={() => setSupportOpen(false)} />}
+
       {/* top bar */}
       <header className="sticky top-0 z-30 glass">
         <div className="mx-auto max-w-6xl px-5 h-16 flex items-center justify-between">
@@ -1409,6 +1415,13 @@ export default function Dashboard() {
                           <span aria-hidden>🛡️</span> Admin console
                         </Link>
                       )}
+                      <button
+                        role="menuitem"
+                        onClick={() => { setSupportOpen(true); setUserMenuOpen(false); }}
+                        className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-foreground transition hover:bg-surface-2"
+                      >
+                        <span aria-hidden>💬</span> Contact support
+                      </button>
                     </div>
                     <div className="border-t border-border py-1">
                       <button

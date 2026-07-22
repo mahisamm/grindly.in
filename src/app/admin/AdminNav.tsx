@@ -11,6 +11,7 @@ const LINKS = [
   ["/admin/agent-health", "Agent health"],
   ["/admin/applications", "Applications"],
   ["/admin/users", "Users"],
+  ["/admin/support", "Support"],
   ["/admin/integrations", "Integrations"],
   ["/admin/audit", "Audit log"],
   ["/admin/settings", "Settings"],
