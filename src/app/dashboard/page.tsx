@@ -382,7 +382,7 @@ function TagInput({ value, onChange, placeholder }: {
       {value.map((t) => (
         <span key={t} className="flex items-center gap-1 rounded-md bg-brand/15 px-2 py-0.5 text-sm text-brand-2">
           {t}
-          <button type="button" onClick={() => onChange(value.filter((x) => x !== t))} aria-label={`remove ${t}`} className="text-muted hover:text-danger">×</button>
+          <button type="button" onClick={() => onChange(value.filter((x) => x !== t))} aria-label={`remove ${t}`} className="min-h-0 leading-none text-muted hover:text-danger">×</button>
         </span>
       ))}
       <input
@@ -1366,7 +1366,7 @@ export default function Dashboard() {
                 aria-expanded={userMenuOpen}
                 aria-label="Account menu"
                 title="Your account"
-                className="flex size-9 items-center justify-center rounded-full brand-gradient text-sm font-semibold text-white transition hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                className="flex size-9 min-h-0 items-center justify-center rounded-full brand-gradient text-sm font-semibold text-white transition hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
               >
                 {(me.user.name || me.user.email).trim().charAt(0).toUpperCase() || "?"}
               </button>
@@ -2383,7 +2383,7 @@ export default function Dashboard() {
                 {apps.map((a) => (
                   <div
                     key={a.id}
-                    className="flex items-start sm:items-center justify-between rounded-xl border border-border bg-surface px-4 py-3 hover:border-brand/40 transition gap-3"
+                    className="flex flex-wrap items-start sm:items-center justify-between rounded-xl border border-border bg-surface px-4 py-3 hover:border-brand/40 transition gap-3"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">

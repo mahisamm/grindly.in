@@ -425,7 +425,11 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 
 /* ── Mobile / touch improvements ──────────────────────────── */
 @media (max-width: 640px) {
-  button, a, select, input[type="checkbox"], input[type="radio"] { min-height: 44px; }
+  /* Toggles (role="switch") are deliberately short pill-shaped controls whose
+     knob is centred for a specific track height — forcing 44px stretched the
+     track into a fat oval and floated an absolutely-positioned knob. Exclude
+     them; fixed-size square icon buttons opt out per-site with min-h-0. */
+  button:not([role="switch"]), a, select, input[type="checkbox"], input[type="radio"] { min-height: 44px; }
   input[type="text"], input[type="email"], input[type="password"],
   input[type="number"], textarea { font-size: 16px; min-height: 44px; }
   .display { letter-spacing: -0.02em; }
