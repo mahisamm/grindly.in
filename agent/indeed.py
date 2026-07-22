@@ -84,7 +84,15 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                 break
             page_url = _search_url(domains, start=(pnum - 1) * 25)
             page.goto(page_url, wait_until="domcontentloaded", timeout=45000)
-            delay = stealth.random_delay_ms(2000, 5500) if pnum == 1 else stealth.random_delay_ms(1500, 4000)
+            # Indeed sits behind Cloudflare's "Just a moment…" JS challenge, which
+            # clears itself once the browser solves it — but that takes ~10-20s, so
+            # a short fixed sleep raced it and only ever saw the challenge page.
+            # Wait for real job cards to appear instead.
+            try:
+                page.wait_for_selector(".job_seen_beacon, [data-jk], td.resultContent", timeout=25000)
+            except Exception:  # noqa: BLE001
+                pass
+            delay = stealth.random_delay_ms(1500, 3500) if pnum == 1 else stealth.random_delay_ms(1200, 2500)
             page.wait_for_timeout(delay)
 
             cards = page.query_selector_all(".job_seen_beacon, [data-jk], .resultContent")

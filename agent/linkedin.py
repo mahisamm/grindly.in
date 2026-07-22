@@ -95,86 +95,69 @@ def _safe_click(element, page):
         element.click()
 
 
-def _search_url(keyword: str) -> str:
+def _search_url(keyword: str, start: int = 0) -> str:
+    # Public "guest" jobs API — returns job-card HTML with no login/authwall,
+    # unlike the /jobs/search app page which walls anonymous scraping. Paginates
+    # 25 per request via &start.
     kw = urllib.parse.quote(f"{keyword} internship")
     return (
-        f"{BASE}/jobs/search/"
-        f"?keywords={kw}"
-        f"&location=India"
-        f"&f_E=1"
-        f"&f_JT=I"
-        f"&sortBy=DD"
+        f"{BASE}/jobs-guest/jobs/api/seeMoreJobPostings/search"
+        f"?keywords={kw}&location=India&f_JT=I&start={start}"
     )
 
 
 def _fetch_one_domain(page, keyword: str, limit: int) -> list[dict]:
-    """Scrape job cards for a single domain keyword."""
+    """Scrape job cards for a single keyword via LinkedIn's public guest jobs
+    API (no login/authwall). The endpoint returns <li> base-card HTML, 25 per
+    request; paginate with &start. Replaces the old /jobs/search app-page scrape,
+    which authwalled anonymous sessions and returned nothing."""
     jobs: list[dict] = []
+    seen: set[str] = set()
     try:
-        page.goto(_search_url(keyword), wait_until="domcontentloaded", timeout=45000)
-        _rand_delay(page, 2.5, 4.5)
-
-        if _is_logged_out(page):
-            return []
-
-        cards = page.query_selector_all(
-            ".job-card-container, "
-            "[data-occludable-job-id], "
-            ".jobs-search__results-list li"
-        )
-        for card in cards:
+        for start in range(0, 75, 25):  # up to 3 pages (75 cards)
             if len(jobs) >= limit:
                 break
-            try:
-                title_el = _qsel(card, [
-                    ".job-card-list__title",
-                    ".job-card-container__link",
-                    "strong",
-                    ".artdeco-entity-lockup__title",
-                ])
-                title = (title_el.inner_text() or "").strip() if title_el else ""
-                company = _text(card, [
-                    ".job-card-container__company-name",
-                    ".artdeco-entity-lockup__subtitle",
-                    ".job-card-list__entity-lockup-company-name",
-                ])
-                location = _text(card, [
-                    ".job-card-container__metadata-item",
-                    ".artdeco-entity-lockup__caption",
-                    ".job-card-list__metadata-item",
-                ])
-                job_id = card.get_attribute("data-occludable-job-id") or \
-                    card.get_attribute("data-entity-urn") or ""
-                job_id = re.search(r"(\d+)", job_id)
-                job_id = job_id.group(1) if job_id else ""
-                href = _attr(card, [
-                    "a.job-card-list__title",
-                    "a.job-card-container__link",
-                    "a",
-                ], "href")
-                if not title:
+            page.goto(_search_url(keyword, start), wait_until="domcontentloaded", timeout=45000)
+            _rand_delay(page, 1.8, 3.2)
+            cards = page.query_selector_all("li div.base-card, div.base-search-card, div.base-card")
+            if not cards:
+                break
+            new_this = 0
+            for card in cards:
+                if len(jobs) >= limit:
+                    break
+                try:
+                    title = _text(card, [".base-search-card__title", "h3"])
+                    company = _text(card, [".base-search-card__subtitle", "h4"])
+                    location = _text(card, [".job-search-card__location"])
+                    urn = card.get_attribute("data-entity-urn") or ""
+                    m = re.search(r"(\d{6,})", urn)
+                    href = _attr(card, ["a.base-card__full-link", "a[href*='/jobs/view/']", "a"], "href") or ""
+                    if m:
+                        job_id = m.group(1)
+                    else:
+                        hm = re.search(r"-(\d{6,})(?:\?|/|$)", href)
+                        job_id = hm.group(1) if hm else ""
+                    if not title or not job_id or job_id in seen:
+                        continue
+                    seen.add(job_id)
+                    url = href.split("?")[0] if href else f"{BASE}/jobs/view/{job_id}"
+                    jobs.append({
+                        "source": "linkedin",
+                        "external_id": job_id,
+                        "title": title,
+                        "company": company or "Unknown",
+                        "location": location or "",
+                        "stipend": "",
+                        "duration": "",
+                        "skills": _infer_skills(title),
+                        "url": url,
+                    })
+                    new_this += 1
+                except Exception:  # noqa: BLE001
                     continue
-                url = (
-                    (href if href.startswith("http") else BASE + href)
-                    if href
-                    else f"{BASE}/jobs/view/{job_id}"
-                )
-                if not job_id:
-                    m = re.search(r"/view/(\d+)", url)
-                    job_id = m.group(1) if m else str(abs(hash(url)))
-                jobs.append({
-                    "source": "linkedin",
-                    "external_id": job_id,
-                    "title": title,
-                    "company": company or "Unknown",
-                    "location": location or "",
-                    "stipend": "",
-                    "duration": "",
-                    "skills": _infer_skills(title),
-                    "url": url,
-                })
-            except Exception:  # noqa: BLE001
-                continue
+            if new_this == 0:
+                break
     except Exception:  # noqa: BLE001
         pass
     return jobs
