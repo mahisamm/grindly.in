@@ -74,11 +74,26 @@ def _search_url(domains: list[str], start: int = 0) -> str:
     return base + (f"&start={start}" if start > 0 else "")
 
 
+# A fixed, current Chrome UA. Indeed's Cloudflare challenge clears for a fresh
+# browser context with a normal UA, but the persistent apply-profile (cached
+# challenge state / rotated UA) stays stuck on "Just a moment…". Discovery needs
+# no login, so fetch uses a throwaway context that reliably passes the challenge.
+_FETCH_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+
+
 def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
-    page = _context(uid).new_page()
+    from playwright.sync_api import sync_playwright
     jobs: list[dict] = []
     seen_jks: set[str] = set()
+    pw = sync_playwright().start()
+    browser = None
     try:
+        browser = pw.chromium.launch(
+            headless=os.environ.get("INTERNPILOT_HEADLESS", "0") == "1",
+            args=["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
+        )
+        ctx = browser.new_context(user_agent=_FETCH_UA, locale="en-IN", viewport={"width": 1366, "height": 900})
+        page = ctx.new_page()
         for pnum in range(1, 4):  # pages 1-3 (Indeed paginates by 25)
             if len(jobs) >= limit:
                 break
@@ -147,7 +162,12 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                 break  # no new results, stop paginating
     finally:
         try:
-            page.close()
+            if browser is not None:
+                browser.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            pw.stop()
         except Exception:  # noqa: BLE001
             pass
     return jobs
