@@ -92,49 +92,42 @@ def _search_url(domains: list[str]) -> str:
 
 
 def _extract_cards(page, limit: int, seen_ids: set, jobs: list) -> int:
-    """Parse opportunity cards from current page state into jobs list. Returns count added."""
-    cards = page.query_selector_all(
-        ".opportunity-card-new, .opportunity-card, "
-        "[class*='opportunityCard'], [class*='opportunity-card'], "
-        "app-opportunity-card"
-    )
+    """Parse internship cards from current page state into jobs. Returns count added.
+
+    Unstop is an Angular SPA: each listing is an <a class="item opp_<id>"> whose
+    href is /internships/<slug>-<id>, with the title in an <h3> and the company in
+    a <p>. The old .opportunity-card* / .org-name markup is gone — this selector
+    set was refreshed against the live DOM (2026-07)."""
+    cards = page.query_selector_all("a.item[href*='/internships/']")
     added = 0
     for card in cards:
         if len(jobs) >= limit:
             break
         try:
-            title = _text(card, [
-                ".opportunity-title",
-                "[class*='title']",
-                "h3", "h4",
-            ])
-            company = _text(card, [
-                ".org-name",
-                "[class*='org-name']",
-                "[class*='company']",
-                ".company-name",
-            ])
-            stipend = _text(card, [
-                "[class*='stipend']",
-                "[class*='salary']",
-                ".salary",
-            ])
-            href = _attr(card, ["a[href*='/p/']", "a[href*='/internship']", "a"], "href")
-            if not title or not href:
+            href = card.get_attribute("href") or ""
+            if not href:
                 continue
-            url = href if href.startswith("http") else BASE + href
-            jid_m = re.search(r"/p/([^/]+)", href)
-            jid = jid_m.group(1) if jid_m else str(abs(hash(url)))
+            m = re.search(r"-(\d+)(?:/|$)", href)
+            jid = m.group(1) if m else str(abs(hash(href)))
             if jid in seen_ids:
                 continue
+            title = _text(card, ["h3", ".double-wrap"])
+            if not title:
+                img = card.query_selector("img")
+                title = (img.get_attribute("alt") or "").strip() if img else ""
+            if not title:
+                continue
+            company = _text(card, ["p.single-wrap", "p"])
+            location = _text(card, ["span.single-wrap"])
             seen_ids.add(jid)
+            url = href if href.startswith("http") else BASE + href
             jobs.append({
                 "source": "unstop",
                 "external_id": jid,
                 "title": title,
                 "company": company or "Unknown",
-                "location": "Remote/Onsite",
-                "stipend": stipend or "",
+                "location": location or "Remote/Onsite",
+                "stipend": "",
                 "duration": "",
                 "skills": _infer_skills(title),
                 "url": url,
@@ -151,26 +144,21 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     seen_ids: set[str] = set()
     try:
         page.goto(_search_url(domains), wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(stealth.random_delay_ms(2500, 5500))
+        page.wait_for_timeout(stealth.random_delay_ms(4000, 6500))  # Angular SPA hydration
 
-        # Unstop is a React SPA — wait for cards to hydrate, then try load-more
-        _extract_cards(page, limit, seen_ids, jobs)
-
-        if len(jobs) < limit:
-            load_more = _qsel(page, [
-                "button:has-text('Load more')",
-                "button:has-text('Show more')",
-                "button:has-text('View more')",
-                "[class*='load-more']",
-                "[class*='loadMore']",
-            ])
-            if load_more:
-                try:
-                    load_more.click()
-                    page.wait_for_timeout(stealth.random_delay_ms(1500, 3000))
-                    _extract_cards(page, limit, seen_ids, jobs)
-                except Exception:  # noqa: BLE001
-                    pass
+        # Infinite scroll — unstop lazy-loads cards on scroll (content-visibility);
+        # there is no load-more button. Extract, scroll, repeat until we have enough
+        # or two scrolls in a row surface nothing new.
+        stale = 0
+        for _ in range(8):
+            added = _extract_cards(page, limit, seen_ids, jobs)
+            if len(jobs) >= limit:
+                break
+            stale = stale + 1 if added == 0 else 0
+            if stale >= 2:
+                break
+            page.evaluate("window.scrollBy(0, 1600)")
+            page.wait_for_timeout(stealth.random_delay_ms(1400, 2600))
     finally:
         try:
             page.close()
