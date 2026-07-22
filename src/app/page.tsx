@@ -119,7 +119,7 @@ export default function Home() {
         <div className="mb-[clamp(40px,6vw,72px)] grid grid-cols-1 items-center gap-[clamp(20px,4vw,60px)] lg:grid-cols-[1.05fr_0.95fr]">
           <Reveal>
             <span className="text-[0.72rem] font-medium uppercase tracking-[0.16em] text-brand">01 — Features</span>
-            <h2 className="mt-2.5 text-[clamp(2.2rem,5vw,3.6rem)] leading-[0.98] tracking-[-0.02em]">
+            <h2 className="mt-2.5 text-[clamp(2.2rem,5vw,3.6rem)] leading-[1.06] tracking-[-0.02em]">
               Everything an intern-hunter <span className="accent-italic">wishes</span> they had.
             </h2>
             <p className="mt-3.5 max-w-[44ch] text-[var(--ink-soft)]">

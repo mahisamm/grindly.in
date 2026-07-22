@@ -59,7 +59,7 @@ export default function LoginPage() {
         </Link>
 
         <div className="relative z-[2]">
-          <h2 className="display text-[clamp(2.2rem,3.6vw,3.4rem)] leading-[0.98] text-[var(--paper)]">
+          <h2 className="display text-[clamp(2.2rem,3.6vw,3.4rem)] leading-[1.06] text-[var(--paper)]">
             Your agent kept
             <br />
             applying while

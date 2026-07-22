@@ -102,7 +102,11 @@ body {
   font-family: var(--ff-display), "Fraunces", Georgia, serif;
   font-weight: 900;
   letter-spacing: -0.02em;
-  line-height: 0.98;
+  /* 1.06, not sub-1.0: Fraunces has a long double-story "g" tail, so a tight
+     0.98 clipped descenders into the next line on multi-line headings (the
+     hero "Stop hunting / internships by hand"). This clears them and stays
+     editorial-tight. Keep inline leading overrides in step (see login hero). */
+  line-height: 1.06;
 }
 h1, h2, h3 { font-family: var(--ff-display), "Fraunces", Georgia, serif; }
 /* italic vermilion accent used across headings */
