@@ -464,6 +464,11 @@ export default function Dashboard() {
   // completion notice.
   const pollingRunId = useRef<string | null>(null);
   const finishedRunId = useRef<string | null>(null);
+  // Anchor for the tab strip so the "Set up integrations →" banner (and the other
+  // setTab("integrations") entry points, which all sit above the strip) can scroll
+  // the integrations panel into view — otherwise the tab silently switches far
+  // below the fold and the click looks like it did nothing.
+  const integrationsRef = useRef<HTMLDivElement>(null);
   // Neither pollRun's nor connectPlatform's poll loop stopped itself on
   // unmount (e.g. navigating to /applications mid-run) — the old closure kept
   // firing fetches every 2-2.5s, and returning to /dashboard later started a
@@ -1159,7 +1164,14 @@ export default function Dashboard() {
   // a fresh page — jump to the top so the user isn't dropped mid-scroll into a
   // long dashboard. Paired with hiding the home content below.
   useEffect(() => {
-    if (tab === "profile" && typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+    if (typeof window === "undefined") return;
+    if (tab === "profile") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } else if (tab === "integrations") {
+      // Reveal the integrations panel when switched in from a banner/button above
+      // the fold. scroll-mt-20 on the anchor offsets the sticky header.
+      integrationsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }, [tab]);
 
   async function revokeExtToken(id?: string, all?: boolean) {
@@ -2148,7 +2160,7 @@ export default function Dashboard() {
             show with nothing active (a phantom tab); that view has its own top
             back-bar instead, and the home content above is hidden. */}
         {tab !== "profile" && (
-          <div className="mt-8 flex items-center gap-2 border-b border-border overflow-x-auto scrollbar-none">
+          <div ref={integrationsRef} className="mt-8 scroll-mt-20 flex items-center gap-2 border-b border-border overflow-x-auto scrollbar-none">
             {(["applications", "integrations", "reports"] as const).map((t) => (
               <button
                 key={t}
