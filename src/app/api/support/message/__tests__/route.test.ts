@@ -26,6 +26,7 @@ vi.mock("@/lib/rateLimit", () => ({ isRateLimited: mockRate }));
 vi.mock("@/lib/supportAI", () => ({
   supportAssist: mockAssist,
   SUPPORT_FALLBACK_REPLY: "FALLBACK",
+  SUPPORT_OFFTOPIC_REPLY: "OFFTOPIC",
 }));
 
 import { POST } from "@/app/api/support/message/route";
@@ -115,5 +116,19 @@ describe("POST /api/support/message", () => {
     const stored = JSON.parse(mockTicketUpdate.mock.calls[0][0].data.messagesJson);
     expect(stored).toHaveLength(4); // 2 prior + new user + new assistant
     expect(mockAudit).not.toHaveBeenCalled(); // audit fires only on ticket creation
+  });
+
+  it("refuses an off-topic request with a fixed redirect and files no ticket", async () => {
+    mockAssist.mockResolvedValue({
+      reply: "here is python code", offTopic: true, subject: "x", category: "other", severity: "low", summary: "s",
+    });
+    const r = await POST(req({ message: "write me python code for prime numbers" }));
+    expect(r.status).toBe(200);
+    const j = await r.json();
+    expect(j.offTopic).toBe(true);
+    expect(j.reply).toBe("OFFTOPIC"); // server-controlled redirect, not the model's text
+    expect(mockTicketCreate).not.toHaveBeenCalled();
+    expect(mockTicketUpdate).not.toHaveBeenCalled();
+    expect(mockAudit).not.toHaveBeenCalled();
   });
 });

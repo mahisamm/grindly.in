@@ -6,7 +6,18 @@ describe("parseSupportAI", () => {
     const r = parseSupportAI(
       JSON.stringify({ reply: "Hi", subject: "S", category: "bug", severity: "high", summary: "sum" }),
     );
-    expect(r).toEqual({ reply: "Hi", subject: "S", category: "bug", severity: "high", summary: "sum" });
+    expect(r).toEqual({ reply: "Hi", offTopic: false, subject: "S", category: "bug", severity: "high", summary: "sum" });
+  });
+
+  it("flags offTopic when the model sets it, and defaults it to false", () => {
+    const on = parseSupportAI(
+      JSON.stringify({ reply: "no", offTopic: true, subject: "s", category: "other", severity: "low", summary: "z" }),
+    );
+    expect(on?.offTopic).toBe(true);
+    const off = parseSupportAI(
+      JSON.stringify({ reply: "yes", subject: "s", category: "bug", severity: "low", summary: "z" }),
+    );
+    expect(off?.offTopic).toBe(false);
   });
 
   it("unwraps ```json fences and surrounding prose", () => {

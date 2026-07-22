@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { isRateLimited } from "@/lib/rateLimit";
-import { supportAssist, SUPPORT_FALLBACK_REPLY, type SupportMsg } from "@/lib/supportAI";
+import { supportAssist, SUPPORT_FALLBACK_REPLY, SUPPORT_OFFTOPIC_REPLY, type SupportMsg } from "@/lib/supportAI";
 import { normalizePlan } from "@/lib/plans";
 
 export const dynamic = "force-dynamic";
@@ -61,6 +61,19 @@ export async function POST(req: Request) {
 
   const userContext = `name=${user.name ?? "unknown"}, plan=${normalizePlan(user.plan)}, accountStatus=${user.status}`;
   const ai = await supportAssist(userContext, history);
+
+  // Scope firewall: an out-of-scope request (general coding, trivia, travel,
+  // homework, …) gets a fixed redirect and is NOT filed as a ticket — no admin
+  // noise, nothing stored. The model flags it; the server owns the response text
+  // so a jailbroken prompt can't coax a real answer through us.
+  if (ai?.offTopic) {
+    return NextResponse.json({
+      ticketId: existing?.id ?? null,
+      reply: SUPPORT_OFFTOPIC_REPLY,
+      offTopic: true,
+      aiHandled: true,
+    });
+  }
 
   const replyText = ai?.reply ?? SUPPORT_FALLBACK_REPLY;
   history.push({ role: "assistant", content: replyText, at: new Date().toISOString() });
