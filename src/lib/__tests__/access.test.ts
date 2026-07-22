@@ -40,7 +40,7 @@ describe("resolveInitialAccess", () => {
     expect(mockFindUnique).not.toHaveBeenCalled();
   });
 
-  it("approves any email immediately when openSignups is on — the new default", async () => {
+  it("approves any email immediately when openSignups is explicitly turned on", async () => {
     mockReadAdminSettings.mockReturnValue({ openSignups: true });
     expect(await resolveInitialAccess("stranger@example.com")).toBe("approved");
     // Doesn't even need to touch the allowlist when signups are open.

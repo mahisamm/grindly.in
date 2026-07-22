@@ -18,10 +18,11 @@ export type AdminSettings = {
 const DEFAULTS: AdminSettings = {
   maintenanceMode: false,
   globalDailyCap: 0,
-  // Every Google sign-in is auto-approved rather than queued for manual
-  // review — see src/lib/access.ts resolveInitialAccess. Toggle off from
-  // /admin/settings to go back to the request queue, no redeploy needed.
-  openSignups: true,
+  // Approval-gated beta (the intended default): a new Google sign-in lands in
+  // "pending" and sees the waitlist until an admin approves it — or its email is
+  // on the allowlist. See src/lib/access.ts resolveInitialAccess. Flip to true
+  // from /admin/settings to auto-approve every signup, no redeploy needed.
+  openSignups: false,
   featureFlags: { googleAuth: true, autoApply: true },
   bannedDomains: [],
 };

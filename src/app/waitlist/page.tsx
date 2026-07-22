@@ -89,12 +89,14 @@ export default function WaitlistPage() {
                 <span className="size-1.5 rounded-full bg-brand" /> Gated beta
               </span>
               <h1 className="display mt-4 text-[clamp(1.7rem,2.6vw,2.2rem)] tracking-[-0.01em]">
-                You&apos;re almost in
+                You&apos;re on the list
               </h1>
               <p className="mt-2 text-sm text-[var(--ink-soft)]">
-                Grindly is invite-only for now. Tap below to request access for{" "}
-                <span className="font-medium text-ink">{email}</span> — we&apos;ll
-                email you the moment your agent is switched on.
+                Grindly&apos;s free beta is invite-only while we finish building it, so
+                access for <span className="font-medium text-ink">{email}</span> is
+                paused for now. Request a spot below and we&apos;ll reach out if one
+                opens — and paid plans are coming soon, so you&apos;ll have a way in
+                either way.
               </p>
               <button
                 onClick={requestAccess}
