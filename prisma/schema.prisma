@@ -80,6 +80,11 @@ model User {
   slackConnected Boolean @default(false) @map("slack_connected")
   // internshala session (persistent browser profile) ready?
   internshalaConnected Boolean @default(false) @map("internshala_connected")
+  // Opt-in waitlist for Gmail interview detection. While gmail.readonly is still
+  // in Google verification the feature ships dark to the public; a user who taps
+  // "Notify me when it's ready" flips this so we can email them the day it opens.
+  // Idempotent (a flag, not an event) so repeat taps don't pile up rows.
+  gmailScanInterest Boolean @default(false) @map("gmail_scan_interest")
   // Legacy flag, superseded by internshalaBetaAccess below — unused by any
   // current code path (verified via grep), but still live with real rows.
   // Declared here (not dropped) purely so `prisma db push` leaves it alone;

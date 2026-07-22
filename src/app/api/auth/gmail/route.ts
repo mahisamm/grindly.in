@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { createHmac } from "node:crypto";
 import { getUid } from "@/lib/session";
 import { baseUrl } from "@/lib/baseUrl";
-import { gmailClient, gmailScanEnabled } from "@/lib/googleOAuth";
+import { prisma } from "@/lib/prisma";
+import { gmailClient, gmailScanBeta } from "@/lib/googleOAuth";
 
 function signState(uid: string, ts: number): string {
   const key = process.env.APP_ENCRYPTION_KEY ?? "";
@@ -20,10 +21,13 @@ export async function GET(req: Request) {
 
   const base = baseUrl(new URL(req.url).origin);
 
-  // gmail.readonly is a restricted scope. Until it clears verification, walking
-  // a user into this consent screen only shows them a warning or a hard block,
-  // so refuse at the door and send them back with a message they can act on.
-  if (!gmailScanEnabled()) {
+  // gmail.readonly is a restricted scope. Until it clears verification, only
+  // allowlisted beta testers (also added as Google test users) can complete this
+  // consent — everyone else hits a warning or a hard block. Gate on the per-user
+  // beta check, not just the env switch, so a non-tester who reaches this URL
+  // directly is turned away at the door instead of at Google's wall.
+  const user = await prisma.user.findUnique({ where: { id: uid }, select: { email: true } });
+  if (!gmailScanBeta(user?.email)) {
     return NextResponse.redirect(`${base}/dashboard?gmailError=unavailable`);
   }
 

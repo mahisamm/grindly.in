@@ -40,3 +40,25 @@ export function gmailClient(): OAuthClient | null {
 export function gmailScanEnabled(): boolean {
   return process.env.GMAIL_SCAN_ENABLED === "1" && !!gmailClient();
 }
+
+/** Emails cleared to use Gmail scanning while it is still in Google's Testing
+ *  mode (owner + hand-picked beta testers, each also added as a Google test
+ *  user). Comma-separated in GMAIL_SCAN_BETA_EMAILS, matched case-insensitively. */
+export function gmailScanBetaEmails(): Set<string> {
+  return new Set(
+    (process.env.GMAIL_SCAN_BETA_EMAILS ?? "")
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+/** Whether THIS user may see the live "Connect Gmail" flow. Distinct from
+ *  gmailScanEnabled(): the env switch turns the backend capability on for the
+ *  fleet, but until gmail.readonly is publicly verified only allowlisted testers
+ *  can complete Google's consent (everyone else hits the "unverified app" wall).
+ *  So the public sees a waitlist link and only beta emails see Connect. */
+export function gmailScanBeta(email: string | null | undefined): boolean {
+  if (!gmailScanEnabled() || !email) return false;
+  return gmailScanBetaEmails().has(email.toLowerCase());
+}

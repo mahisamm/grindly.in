@@ -124,6 +124,8 @@ type Me = {
     internshalaConnected: boolean;
     gmailConnected: boolean;
     gmailScanEnabled: boolean;
+    gmailScanBeta?: boolean;
+    gmailScanInterest?: boolean;
     internshalaLoginEnabled: boolean;
   };
   profile: RawProfile | null;
@@ -1644,11 +1646,11 @@ export default function Dashboard() {
                 marking it. Answers the very common "how will I know I got an
                 interview?" question right where the funnel lives. */}
             <div className="mt-3 space-y-1.5 border-t border-border/60 pt-2.5">
-              {me.user.gmailScanEnabled && me.user.gmailConnected ? (
+              {me.user.gmailScanBeta && me.user.gmailConnected ? (
                 <p className="text-xs text-accent">
                   ✓ Grindly reads interview, offer, and rejection emails from your inbox and updates these automatically.
                 </p>
-              ) : me.user.gmailScanEnabled ? (
+              ) : me.user.gmailScanBeta ? (
                 <p className="text-xs text-muted">
                   Companies email or call you directly.{" "}
                   <button onClick={() => setTab("integrations")} className="underline text-brand-2">Connect Gmail</button>{" "}
@@ -2698,7 +2700,7 @@ export default function Dashboard() {
                 <li>• <span className="text-foreground font-medium">Do it yourself</span> — when a company replies, mark the outcome on that application (one tap). Always available, nothing to set up.</li>
                 <li>• <span className="text-foreground font-medium">Let Grindly watch</span> — connect Gmail (read-only) and the agent detects interview calls, offers, and rejections, then pings you on Slack or email. Optional.</li>
               </ul>
-              {me.user.gmailScanEnabled ? (
+              {me.user.gmailScanBeta ? (
                 me.user.gmailConnected ? (
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm text-accent">✓ Watching your inbox</span>
@@ -2737,10 +2739,30 @@ export default function Dashboard() {
                     Connect Gmail (read-only)
                   </a>
                 )
-              ) : (
-                <p className="text-xs text-muted">
-                  <span className="text-foreground font-medium">Automatic inbox detection is coming soon</span> — it&apos;s pending Google&apos;s security review of the read-only Gmail permission, and switches on for everyone automatically once approved. For now, just mark outcomes yourself — it takes one tap.
+              ) : me.user.gmailScanInterest ? (
+                <p className="text-xs text-accent">
+                  ✓ You&apos;re on the list — we&apos;ll email you the moment automatic inbox detection opens. Until then, mark outcomes yourself in one tap.
                 </p>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted">
+                    <span className="text-foreground font-medium">Automatic inbox detection is in review</span> — it&apos;s pending Google&apos;s security check of the read-only Gmail permission. For now, mark outcomes yourself (one tap) — or get a heads-up the day it opens:
+                  </p>
+                  <button
+                    onClick={async () => {
+                      const r = await fetch("/api/gmail/interest", { method: "POST" });
+                      if (r.ok) {
+                        setMe((prev) => (prev ? { ...prev, user: { ...prev.user, gmailScanInterest: true } } : prev));
+                        setNotice({ kind: "ok", text: "You're on the list — we'll email you when automatic inbox detection opens." });
+                      } else {
+                        setNotice({ kind: "err", text: "Couldn't save that — please try again." });
+                      }
+                    }}
+                    className="text-sm font-medium text-brand-2 hover:underline"
+                  >
+                    Notify me when it&apos;s ready →
+                  </button>
+                </div>
               )}
             </div>
 

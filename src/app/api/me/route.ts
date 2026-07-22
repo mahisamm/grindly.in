@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { internshalaLoginEnabled } from "@/lib/featureFlags";
-import { gmailScanEnabled } from "@/lib/googleOAuth";
+import { gmailScanEnabled, gmailScanBeta } from "@/lib/googleOAuth";
 import { visibleToUser } from "@/lib/pipeline";
 import { getQuota } from "@/lib/quota";
 
@@ -195,6 +195,10 @@ export async function GET() {
       internshalaConnected: user.internshalaConnected,
       gmailConnected,
       gmailScanEnabled: gmailScanEnabled(),
+      // Per-user: only allowlisted testers see the live Connect flow; everyone
+      // else gets the waitlist link. See gmailScanBeta() in lib/googleOAuth.
+      gmailScanBeta: gmailScanBeta(user.email),
+      gmailScanInterest: user.gmailScanInterest,
       internshalaLoginEnabled: internshalaLoginEnabled(user),
       paymentsEnabled: process.env.PAYMENTS_ENABLED === "true",
     },
