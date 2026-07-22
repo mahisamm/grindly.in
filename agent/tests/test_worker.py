@@ -585,6 +585,18 @@ def test_platforms_for_today_rotates_across_dates():
     assert len(set(picks)) > 1  # not the same platform(s) every single day
 
 
+def test_platforms_for_today_always_includes_primary():
+    # The top-priority connected platform must run EVERY day, so a day's dice can
+    # never strand the user on only a weaker/broken board (the "unstop-only day"
+    # that surfaced 0 matches while internshala — which works — sat untouched).
+    # available is SOURCE_PRIORITY-ordered, so index 0 is the primary.
+    available = [s for s in worker.SOURCE_PRIORITY if s in ("internshala", "unstop")]
+    assert available[0] == "internshala"
+    for d in range(1, 32):
+        picked = worker._platforms_for_today("u1", available, today=f"2026-08-{d:02d}")
+        assert "internshala" in picked, f"primary missing on 2026-08-{d:02d}: {picked}"
+
+
 def test_platforms_for_today_biases_toward_two_when_multiple_connected():
     # The bias fix: with 2+ platforms connected, days should split volume
     # across two platforms more often than concentrating on one. Assert

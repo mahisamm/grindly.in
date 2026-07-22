@@ -142,10 +142,20 @@ def _platforms_for_today(uid: str, available: list[str], today: str | None = Non
         return []
     today = today or datetime.date.today().isoformat()
     rng = random.Random(f"{uid}:{today}:platforms")
+    # Preserve the caller's priority order (it passes SOURCE_PRIORITY filtered to
+    # the connected platforms) and ALWAYS include the top-priority one. A day's
+    # dice must never strand the user on only a weaker/less-reliable board — that
+    # is exactly how a run finds nothing while the mature platform sits untouched
+    # (e.g. an "unstop-only" day when internshala is the one that actually returns
+    # listings). A human checks their main job site every day anyway; the rotation
+    # variety comes from the *additional* platform(s) chosen below.
+    primary = available[0]
+    rest = list(available[1:])
+    # Draw the count first (same RNG order as before this guarantee was added, so
+    # the 1-vs-2 platform-day distribution is unchanged), then shuffle the rest.
     n = min(len(available), rng.choice([1, 2, 2]))
-    ordered = sorted(available)
-    rng.shuffle(ordered)
-    return ordered[:n]
+    rng.shuffle(rest)
+    return [primary] + rest[: max(0, n - 1)]
 
 
 def _requires_approval(src: str, auto_apply: bool) -> bool:
