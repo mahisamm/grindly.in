@@ -2574,11 +2574,9 @@ export default function Dashboard() {
                             </p>
                           ) : (
                             <p className="border-t border-border/60 pt-2 text-[11px] text-muted">
-                              On desktop?{" "}
-                              <Link href="/extension/connect" className="text-brand-2 underline">
-                                Get the browser extension
-                              </Link>{" "}
-                              to auto-fill this in one click.
+                              One-click auto-fill via the browser extension is{" "}
+                              <span className="text-foreground">coming soon</span>. For now, open the
+                              listing and use the kit above.
                             </p>
                           )}
                         </div>
@@ -2806,13 +2804,19 @@ export default function Dashboard() {
                 The agent finds, scores, and preps every match either way. The only choice is who fills the form:
               </p>
               <ul className="text-xs text-muted mb-3 space-y-1.5">
-                <li>• <span className="text-foreground font-medium">Less manual (browser extension)</span> — it auto-fills the whole form in your own browser from your Apply Kit. You review and click <span className="font-medium">Submit</span>; the extension never submits for you.</li>
+                <li>• <span className="text-foreground font-medium">Less manual (browser extension)</span> <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">coming soon</span> — it&apos;ll auto-fill the whole form in your own browser from your Apply Kit. You review and click <span className="font-medium">Submit</span>; the extension never submits for you.</li>
                 <li>• <span className="text-foreground font-medium">Do it yourself</span> — open the listing and fill it in by hand using the cover letter and answers Grindly already prepared. Nothing to install.</li>
               </ul>
-              <p className="text-xs text-muted mb-3">
-                <Link href="/extension/connect" className="text-brand-2 underline">Get / connect the extension →</Link>{" "}
-                <span className="text-muted">Optional — switch anytime.</span>
-              </p>
+              {extInstalled ? (
+                <p className="text-xs text-muted mb-3">
+                  <Link href="/extension/connect" className="text-brand-2 underline">Connect / manage the extension →</Link>
+                </p>
+              ) : (
+                <p className="text-xs text-muted mb-3">
+                  The browser extension is <span className="text-foreground">coming soon</span> — for now use
+                  “Do it yourself”. We&apos;ll let you know the moment it&apos;s ready.
+                </p>
+              )}
               {extTokens.length > 0 && (
                 <div className="space-y-2">
                   {extTokens.map((t) => (

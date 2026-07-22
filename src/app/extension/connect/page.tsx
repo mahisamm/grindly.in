@@ -96,21 +96,34 @@ export default function ExtensionConnectPage() {
           </>
         )}
 
-        {phase === "ready" && (
+        {phase === "ready" && extPresent && (
           <>
             <h1 className="text-xl font-semibold">Connect the extension</h1>
             <p className="mt-2 text-sm text-muted">
               This links the browser extension to your Grindly account so it can auto-fill your
               matched applications — in your own browser. You always click Submit yourself.
             </p>
-            {!extPresent && (
-              <p className="mt-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
-                We can’t detect the extension in this browser yet. Install it, then reload this page.
-              </p>
-            )}
             <button onClick={connect} className="mt-5 w-full rounded-lg brand-gradient px-5 py-2.5 text-sm font-medium text-white hover:opacity-90 transition">
               Connect
             </button>
+          </>
+        )}
+
+        {phase === "ready" && !extPresent && (
+          <>
+            <span className="inline-flex items-center gap-2 rounded-full border border-brand/40 bg-brand/10 px-3 py-1 text-xs font-medium text-brand">
+              <span className="size-1.5 rounded-full bg-brand" /> Coming soon
+            </span>
+            <h1 className="mt-4 text-xl font-semibold">The browser extension is on the way</h1>
+            <p className="mt-2 text-sm text-muted">
+              It&apos;ll auto-fill your matched applications in your own browser — one click each, and you
+              always submit yourself. Until it ships, open each listing from your dashboard and submit it
+              with the cover letter and answers Grindly already prepared. We&apos;ll let you know the moment
+              it&apos;s ready.
+            </p>
+            <Link href="/dashboard" className="mt-5 inline-block rounded-lg border border-[var(--line-2)] px-5 py-2.5 text-sm hover:border-brand/40 transition">
+              Back to dashboard
+            </Link>
           </>
         )}
 
