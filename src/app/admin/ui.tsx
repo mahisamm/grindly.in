@@ -4,8 +4,8 @@ import { ReactNode } from "react";
 
 export function PageTitle({ title, sub }: { title: string; sub?: string }) {
   return (
-    <div className="mb-6">
-      <h1 className="font-display text-2xl font-black tracking-tight text-foreground">{title}</h1>
+    <div className="mb-4 sm:mb-6">
+      <h1 className="font-display text-xl font-black tracking-tight text-foreground sm:text-2xl">{title}</h1>
       {sub && <p className="mt-1 font-sans text-xs text-muted">{sub}</p>}
     </div>
   );
@@ -14,6 +14,30 @@ export function PageTitle({ title, sub }: { title: string; sub?: string }) {
 export function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
     <div className={`glow rounded-lg border border-border bg-surface ${className}`}>{children}</div>
+  );
+}
+
+/**
+ * Horizontal scroll container for a data table.
+ *
+ * Admin tables have 6-8 columns and cannot usefully reflow onto a 390px phone:
+ * left to themselves the browser crushes every column until the text wraps one
+ * character per line, which is exactly what the admin reported seeing. Give the
+ * table a sane minimum width and let the panel scroll sideways instead.
+ * `-webkit-overflow-scrolling` comes free with overflow-x-auto in modern iOS.
+ */
+export function TableWrap({ children, min = "min-w-[720px]" }: { children: ReactNode; min?: string }) {
+  return (
+    <div className="w-full overflow-x-auto overscroll-x-contain">
+      <div className={min}>{children}</div>
+    </div>
+  );
+}
+
+/** Filter bar that stacks to full width on a phone and inlines from `sm` up. */
+export function FilterBar({ children }: { children: ReactNode }) {
+  return (
+    <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">{children}</div>
   );
 }
 

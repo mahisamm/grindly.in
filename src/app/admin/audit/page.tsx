@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PageTitle, Panel, Badge, fmtDate } from "../ui";
+import { PageTitle, Panel, Badge, fmtDate, TableWrap } from "../ui";
 
 type Log = { id: string; action: string; target: string | null; detail: string | null; email: string | null; createdAt: string };
 type Resp = { page: number; totalPages: number; total: number; logs: Log[] };
@@ -39,29 +39,31 @@ export default function AdminAudit() {
       {!err && !d && <p className="font-sans text-sm text-muted">Loading…</p>}
 
       {d && <Panel>
-        <table className="w-full text-left font-sans text-xs">
-          <thead className="text-muted">
-            <tr className="border-b border-border">
-              <th className="px-4 py-2 font-medium">Action</th>
-              <th className="px-4 py-2 font-medium">User</th>
-              <th className="px-4 py-2 font-medium">Target</th>
-              <th className="px-4 py-2 font-medium">Detail</th>
-              <th className="px-4 py-2 font-medium">When</th>
-            </tr>
-          </thead>
-          <tbody>
-            {d?.logs.map((l) => (
-              <tr key={l.id} className="border-b border-surface-2 hover:bg-surface-2">
-                <td className="px-4 py-2">{l.action.startsWith("admin_") ? <Badge value="admin" /> : null} <span className="text-brand">{l.action}</span></td>
-                <td className="px-4 py-2 text-muted">{l.email ?? "—"}</td>
-                <td className="max-w-[180px] truncate px-4 py-2 text-muted" title={l.target ?? ""}>{l.target ?? "—"}</td>
-                <td className="max-w-[240px] truncate px-4 py-2 text-muted" title={l.detail ?? ""}>{l.detail ?? "—"}</td>
-                <td className="px-4 py-2 text-muted">{fmtDate(l.createdAt)}</td>
+        <TableWrap min="min-w-[720px]">
+          <table className="w-full text-left font-sans text-xs">
+            <thead className="text-muted">
+              <tr className="border-b border-border">
+                <th className="px-4 py-2 font-medium">Action</th>
+                <th className="px-4 py-2 font-medium">User</th>
+                <th className="px-4 py-2 font-medium">Target</th>
+                <th className="px-4 py-2 font-medium">Detail</th>
+                <th className="px-4 py-2 font-medium">When</th>
               </tr>
-            ))}
-            {d && d.logs.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted">No entries match.</td></tr>}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {d?.logs.map((l) => (
+                <tr key={l.id} className="border-b border-surface-2 hover:bg-surface-2">
+                  <td className="px-4 py-2">{l.action.startsWith("admin_") ? <Badge value="admin" /> : null} <span className="text-brand">{l.action}</span></td>
+                  <td className="px-4 py-2 text-muted">{l.email ?? "—"}</td>
+                  <td className="max-w-[180px] truncate px-4 py-2 text-muted" title={l.target ?? ""}>{l.target ?? "—"}</td>
+                  <td className="max-w-[240px] truncate px-4 py-2 text-muted" title={l.detail ?? ""}>{l.detail ?? "—"}</td>
+                  <td className="px-4 py-2 text-muted">{fmtDate(l.createdAt)}</td>
+                </tr>
+              ))}
+              {d && d.logs.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted">No entries match.</td></tr>}
+            </tbody>
+          </table>
+        </TableWrap>
       </Panel>}
 
       {d && d.totalPages > 1 && (

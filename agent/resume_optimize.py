@@ -74,23 +74,37 @@ _STRATEGIES: list[tuple[str, str]] = [
 
 # ---------------- public API ----------------
 
-def generate_variants(source_text: str, master_skills: list[str]) -> list[dict]:
-    """Produce up to 3 compiled, measured, higher-scoring resume variants.
+def generate_variants(
+    source_text: str, master_skills: list[str], debug_dir: str | None = None
+) -> dict:
+    """Produce up to 3 compiled, measured resume variants + why any were dropped.
 
-    Returns a list of dicts (best score first), each:
-        {label, score, grade, baseline_score, changes: [str], pdf_bytes: bytes}
+    Returns {"variants": [...], "baseline": int, "reasons": [str], "aborted": str|None}.
+    `variants` is best-score-first, each:
+        {label, score, grade, baseline_score, beats_baseline, changes: [str], pdf_bytes: bytes}
 
-    An empty list is a valid, honest outcome — it means nothing we could generate
-    scored higher than the master, or the LLM/compiler was unavailable. The caller
-    surfaces that as "no gain", never as an error and never as a worse resume.
+    Variants that scored at or below the master are KEPT and flagged
+    beats_baseline=False rather than discarded. Dropping them silently is what
+    produced "we couldn't beat your resume, so here is nothing" for a beta user
+    who explicitly wanted to SEE the rewrites; the UI can label a non-winner, but
+    it can't show a row that was thrown away. Only unreadable/unsafe ones die.
+
+    `reasons` is the per-variant audit trail (kept / dropped and why) so the user
+    and the admin get a real explanation instead of a guess at their resume being
+    too good. `debug_dir`, when set, receives the .tex + .pdf of any variant whose
+    compiled output couldn't be parsed — the only way to diagnose that offline.
+
+    An empty variant list is a valid outcome, but `aborted`/`reasons` say WHICH
+    kind: nothing beat the master, versus the LLM or the compiler never worked.
+    Those are different messages to a user and the caller must not conflate them.
     """
     text = (source_text or "").strip()
     if len(text) < 200:
         print("[optimize] source too short to rebuild safely")
-        return []
+        return {"variants": [], "baseline": 0, "reasons": [], "aborted": "source_too_short"}
     if not latex_resume.tectonic_available():
         print("[optimize] tectonic not installed — cannot compile variants")
-        return []
+        return {"variants": [], "baseline": 0, "reasons": [], "aborted": "no_compiler"}
 
     # Re-score the master NOW, with the same providers this batch will use, so the
     # ">baseline" comparison is apples-to-apples rather than against a stored score
@@ -102,18 +116,32 @@ def generate_variants(source_text: str, master_skills: list[str]) -> list[dict]:
     base_struct = _extract_struct(text)
     if not base_struct:
         print("[optimize] structured extraction failed — aborting")
-        return []
+        return {
+            "variants": [], "baseline": baseline_score,
+            "reasons": [], "aborted": "extraction_failed",
+        }
 
     allowed = _allowed_tokens(text, master_skills)
 
     out: list[dict] = []
+    reasons: list[str] = []
     for label, instruction in _STRATEGIES:
-        variant = _one_variant(label, instruction, base_struct, allowed, master_skills, baseline_score)
+        variant, reason = _one_variant(
+            label, instruction, base_struct, allowed, master_skills, baseline_score, debug_dir
+        )
+        reasons.append(reason)
         if variant:
             out.append(variant)
 
-    out.sort(key=lambda v: v["score"], reverse=True)
-    return out[:3]
+    # Winners first, then near-misses by score. A variant that ties or loses is
+    # still shown (flagged), so the user always has something to look at.
+    out.sort(key=lambda v: (v["beats_baseline"], v["score"]), reverse=True)
+    return {
+        "variants": out[:3],
+        "baseline": baseline_score,
+        "reasons": reasons,
+        "aborted": None,
+    }
 
 
 # ---------------- one variant ----------------
@@ -125,57 +153,95 @@ def _one_variant(
     allowed: set[str],
     master_skills: list[str],
     baseline_score: int,
-) -> dict | None:
+    debug_dir: str | None = None,
+) -> tuple[dict | None, str]:
+    """Build one variant. Returns (variant_or_None, human-readable reason).
+
+    The reason string is not decoration — it is what the user is told when the
+    batch produces nothing, and it is the only signal that separates "your resume
+    is already strong" from "our compiler produced an unreadable PDF".
+    """
     rewritten = _rewrite_struct(base_struct, instruction, master_skills)
     if not rewritten:
         print(f"[optimize] {label}: rewrite produced nothing")
-        return None
+        return None, f"{label}: the rewrite step returned nothing (model unavailable)"
     struct = rewritten.get("resume") if isinstance(rewritten.get("resume"), dict) else rewritten
     changes = _clean_changes(rewritten.get("changes"))
 
     invented = _fabricated_skills(struct, allowed)
     if invented:
         print(f"[optimize] {label}: truthfulness gate rejected invented skill(s): {invented}")
-        return None
+        return None, f"{label}: dropped — it invented skills you don't have ({', '.join(sorted(invented))})"
 
     tex = _render_latex(struct)
     if latex_resume.unsafe_commands(tex):
         print(f"[optimize] {label}: rendered tex tripped the unsafe-command denylist — skipping")
-        return None
+        return None, f"{label}: dropped by the LaTeX safety check"
 
     with tempfile.TemporaryDirectory(prefix="grindly-opt-") as tmp:
         pdf_path = os.path.join(tmp, "variant.pdf")
         result = latex_resume.compile_report(tex, pdf_path)
         if not result.ok or not os.path.exists(pdf_path):
             print(f"[optimize] {label}: compile failed")
-            return None
+            _dump_debug(debug_dir, label, tex, None)
+            return None, f"{label}: the document didn't compile"
         if result.pages and result.pages > _MAX_PAGES:
             print(f"[optimize] {label}: {result.pages} pages — over the {_MAX_PAGES}-page cap")
-            return None
+            return None, f"{label}: came out {result.pages} pages, over the {_MAX_PAGES}-page limit"
 
         # Score what a parser actually reads off the compiled PDF, not the tex.
         parsed = resume_parse.extract_text(pdf_path)
-        if not parsed or len(parsed.strip()) < 200:
-            print(f"[optimize] {label}: compiled PDF yields no parseable text — rejecting")
-            return None
+        n_chars = len((parsed or "").strip())
+        if n_chars < 200:
+            # Our bug, not the user's resume. Keep the evidence: without the tex
+            # and the pdf there is no way to tell an empty render from a font
+            # that carries no extractable text.
+            print(f"[optimize] {label}: compiled PDF yields only {n_chars} chars of text — rejecting")
+            _dump_debug(debug_dir, label, tex, pdf_path)
+            return None, f"{label}: the compiled PDF came out unreadable ({n_chars} chars) — a bug on our side"
         scored = resume_ai.with_ats(resume_ai.analyze(parsed), parsed, master_skills)
         score = int(scored.get("score") or 0)
-        if score <= baseline_score:
-            print(f"[optimize] {label}: {score} did not beat baseline {baseline_score} — dropping")
-            return None
+        beats = score > baseline_score
 
         with open(pdf_path, "rb") as f:
             pdf_bytes = f.read()
 
-    print(f"[optimize] {label}: kept ({score} > {baseline_score})")
+    if beats:
+        print(f"[optimize] {label}: kept ({score} > {baseline_score})")
+        reason = f"{label}: {score} vs your {baseline_score} — kept"
+    else:
+        print(f"[optimize] {label}: kept for preview ({score} <= baseline {baseline_score})")
+        reason = f"{label}: {score} vs your {baseline_score} — shown for preview, not an improvement"
     return {
         "label": label,
         "score": score,
         "grade": scored.get("grade") or resume_ai._grade(score),
         "baseline_score": baseline_score,
+        "beats_baseline": beats,
         "changes": changes,
         "pdf_bytes": pdf_bytes,
-    }
+    }, reason
+
+
+def _dump_debug(debug_dir: str | None, label: str, tex: str, pdf_path: str | None) -> None:
+    """Save the artefacts of a variant that failed to compile or parse.
+
+    Best-effort and silent on failure — a debugging aid must never be able to
+    take down the run it is trying to explain.
+    """
+    if not debug_dir:
+        return
+    try:
+        os.makedirs(debug_dir, exist_ok=True)
+        slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "variant"
+        with open(os.path.join(debug_dir, f"{slug}.tex"), "w", encoding="utf-8") as f:
+            f.write(tex)
+        if pdf_path and os.path.exists(pdf_path):
+            with open(pdf_path, "rb") as src, open(os.path.join(debug_dir, f"{slug}.pdf"), "wb") as dst:
+                dst.write(src.read())
+        print(f"[optimize] {label}: debug artefacts written to {debug_dir}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[optimize] {label}: could not write debug artefacts ({e})")
 
 
 # ---------------- LLM: extract + rewrite ----------------

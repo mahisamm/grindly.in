@@ -1,5 +1,6 @@
 # Grindly agent worker deps. Uses local Ollama via REST (no python client needed).
 pdfminer.six>=20231228   # resume PDF text extraction
+pypdf>=4.2.0             # second-opinion PDF extractor — pdfminer reads ~nothing off some Tectonic output
 python-docx>=1.1.0       # resume DOCX text extraction
 playwright>=1.44.0       # live platform scraping + apply (mode=live only)
 cryptography>=42.0.0     # AES-256-GCM credential encryption (agent/secret_box.py)

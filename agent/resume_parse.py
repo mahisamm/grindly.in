@@ -44,12 +44,36 @@ def extract_text(path: str) -> str:
 
 
 def _pdf_text(path: str) -> str:
+    """PDF text, pdfminer first with a pypdf second opinion.
+
+    Two extractors because one is not enough in practice: pdfminer returned
+    almost nothing for Tectonic-compiled resume variants (see resume_optimize),
+    which made a working optimizer look like it "couldn't beat your resume" to
+    the user. They fail on different things, so we take whichever reads more.
+    """
+    pdfminer_text = ""
     try:
         from pdfminer.high_level import extract_text as pdf_extract
-        return pdf_extract(path) or ""
+        pdfminer_text = pdf_extract(path) or ""
     except Exception as e:  # noqa: BLE001
-        print(f"[resume] pdfminer unavailable ({e}); install pdfminer.six")
-        return ""
+        print(f"[resume] pdfminer failed ({e}); trying pypdf")
+
+    if len(pdfminer_text.strip()) >= 200:
+        return pdfminer_text
+
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(path)
+        alt = "\n".join((p.extract_text() or "") for p in reader.pages)
+    except Exception as e:  # noqa: BLE001
+        print(f"[resume] pypdf fallback unavailable ({e})")
+        return pdfminer_text
+
+    if len(alt.strip()) > len(pdfminer_text.strip()):
+        print(f"[resume] pypdf read {len(alt.strip())} chars where pdfminer read "
+              f"{len(pdfminer_text.strip())} — using pypdf")
+        return alt
+    return pdfminer_text
 
 
 def _docx_text(path: str) -> str:

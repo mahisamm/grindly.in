@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { PageTitle, Panel, StatCard, Badge, WeekTable, fmtDate } from "./ui";
+import { PageTitle, Panel, StatCard, Badge, WeekTable, fmtDate, TableWrap } from "./ui";
 
 type Overview = {
   users: { total: number; active: number; paused: number; paid: number; free: number; admins: number;
@@ -53,15 +53,17 @@ export default function AdminOverview() {
       </div>
 
       {/* Hero numbers */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <Panel className="px-6 py-5">
+      {/* One column on a phone: two 5xl numbers side by side at 390px wrap their
+          own captions into unreadable slivers. */}
+      <div className="grid grid-cols-1 gap-4 mb-6 sm:grid-cols-2">
+        <Panel className="px-4 py-4 sm:px-6 sm:py-5">
           <div className="font-sans text-[11px] uppercase tracking-wide text-muted">Active subscribers</div>
-          <div className="mt-1 font-sans text-5xl font-bold tabular-nums text-accent">{d.users.active}</div>
+          <div className="mt-1 font-sans text-4xl font-bold tabular-nums text-accent sm:text-5xl">{d.users.active}</div>
           <div className="mt-1 font-sans text-xs text-muted">{d.users.total} total · {d.users.paused} paused · {d.users.paid} paid</div>
         </Panel>
-        <Panel className="px-6 py-5">
+        <Panel className="px-4 py-4 sm:px-6 sm:py-5">
           <div className="font-sans text-[11px] uppercase tracking-wide text-muted">Successful applications</div>
-          <div className="mt-1 font-sans text-5xl font-bold tabular-nums text-foreground">{d.runs.allTimeApplied}</div>
+          <div className="mt-1 font-sans text-4xl font-bold tabular-nums text-foreground sm:text-5xl">{d.runs.allTimeApplied}</div>
           <div className="mt-1 font-sans text-xs text-muted">+{d.runs.appliedToday} today · {d.runs.applied} in 14d · {d.runs.failRate}% fail rate</div>
         </Panel>
       </div>
@@ -112,30 +114,32 @@ export default function AdminOverview() {
           {d.recentFailures.length === 0 ? (
             <p className="px-4 py-6 font-sans text-sm text-muted">No failures. Clean.</p>
           ) : (
-            <table className="w-full text-left font-sans text-xs">
-              <thead className="text-muted">
-                <tr className="border-b border-border">
-                  <th className="px-4 py-2 font-medium">User</th>
-                  <th className="px-4 py-2 font-medium">Job</th>
-                  <th className="px-4 py-2 font-medium">Reason</th>
-                  <th className="px-4 py-2 font-medium">When</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.recentFailures.map((f) => (
-                  <tr key={f.id} className="border-b border-surface-2 hover:bg-surface-2">
-                    <td className="px-4 py-2">
-                      {f.userId ? (
-                        <Link href={`/admin/users/${f.userId}`} className="text-brand hover:underline">{f.email}</Link>
-                      ) : f.email}
-                    </td>
-                    <td className="px-4 py-2 text-muted">{f.company}</td>
-                    <td className="px-4 py-2"><Badge value={f.reason} /></td>
-                    <td className="px-4 py-2 text-muted">{fmtDate(f.createdAt)}</td>
+            <TableWrap min="min-w-[640px]">
+              <table className="w-full text-left font-sans text-xs">
+                <thead className="text-muted">
+                  <tr className="border-b border-border">
+                    <th className="px-4 py-2 font-medium">User</th>
+                    <th className="px-4 py-2 font-medium">Job</th>
+                    <th className="px-4 py-2 font-medium">Reason</th>
+                    <th className="px-4 py-2 font-medium">When</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {d.recentFailures.map((f) => (
+                    <tr key={f.id} className="border-b border-surface-2 hover:bg-surface-2">
+                      <td className="px-4 py-2">
+                        {f.userId ? (
+                          <Link href={`/admin/users/${f.userId}`} className="text-brand hover:underline">{f.email}</Link>
+                        ) : f.email}
+                      </td>
+                      <td className="px-4 py-2 text-muted">{f.company}</td>
+                      <td className="px-4 py-2"><Badge value={f.reason} /></td>
+                      <td className="px-4 py-2 text-muted">{fmtDate(f.createdAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </TableWrap>
           )}
         </Panel>
 

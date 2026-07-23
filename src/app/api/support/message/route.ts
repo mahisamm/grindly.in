@@ -3,7 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { isRateLimited } from "@/lib/rateLimit";
-import { supportAssist, SUPPORT_FALLBACK_REPLY, SUPPORT_OFFTOPIC_REPLY, type SupportMsg } from "@/lib/supportAI";
+import {
+  supportAssist,
+  isRepeatReply,
+  SUPPORT_FALLBACK_REPLY,
+  SUPPORT_OFFTOPIC_REPLY,
+  SUPPORT_ESCALATION_REPLY,
+  type SupportMsg,
+} from "@/lib/supportAI";
 import { normalizePlan } from "@/lib/plans";
 
 export const dynamic = "force-dynamic";
@@ -75,17 +82,28 @@ export async function POST(req: Request) {
     });
   }
 
-  const replyText = ai?.reply ?? SUPPORT_FALLBACK_REPLY;
+  // Loop breaker. The prompt tells the model not to repeat itself, but a prompt
+  // is not a guarantee — so the server checks. If this reply says the same thing
+  // as the last one, the user is stuck in a paraphrase loop: replace it with a
+  // hand-off and escalate the ticket instead of letting the bot stonewall.
+  const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
+  const looped = !!ai && !!lastAssistant && isRepeatReply(ai.reply, lastAssistant.content);
+
+  const replyText = looped ? SUPPORT_ESCALATION_REPLY : (ai?.reply ?? SUPPORT_FALLBACK_REPLY);
   history.push({ role: "assistant", content: replyText, at: new Date().toISOString() });
 
   // Triage: prefer the fresh AI read, else keep the ticket's prior values, else
-  // fall back to the raw first line so the admin queue is never blank.
+  // fall back to the raw first line so the admin queue is never blank. A looped
+  // answer is by definition unresolved by the bot — force it to the top of the
+  // queue regardless of what the model thought the severity was.
   const data = {
     messagesJson: JSON.stringify(history.slice(-MAX_STORED)),
     subject: ai?.subject ?? existing?.subject ?? message.slice(0, 70),
     category: ai?.category ?? existing?.category ?? "other",
-    severity: ai?.severity ?? existing?.severity ?? "normal",
-    summary: ai?.summary ?? existing?.summary ?? message.slice(0, 200),
+    severity: looped ? "high" : (ai?.severity ?? existing?.severity ?? "normal"),
+    summary: looped
+      ? `NEEDS A HUMAN — the assistant repeated itself and could not answer. ${ai?.summary ?? message.slice(0, 200)}`.slice(0, 400)
+      : (ai?.summary ?? existing?.summary ?? message.slice(0, 200)),
   };
 
   let ticketId: string;
@@ -98,5 +116,5 @@ export async function POST(req: Request) {
     await audit("support_ticket_opened", { userId: uid, target: data.category, detail: data.subject });
   }
 
-  return NextResponse.json({ ticketId, reply: replyText, aiHandled: !!ai });
+  return NextResponse.json({ ticketId, reply: replyText, aiHandled: !!ai, escalated: looped });
 }

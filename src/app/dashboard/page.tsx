@@ -16,6 +16,25 @@ import { planCap, normalizePlan } from "@/lib/plans";
 // browser. ssr: false keeps it out of the server bundle entirely.
 const ConnectViewer = dynamic(() => import("@/components/ConnectViewer"), { ssr: false });
 
+// A submission the user opened but hasn't confirmed yet, kept in localStorage so
+// the "Did you submit it?" prompt survives a reload, a closed tab, or coming back
+// tomorrow. Same-day TTL: past that we'd be asking about something the user can
+// no longer remember accurately, and a wrong "yes" both burns apply quota and
+// poisons the interview-rate denominator.
+const PENDING_SUBMIT_KEY = "grindly_pending_submit";
+const PENDING_SUBMIT_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Extensions alone are not enough in a file picker: Android's Drive/Files
+// provider and some iOS pickers match on MIME type and grey out the user's own
+// PDF when only extensions are listed — the upload "fails" with no request ever
+// being made. Mirrors the onboarding page's list.
+const RESUME_ACCEPT_ATTR = [
+  ".pdf", ".docx", ".txt",
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+].join(",");
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 type App = {
@@ -506,8 +525,17 @@ export default function Dashboard() {
   // The application the user just opened to submit on the platform. When they
   // switch back to this tab we surface a one-tap "Did you submit it?" prompt so
   // the loop closes even if they forget to come back and confirm.
+  //
+  // Mirrored to localStorage (see PENDING_SUBMIT_KEY below): this used to be
+  // in-memory only, so a user who submitted on Internshala, got pulled into its
+  // "recommended for you" flow, and came back an hour later (or reloaded) was
+  // never asked — their application sat at `approved` forever and the Applied
+  // count under-reported. Reported by a beta user, 2026-07-23.
   const [pendingSubmit, setPendingSubmit] = useState<{ id: string; label: string } | null>(null);
   const [showReturnPrompt, setShowReturnPrompt] = useState(false);
+  // "Not yet" snooze — keeps the pending record alive without re-prompting on
+  // every tab switch. A ref, not state: changing it must not re-run the effect.
+  const snoozeUntilRef = useRef(0);
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [analyzingResume, setAnalyzingResume] = useState(false);
@@ -586,6 +614,14 @@ export default function Dashboard() {
   }, [router]);
 
   useEffect(() => {
+    // Paused entirely while the remote-login viewer is open — including the
+    // immediate load(). Two reasons: every tick re-renders the tree that hosts
+    // the live VNC canvas (what users saw as the login window flickering), and
+    // on a 1-vCPU host it competes with the connect container streaming that
+    // very screen. Nothing here is worth refreshing while the user is staring at
+    // a login window; the connect poll calls load() the moment it connects, and
+    // this effect re-runs (fetching once) as soon as the viewer closes.
+    if (viewer) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- polling: load on mount + on an interval
     load();
     // 12s, not 4s: on a single-core host, 100 open dashboards polling /api/me
@@ -593,21 +629,53 @@ export default function Dashboard() {
     // a background product — near-real-time dashboard refresh isn't worth the load.
     const t = setInterval(load, 12000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, viewer]);
 
   // Reset page when filter changes
   // eslint-disable-next-line react-hooks/set-state-in-effect -- reset pagination on filter/tab change
   useEffect(() => { setPage(0); }, [filter, tab]);
 
-  // When the user tabs back after opening a listing to submit, ask them to
+  // When the user comes back after opening a listing to submit, ask them to
   // confirm — this is what closes the "opened it, never came back to mark it"
   // gap that left applications stuck and skewed the response-rate metric.
+  //
+  // Three triggers, not one: `focus` alone missed the common cases — a phone
+  // browser switching tabs fires `visibilitychange` without `focus`, and a
+  // back-navigation from a bfcache'd page fires only `pageshow`.
   useEffect(() => {
     if (!pendingSubmit) return;
-    const onFocus = () => setShowReturnPrompt(true);
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    const show = () => {
+      if (document.hidden || Date.now() < snoozeUntilRef.current) return;
+      setShowReturnPrompt(true);
+    };
+    window.addEventListener("focus", show);
+    window.addEventListener("pageshow", show);
+    document.addEventListener("visibilitychange", show);
+    return () => {
+      window.removeEventListener("focus", show);
+      window.removeEventListener("pageshow", show);
+      document.removeEventListener("visibilitychange", show);
+    };
   }, [pendingSubmit]);
+
+  // Restore a pending confirmation across reloads/new sessions. Anything older
+  // than PENDING_SUBMIT_TTL_MS is dropped — asking "did you submit this?" about
+  // a listing from last week invites a wrong yes, and a wrong yes burns quota
+  // and corrupts the interview-rate denominator.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PENDING_SUBMIT_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { id?: string; label?: string; at?: number };
+      if (!saved?.id || !saved.label || !saved.at || Date.now() - saved.at > PENDING_SUBMIT_TTL_MS) {
+        localStorage.removeItem(PENDING_SUBMIT_KEY);
+        return;
+      }
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- rehydrate from storage on mount
+      setPendingSubmit({ id: saved.id, label: saved.label });
+      setShowReturnPrompt(true); // they are already back — ask now
+    } catch { /* private mode / corrupt value — the in-memory path still works */ }
+  }, []);
 
   // First-run walkthrough — show once per browser after the user is loaded
   useEffect(() => {
@@ -794,7 +862,18 @@ export default function Dashboard() {
         const d = await r.json().catch(() => ({}));
         const row = (d.integrations as Integration[] ?? []).find(i => i.platform === platform);
         if (row?.status === "connected") { setConnectingPlatform(null); setViewer(null); setNotice({ kind: "ok", text: `${platform} connected.` }); load(); return; }
-        if (row?.connectToken) { opened = true; setNotice(null); setViewer({ platform, token: row.connectToken }); }
+        if (row?.connectToken) {
+          opened = true;
+          setNotice(null);
+          // Identity-stable update. This used to allocate a fresh object every
+          // 2s, so the whole dashboard — with the live remote-browser canvas
+          // inside it — re-rendered on every poll tick. That is what users saw
+          // as the login window "flickering". The token doesn't change during a
+          // session (agent/connect_service.py mints it once), so keep the same
+          // object and React skips the re-render entirely.
+          const tok = row.connectToken;
+          setViewer((prev) => (prev && prev.token === tok && prev.platform === platform ? prev : { platform, token: tok }));
+        }
         else if (!opened && Date.now() - started > 12_000) {
           // Still no token after a bit — almost always means another user's
           // connect session is using the single shared browser. Say so
@@ -953,14 +1032,36 @@ export default function Dashboard() {
    *  skills/score derived from the old one server-side, so `load()` afterwards is
    *  what makes the re-analysis visible. */
   async function uploadResume(file: File, kind: "master" | "tex") {
+    // Catch the two rejections the server would issue anyway, before spending a
+    // slow mobile upload on them.
+    const limit = kind === "tex" ? 512 * 1024 : 5 * 1024 * 1024;
+    if (file.size > limit) {
+      setNotice({
+        kind: "err",
+        text: `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB — the limit is ${kind === "tex" ? "512 KB" : "5 MB"}.`,
+      });
+      return;
+    }
+    if (file.size === 0) {
+      setNotice({ kind: "err", text: "That file is empty — pick the actual resume file." });
+      return;
+    }
     setUploading(kind);
     const body = new FormData();
     body.append("file", file);
-    const res = await fetch("/api/resume", { method: "POST", body }).catch(() => null);
+    // 2 minutes, and a real timeout rather than hanging forever: a stalled
+    // upload with no feedback is the failure mode users report as "it doesn't work".
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 120_000);
+    const res = await fetch("/api/resume", { method: "POST", body, signal: ctrl.signal }).catch(() => null);
+    clearTimeout(timer);
     setUploading(null);
     if (!res || !res.ok) {
       const msg = res ? ((await res.json().catch(() => ({}))) as { error?: string }).error : null;
-      setNotice({ kind: "err", text: msg || "Couldn't upload that file — please try again." });
+      setNotice({
+        kind: "err",
+        text: msg || "Couldn't upload that file — your connection may have dropped. Try again.",
+      });
       return;
     }
     setNotice({
@@ -1005,7 +1106,7 @@ export default function Dashboard() {
       try { tab.opener = null; } catch { /* cross-origin already */ }
       tab.location.replace(safeUrl);
     }
-    setPendingSubmit({ id: a.id, label: `${a.jobTitle} — ${a.company}` });
+    rememberPendingSubmit(a.id, `${a.jobTitle} — ${a.company}`);
     if (!safeUrl) {
       setNotice({ kind: "info", text: "This one has no direct link — open it from your job platform, then confirm below." });
     }
@@ -1014,7 +1115,7 @@ export default function Dashboard() {
 
   async function reopen(a: App) {
     if (a.url) window.open(a.url, "_blank", "noopener,noreferrer");
-    setPendingSubmit({ id: a.id, label: `${a.jobTitle} — ${a.company}` });
+    rememberPendingSubmit(a.id, `${a.jobTitle} — ${a.company}`);
   }
 
   async function approveAllApplications() {
@@ -1029,17 +1130,36 @@ export default function Dashboard() {
     load();
   }
 
+  // Remember (and persist) the listing the user just opened, so the confirm
+  // prompt still finds them after a reload or a long detour on the platform.
+  function rememberPendingSubmit(id: string, label: string) {
+    setPendingSubmit({ id, label });
+    try {
+      localStorage.setItem(PENDING_SUBMIT_KEY, JSON.stringify({ id, label, at: Date.now() }));
+    } catch { /* private mode — in-memory prompt still works this session */ }
+  }
+
+  function clearPendingSubmit() {
+    setPendingSubmit(null);
+    setShowReturnPrompt(false);
+    try { localStorage.removeItem(PENDING_SUBMIT_KEY); } catch {}
+  }
+
   // The UI now asks explicitly with a Yes/No prompt, so no native confirm() —
   // callers only reach here when the user has said they submitted it.
   async function confirmManualSubmission(id: string) {
     setConfirmingSubmittedId(id);
-    if (pendingSubmit?.id === id) { setPendingSubmit(null); setShowReturnPrompt(false); }
+    if (pendingSubmit?.id === id) clearPendingSubmit();
     const res = await fetch("/api/applications/submitted", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
     }).catch(() => null);
     setConfirmingSubmittedId(null);
+    // 404 = this one is no longer awaiting confirmation (already recorded, or
+    // confirmed from another device). A restored prompt hitting that is normal,
+    // not an error worth alarming the user about.
+    if (res && res.status === 404) { load(); return; }
     if (!res || !res.ok) {
       setNotice({ kind: "err", text: "Couldn't record that submission — please try again." });
       return;
@@ -1048,9 +1168,13 @@ export default function Dashboard() {
     load();
   }
 
+  // "Not yet" — hide the bar but KEEP the pending record, so the prompt comes
+  // back later instead of being lost. Dropping it here is what let a genuinely
+  // submitted application stay uncounted forever after one stray tap. Snoozed
+  // for 10 minutes so it doesn't re-nag on every tab switch in between.
   function dismissReturnPrompt() {
     setShowReturnPrompt(false);
-    setPendingSubmit(null);
+    snoozeUntilRef.current = Date.now() + 10 * 60 * 1000;
   }
 
   // Copy a listing's submit URL so the user can paste it anywhere (or hand it to
@@ -1320,7 +1444,7 @@ export default function Dashboard() {
               </li>
               <li className="flex gap-3">
                 <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">3</span>
-                <span><span className="font-medium">Run the agent.</span> It scores and prepares matches. You tap <span className="font-medium">Open &amp; submit</span> to send each one yourself, then track the outcome here.</span>
+                <span><span className="font-medium">Run the agent.</span> It scores and prepares matches. You tap <span className="font-medium">Open &amp; submit</span> to send each one yourself — <span className="font-medium">on the platform you attach your resume and press Submit</span>; Grindly doesn&apos;t submit or upload files for you. Then track the outcome here.</span>
               </li>
             </ol>
             <p className="mt-4 text-xs text-muted">Tip: <span className="text-foreground">Run now</span> searches every day for you — connecting a platform is optional (for auto-fill).</p>
@@ -2066,7 +2190,7 @@ export default function Dashboard() {
                       full-width branded card, not a tiny link. Hidden while building,
                       once versions exist, or when nothing could beat the current score;
                       those states have their own UI below. */}
-                  {!busy && variants.length === 0 && status !== "no_gain" && status !== "failed" && (
+                  {!busy && variants.length === 0 && status !== "no_gain" && status !== "failed" && status !== "error" && (
                     <button
                       onClick={optimizeResume}
                       className="group mb-3 block w-full rounded-xl border border-brand/40 bg-gradient-to-br from-brand/10 to-accent/10 p-4 text-left transition hover:border-brand/70"
@@ -2116,7 +2240,22 @@ export default function Dashboard() {
                   {!busy && status === "no_gain" && (
                     <div className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-xs text-muted">
                       {me.profile!.resumeVariantDetail ||
-                        "Your resume already scores well — we couldn't beat it without changing the facts, so nothing was added."}
+                        "None of the rewrites beat your current resume without changing the facts."}{" "}
+                      <button onClick={optimizeResume} className="underline font-medium text-brand-2">Try again →</button>
+                    </div>
+                  )}
+
+                  {/* "error" is OUR failure (generator crashed, nothing compiled,
+                      unreadable output) — kept visibly distinct from "no_gain" so
+                      a user is never told their resume was too good to improve
+                      when the truth is that our pipeline broke. */}
+                  {!busy && status === "error" && (
+                    <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2.5 text-xs text-warn">
+                      {me.profile!.resumeVariantDetail ||
+                        "Something broke on our side while building your versions — this isn't your resume."}{" "}
+                      <button onClick={optimizeResume} className="underline font-medium">Try again →</button>
+                      {" · "}
+                      <button onClick={() => setSupportOpen(true)} className="underline font-medium">Tell support</button>
                     </div>
                   )}
 
@@ -2146,6 +2285,15 @@ export default function Dashboard() {
                                 <span className="text-[0.7rem] font-semibold text-accent">+{delta}</span>
                               )}
                             </div>
+                            {/* Non-winners are shown rather than discarded (users
+                                asked to see the rewrites either way) — but they are
+                                labelled, so nobody switches to a worse resume by
+                                mistake. */}
+                            {delta <= 0 && (
+                              <div className="mt-1 text-[0.65rem] text-muted">
+                                Preview only — doesn&apos;t beat your current {v.baselineScore}
+                              </div>
+                            )}
                             {v.changes.length > 0 && (
                               <ul className="mt-2 space-y-1">
                                 {v.changes.map((c, i) => (
@@ -2167,7 +2315,14 @@ export default function Dashboard() {
                               <button
                                 onClick={() => useVariant(v)}
                                 disabled={usingVariant === v.id}
-                                className="press rounded-md brand-gradient px-2.5 py-1 text-[0.7rem] font-medium text-white hover:opacity-90 transition disabled:opacity-50"
+                                title={delta > 0
+                                  ? "Make this your master resume"
+                                  : `This scores ${v.score} vs your current ${v.baselineScore} — switching would lower your score`}
+                                className={`press rounded-md px-2.5 py-1 text-[0.7rem] font-medium transition disabled:opacity-50 ${
+                                  delta > 0
+                                    ? "brand-gradient text-white hover:opacity-90"
+                                    : "border border-border text-muted hover:text-foreground"
+                                }`}
                               >
                                 {usingVariant === v.id ? "Switching…" : "Use as my resume"}
                               </button>
@@ -2193,7 +2348,7 @@ export default function Dashboard() {
                 label="Your resume"
                 hint="PDF, DOCX or TXT · this is the exact file recruiters receive"
                 current={me.profile.resumeName}
-                accept=".pdf,.docx,.txt"
+                accept={RESUME_ACCEPT_ATTR}
                 busy={uploading === "master"}
                 onPick={(f) => uploadResume(f, "master")}
               />
@@ -2974,6 +3129,8 @@ export default function Dashboard() {
                 <li>Click <strong>Run now</strong> (or let the daily run go) — the agent finds matches and drafts each one: tailored resume, cover letter, and screening answers.</li>
                 <li>Connecting a platform is optional — it only powers the pre-filled answer draft. Discovery works with nothing connected.</li>
                 <li>For each prepared match, tap <strong>Open &amp; submit ↗</strong> — Grindly opens the listing in your own browser so you review and submit it yourself.</li>
+                <li><strong>What you do on the platform:</strong> attach your resume and press Submit. Grindly prepares the wording and the answers, but it does not upload your file or click Submit for you — the platforms&apos; terms forbid automated submission, and it&apos;s your account that would be banned for it.</li>
+                <li>Come back and tap <strong>✓ I submitted it</strong> so your Applied count and daily limit stay accurate. We&apos;ll ask you automatically when you return to this tab.</li>
                 <li>Grindly never logs in and submits on your behalf. External and unsupported complex applications are skipped.</li>
                 <li>You can prepare up to <strong>{cap}</strong> matches/day on the free plan.</li>
               </ol>

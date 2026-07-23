@@ -16,10 +16,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const admin = await getAdminOrNull();
   if (!admin) notFound();
 
+  // Column on a phone (top bar above content), row from `lg` (sidebar beside it).
+  // `min-w-0` on main is what actually lets the tables' own scroll containers
+  // work — without it a wide table stretches the flex item and the whole page
+  // scrolls sideways instead.
   return (
-    <div className="grid-bg flex min-h-screen text-foreground [font-feature-settings:'tnum'] selection:bg-brand/30">
+    <div className="grid-bg flex min-h-screen flex-col text-foreground [font-feature-settings:'tnum'] selection:bg-brand/30 lg:flex-row">
       <AdminNav email={admin.email} />
-      <main className="min-w-0 flex-1 overflow-x-auto p-8">{children}</main>
+      <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
     </div>
   );
 }

@@ -9,6 +9,14 @@ const FAQ: { q: string; a: string }[] = [
     a: "No. Grindly finds matches, drafts a tailored resume and cover letter, and prepares each application — but you complete the final submission yourself in your own browser (Safe Apply Mode). Nothing is ever sent to an employer without you clicking submit.",
   },
   {
+    q: "Why can't the agent just submit the application for me?",
+    a: "Four concrete reasons, not just 'security'. (1) LinkedIn, Internshala, Naukri, Unstop and Indeed all forbid automated submission in their terms — an account caught doing it gets restricted or banned, and it is your account that is lost, not ours. (2) Grindly never stores your platform password, so by design it has no session to submit with — that is what stops a breach here from becoming a breach of your job accounts. (3) Many forms ask questions only you can answer truthfully (notice period, relocation, expected stipend, 'why this role'), and a bot answering those for you is misrepresentation to an employer. (4) You keep the last look at what goes out with your name on it. What you get instead: the roles found and scored, the cover letter and screening answers drafted, and a ready-to-submit link. The browser extension can auto-fill the form fields for you — the Submit click stays yours.",
+  },
+  {
+    q: "Do I have to upload my resume on the job platform myself?",
+    a: "Yes. You upload your resume to Grindly once so the agent can match and tailor it, but on the platform's own form you attach the file and press Submit yourself. Grindly does not upload files into the platform's form on your behalf — same reason the agent does not submit for you.",
+  },
+  {
     q: "What data is sent to AI providers?",
     a: "Resume and job text is sent to the AI ensemble to score matches and draft applications. Before anything leaves our servers it is passed through automatic redaction that strips direct identifiers — email, phone, and long ID/card numbers. Providers see your skills, not your contact details. Full detail is on the Privacy page.",
   },

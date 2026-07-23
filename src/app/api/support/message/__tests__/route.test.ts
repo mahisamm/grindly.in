@@ -23,10 +23,14 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/audit", () => ({ audit: mockAudit }));
 vi.mock("@/lib/rateLimit", () => ({ isRateLimited: mockRate }));
-vi.mock("@/lib/supportAI", () => ({
+// Only the network call is faked. isRepeatReply is pure and is exactly the
+// behaviour the loop-breaker tests below assert on, so it stays real.
+vi.mock("@/lib/supportAI", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/supportAI")>()),
   supportAssist: mockAssist,
   SUPPORT_FALLBACK_REPLY: "FALLBACK",
   SUPPORT_OFFTOPIC_REPLY: "OFFTOPIC",
+  SUPPORT_ESCALATION_REPLY: "ESCALATED",
 }));
 
 import { POST } from "@/app/api/support/message/route";
@@ -116,6 +120,50 @@ describe("POST /api/support/message", () => {
     const stored = JSON.parse(mockTicketUpdate.mock.calls[0][0].data.messagesJson);
     expect(stored).toHaveLength(4); // 2 prior + new user + new assistant
     expect(mockAudit).not.toHaveBeenCalled(); // audit fires only on ticket creation
+  });
+
+  // Regression: a beta user asked "why?" four times and got the same "for
+  // security reasons" sentence back every time. The bot must hand off instead.
+  it("breaks an answer loop: swaps in the escalation reply and forces severity high", async () => {
+    const canned = "Grindly cannot auto-apply to jobs for security reasons, you apply yourself in Safe Apply Mode.";
+    mockTicketFind.mockResolvedValue({
+      id: "t9", subject: "old", category: "how_to", severity: "normal", summary: "s",
+      messagesJson: JSON.stringify([
+        { role: "user", content: "why can't it apply", at: "x" },
+        { role: "assistant", content: canned, at: "y" },
+      ]),
+    });
+    mockAssist.mockResolvedValue({
+      // Same meaning, different wording — exactly what the model actually does.
+      reply: "For security reasons Grindly cannot auto-apply to jobs; you apply yourself in Safe Apply Mode.",
+      offTopic: false, subject: "Security", category: "how_to", severity: "normal", summary: "asked why",
+    });
+    const r = await POST(req({ message: "what are those security reasons" }));
+    const j = await r.json();
+    expect(j.reply).toBe("ESCALATED");
+    expect(j.escalated).toBe(true);
+    const data = mockTicketUpdate.mock.calls[0][0].data;
+    expect(data.severity).toBe("high");
+    expect(data.summary).toContain("NEEDS A HUMAN");
+  });
+
+  it("leaves a genuinely new answer alone", async () => {
+    mockTicketFind.mockResolvedValue({
+      id: "t9", subject: "old", category: "how_to", severity: "normal", summary: "s",
+      messagesJson: JSON.stringify([
+        { role: "user", content: "why can't it apply", at: "x" },
+        { role: "assistant", content: "Grindly cannot auto-apply for security reasons.", at: "y" },
+      ]),
+    });
+    mockAssist.mockResolvedValue({
+      reply: "Three concrete reasons: the platforms' terms forbid automated submission and your account gets banned, we never hold your platform password, and some forms ask questions only you can answer truthfully.",
+      offTopic: false, subject: "Security", category: "how_to", severity: "normal", summary: "explained",
+    });
+    const r = await POST(req({ message: "what are those security reasons" }));
+    const j = await r.json();
+    expect(j.escalated).toBe(false);
+    expect(j.reply).toContain("terms forbid automated submission");
+    expect(mockTicketUpdate.mock.calls[0][0].data.severity).toBe("normal");
   });
 
   it("refuses an off-topic request with a fixed redirect and files no ticket", async () => {

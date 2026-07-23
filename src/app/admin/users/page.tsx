@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { PageTitle, Panel, Badge, fmtDate } from "../ui";
+import { PageTitle, Panel, Badge, fmtDate, TableWrap } from "../ui";
 
 type Row = {
   id: string; email: string; name: string | null; role: string; plan: string;
@@ -42,36 +42,38 @@ export default function AdminUsers() {
       {err && <p className="font-sans text-sm text-brand">{err}</p>}
 
       <Panel>
-        <table className="w-full text-left font-sans text-xs">
-          <thead className="text-muted">
-            <tr className="border-b border-border">
-              <th className="px-4 py-2 font-medium">Email</th>
-              <th className="px-4 py-2 font-medium">Status</th>
-              <th className="px-4 py-2 font-medium">Plan</th>
-              <th className="px-4 py-2 font-medium">Role</th>
-              <th className="px-4 py-2 font-medium text-right">Apps</th>
-              <th className="px-4 py-2 font-medium">Joined</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data?.users.map((u) => (
-              <tr key={u.id} className="border-b border-surface-2 hover:bg-surface-2">
-                <td className="px-4 py-2">
-                  <Link href={`/admin/users/${u.id}`} className="text-brand hover:underline">{u.email}</Link>
-                  {u.name && <span className="ml-2 text-muted">{u.name}</span>}
-                </td>
-                <td className="px-4 py-2"><Badge value={u.status} /></td>
-                <td className="px-4 py-2">{u.plan}{u.paid ? "" : <span className="text-muted"> (unpaid)</span>}</td>
-                <td className="px-4 py-2">{u.role === "admin" ? <Badge value="admin" /> : <span className="text-muted">user</span>}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{u.applications}</td>
-                <td className="px-4 py-2 text-muted">{fmtDate(u.createdAt)}</td>
+        <TableWrap min="min-w-[720px]">
+          <table className="w-full text-left font-sans text-xs">
+            <thead className="text-muted">
+              <tr className="border-b border-border">
+                <th className="px-4 py-2 font-medium">Email</th>
+                <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium">Plan</th>
+                <th className="px-4 py-2 font-medium">Role</th>
+                <th className="px-4 py-2 font-medium text-right">Apps</th>
+                <th className="px-4 py-2 font-medium">Joined</th>
               </tr>
-            ))}
-            {data && data.users.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-6 text-center text-muted">No users match.</td></tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data?.users.map((u) => (
+                <tr key={u.id} className="border-b border-surface-2 hover:bg-surface-2">
+                  <td className="px-4 py-2">
+                    <Link href={`/admin/users/${u.id}`} className="text-brand hover:underline">{u.email}</Link>
+                    {u.name && <span className="ml-2 text-muted">{u.name}</span>}
+                  </td>
+                  <td className="px-4 py-2"><Badge value={u.status} /></td>
+                  <td className="px-4 py-2">{u.plan}{u.paid ? "" : <span className="text-muted"> (unpaid)</span>}</td>
+                  <td className="px-4 py-2">{u.role === "admin" ? <Badge value="admin" /> : <span className="text-muted">user</span>}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">{u.applications}</td>
+                  <td className="px-4 py-2 text-muted">{fmtDate(u.createdAt)}</td>
+                </tr>
+              ))}
+              {data && data.users.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-6 text-center text-muted">No users match.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </TableWrap>
       </Panel>
 
       {data && data.totalPages > 1 && (

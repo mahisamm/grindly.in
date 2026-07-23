@@ -1727,21 +1727,50 @@ def optimize_variants(uid: str) -> dict:
         skills = resume_parse.extract_skills(text)
 
     db.set_variant_status(uid, "generating", "Building optimized versions…")
+    # Failed compiles/renders leave their .tex + .pdf here — the only way to tell
+    # an empty document from an unextractable one after the fact.
+    debug_dir = os.path.join(_ROOT_DIR, "data", "logs", "optimize", uid)
     try:
-        variants = resume_optimize.generate_variants(text, skills)
+        batch = resume_optimize.generate_variants(text, skills, debug_dir=debug_dir)
     except Exception as e:  # noqa: BLE001 — a generation crash must degrade, not kill the worker
         log.exception("optimize: generation failed for %s", uid)
-        db.set_variant_status(uid, "no_gain", "Couldn't build optimized versions this time — try again.")
+        # NOT "no_gain": this is our failure, and telling the user their resume
+        # was too good to improve when the generator crashed is a lie they act on.
+        db.set_variant_status(uid, "error", "Something broke while building your versions — try again, and tell support if it repeats.")
         return {"status": "error", "detail": str(e)}
+
+    variants = batch.get("variants") or []
+    reasons = batch.get("reasons") or []
+    aborted = batch.get("aborted")
+
+    if aborted:
+        db.clear_resume_variants(uid)
+        detail = {
+            "source_too_short": "We couldn't read enough text out of your resume to rebuild it. Upload a text-based PDF or DOCX (not a scan).",
+            "no_compiler": "The resume builder is unavailable on our side right now — this is not your resume. Try again shortly.",
+            "extraction_failed": "We couldn't break your resume into sections to rebuild it. Try again, or tell support if it repeats.",
+        }.get(aborted, "Couldn't build optimized versions this time — try again.")
+        status = "no_gain" if aborted == "source_too_short" else "error"
+        db.set_variant_status(uid, status, detail)
+        log.warning("optimize: %s aborted (%s)", uid, aborted)
+        return {"status": status, "detail": aborted}
 
     if not variants:
         db.clear_resume_variants(uid)
+        # Say WHY each one dropped. "Your resume already scores well" was being
+        # shown even when every variant died on an unreadable compile — a beta
+        # user read that, believed the feature had run, and filed a bug.
+        why = " · ".join(reasons[:3]) if reasons else "no versions survived scoring"
+        ours = any("our side" in r or "didn't compile" in r for r in reasons)
         db.set_variant_status(
-            uid, "no_gain",
-            "Your resume already scores well — we couldn't produce a version that "
-            "beats it without changing the facts, so nothing was added.",
+            uid,
+            "error" if ours else "no_gain",
+            ("Couldn't produce a usable version this time. " if ours
+             else "None of the rewrites beat your current resume without changing the facts. ")
+            + why,
         )
-        return {"status": "no_gain"}
+        log.info("optimize: %s produced nothing — %s", uid, why)
+        return {"status": "error" if ours else "no_gain", "reasons": reasons}
 
     # Persist the compiled PDFs to disk, then record the rows. Wipe the user's old
     # variant dir first so a smaller new batch can't leave orphaned files behind.
@@ -1759,9 +1788,19 @@ def optimize_variants(uid: str) -> dict:
     base_hash = _resume_hash(text)
     db.save_resume_variants(uid, base_hash, variants)
     best = variants[0]["score"]
-    db.set_variant_status(uid, "ready", f"{len(variants)} version(s) ready — best scores {best}.")
-    log.info("optimize: %s stored %d variant(s), best=%d", uid, len(variants), best)
-    return {"status": "ready", "count": len(variants), "best": best}
+    baseline = int(batch.get("baseline") or 0)
+    winners = sum(1 for v in variants if v.get("beats_baseline"))
+    if winners:
+        detail = f"{winners} version(s) beat your {baseline} — best scores {best}."
+    else:
+        # Shown, not hidden: the user asked to SEE the rewrites. Be explicit that
+        # they're previews so nobody switches to a lower-scoring resume by accident.
+        detail = (f"None of these beat your current {baseline} (best was {best}), "
+                  f"so they're here for preview only — your resume stays as it is.")
+    db.set_variant_status(uid, "ready", detail)
+    log.info("optimize: %s stored %d variant(s), %d beat baseline %d, best=%d",
+             uid, len(variants), winners, baseline, best)
+    return {"status": "ready", "count": len(variants), "best": best, "winners": winners}
 
 
 def scan_email(uid: str) -> dict:

@@ -53,6 +53,27 @@ function loadRazorpayCheckout(): Promise<void> {
 
 const STEPS = ["Resume", "Profile questions", "Notifications", "Activate"];
 
+// What the server will actually accept (see src/app/api/resume/route.ts).
+// .doc is deliberately absent: the picker used to offer it and the server then
+// rejected it, which is the worst of both worlds.
+const ACCEPTED_EXT = [".pdf", ".docx", ".txt"];
+const ACCEPTED_MIME = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+];
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+// Extensions alone are not enough in a file picker. Android's Drive/Files
+// provider and some iOS pickers match on MIME type, and with an extension-only
+// `accept` they grey out the user's PDF so it cannot be selected at all — the
+// upload "fails" without a single request ever being sent.
+const ACCEPT_ATTR = [
+  ".pdf", ".docx", ".txt",
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+].join(",");
+
 export default function OnboardingPage() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<Form>({ ...DEFAULTS });
@@ -159,29 +180,78 @@ export default function OnboardingPage() {
   }
 
   async function uploadResume(file: File) {
-    setUploading(true);
     setMsg("");
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 60_000);
+
+    // Check locally first. Both of these used to cost a full upload before the
+    // server said no — painful on a phone, and the resulting message arrived
+    // long after the user had given up.
+    const ext = (file.name.match(/\.[^.]+$/)?.[0] ?? "").toLowerCase();
+    // An extensionless name is NOT a rejection: some Android/cloud pickers hand
+    // over a file with no suffix, and the server treats those as PDF
+    // (path.extname(...) || ".pdf" in src/app/api/resume/route.ts). Fall back to
+    // the browser's MIME type so this local check can never be stricter than the
+    // server's — refusing a file the server would have taken is the exact bug
+    // this pre-check exists to avoid.
+    const mimeOk = ACCEPTED_MIME.includes(file.type);
+    if (ext && !ACCEPTED_EXT.includes(ext) && !mimeOk) {
+      setMsg(
+        ext === ".doc"
+          ? "Old .doc files can't be read. Open it and 'Save as' PDF or DOCX, then upload that."
+          : `We can't read ${ext} files. Upload a PDF, DOCX or TXT.`,
+      );
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setMsg(`That file is ${(file.size / 1024 / 1024).toFixed(1)} MB — the limit is 5 MB. Export a smaller PDF and try again.`);
+      return;
+    }
+    if (file.size === 0) {
+      setMsg("That file is empty. Pick the actual resume file and try again.");
+      return;
+    }
+
+    setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/resume", { method: "POST", body: fd, signal: controller.signal });
-      if (res.ok) {
-        const j = await res.json();
-        setResumeName(j.resumeName);
-      } else {
-        const j = await res.json().catch(() => ({}));
-        setMsg(j.error || "Upload failed — try a PDF, DOCX or TXT.");
-      }
-    } catch (e) {
-      if (e instanceof Error && e.name === "AbortError") {
-        setMsg("Upload timed out — server took too long. Try again.");
-      } else {
-        setMsg("Upload failed — check your connection and try again.");
+      // Two attempts. A phone on a weak uplink drops the connection mid-body far
+      // more often than the server rejects anything — prod logs for the one real
+      // upload failure show a client abort, not a server error.
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const controller = new AbortController();
+        // 60s was too tight for a 4 MB PDF on mobile data; the abort landed while
+        // the body was still uploading and read to the user as "upload failed".
+        const timer = setTimeout(() => controller.abort(), 120_000);
+        try {
+          const fd = new FormData();
+          fd.append("file", file);
+          const res = await fetch("/api/resume", { method: "POST", body: fd, signal: controller.signal });
+          if (res.ok) {
+            const j = await res.json();
+            setResumeName(j.resumeName);
+            setMsg("");
+            return;
+          }
+          const j = await res.json().catch(() => ({}));
+          if (res.status === 403 && j.code === "access_pending") {
+            // Distinct from a broken upload: nothing the user does to the file
+            // will help. Say what is actually happening.
+            setMsg("Your beta access is still pending approval, so uploads are locked. We'll email you the moment it's approved.");
+            return;
+          }
+          // A 4xx is a verdict on the file — retrying sends the same bytes to the
+          // same answer. Only network-level failures below are worth a second go.
+          setMsg(j.error || "Upload failed — try a PDF, DOCX or TXT.");
+          return;
+        } catch (e) {
+          const aborted = e instanceof Error && e.name === "AbortError";
+          if (attempt === 1) continue; // one silent retry
+          setMsg(aborted
+            ? "Upload timed out — your connection dropped partway. Try again on a stronger network, or paste the text below."
+            : "Upload failed — check your connection and try again, or paste the text below.");
+        } finally {
+          clearTimeout(timer);
+        }
       }
     } finally {
-      clearTimeout(timer);
       setUploading(false);
     }
   }
@@ -386,10 +456,14 @@ export default function OnboardingPage() {
               <label className="mt-5 flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-surface px-4 py-10 cursor-pointer hover:border-brand/60 transition">
                 <input
                   type="file"
-                  accept=".pdf,.doc,.docx,.txt"
+                  accept={ACCEPT_ATTR}
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
+                    // Reset the input so picking the SAME file again after a
+                    // failure still fires onChange (it doesn't if the value is
+                    // unchanged — a silent dead end for anyone retrying).
+                    e.target.value = "";
                     if (f) uploadResume(f);
                   }}
                 />
@@ -401,7 +475,16 @@ export default function OnboardingPage() {
                       ? `Uploaded: ${resumeName}`
                       : "Click to upload PDF / DOCX / TXT"}
                 </span>
+                <span className="text-xs text-muted">Max 5 MB · text-based PDF, not a scan</span>
               </label>
+
+              {/* Errors belong next to the thing that failed. This used to sit
+                  below the paste box, out of sight on a phone. */}
+              {msg && (
+                <p className="mt-3 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
+                  {msg}
+                </p>
+              )}
 
               <div className="my-5 flex items-center gap-3 text-xs text-muted">
                 <div className="h-px flex-1 bg-border" /> or paste it
@@ -417,7 +500,6 @@ export default function OnboardingPage() {
                 className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand transition"
               />
 
-              {msg && <p className="mt-3 text-sm text-danger">{msg}</p>}
               <div className="mt-6 flex justify-end">
                 <button
                   disabled={!resumeName && !resumeText.trim()}

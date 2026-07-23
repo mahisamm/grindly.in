@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { PageTitle, Panel, StatCard, Badge, fmtDate } from "../../ui";
+import { PageTitle, Panel, StatCard, Badge, fmtDate, TableWrap } from "../../ui";
 
 type Detail = {
   user: { id: string; email: string; name: string | null; role: string; plan: string;
@@ -164,30 +164,41 @@ export default function AdminUserDetail() {
 
       {/* Applications */}
       <Panel className="mt-6">
-        <div className="border-b border-border px-4 py-3 font-sans text-sm font-bold">Recent applications ({d.applications.length})</div>
-        <table className="w-full text-left font-sans text-xs">
-          <thead className="text-muted">
-            <tr className="border-b border-border">
-              <th className="px-4 py-2 font-medium">Job</th>
-              <th className="px-4 py-2 font-medium text-right">Score</th>
-              <th className="px-4 py-2 font-medium">Status</th>
-              <th className="px-4 py-2 font-medium">Outcome</th>
-              <th className="px-4 py-2 font-medium">When</th>
-            </tr>
-          </thead>
-          <tbody>
-            {d.applications.map((a) => (
-              <tr key={a.id} className="border-b border-surface-2">
-                <td className="px-4 py-2">{a.jobTitle} <span className="text-muted">· {a.company}</span></td>
-                <td className="px-4 py-2 text-right tabular-nums">{a.matchScore}</td>
-                <td className="px-4 py-2"><Badge value={a.status} />{a.failureReason && <span className="ml-1 text-brand">{a.failureReason}</span>}</td>
-                <td className="px-4 py-2 text-muted">{a.outcome ?? "—"}</td>
-                <td className="px-4 py-2 text-muted">{fmtDate(a.createdAt)}</td>
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 font-sans text-sm font-bold">
+          Recent applications ({d.applications.length})
+          {/* This panel caps at 50 rows; the filtered view is the complete list. */}
+          <Link
+            href={`/admin/applications?userId=${d.user.id}`}
+            className="ml-auto text-xs font-medium text-brand hover:underline"
+          >
+            all applications for this user →
+          </Link>
+        </div>
+        <TableWrap min="min-w-[720px]">
+          <table className="w-full text-left font-sans text-xs">
+            <thead className="text-muted">
+              <tr className="border-b border-border">
+                <th className="px-4 py-2 font-medium">Job</th>
+                <th className="px-4 py-2 font-medium text-right">Score</th>
+                <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium">Outcome</th>
+                <th className="px-4 py-2 font-medium">When</th>
               </tr>
-            ))}
-            {d.applications.length === 0 && <tr><td colSpan={5} className="px-4 py-4 text-center text-muted">No applications.</td></tr>}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {d.applications.map((a) => (
+                <tr key={a.id} className="border-b border-surface-2">
+                  <td className="px-4 py-2">{a.jobTitle} <span className="text-muted">· {a.company}</span></td>
+                  <td className="px-4 py-2 text-right tabular-nums">{a.matchScore}</td>
+                  <td className="px-4 py-2"><Badge value={a.status} />{a.failureReason && <span className="ml-1 text-brand">{a.failureReason}</span>}</td>
+                  <td className="px-4 py-2 text-muted">{a.outcome ?? "—"}</td>
+                  <td className="px-4 py-2 text-muted">{fmtDate(a.createdAt)}</td>
+                </tr>
+              ))}
+              {d.applications.length === 0 && <tr><td colSpan={5} className="px-4 py-4 text-center text-muted">No applications.</td></tr>}
+            </tbody>
+          </table>
+        </TableWrap>
       </Panel>
 
       {/* Audit */}

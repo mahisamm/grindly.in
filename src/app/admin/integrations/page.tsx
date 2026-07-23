@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { PageTitle, Panel, Badge, fmtDate } from "../ui";
+import { PageTitle, Panel, Badge, fmtDate, TableWrap } from "../ui";
 
 type Resp = {
   summary: Record<string, number>;
@@ -35,31 +35,33 @@ export default function AdminIntegrations() {
       </div>
 
       <Panel>
-        <table className="w-full text-left font-sans text-xs">
-          <thead className="text-muted">
-            <tr className="border-b border-border">
-              <th className="px-4 py-2 font-medium">User</th>
-              <th className="px-4 py-2 font-medium">Platform</th>
-              <th className="px-4 py-2 font-medium">Status</th>
-              <th className="px-4 py-2 font-medium">Connected</th>
-              <th className="px-4 py-2 font-medium">Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {d.integrations.map((i, idx) => (
-              <tr key={idx} className="border-b border-surface-2 hover:bg-surface-2">
-                <td className="px-4 py-2">
-                  {i.userId ? <Link href={`/admin/users/${i.userId}`} className="text-brand hover:underline">{i.email}</Link> : i.email}
-                </td>
-                <td className="px-4 py-2">{i.platform}</td>
-                <td className="px-4 py-2"><Badge value={i.status} /></td>
-                <td className="px-4 py-2 text-muted">{fmtDate(i.connectedAt)}</td>
-                <td className="px-4 py-2 text-muted">{fmtDate(i.updatedAt)}</td>
+        <TableWrap min="min-w-[640px]">
+          <table className="w-full text-left font-sans text-xs">
+            <thead className="text-muted">
+              <tr className="border-b border-border">
+                <th className="px-4 py-2 font-medium">User</th>
+                <th className="px-4 py-2 font-medium">Platform</th>
+                <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium">Connected</th>
+                <th className="px-4 py-2 font-medium">Updated</th>
               </tr>
-            ))}
-            {d.integrations.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted">No integrations yet.</td></tr>}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {d.integrations.map((i, idx) => (
+                <tr key={idx} className="border-b border-surface-2 hover:bg-surface-2">
+                  <td className="px-4 py-2">
+                    {i.userId ? <Link href={`/admin/users/${i.userId}`} className="text-brand hover:underline">{i.email}</Link> : i.email}
+                  </td>
+                  <td className="px-4 py-2">{i.platform}</td>
+                  <td className="px-4 py-2"><Badge value={i.status} /></td>
+                  <td className="px-4 py-2 text-muted">{fmtDate(i.connectedAt)}</td>
+                  <td className="px-4 py-2 text-muted">{fmtDate(i.updatedAt)}</td>
+                </tr>
+              ))}
+              {d.integrations.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-muted">No integrations yet.</td></tr>}
+            </tbody>
+          </table>
+        </TableWrap>
       </Panel>
     </>
   );

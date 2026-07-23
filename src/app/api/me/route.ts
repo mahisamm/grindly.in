@@ -115,9 +115,12 @@ export async function GET() {
   }
 
   // ATS-optimized resume variants ("3 better versions"), best score first. Rows
-  // only exist after the user clicks Generate AND at least one variant beat the
-  // master — see agent/resume_optimize.py. `changes` is a JSON string on disk;
-  // parse it here so the client renders a plain array.
+  // exist after the user clicks Generate; ones that beat the master rank first,
+  // and ones that didn't are still returned so the dashboard can show them as
+  // preview-only rather than showing nothing at all (see agent/resume_optimize.py
+  // — discarding them read to beta users as a broken feature). Compare score vs
+  // baselineScore to tell them apart. `changes` is a JSON string on disk; parse
+  // it here so the client renders a plain array.
   const variantRows = await prisma.resumeVariant
     .findMany({
       where: { userId: uid },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { PageTitle, Panel, StatCard, fmtDate } from "../ui";
+import { PageTitle, Panel, StatCard, fmtDate, TableWrap } from "../ui";
 
 type Pending = { id: string; email: string; name: string | null; createdAt: string; requestedAt: string | null; requested: boolean };
 type Allow = { email: string; note: string | null; createdAt: string };
@@ -120,54 +120,56 @@ export default function AccessPage() {
         {d.pending.length === 0 ? (
           <p className="px-4 py-6 font-sans text-sm text-muted">Nobody waiting. All clear.</p>
         ) : (
-          <table className="w-full text-left font-sans text-xs">
-            <thead className="text-muted">
-              <tr className="border-b border-border">
-                <th className="px-4 py-2 font-medium">Email</th>
-                <th className="px-4 py-2 font-medium">Signed up</th>
-                <th className="px-4 py-2 font-medium">Requested</th>
-                <th className="px-4 py-2 font-medium text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.pending.map((p) => (
-                <tr key={p.id} className="border-b border-surface-2 hover:bg-surface-2">
-                  <td className="px-4 py-2">
-                    <div className="text-foreground">{p.email}</div>
-                    {p.name && <div className="text-muted">{p.name}</div>}
-                  </td>
-                  <td className="px-4 py-2 text-muted">{fmtDate(p.createdAt)}</td>
-                  <td className="px-4 py-2">
-                    {p.requested ? (
-                      <span className="rounded border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-warn">
-                        {fmtDate(p.requestedAt)}
-                      </span>
-                    ) : (
-                      <span className="text-muted">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2">
-                    <div className="flex justify-end gap-2">
-                      <button
-                        onClick={() => act({ action: "approve", userId: p.id }, `ap-${p.id}`)}
-                        disabled={busy === `ap-${p.id}`}
-                        className="rounded bg-accent px-2.5 py-1 font-bold text-white transition hover:opacity-90 disabled:opacity-50"
-                      >
-                        {busy === `ap-${p.id}` ? "…" : "Approve"}
-                      </button>
-                      <button
-                        onClick={() => act({ action: "deny", userId: p.id }, `dn-${p.id}`)}
-                        disabled={busy === `dn-${p.id}`}
-                        className="rounded border border-brand/40 px-2.5 py-1 text-brand transition hover:bg-brand/10 disabled:opacity-50"
-                      >
-                        Deny
-                      </button>
-                    </div>
-                  </td>
+          <TableWrap min="min-w-[640px]">
+            <table className="w-full text-left font-sans text-xs">
+              <thead className="text-muted">
+                <tr className="border-b border-border">
+                  <th className="px-4 py-2 font-medium">Email</th>
+                  <th className="px-4 py-2 font-medium">Signed up</th>
+                  <th className="px-4 py-2 font-medium">Requested</th>
+                  <th className="px-4 py-2 font-medium text-right">Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {d.pending.map((p) => (
+                  <tr key={p.id} className="border-b border-surface-2 hover:bg-surface-2">
+                    <td className="px-4 py-2">
+                      <div className="text-foreground">{p.email}</div>
+                      {p.name && <div className="text-muted">{p.name}</div>}
+                    </td>
+                    <td className="px-4 py-2 text-muted">{fmtDate(p.createdAt)}</td>
+                    <td className="px-4 py-2">
+                      {p.requested ? (
+                        <span className="rounded border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-warn">
+                          {fmtDate(p.requestedAt)}
+                        </span>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          onClick={() => act({ action: "approve", userId: p.id }, `ap-${p.id}`)}
+                          disabled={busy === `ap-${p.id}`}
+                          className="rounded bg-accent px-2.5 py-1 font-bold text-white transition hover:opacity-90 disabled:opacity-50"
+                        >
+                          {busy === `ap-${p.id}` ? "…" : "Approve"}
+                        </button>
+                        <button
+                          onClick={() => act({ action: "deny", userId: p.id }, `dn-${p.id}`)}
+                          disabled={busy === `dn-${p.id}`}
+                          className="rounded border border-brand/40 px-2.5 py-1 text-brand transition hover:bg-brand/10 disabled:opacity-50"
+                        >
+                          Deny
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableWrap>
         )}
       </Panel>
 
