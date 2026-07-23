@@ -112,10 +112,12 @@ describe("POST /api/applications/approve", () => {
     mockFindFirst.mockResolvedValue({ id: "a1", reason: "good fit" });
     const res = await POST(makeReq({ id: "a1" }));
     expect(res.status).toBe(200);
-    expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "a1" },
-      data: { status: "approved", reason: "good fit — ready for your final browser submission" },
-    });
+    const arg = mockUpdate.mock.calls[0][0];
+    expect(arg.where).toEqual({ id: "a1" });
+    expect(arg.data.status).toBe("approved");
+    expect(arg.data.reason).toBe("good fit — ready for your final browser submission");
+    // Dates the quota reservation so it expires with today — see lib/quota.ts.
+    expect(arg.data.approvedAt).toBeInstanceOf(Date);
   });
 
   it("never queues a worker to submit on the user's behalf", async () => {

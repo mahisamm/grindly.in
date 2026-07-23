@@ -52,13 +52,30 @@ export async function remainingToday(userId: string, plan?: string | null): Prom
   return (await getQuota(userId, plan)).remaining;
 }
 
-/** Approved-but-not-yet-submitted rows — capacity already "spoken for" against
- * the daily cap even though they haven't flipped to `applied` yet. Approved
- * rows never expire on their own, so without counting them here a user could
- * call approve/approve-all once per day for many days in a row and bank far
- * more than one day's cap, then burst-submit the backlog past the limit. */
+/** Rows approved TODAY and not yet submitted — capacity already "spoken for"
+ * against today's cap even though they haven't flipped to `applied` yet.
+ *
+ * The reservation has to expire with the day that granted it. This used to count
+ * every approved row for all time, and the failure mode was brutal: hardly
+ * anyone comes back to tick "yes, I submitted it", so one day of approvals left
+ * `pending === cap` permanently and the user could never approve again — the UI
+ * said "your daily limit is reached, try again tomorrow" on every tomorrow,
+ * forever. The core loop of the product was bricked by its own safety check.
+ *
+ * A null `approvedAt` means a row approved before this column existed. Those are
+ * deliberately NOT counted: they are exactly the rows that jammed the old
+ * counter, and refusing to count them is what unsticks an already-stuck account.
+ *
+ * Bursting past the cap is still prevented downstream — /api/applications/submitted
+ * consumes quota atomically via tryConsumeApplyQuota. */
 export async function pendingApprovedCount(userId: string): Promise<number> {
-  return prisma.application.count({ where: { userId, status: "approved" } });
+  return prisma.application.count({
+    where: {
+      userId,
+      status: "approved",
+      approvedAt: { gte: new Date(startOfTodayMs()) },
+    },
+  });
 }
 
 /** Remaining capacity for NEW approvals today — today's cap minus what's

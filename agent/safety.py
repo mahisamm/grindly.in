@@ -58,13 +58,111 @@ SAFE_APPLY_REASON = (
 
 
 def requires_manual_final_submit(source: str | None = None) -> tuple[bool, str]:
-    """Return the mandatory final-submit policy for a source.
+    """Return the mandatory final-submit policy for a *board* source.
 
     Unknown sources intentionally receive the same answer.  A future official
     partner API must be explicitly designed and reviewed before it can receive
     a different policy; a new source never inherits unattended submission.
+
+    This governs the board channel only.  Applications routed to an employer's
+    own intake — Google Form, HR mailbox, ATS portal — never reach a platform
+    adapter and are governed by `destination_policy()` below instead.
     """
     return True, SAFE_APPLY_REASON
+
+
+# ── Destination policy ──────────────────────────────────────────────────────
+#
+# The old model had one question: "may we submit on <platform>?", and one
+# answer: no.  That conflated two different risks under one boolean.  The real
+# variable is not which board found the listing, it is *where the application
+# is delivered*, because ban risk requires a bannable account:
+#
+#   Tier A  employer's own intake (Google Form / HR mailbox / ATS portal).
+#           The candidate has no account there; the form exists to receive
+#           applications from strangers.  Unattended submit is safe.
+#   Tier B  a board where the user explicitly handed us credentials through the
+#           hosted-login consent flow.  Permitted only when switched on, and
+#           only under the worker's per-platform pacing caps.
+#   Tier C  a board holding an account the user cannot afford to lose.  Never
+#           submitted from our servers, at any setting.  This is the browser
+#           extension's job — the user's own session, device and IP.
+#
+# See agent/resolver.py for how a listing is mapped to a tier.
+
+# off    — resolve nothing, behave exactly as before this module existed.
+# shadow — resolve and record every destination, submit nothing.  This is how
+#          the Tier A coverage rate gets measured before anything is promised
+#          to a user.  Default, because a number nobody has measured is not a
+#          basis for sending mail in someone's name.
+# live   — Tier A destinations submit unattended.
+AUTO_APPLY_OFF = "off"
+AUTO_APPLY_SHADOW = "shadow"
+AUTO_APPLY_LIVE = "live"
+
+TIER_A_HOLD_REASON = (
+    "Auto-apply is in shadow mode: destination resolved but nothing was sent."
+)
+TIER_B_HOLD_REASON = (
+    "This board holds your account, so the agent prepared the application "
+    "instead of sending it. Approve it and the agent submits."
+)
+TIER_C_HOLD_REASON = (
+    "This platform is never submitted from Grindly's servers — open it in your "
+    "own browser to send it."
+)
+
+
+def auto_apply_mode() -> str:
+    """Fleet-wide auto-apply switch, from GRINDLY_AUTO_APPLY_MODE.
+
+    Fails closed: anything unrecognised (including a typo in the env var) reads
+    as shadow, never as live.  A misconfigured deploy must not start sending
+    applications under a user's name.
+    """
+    mode = (os.environ.get("GRINDLY_AUTO_APPLY_MODE") or AUTO_APPLY_SHADOW).strip().lower()
+    return mode if mode in (AUTO_APPLY_OFF, AUTO_APPLY_SHADOW, AUTO_APPLY_LIVE) else AUTO_APPLY_SHADOW
+
+
+def tier_b_enabled() -> bool:
+    """Tier B (hosted submit on a board the user gave credentials to) is a
+    separate switch from `live`.  Turning Tier A on must never silently turn on
+    the one path that can cost a user their account."""
+    return os.environ.get("GRINDLY_TIER_B_APPLY") == "1"
+
+
+def destination_policy(dest: dict | None) -> tuple[bool, str]:
+    """May the worker submit this destination unattended? -> (ok, reason).
+
+    `reason` is written for the user, not for a log line: when ok is False it
+    is what the dashboard shows next to the banked application.
+    """
+    from resolver import TIER_A, TIER_B, TIER_C  # local: keeps import graph acyclic
+
+    if not dest:
+        return False, SAFE_APPLY_REASON
+
+    mode = auto_apply_mode()
+    if mode == AUTO_APPLY_OFF:
+        return False, SAFE_APPLY_REASON
+
+    tier = dest.get("tier")
+
+    if tier == TIER_A:
+        if mode != AUTO_APPLY_LIVE:
+            return False, TIER_A_HOLD_REASON
+        return True, f"auto-apply: {dest.get('evidence') or dest.get('channel')}"
+
+    if tier == TIER_B:
+        if mode != AUTO_APPLY_LIVE or not tier_b_enabled():
+            return False, TIER_B_HOLD_REASON
+        return True, f"auto-apply (hosted): {dest.get('vendor') or 'platform'}"
+
+    if tier == TIER_C:
+        return False, TIER_C_HOLD_REASON
+
+    # Unknown tier — treat like an unknown source: no permission by default.
+    return False, SAFE_APPLY_REASON
 
 
 def can_apply(job: dict, profile: dict, score: int | None = None) -> tuple[bool, str | None]:

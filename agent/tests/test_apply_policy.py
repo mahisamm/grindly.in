@@ -1,0 +1,114 @@
+"""Tiered apply policy — who is allowed to submit what, unattended.
+
+Every test here is a fail-closed test. The old policy was one boolean that
+always said no; the new one says yes in exactly one situation (Tier A, live
+mode) and must say no everywhere else, including when the configuration is
+wrong, missing, or garbage.
+"""
+import pytest
+
+import resolver
+import safety
+
+
+def _dest(tier, channel=resolver.CHANNEL_GOOGLE_FORM):
+    return resolver.destination(
+        channel=channel, tier=tier, target="https://example.test/form",
+        vendor="google", evidence="test",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch):
+    monkeypatch.delenv("GRINDLY_AUTO_APPLY_MODE", raising=False)
+    monkeypatch.delenv("GRINDLY_TIER_B_APPLY", raising=False)
+
+
+# ── The switch itself ───────────────────────────────────────────────────────
+
+def test_default_mode_is_shadow_not_live():
+    """Nothing sends until someone deliberately turns it on."""
+    assert safety.auto_apply_mode() == safety.AUTO_APPLY_SHADOW
+
+
+def test_an_unrecognised_mode_reads_as_shadow(monkeypatch):
+    for junk in ("LIVE!", "true", "1", "yes", "", "   "):
+        monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", junk)
+        assert safety.auto_apply_mode() == safety.AUTO_APPLY_SHADOW
+
+
+def test_mode_is_case_insensitive(monkeypatch):
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "  LIVE ")
+    assert safety.auto_apply_mode() == safety.AUTO_APPLY_LIVE
+
+
+# ── Tier A ──────────────────────────────────────────────────────────────────
+
+def test_tier_a_sends_only_in_live_mode(monkeypatch):
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    ok, _ = safety.destination_policy(_dest(resolver.TIER_A))
+    assert ok is True
+
+
+def test_tier_a_is_held_in_shadow_mode(monkeypatch):
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "shadow")
+    ok, reason = safety.destination_policy(_dest(resolver.TIER_A))
+    assert ok is False
+    assert "shadow" in reason.lower()
+
+
+def test_off_mode_holds_everything(monkeypatch):
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "off")
+    for tier in (resolver.TIER_A, resolver.TIER_B, resolver.TIER_C):
+        ok, _ = safety.destination_policy(_dest(tier))
+        assert ok is False
+
+
+# ── Tier B ──────────────────────────────────────────────────────────────────
+
+def test_tier_b_needs_its_own_switch_on_top_of_live(monkeypatch):
+    """Turning Tier A on must never silently turn on the one path that can cost
+    a user their account."""
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    ok, reason = safety.destination_policy(_dest(resolver.TIER_B, resolver.CHANNEL_PLATFORM))
+    assert ok is False
+    assert reason
+
+    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
+    ok, _ = safety.destination_policy(_dest(resolver.TIER_B, resolver.CHANNEL_PLATFORM))
+    assert ok is True
+
+
+def test_tier_b_switch_alone_does_nothing_in_shadow(monkeypatch):
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "shadow")
+    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
+    ok, _ = safety.destination_policy(_dest(resolver.TIER_B, resolver.CHANNEL_PLATFORM))
+    assert ok is False
+
+
+# ── Tier C ──────────────────────────────────────────────────────────────────
+
+def test_tier_c_is_never_sent_at_any_setting(monkeypatch):
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
+    ok, reason = safety.destination_policy(_dest(resolver.TIER_C, resolver.CHANNEL_PLATFORM))
+    assert ok is False
+    assert "own browser" in reason
+
+
+# ── Junk input ──────────────────────────────────────────────────────────────
+
+def test_missing_or_unknown_destination_is_refused(monkeypatch):
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    for dest in (None, {}, {"tier": "Z"}, {"channel": "google_form"}):
+        ok, _ = safety.destination_policy(dest)
+        assert ok is False
+
+
+def test_board_channel_still_fails_closed_independently():
+    """Safe Apply Mode remains a second lock: even a policy bug that said yes
+    for a board cannot get past requires_manual_final_submit."""
+    for source in ("linkedin", "internshala", "naukri", "unstop", "indeed", None):
+        required, reason = safety.requires_manual_final_submit(source)
+        assert required is True
+        assert "own browser" in reason

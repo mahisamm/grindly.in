@@ -6,6 +6,7 @@ import { gmailScanEnabled, gmailScanBeta } from "@/lib/googleOAuth";
 import { visibleToUser } from "@/lib/pipeline";
 import { getQuota } from "@/lib/quota";
 import { hasAppAccess } from "@/lib/access";
+import { autoApplyMode, agentWillSend } from "@/lib/applyPolicy";
 
 const PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"] as const;
 
@@ -156,24 +157,51 @@ export async function GET() {
   const gmailConnected = byPlatform["gmail"]?.status === "connected";
 
   const apps = user.applications;
-  const appliedApps = apps.filter((a) => a.status === "applied");
-  // beta funnel: interview rate is the headline product-works signal
-  const interviews = appliedApps.filter((a) => a.outcome === "interview" || a.outcome === "offer").length;
-  const offers = appliedApps.filter((a) => a.outcome === "offer").length;
-  const outcomeReported = appliedApps.filter((a) => a.outcome).length;
+
+  // Counted in the DB, NOT over `apps`.
+  //
+  // `apps` is the 100 newest rows — a page, for rendering the list. Deriving the
+  // headline totals from it meant that the moment a user passed 100 rows (which
+  // matched + skipped reach quickly), their lifetime "Applied" number and their
+  // interview rate began to SHRINK as older applications fell off the page. The
+  // one number that tells someone whether the product is working was quietly
+  // decaying, and it looked like the agent was undoing their work.
+  const scope = visibleToUser(uid);
+  const [byStatus, interviews, offers, outcomeReported] = await Promise.all([
+    prisma.application.groupBy({
+      by: ["status"],
+      where: scope,
+      _count: { _all: true },
+    }),
+    prisma.application.count({
+      where: { ...scope, status: "applied", outcome: { in: ["interview", "offer"] } },
+    }),
+    prisma.application.count({ where: { ...scope, status: "applied", outcome: "offer" } }),
+    prisma.application.count({
+      where: { ...scope, status: "applied", outcome: { not: null } },
+    }),
+  ]);
+  const countOf = (s: string) =>
+    byStatus.find((g) => g.status === s)?._count._all ?? 0;
+
   const stats = {
-    // `apps` is already filtered to what this user may see, so every "matched" row
-    // in it has come due — this IS the ready-to-send count, not the pipeline size.
-    ready: apps.filter((a) => a.status === "matched").length,
+    // Every "matched" row this user may see has come due — the rest of the
+    // month's pipeline never leaves the server (src/lib/pipeline.ts). So this IS
+    // the ready-to-send count, not the pipeline size.
+    ready: countOf("matched"),
     // The rest of the month, as a number only. The user is told the work exists;
     // they are not handed the list.
     queued,
-    approved: apps.filter((a) => a.status === "approved").length,
+    approved: countOf("approved"),
     // everything the agent has looked at and scored, whatever the verdict
-    reviewed: apps.length,
-    applied: appliedApps.length,
-    skipped: apps.filter((a) => a.status === "skipped").length,
-    failed: apps.filter((a) => a.status === "failed").length,
+    reviewed: byStatus.reduce((s, g) => s + g._count._all, 0),
+    applied: countOf("applied"),
+    skipped: countOf("skipped"),
+    failed: countOf("failed"),
+    needsReview: countOf("needs_review"),
+    // Still page-scoped, and that is fine: an average over the most recent 100
+    // scored listings is a more useful "how well am I matching lately" number
+    // than a lifetime mean, and nothing downstream reads it as a total.
     avgScore: apps.length
       ? Math.round(apps.reduce((s, a) => s + a.matchScore, 0) / apps.length)
       : 0,
@@ -226,6 +254,19 @@ export async function GET() {
     applications: slimApps,
     reports: user.reports,
     stats,
+    // What the agent is actually allowed to send on this deploy, so the UI can
+    // stop stating "you always submit it yourself" as an absolute. That sentence
+    // is true today (shadow mode) and becomes a lie the moment routing goes live
+    // — and a dashboard that tells someone to go finish an application the agent
+    // already sent is worse than one that promised nothing.
+    //
+    // sendsAny is computed from THIS user's real rows, not from the mode alone:
+    // a user whose matches are all board-only sees no agent-sent applications
+    // even in live mode, and should not be told otherwise.
+    autoApply: {
+      mode: autoApplyMode(),
+      sendsAny: slimApps.some((a) => agentWillSend(a)),
+    },
     quota,
     integrations,
     resumeVariants,

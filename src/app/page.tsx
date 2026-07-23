@@ -9,7 +9,7 @@ const STEPS = [
   ["01", "Drop your resume", "Create an account and upload your resume. That's the only homework you do."],
   ["02", "Answer a few profile questions", "Domains, locations, stipend, daily limits. These become the agent's firewall — what it may and may not apply to."],
   ["03", "Start free & choose updates", "Activate the free plan — 5 applications a day — then pick email or Slack reports. Connect Gmail to auto-detect interview calls."],
-  ["04", "You prepare, then submit", "It reads listings, scores each against your resume, and prepares supported matches for you to complete in your own browser."],
+  ["04", "It applies for you", "It reads listings and scores each against your resume. When the application goes to a company's own form or inbox, it fills it in and sends it. When it's behind a job-board account, it prepares everything and you tap submit."],
   ["05", "Daily progress reports", "Every day you get a report: what it prepared for you, match scores, and what it skipped (and why). Mark what you submitted to track your interview rate."],
 ] as const;
 
@@ -17,7 +17,7 @@ const FEATURES = [
   ["Resume-aware matching", "Skills extracted from your resume score every role 0–100. Only real fits get an application.", Target],
   ["You set the firewall", "Min match score, max/day, excluded companies, stipend floor — hard constraints the agent can't cross.", Bolt],
   ["Application-ready matches", "Opens supported listings and drafts each application — tailored resume, cover letter, screening answers — ready for you to submit, not just a list of links.", Doc],
-  ["You control every submission", "The agent prepares the match; you complete the final submission in your own browser. Pause anytime from the dashboard.", Clock],
+  ["Your accounts stay safe", "The agent sends applications to a company's own form or inbox, where you hold no account. On LinkedIn, Internshala and Naukri it never clicks submit — that's your account to lose, not ours.", Clock],
   ["Daily reports your way", "Get progress reports via Slack DM or email — whichever you prefer. Connect Gmail to auto-detect interview calls.", Slack],
   ["Private by design", "Resume analysis uses only the AI providers configured for this service and degrades safely if they're unavailable. Your data is never sold.", Sparkle],
 ] as const;
@@ -54,9 +54,9 @@ export default function Home() {
 
             <p className="mt-4 max-w-[44ch] text-[var(--ink-soft)] leading-relaxed">
               Grindly reads your resume, finds internships that actually match your
-              skills, and prepares supported matches — every day, inside the limits
-              you set. You complete the final submission in your own browser and get
-              a daily report via email or Slack.
+              skills, and applies — every day, inside the limits you set. Where an
+              application would put your job-board account at risk, it prepares
+              everything and leaves the tap to you. Daily report by email or Slack.
             </p>
 
             <div className="mt-6 flex flex-wrap items-center gap-2.5">

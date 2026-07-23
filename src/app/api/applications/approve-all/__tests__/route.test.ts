@@ -99,14 +99,17 @@ describe("POST /api/applications/approve-all", () => {
 
     expect(body).toMatchObject({ ok: true, approved: 2 });
     expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "a1" },
-    data: { status: "approved", reason: "good fit — ready for your final browser submission" },
-    });
-    expect(mockUpdate).toHaveBeenCalledWith({
-      where: { id: "a2" },
-    data: { status: "approved", reason: " — ready for your final browser submission" },
-    });
+    const byId: Record<string, Record<string, unknown>> = {};
+    for (const call of mockUpdate.mock.calls) {
+      const arg = call[0] as { where: { id: string }; data: Record<string, unknown> };
+      byId[arg.where.id] = arg.data;
+    }
+    expect(byId.a1.status).toBe("approved");
+    expect(byId.a1.reason).toBe("good fit — ready for your final browser submission");
+    expect(byId.a2.reason).toBe(" — ready for your final browser submission");
+    // Dates the quota reservation so it expires with today — see lib/quota.ts.
+    expect(byId.a1.approvedAt).toBeInstanceOf(Date);
+    expect(byId.a2.approvedAt).toBeInstanceOf(Date);
   });
 
   it("never queues a worker to submit the batch", async () => {

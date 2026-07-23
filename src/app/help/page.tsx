@@ -6,15 +6,19 @@ export const metadata = { title: "Help & Support – Grindly" };
 const FAQ: { q: string; a: string }[] = [
   {
     q: "Does Grindly apply to jobs automatically?",
-    a: "No. Grindly finds matches, drafts a tailored resume and cover letter, and prepares each application — but you complete the final submission yourself in your own browser (Safe Apply Mode). Nothing is ever sent to an employer without you clicking submit.",
+    a: "For some, yes — and it depends entirely on where the application actually goes. Plenty of listings on the job boards are cross-posts: the real application lives on the company's own Google Form or an HR mailbox, where you don't have an account at all. Those the agent can fill in and send on its own, because there's no account of yours at risk. Listings that only exist on LinkedIn, Internshala, Naukri, Unstop or Indeed are different — those sit behind your account, so the agent prepares everything and you press submit. Your dashboard labels each one, so you always know which happened.",
   },
   {
-    q: "Why can't the agent just submit the application for me?",
-    a: "Four concrete reasons, not just 'security'. (1) LinkedIn, Internshala, Naukri, Unstop and Indeed all forbid automated submission in their terms — an account caught doing it gets restricted or banned, and it is your account that is lost, not ours. (2) Grindly never stores your platform password, so by design it has no session to submit with — that is what stops a breach here from becoming a breach of your job accounts. (3) Many forms ask questions only you can answer truthfully (notice period, relocation, expected stipend, 'why this role'), and a bot answering those for you is misrepresentation to an employer. (4) You keep the last look at what goes out with your name on it. What you get instead: the roles found and scored, the cover letter and screening answers drafted, and a ready-to-submit link. The browser extension can auto-fill the form fields for you — the Submit click stays yours.",
+    q: "Why won't the agent submit on LinkedIn or Internshala for me?",
+    a: "Because it's your account on the line, not ours. (1) LinkedIn, Internshala, Naukri, Unstop and Indeed all forbid automated submission in their terms — an account caught doing it gets restricted or banned, and losing it in the middle of your job search is a far worse outcome than a few extra taps. (2) Grindly never stores your platform password, so by design it has no session to submit with; that's what stops a breach here from becoming a breach of your job accounts. (3) You keep the last look at what goes out with your name on it. What you get instead: the role found and scored, the cover letter and screening answers drafted, and a ready-to-submit link. A company's own form has none of these problems — nobody holds an account there, and the form exists precisely to receive applications from people it's never met.",
+  },
+  {
+    q: "What does the agent do if it can't answer one of the questions?",
+    a: "It stops and leaves the application for you, rather than guessing. It will never invent a fact about you — not a CGPA, not a graduation year, not a rating of your own skills. Anything checkable comes from your profile or doesn't get written at all, and anything the agent couldn't answer honestly shows up on your dashboard for you to finish. An application you can't defend in the interview is worse than one that didn't go out.",
   },
   {
     q: "Do I have to upload my resume on the job platform myself?",
-    a: "Yes. You upload your resume to Grindly once so the agent can match and tailor it, but on the platform's own form you attach the file and press Submit yourself. Grindly does not upload files into the platform's form on your behalf — same reason the agent does not submit for you.",
+    a: "On the job boards, yes — you attach the file and press Submit on the platform's own form, for the same reason the agent doesn't submit there. When the application goes to a company's own Google Form or HR mailbox, the agent attaches the resume it tailored for that role itself.",
   },
   {
     q: "What data is sent to AI providers?",

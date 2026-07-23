@@ -102,6 +102,13 @@ services:
       GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
       GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET:-}
       GMAIL_SCAN_ENABLED: ${GMAIL_SCAN_ENABLED:-}
+      GMAIL_SEND_ENABLED: ${GMAIL_SEND_ENABLED:-}
+      # The web app must read the SAME auto-apply switches as the worker, or the
+      # dashboard tells users the agent will send something it won't (or the
+      # reverse). src/lib/applyPolicy.ts mirrors agent/safety.py; both default to
+      # shadow, so an unset value here is safe but must still match the worker.
+      GRINDLY_AUTO_APPLY_MODE: ${GRINDLY_AUTO_APPLY_MODE:-shadow}
+      GRINDLY_TIER_B_APPLY: ${GRINDLY_TIER_B_APPLY:-}
       # Single explicit payments switch — see .env.example. Must be "true" (not
       # just Razorpay keys being present) before /api/pay will do anything.
       PAYMENTS_ENABLED: ${PAYMENTS_ENABLED:-false}
@@ -175,6 +182,25 @@ services:
       # unlimited) instead of these.
       GRINDLY_CAP_PER_PLATFORM: ${GRINDLY_CAP_PER_PLATFORM:-5}
       GRINDLY_CAP_PER_RUN: ${GRINDLY_CAP_PER_RUN:-5}
+      # ── Auto-apply routing (agent/resolver.py, agent/safety.py) ────────────
+      # Defaults to shadow: the agent resolves and RECORDS where each application
+      # would really go, and sends nothing. Read the result after a week with
+      #   docker compose exec worker python agent/coverage_report.py --days 7
+      # Must match the web service's copy of these two, or the dashboard tells
+      # users something different from what the agent does.
+      GRINDLY_AUTO_APPLY_MODE: ${GRINDLY_AUTO_APPLY_MODE:-shadow}
+      GRINDLY_TIER_B_APPLY: ${GRINDLY_TIER_B_APPLY:-}
+      GRINDLY_RESOLVE_FETCH_BUDGET: ${GRINDLY_RESOLVE_FETCH_BUDGET:-12}
+      # Emailing an application from the user's own Gmail needs BOTH the switch
+      # and the OAuth client that minted their refresh token — agent/channel_email
+      # refreshes the access token itself (email_scanner.refresh_access_token) and
+      # Google rejects a refresh whose client_id differs from the issuing one. The
+      # worker had neither of these before, so the channel could only ever fail.
+      GMAIL_SEND_ENABLED: ${GMAIL_SEND_ENABLED:-}
+      GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
+      GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       GROQ_API_KEY: ${GROQ_API_KEY}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}

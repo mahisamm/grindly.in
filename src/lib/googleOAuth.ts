@@ -62,3 +62,47 @@ export function gmailScanBeta(email: string | null | undefined): boolean {
   if (!gmailScanEnabled() || !email) return false;
   return gmailScanBetaEmails().has(email.toLowerCase());
 }
+
+/** Whether the agent may SEND application emails from the user's Gmail.
+ *
+ *  A large share of internship listings are cross-posts whose real intake is an
+ *  HR mailbox. Mailing the application from the candidate's own address is the
+ *  lowest-risk delivery channel Grindly has — no account of theirs is being
+ *  automated, the recruiter gets a normal email from a real person, and replies
+ *  land in their inbox where they belong.
+ *
+ *  Separate switch from scanning on purpose: reading someone's inbox and sending
+ *  mail as them are different grants with different consequences if either is
+ *  wrong, and gmail.send carries its own restricted-scope verification. Off
+ *  unless the deploy says otherwise — a default-on send capability is not
+ *  something a misconfigured environment should be able to hand out. Mirrored
+ *  agent-side by channel_email.enabled() (GMAIL_SEND_ENABLED). */
+export function gmailSendEnabled(): boolean {
+  return process.env.GMAIL_SEND_ENABLED === "1" && !!gmailClient();
+}
+
+/** The scopes the Gmail consent screen asks for.
+ *
+ *  Requested together in one consent so the user is not sent back to Google a
+ *  second time, but each half is independently gated: a token minted with send
+ *  is useless while GMAIL_SEND_ENABLED is off, and vice versa. Never returns an
+ *  empty list — a consent screen asking for nothing is a broken redirect, so
+ *  callers must check gmailConnectBeta() before starting the flow at all. */
+export function gmailScopes(): string[] {
+  const scopes: string[] = [];
+  if (gmailScanEnabled()) scopes.push("https://www.googleapis.com/auth/gmail.readonly");
+  if (gmailSendEnabled()) scopes.push("https://www.googleapis.com/auth/gmail.send");
+  return scopes;
+}
+
+/** May this user start the Gmail consent flow at all?
+ *
+ *  True when at least one Gmail capability is switched on for the fleet AND this
+ *  email is on the beta list. Both scopes are restricted, so a non-tester who
+ *  reaches the URL directly is turned away here rather than at Google's
+ *  "unverified app" wall — which is a dead end with no way back. */
+export function gmailConnectBeta(email: string | null | undefined): boolean {
+  if (!email) return false;
+  if (!gmailScanEnabled() && !gmailSendEnabled()) return false;
+  return gmailScanBetaEmails().has(email.toLowerCase());
+}

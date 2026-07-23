@@ -81,8 +81,11 @@ export const PROFF_FIELDS: ProffField[] = [
   },
   {
     key: "autoApply",
-    label: "Auto-prep applications",
-    help: "On = the agent finds and prepares matches for you. You always complete the final submission in your own browser. Off = it only shortlists.",
+    // This toggle now genuinely governs sending, not just preparing — the worker
+    // reads it before any unattended submit (agent/worker.py), so the label had
+    // to stop describing it as a prep-only switch.
+    label: "Let the agent apply for me",
+    help: "On = when an application goes to a company's own form or HR inbox, the agent fills it in and sends it — nothing needed from you. Applications that only exist on LinkedIn/Internshala/Naukri still wait for your tap, because those sit behind your account. Off = the agent only finds and prepares; nothing is ever sent without you.",
     type: "toggle",
     group: "Limits & rules",
   },

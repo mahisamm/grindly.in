@@ -47,6 +47,7 @@ import notify
 import latex_resume
 import matcher
 import questions
+import resolver
 import resume_parse
 import resume_ai
 import resume_optimize
@@ -54,6 +55,8 @@ import safety
 import scam
 import company_rep
 import drift
+import channel_email
+import channel_google_form
 import llm as llm_mod
 
 logging.basicConfig(
@@ -159,14 +162,177 @@ def _platforms_for_today(uid: str, available: list[str], today: str | None = Non
 
 
 def _requires_approval(src: str, auto_apply: bool) -> bool:
-    """True when discovery must stop before final platform submission.
+    """True when discovery must stop before final *board* submission.
 
     Safe Apply Mode fails closed for every browser source, including an
     unrecognised future source.  The profile setting controls whether the agent
     prepares matches, never whether it may impersonate a user at final submit.
+
+    Only governs the board channel.  Applications routed to an employer's own
+    intake go through `safety.destination_policy()` instead — see
+    `_resolve_destination` below and agent/resolver.py for why those are a
+    different risk class entirely.
     """
     del auto_apply
     return safety.requires_manual_final_submit(src)[0]
+
+
+# How many extra page loads one run may spend resolving where applications
+# really go. Resolution is nearly free when the JD is already in hand (the
+# re-scoring step fetches the top few); this budget caps the case where it is
+# not, so a discovery sweep cannot turn into a crawl.
+RESOLVE_FETCH_BUDGET = int(os.environ.get("GRINDLY_RESOLVE_FETCH_BUDGET", "12"))
+
+# Channels that deliver to an employer directly. Keyed by resolver channel so a
+# new channel is one entry here plus one module, with no branching in the loop.
+_CHANNEL_MODULES = {
+    resolver.CHANNEL_GOOGLE_FORM: channel_google_form,
+    resolver.CHANNEL_EMAIL: channel_email,
+}
+
+# Tier A says "safe to submit unattended". It does NOT say "we have something
+# that can submit it". ATS portals (Greenhouse, Lever, Ashby, ...) resolve to
+# Tier A correctly — no candidate account is involved — but no sender exists for
+# them yet, and the two facts must not be conflated: a dict miss in
+# _CHANNEL_MODULES used to fall straight through to the BOARD adapter, so an
+# ATS-routed listing found on LinkedIn would be handed to linkedin.apply(). That
+# is the exact thing this whole design exists to prevent, and it survived only
+# because Safe Apply Mode caught it one layer further down.
+#
+# So deliverability is now an explicit question with an explicit answer.
+def channel_deliverable(dest: dict | None) -> bool:
+    """Do we actually have a sender for this destination's channel?"""
+    if not dest:
+        return False
+    channel = dest.get("channel")
+    if channel == resolver.CHANNEL_PLATFORM:
+        return True          # board adapters exist; policy decides if they may run
+    return channel in _CHANNEL_MODULES and bool(dest.get("target"))
+
+
+_UNDELIVERABLE_REASON = {
+    resolver.CHANNEL_ATS: (
+        "found the company's own application page — Grindly can't submit to it "
+        "automatically yet, so open it and send it in one step"
+    ),
+}
+
+
+def _resolve_destination(job: dict, jd_text: str, *, allow_fetch: bool) -> tuple[dict, int]:
+    """Where should this application actually be delivered?
+
+    Returns (destination, page_loads) — the caller charges `page_loads` against
+    the run's fetch budget, so the budget tracks real traffic rather than how
+    many listings happened to route somewhere.
+
+    Never raises and never blocks a run: any failure falls back to the board
+    channel, which is exactly the behaviour that existed before routing.
+    """
+    loads = 0
+    fetch = None
+    # Only spend a page load when the JD says the application lives elsewhere.
+    # Fetching every listing's outbound links to find out would be a crawl.
+    if allow_fetch and resolver.looks_like_external_apply(jd_text):
+        def fetch(url: str) -> str:  # noqa: E306 — small local, deliberate
+            nonlocal loads
+            loads += 1
+            return _fetch_public_html(url)
+    try:
+        return resolver.resolve(job, jd_text, fetch=fetch), loads
+    except Exception as e:  # noqa: BLE001
+        log.warning("destination resolution failed for %s: %s", job.get("url"), e)
+        fallback = resolver.platform_destination(
+            job, resolver.platform_tier(job.get("source") or "")
+        )
+        return fallback, loads
+
+
+def _fetch_public_html(url: str, timeout: int = 20) -> str:
+    """Plain GET of a public page — a company careers page linked from a JD.
+
+    Deliberately not the Playwright stack: this is reading a public page to find
+    an application link, not operating a logged-in session, and it should cost a
+    request rather than a browser.
+
+    The URL comes from attacker-controlled text (anyone who can post a listing can
+    put a link in it), so resolver.is_fetchable() gates both the initial URL and
+    the final URL after redirects — a public host can 302 to an internal one, and
+    checking only the first would be checking the wrong thing.
+    """
+    import urllib.request
+
+    if not resolver.is_fetchable(url):
+        log.debug("refusing to fetch non-public URL from a listing: %s", url)
+        return ""
+
+    req = urllib.request.Request(url, headers={
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+        ),
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            if not resolver.is_fetchable(r.geturl()):
+                log.debug("refusing redirect to a non-public URL: %s", r.geturl())
+                return ""
+            ctype = (r.headers.get("Content-Type") or "").lower()
+            if "html" not in ctype and "text" not in ctype:
+                return ""
+            return r.read(600_000).decode("utf-8", "replace")
+    except Exception as e:  # noqa: BLE001
+        log.debug("careers-page fetch failed for %s: %s", url, e)
+        return ""
+
+
+def _dispatch_apply(
+    dest: dict, job: dict, letter: str, uid: str, *,
+    profile: dict, resume_path: str | None, record: dict,
+    skills: list[str], source_modules: dict,
+) -> tuple[str, str]:
+    """Submit through whichever channel the resolver picked.
+
+    Employer channels (Google Form, email) take a `target` — the resolved form
+    URL or mailbox — because the listing URL is not where the application goes.
+    Board adapters keep their existing signature untouched.
+
+    A destination we cannot deliver NEVER falls back to the board. Routing a
+    listing away from LinkedIn and then submitting it on LinkedIn anyway would
+    invert the entire point of the resolver, and it is the kind of mistake a bare
+    `dict.get() or fallthrough` makes silently.
+    """
+    channel = dest.get("channel")
+    mod = _CHANNEL_MODULES.get(channel)
+    if mod is not None:
+        return mod.apply(
+            job, letter, uid, profile=profile, resume_path=resume_path,
+            record=record, target=dest.get("target") or "", skills=skills,
+        )
+
+    if channel != resolver.CHANNEL_PLATFORM:
+        return "needs_review", _UNDELIVERABLE_REASON.get(
+            channel, f"no sender for a {channel} destination yet — open it yourself"
+        )
+
+    src = job.get("source") or ""
+    platform_mod = source_modules.get(src)
+    if platform_mod is None:
+        return "skipped", f"{src} unavailable this run"
+
+    status, why = platform_mod.apply(
+        job, letter, uid, profile=profile, resume_path=resume_path, record=record,
+    )
+    # Retry ONLY on clearly pre-submit failures (missing selector / element). A
+    # "timeout" can fire AFTER the submit click went through, so retrying it
+    # would file a SECOND real application.
+    if status == "failed" and any(
+        k in why.lower() for k in ("selector", "not found", "element")
+    ) and "timeout" not in why.lower():
+        time.sleep(random.randint(15, 40))
+        status, why = platform_mod.apply(
+            job, letter, uid, profile=profile, resume_path=resume_path, record=record,
+        )
+    return status, why
 
 
 def _cooldown_active(row: dict | None, cutoff) -> bool:
@@ -927,6 +1093,11 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     per_src_reasons: dict[str, list[str]] = {}  # per-platform failure-reason codes (drift signal)
     needs_login_srcs: set[str] = set()     # platforms whose session died mid-run
     challenged_srcs: set[str] = set()      # platforms that flagged a captcha/challenge this run
+    # Where this run's matches were routed, and how many extra page loads that
+    # cost. per_channel is the coverage readout the shadow-mode rollout turns on:
+    # what share of real listings have an employer-side intake we can use.
+    per_channel: dict[str, int] = {}
+    resolve_fetches = 0
 
     def _platform_blocked(src: str) -> bool:
         """True if this platform should be skipped: challenged already this run,
@@ -1106,10 +1277,13 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
 
         return _snapshot(pdf, edited, True, "tailored (Skills/Hobbies only)")
 
-    # 4a. Keep user-approved applications ready for the user's own final submit.
-    # Safe Apply Mode never calls a platform adapter from this queue.  This guard
-    # is intentionally before module loading so an accidental queue run cannot
-    # log in, fill, or click any external application form.
+    # 4a. Send the applications the user approved.
+    #
+    # Two routes out of this queue, and the difference is where the application
+    # lands. A row resolved to an employer's own intake (Google Form, HR mailbox)
+    # can be delivered outright — no account of the user's is involved. A row
+    # that only exists on a board still hits Safe Apply Mode's fail-closed gate
+    # and is held for the user's own browser, exactly as before.
     requeue_after_seconds = 0
     approved_apps = db.get_approved_applications(uid)
     if live and approved_apps:
@@ -1117,32 +1291,50 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             if remaining <= 0:
                 break
             src = app_row.get("source") or ""
-            manual_final_submit, hold_reason = safety.requires_manual_final_submit(src)
-            if manual_final_submit:
+            row_dest = {
+                "channel": app_row.get("apply_channel") or resolver.CHANNEL_PLATFORM,
+                "tier": app_row.get("apply_tier") or resolver.platform_tier(src),
+                "target": app_row.get("apply_target") or "",
+                "vendor": "",
+                "evidence": "approved by the user",
+            }
+            employer_channel = row_dest["channel"] in _CHANNEL_MODULES and row_dest["target"]
+
+            if employer_channel:
+                send_ok, hold_reason = safety.destination_policy(row_dest)
+            else:
+                manual_final_submit, hold_reason = safety.requires_manual_final_submit(src)
+                send_ok = not manual_final_submit
+            if not send_ok:
                 db.update_application_status(app_row["id"], "approved", hold_reason)
                 db.add_audit("safe_apply_hold", user_id=uid, target=app_row.get("url"), detail=src)
                 continue
+
             # A user tapped Approve on this — it MUST send, regardless of
             # today's discovery rotation. Rotation only limits which sites we
             # *scrape* for new jobs; it must never strand an already-approved
             # application (that would silently break the one-tap promise).
             # So load the platform module on demand for any connected
             # platform, even one not in today's rotated source_modules.
-            if src not in connected_platforms:
-                # Platform genuinely not connected (session gone / never set) —
-                # can't submit; leave it approved for a run where it's connected.
-                continue
-            mod = source_modules.get(src)
-            if mod is None:
-                mod = _load_module(src)
-                if mod is None:
+            # None of that applies to an employer channel: it needs no board
+            # session at all, so a disconnected platform must not block it.
+            mod = None
+            if not employer_channel:
+                if src not in connected_platforms:
+                    # Platform genuinely not connected (session gone / never set) —
+                    # can't submit; leave it approved for a run where it's connected.
                     continue
-                source_modules[src] = mod  # so end-of-run close() cleans it up too
-            if _platform_blocked(src):
-                db.update_application_status(
-                    app_row["id"], "matched", f"{src} paused — captcha/challenge cooldown active",
-                )
-                continue
+                mod = source_modules.get(src)
+                if mod is None:
+                    mod = _load_module(src)
+                    if mod is None:
+                        continue
+                    source_modules[src] = mod  # so end-of-run close() cleans it up too
+                if _platform_blocked(src):
+                    db.update_application_status(
+                        app_row["id"], "matched", f"{src} paused — captcha/challenge cooldown active",
+                    )
+                    continue
             job = {
                 "source": src,
                 "external_id": app_row.get("external_id") or "",
@@ -1151,8 +1343,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 "url": app_row["url"] or "",
                 "skills": json.loads(app_row.get("skills") or "[]"),
             }
-            mod = source_modules[src]
-            jd_text = _scrape_jd_if_available(src, mod, job["url"], uid)
+            jd_text = _scrape_jd_if_available(src, mod, job["url"], uid) if mod else ""
             letter_key = (job["title"], job["company"])
             if letter_key not in letter_cache:
                 letter_cache[letter_key] = cover_letter(name, job["title"], job["company"], skills, job, jd_text=jd_text)
@@ -1160,15 +1351,32 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             resume_path, vid = _get_resume(job["title"], job["company"], job["skills"], jd_text=jd_text)
             rec: dict = {}
             try:
-                status, why = mod.apply(
-                    job, letter, uid, profile=apply_profile,
-                    resume_path=resume_path, record=rec,
+                status, why = _dispatch_apply(
+                    row_dest, job, letter, uid, profile=apply_profile,
+                    resume_path=resume_path, record=rec, skills=skills,
+                    source_modules=source_modules,
                 )
             except Exception as e:  # noqa: BLE001
                 status, why = "failed", f"exception: {str(e)[:100]}"
             fr = _classify_failure(why) if status == "failed" else None
-            if fr == safety.FAILURE_REASON.CAPTCHA:
+            if fr == safety.FAILURE_REASON.CAPTCHA and not employer_channel:
                 _flag_challenge(src)
+            if status == "login_required":
+                # "login_required" is an ADAPTER return value, not a row status —
+                # applications.status is a Postgres enum (ApplyStatus) that has no
+                # such member, so writing it straight through raised and lost the
+                # whole update. Record it the way the discovery loop already does:
+                # back to matched, with the session-expired reason, and point the
+                # user at the integration that actually needs reconnecting.
+                login_src = "gmail" if row_dest["channel"] == resolver.CHANNEL_EMAIL else src
+                db.set_integration_status(uid, login_src, "needs_login")
+                needs_login_srcs.add(login_src)
+                db.update_application_status(
+                    app_row["id"], "matched", f"{why} — reconnect in dashboard",
+                    failure_reason=safety.FAILURE_REASON.SESSION_EXPIRED,
+                )
+                db.add_audit("session_expired", user_id=uid, target=login_src)
+                continue
             if status == "skipped" and "closed" in why.lower():
                 # The listing died between banking it and offering it — three weeks
                 # is a long time for an internship posting. Backfill the day's batch
@@ -1342,58 +1550,129 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
 
         matched += 1
 
-        if _requires_approval(src, plan["auto_apply"]):
+        # ── Where does this application actually go? ────────────────────────
+        #
+        # A listing found on a board is usually a cross-post; the real intake is
+        # often the employer's own Google Form, HR mailbox or ATS page, where the
+        # candidate holds no account and an unattended submit therefore risks
+        # nothing. Resolve that first, because it — not the board that found the
+        # listing — decides whether the agent may send this without the user.
+        jd_text = job.get("jd_text") or ""
+        if live and not jd_text and resolve_fetches < RESOLVE_FETCH_BUDGET:
+            # _scrape_jd_if_available tolerates a missing module and returns "".
+            jd_text = _scrape_jd_if_available(src, source_modules.get(src), job["url"], uid)
+            if jd_text:
+                job["jd_text"] = jd_text
+                resolve_fetches += 1
+        allow_fetch = live and resolve_fetches < RESOLVE_FETCH_BUDGET
+        dest, page_loads = _resolve_destination(job, jd_text, allow_fetch=allow_fetch)
+        resolve_fetches += page_loads
+        if dest["channel"] != resolver.CHANNEL_PLATFORM:
+            log.info("routed %s @ %s -> %s (%s)", job.get("title"), job.get("company"),
+                     dest["channel"], dest.get("evidence"))
+        per_channel[dest["channel"]] = per_channel.get(dest["channel"], 0) + 1
+        is_platform_channel = dest["channel"] == resolver.CHANNEL_PLATFORM
+
+        auto_ok, policy_reason = safety.destination_policy(dest)
+        # The user's own switch outranks the fleet switch. `auto_apply` is a
+        # setting they can see and toggle ("Auto-apply applications" in the
+        # profile), and it was being dropped on the floor — so turning routing on
+        # for the fleet would have started sending applications for people who
+        # had explicitly said not to. Consent has to survive a config change.
+        if auto_ok and not plan["auto_apply"]:
+            auto_ok = False
+            policy_reason = (
+                "auto-apply is off in your profile — the agent prepared this "
+                "instead of sending it"
+            )
+        # The board channel keeps its own fail-closed gate as a second lock: even
+        # if a policy bug ever said yes for Tier C, Safe Apply Mode still says no.
+        if is_platform_channel and _requires_approval(src, plan["auto_apply"]):
+            auto_ok, policy_reason = False, safety.requires_manual_final_submit(src)[1]
+        # "Allowed to send" and "able to send" are different questions. An ATS
+        # destination is Tier A and permitted, and there is no ATS sender yet —
+        # bank it here rather than letting it reach dispatch, where it would
+        # spend a quota slot only to come back as needs_review.
+        if auto_ok and not channel_deliverable(dest):
+            auto_ok = False
+            policy_reason = _UNDELIVERABLE_REASON.get(
+                dest["channel"], "prepared — open it yourself to send it"
+            )
+
+        if not auto_ok:
             # Bank it with a due date instead of dumping it on the dashboard.
             # `pipeline` is what was already queued before this run, so a second
             # sweep keeps filling days behind the existing queue rather than
             # piling another `cap` matches onto today.
             slot = pipeline + queued
             queued += 1
-            approval_reason = f"{reason} — {safety.SAFE_APPLY_REASON}"
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
-                reason=approval_reason, applied=False,
+                reason=f"{reason} — {policy_reason}", applied=False,
                 scheduled_for=_release_at(slot, plan_cap),
                 missing_skills=matcher.missing_skills(
                     job, skills, jd_text=job.get("jd_text", "")
                 ),
+                destination=dest,
             )
             continue
 
         if remaining <= 0:
+            # Bank it behind the queue like every other match. Filing it with no
+            # scheduled_for makes it due IMMEDIATELY (see the column's note in
+            # prisma/schema.prisma), so a run that hit the cap would dump the
+            # whole remaining sweep onto the dashboard at once — the exact
+            # free-job-board / mass-apply outcome the pipeline exists to prevent.
+            slot = pipeline + queued
+            queued += 1
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
                 reason=f"{reason} — daily cap reached", applied=False,
+                scheduled_for=_release_at(slot, plan_cap),
+                missing_skills=matcher.missing_skills(
+                    job, skills, jd_text=job.get("jd_text", "")
+                ),
+                destination=dest,
             )
             continue
 
-        if _platform_blocked(src):
+        # Board-only pacing gates. An employer's own form is not the board and
+        # has no shared rate limit with it, so a captcha cooldown or a per-run
+        # board cap must not strand an application that never touches the board.
+        if is_platform_channel and _platform_blocked(src):
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
                 reason=f"{reason} — {src} paused (captcha/challenge cooldown)", applied=False,
+                destination=dest,
             )
             continue
 
         # per-platform safety cap — keep a human-like pace on any one platform
-        if SAFETY_CAP_PER_PLATFORM > 0 and per_src_applied.get(src, 0) >= SAFETY_CAP_PER_PLATFORM:
+        if (is_platform_channel and SAFETY_CAP_PER_PLATFORM > 0
+                and per_src_applied.get(src, 0) >= SAFETY_CAP_PER_PLATFORM):
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
                 reason=f"{reason} — {src} per-run cap ({SAFETY_CAP_PER_PLATFORM}) reached",
-                applied=False,
+                applied=False, destination=dest,
             )
             continue
 
+        # Attribute reliability stats to whatever was actually operated. Filing a
+        # Google Form failure against "internshala" would fire a selector-drift
+        # alert at an adapter that was never touched.
+        stat_src = src if is_platform_channel else f"channel:{dest['channel']}"
+
         # apply
-        if live and src in source_modules:
-            mod = source_modules[src]
+        if live and (not is_platform_channel or src in source_modules):
             # JD text enriches the cover letter and the resume tailoring. The
             # top candidates already had theirs fetched (and were scored on it)
             # in 4b — reuse that rather than loading the page a second time.
-            jd_text = job.get("jd_text") or _scrape_jd_if_available(src, mod, job["url"], uid)
+            if not jd_text and is_platform_channel:
+                jd_text = _scrape_jd_if_available(src, source_modules[src], job["url"], uid)
             letter_key = (job["title"], job["company"])
             if letter_key not in letter_cache:
                 letter_cache[letter_key] = cover_letter(
@@ -1403,21 +1682,11 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             resume_path, vid = _get_resume(job["title"], job["company"], job.get("skills", []), jd_text=jd_text)
             rec = {}
             try:
-                status, why = mod.apply(
-                    job, letter, uid, profile=apply_profile,
-                    resume_path=resume_path, record=rec,
+                status, why = _dispatch_apply(
+                    dest, job, letter, uid, profile=apply_profile,
+                    resume_path=resume_path, record=rec, skills=skills,
+                    source_modules=source_modules,
                 )
-                # Retry ONLY on clearly pre-submit failures (missing selector /
-                # element). A "timeout" can fire AFTER the submit click went
-                # through, so retrying it would file a SECOND real application.
-                if status == "failed" and any(
-                    k in why.lower() for k in ("selector", "not found", "element")
-                ) and "timeout" not in why.lower():
-                    time.sleep(random.randint(15, 40))
-                    status, why = mod.apply(
-                        job, letter, uid, profile=apply_profile,
-                        resume_path=resume_path, record=rec,
-                    )
             except Exception as e:  # noqa: BLE001
                 status, why = "failed", f"exception: {str(e)[:100]}"
         else:
@@ -1428,7 +1697,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         if status == "applied":
             applied += 1
             remaining -= 1
-            per_src_applied[src] = per_src_applied.get(src, 0) + 1
+            per_src_applied[stat_src] = per_src_applied.get(stat_src, 0) + 1
             applied_keys.add(dedup_key)
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
@@ -1436,8 +1705,10 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 resume_version_id=vid,
                 screenshot_path=rec.get("screenshot_path"),
                 answers_json=rec.get("answers"),
+                destination=dest,
             )
-            db.add_audit("apply", user_id=uid, target=job.get("url"), detail=f"{src}:applied")
+            db.add_audit("apply", user_id=uid, target=job.get("url"),
+                         detail=f"{stat_src}:applied")
             if _SPREAD_APPLIES and remaining > 0:
                 requeue_after_seconds = random.randint(*_SPREAD_GAP_SEC)
                 log.info(
@@ -1446,19 +1717,26 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 )
                 break
         elif status == "login_required":
-            db.set_integration_status(uid, src, "needs_login")
-            needs_login_srcs.add(src)
+            # Attribute the reconnect to the integration that actually expired.
+            # An email-channel apply failing on Gmail auth must not mark the
+            # board as logged out — that would send the user to reconnect a
+            # platform that is working fine.
+            login_src = "gmail" if dest["channel"] == resolver.CHANNEL_EMAIL else src
+            db.set_integration_status(uid, login_src, "needs_login")
+            needs_login_srcs.add(login_src)
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
                 reason=f"{why} — reconnect in dashboard", applied=False,
                 failure_reason=safety.FAILURE_REASON.SESSION_EXPIRED,
+                destination=dest,
             )
-            db.add_audit("session_expired", user_id=uid, target=src)
+            db.add_audit("session_expired", user_id=uid, target=login_src)
         elif status == "skipped":
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="skipped", reason=why, applied=False,
+                destination=dest,
             )
         elif status == "needs_review":
             # Submit click registered but we couldn't confirm the outcome — do NOT
@@ -1467,7 +1745,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             # budget slot and dedup it like a real attempt so we never re-click
             # an already-submitted form, but surface it for the user to verify.
             remaining -= 1
-            per_src_applied[src] = per_src_applied.get(src, 0) + 1
+            per_src_applied[stat_src] = per_src_applied.get(stat_src, 0) + 1
             applied_keys.add(dedup_key)
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
@@ -1475,6 +1753,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 applied=False, resume_version_id=vid,
                 screenshot_path=rec.get("screenshot_path"),
                 answers_json=rec.get("answers"),
+                destination=dest,
             )
             db.add_audit("apply_needs_review", user_id=uid, target=job.get("url"), detail=why[:120])
             if _SPREAD_APPLIES and remaining > 0:
@@ -1486,10 +1765,12 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 break
         else:
             failed += 1
-            per_src_failed[src] = per_src_failed.get(src, 0) + 1
+            per_src_failed[stat_src] = per_src_failed.get(stat_src, 0) + 1
             fr = _classify_failure(why)
-            per_src_reasons.setdefault(src, []).append(fr)
-            if fr == safety.FAILURE_REASON.CAPTCHA:
+            per_src_reasons.setdefault(stat_src, []).append(fr)
+            # A challenge cooldown only means something for a board we keep a
+            # session on; an employer form has no session to protect.
+            if fr == safety.FAILURE_REASON.CAPTCHA and is_platform_channel:
                 _flag_challenge(src)
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
@@ -1497,11 +1778,33 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 resume_version_id=vid, failure_reason=fr,
                 screenshot_path=rec.get("screenshot_path"),
                 answers_json=rec.get("answers"),
+                destination=dest,
             )
             db.add_audit("apply_failed", user_id=uid, target=job.get("url"), detail=why[:120])
 
         if live:
             time.sleep(random.uniform(*_BASE_PACE_SEC))
+
+    # Routing coverage for this run. This is the number that decides where the
+    # rest of the auto-apply work goes: if most listings resolve to an employer
+    # channel, unattended applying is mostly solved; if they don't, the fix is
+    # more Tier A *sourcing*, not more automation against the boards. Logged
+    # every run (including shadow mode, where nothing was sent) so the answer
+    # accumulates from real traffic rather than from an estimate.
+    if per_channel:
+        total_routed = sum(per_channel.values())
+        employer = total_routed - per_channel.get(resolver.CHANNEL_PLATFORM, 0)
+        log.info(
+            "routing coverage: %d/%d (%d%%) to an employer channel — %s [mode=%s]",
+            employer, total_routed, int(100 * employer / total_routed),
+            ", ".join(f"{k}={v}" for k, v in sorted(per_channel.items())),
+            safety.auto_apply_mode(),
+        )
+        db.add_audit(
+            "routing_coverage", user_id=uid,
+            target=f"{employer}/{total_routed}",
+            detail=json.dumps(per_channel),
+        )
 
     # per-platform reliability check. Split genuine selector drift (our adapter
     # is broken — page an engineer) from transient/user-side failures (captcha,
@@ -1627,12 +1930,13 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     today = datetime.date.today().isoformat()
     ready = db.ready_today_count(uid)
     depth = db.pipeline_depth(uid)
-    # Safe Apply Mode never submits, so `applied` is structurally 0 for virtually
-    # every user. Leading the report with "Recorded 0 submitted internship(s) today"
-    # every single day reads as a dead agent — so lead with what actually happened
-    # (matches ready for the user to submit) and mention submissions only when there
-    # genuinely are any.
-    submitted_bit = f"{applied} submitted by you today. " if applied else ""
+    # Two different numbers, and conflating them is how a report starts lying.
+    # `sent_by_agent` is what the agent delivered to an employer's own intake
+    # with no user involvement; `ready` is what still needs the user because it
+    # only exists on a board that holds their account. Report both, and never
+    # describe one as the other.
+    sent_by_agent = applied
+    submitted_bit = f"{sent_by_agent} sent by the agent today. " if sent_by_agent else ""
     summary = (
         f"{submitted_bit}{ready} match(es) ready for you to prepare and submit. "
         f"{depth} lined up over the coming weeks."
@@ -1642,15 +1946,16 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
 
     sources_used = ", ".join(source_modules.keys()) if source_modules else "your queue"
     approve_nudge = (
-        "\n\n:point_right: I don't click the final submit on LinkedIn/Internshala/Naukri/"
-        "Unstop/Indeed. Open the dashboard, prepare a match, then complete the "
-        "final submission in your own browser."
+        "\n\n:point_right: The ones still waiting are on boards that hold your "
+        "account (LinkedIn/Internshala/Naukri/Unstop/Indeed) — I never click the "
+        "final submit there. Open the dashboard, prepare a match, then send it "
+        "from your own browser."
         if ready
         else ""
     )
-    # Lead with the actionable number (ready for you); show "submitted" only when
-    # nonzero, so the headline never announces the always-zero apply count.
-    applied_bit = f"  ·  :white_check_mark: Submitted by you: {applied}" if applied else ""
+    applied_bit = (
+        f"  ·  :white_check_mark: Sent by the agent: {sent_by_agent}" if sent_by_agent else ""
+    )
     msg = (
         f":robot_face: *Grindly daily report — {today}*\n"
         f":inbox_tray: Ready for you: *{ready}*{applied_bit}  ·  "

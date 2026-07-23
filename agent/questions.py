@@ -142,6 +142,76 @@ _CONFIRM = re.compile(
 # text field (nonsense to a recruiter) or was rejected by a numeric input. It
 # now falls through to the LLM / fallback like any other open question.
 
+# Whose name is being asked for. A Google Form very often labels the field just
+# "Name" — which the old `\b(your name|full name|first name)\b` did not match, so
+# the candidate's name field received a two-sentence LLM paragraph. On a real
+# application, under their real identity.
+#
+# The negative list is the important half: "Company name", "College name" and
+# "Father's name" are all common on Indian internship forms and none of them are
+# the candidate. Answering those from the candidate's name is not a formatting
+# slip, it is a false statement, so they stay unanswered.
+_NAME_OWNER_OTHER = re.compile(
+    r"\b(company|organi[sz]ation|employer|college|school|institute|university|"
+    r"course|degree|project|team|referr?er|reference|father|mother|parent|"
+    r"guardian|spouse|emergency|bank|account|city|state|country|file|document)\b",
+    re.I,
+)
+_NAME_SELF = re.compile(
+    r"^\s*(full\s+|your\s+|candidate\s+|applicant\s+|student\s+|legal\s+)?name\b"
+    r"|\b(your|full|candidate|applicant|student)\s+name\b",
+    re.I,
+)
+_FIRST_NAME = re.compile(r"\b(first|given)\s+name\b", re.I)
+_LAST_NAME = re.compile(r"\b(last|sur|family)\s*name\b", re.I)
+
+# Options that mean "yes" on a choice question. A choice question is only
+# auto-answered when one of its own options matches this — see _pick_option.
+_AFFIRMATIVE_OPTION = re.compile(
+    r"^\s*(yes|yeah|yep|sure|available|immediately|i (can|am|do|will|agree)|"
+    r"agree|accept|confirm|true|ok(ay)?)\b",
+    re.I,
+)
+_PLACEHOLDER_OPTION = re.compile(r"^\s*(select|choose|--|please|pick|none|n/?a)\b", re.I)
+
+
+def _name_answer(label: str, name: str) -> str | None:
+    """The candidate's name, split correctly if the form asks for one half.
+
+    Separate First/Last fields used to BOTH receive the full name, so a form with
+    "First name" and "Last name" went out reading "Asha Rao Asha Rao".
+    """
+    if not name or _NAME_OWNER_OTHER.search(label):
+        return None
+    parts = name.split()
+    if _FIRST_NAME.search(label):
+        return parts[0] if parts else None
+    if _LAST_NAME.search(label):
+        return " ".join(parts[1:]) if len(parts) > 1 else None
+    if _NAME_SELF.search(label):
+        return name
+    return None
+
+
+def _pick_option(field: dict) -> str | None:
+    """The answer for a choice question, or None when there is no honest one.
+
+    The old rule was "an affirmative option, else the first non-placeholder one".
+    That second half invents facts: for "Preferred campus — Pune / Chennai" it
+    silently picked Pune, and for a 1-to-5 rating scale it picked 1 — the lowest
+    possible self-assessment, submitted unattended, under the candidate's name.
+
+    So a choice question is answered only when one of its own options is an
+    affirmative. Anything else is a preference or a claim we do not hold, and it
+    is left unanswered — which makes a REQUIRED one block the submission
+    (channel_google_form.apply returns needs_review) instead of guessing.
+    """
+    options = field.get("options") or []
+    for o in options:
+        if _AFFIRMATIVE_OPTION.match(o):
+            return o
+    return None
+
 
 def _deterministic(field: dict, profile: dict, name: str, email: str) -> str | None:
     """Answers that must come from the profile, never from a model.
@@ -160,8 +230,9 @@ def _deterministic(field: dict, profile: dict, name: str, email: str) -> str | N
     if _CGPA.search(label):
         gpa = profile.get("gpa")
         return str(gpa) if gpa else None
-    if re.search(r"\b(your name|full name|first name)\b", label, re.I):
-        return name or None
+    named = _name_answer(label, name)
+    if named:
+        return named
     if kind in ("checkbox", "radio") and field["required"]:
         return "__check__"
     # NOT a select: a dropdown's answer has to be one of ITS OWN option labels, and
@@ -248,14 +319,13 @@ def answer_fields(
             continue
 
         if f["kind"] == "select":
-            # Prefer an affirmative option; otherwise the first real choice.
-            pick = next(
-                (o for o in f["options"] if re.match(r"^\s*(yes|available|immediately)", o, re.I)),
-                next((o for o in f["options"] if not re.match(r"^\s*(select|choose|--)", o, re.I)), ""),
-            )
+            # Only an affirmative option. See _pick_option for why "first real
+            # choice" was removed: it turned every preference question into an
+            # invented fact, and every rating scale into a 1-out-of-5.
+            pick = _pick_option(f)
             out.append({
-                "question": f["label"], "answer": pick,
-                "source": "default", "kind": "select", "_i": i,
+                "question": f["label"], "answer": pick or "",
+                "source": "default" if pick else "unanswerable", "kind": "select", "_i": i,
             })
             continue
 

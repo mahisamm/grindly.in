@@ -5,6 +5,7 @@ import { dueNow } from "@/lib/pipeline";
 import { getQuota, remainingForApproval } from "@/lib/quota";
 import { notifyUser } from "@/lib/notify";
 import { hasAppAccess } from "@/lib/access";
+import { agentWillSend, approvalOutcomeMessage } from "@/lib/applyPolicy";
 
 /** Approve TODAY'S matches and enqueue ONE submit-only run to send them. See
  *  api/applications/approve for why the run is needed at all.
@@ -47,33 +48,63 @@ export async function POST() {
 
   const matched = await prisma.application.findMany({
     where: { userId: uid, ...dueNow() },
-    select: { id: true, reason: true, jobTitle: true, company: true, url: true },
+    select: {
+      id: true, reason: true, jobTitle: true, company: true, url: true,
+      applyChannel: true, applyTier: true, applyTarget: true,
+    },
     take: approvable,
   });
   if (matched.length === 0) return NextResponse.json({ ok: true, approved: 0 });
 
+  // Split the batch by who acts next. A digest that lumps both together sends
+  // the user off to "finish" applications the agent is about to send itself.
+  const agentSends = matched.filter(agentWillSend);
+  const userSends = matched.filter((a) => !agentWillSend(a));
+
+  const approvedAt = new Date();
   await prisma.$transaction(
     matched.map((a) =>
       prisma.application.update({
         where: { id: a.id },
-        data: { status: "approved", reason: (a.reason ?? "") + " — ready for your final browser submission" },
+        data: {
+          status: "approved",
+          reason: (a.reason ?? "") + ` — ${approvalOutcomeMessage(a)}`,
+          // Dates the quota reservation so it expires with today (lib/quota.ts).
+          approvedAt,
+        },
       })
     )
   );
 
-  // One digest with every link, not one message per job. Best-effort — the
-  // approve must succeed even if delivery fails or no channel is configured.
-  const lines = matched.map(
-    (a) => `• ${a.jobTitle} — ${a.company}${a.url ? `\n  ${a.url}` : ""}`
-  );
+  // One digest, not one message per job. Best-effort — the approve must succeed
+  // even if delivery fails or no channel is configured.
+  const sections: string[] = [];
+  if (agentSends.length > 0) {
+    sections.push(
+      `I'll send these myself — nothing for you to do:\n\n` +
+        agentSends.map((a) => `• ${a.jobTitle} — ${a.company}`).join("\n"),
+    );
+  }
+  if (userSends.length > 0) {
+    sections.push(
+      `These are on boards that hold your account, so they need your final submit:\n\n` +
+        userSends
+          .map((a) => `• ${a.jobTitle} — ${a.company}${a.url ? `\n  ${a.url}` : ""}`)
+          .join("\n") +
+        `\n\nOpen your Grindly dashboard to finish each one.`,
+    );
+  }
   void notifyUser(uid, {
     tier: "urgent",
-    title: `${matched.length} application${matched.length === 1 ? "" : "s"} ready to submit`,
-    body:
-      `These are prepared and waiting for your final submit:\n\n${lines.join("\n")}` +
-      `\n\nOpen your Grindly dashboard to finish each one.`,
+    title: `${matched.length} application${matched.length === 1 ? "" : "s"} approved`,
+    body: sections.join("\n\n"),
   });
 
-  // Safe Apply Mode never queues a server-side browser session to click submit.
-  return NextResponse.json({ ok: true, approved: matched.length, requiresUserSubmit: true });
+  // Board destinations never queue a server-side browser session to click submit.
+  return NextResponse.json({
+    ok: true,
+    approved: matched.length,
+    requiresUserSubmit: userSends.length > 0,
+    agentWillSend: agentSends.length,
+  });
 }

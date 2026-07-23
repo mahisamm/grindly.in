@@ -766,9 +766,70 @@ def upsert_job(job: dict) -> str:
         return jid
 
 
+# Postgres columns this module writes that a lagging `prisma db push` may not
+# have created yet. Checked once per process (see _ensure_app_columns): the
+# alternative is that every single application insert fails until the migrate
+# step lands, which turns a deploy-ordering slip into a fleet-wide outage.
+_PG_APP_COLUMNS = (
+    ("apply_channel", "TEXT"),
+    ("apply_tier", "TEXT"),
+    ("apply_target", "TEXT"),
+)
+_pg_app_columns_checked = False
+
+
 def _ensure_app_columns(c):
-    """Add columns Prisma may not have migrated yet (SQLite resilience)."""
+    """Add columns Prisma may not have migrated yet.
+
+    On SQLite this is the long-standing local-dev resilience path. On Postgres
+    it runs once per process and only for the columns the agent writes ahead of
+    a schema push — ADD COLUMN IF NOT EXISTS is idempotent and cheap, and it
+    removes the ordering dependency between the migrate step and the workers.
+    """
+    global _pg_app_columns_checked
     if PG:
+        if _pg_app_columns_checked:
+            return
+        # Read the catalogue first, so the common path (columns already pushed by
+        # prisma) issues ZERO DDL. ALTER TABLE takes an ACCESS EXCLUSIVE lock on
+        # a live table even when IF NOT EXISTS makes it a no-op, and every worker
+        # process would otherwise grab it on its first write.
+        try:
+            existing = {
+                r["column_name"]
+                for r in c.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'applications'"
+                ).fetchall()
+            }
+        except Exception as e:  # noqa: BLE001
+            print(f"[db] could not read applications columns: {e}")
+            _pg_app_columns_checked = True
+            return
+
+        for name, coltype in _PG_APP_COLUMNS:
+            if name in existing:
+                continue
+            # SAVEPOINT is load-bearing. conn() runs a real transaction, so a
+            # failed statement puts Postgres in an aborted state and EVERY later
+            # query on that connection raises InFailedSqlTransaction — including
+            # the INSERT this helper was called to make safe. Swallowing the
+            # ALTER error without unwinding to a savepoint turned "could not add
+            # a column" into "this worker cannot write applications at all".
+            try:
+                c.execute("SAVEPOINT ensure_app_col")
+                c.execute(f"ALTER TABLE applications ADD COLUMN {name} {coltype}")
+                c.execute("RELEASE SAVEPOINT ensure_app_col")
+            except Exception as e:  # noqa: BLE001
+                # A read-only role or a concurrent prisma push can lose this
+                # race; the column exists either way once the push completes.
+                print(f"[db] could not ensure applications.{name}: {e}")
+                try:
+                    c.execute("ROLLBACK TO SAVEPOINT ensure_app_col")
+                    c.execute("RELEASE SAVEPOINT ensure_app_col")
+                except Exception:  # noqa: BLE001
+                    pass
+        _pg_app_columns_checked = True
         return
     cols = {row[1] for row in c.execute("PRAGMA table_info(applications)").fetchall()}
     if "failure_reason" not in cols:
@@ -791,6 +852,14 @@ def _ensure_app_columns(c):
         c.execute("ALTER TABLE applications ADD COLUMN missing_skills TEXT")
     if "cover_letter" not in cols:
         c.execute("ALTER TABLE applications ADD COLUMN cover_letter TEXT")
+    # Resolved application destination — see agent/resolver.py and the
+    # Application model in prisma/schema.prisma for what these mean.
+    if "apply_channel" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN apply_channel TEXT")
+    if "apply_tier" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN apply_tier TEXT")
+    if "apply_target" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN apply_target TEXT")
 
 
 def add_application(uid: str, *, job_id: str | None, title: str, company: str,
@@ -798,22 +867,61 @@ def add_application(uid: str, *, job_id: str | None, title: str, company: str,
                     applied: bool, resume_version_id: str | None = None,
                     failure_reason: str | None = None, screenshot_path: str | None = None,
                     scheduled_for=None, answers_json: str | None = None,
-                    missing_skills: list[str] | None = None):
+                    missing_skills: list[str] | None = None,
+                    destination: dict | None = None):
+    """Record one application row.
+
+    `destination` is the resolver's verdict for this listing (channel/tier/
+    target). Passing it is what makes Tier A coverage measurable — every row
+    carries where it was, or would have been, delivered.
+    """
+    dest = destination or {}
     with conn() as c:
         _ensure_app_columns(c)
         c.execute(
             "INSERT INTO applications (id, user_id, job_id, job_title, company, url, "
             "match_score, status, reason, failure_reason, screenshot_path, "
             "resume_version_id, scheduled_for, answers_json, missing_skills, "
+            "apply_channel, apply_tier, apply_target, "
             "applied_at, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 cuid(), uid, job_id, title, company, url, int(score), status, reason,
                 failure_reason, screenshot_path, resume_version_id, scheduled_for,
                 answers_json, json.dumps(missing_skills) if missing_skills else None,
+                dest.get("channel"), dest.get("tier"), dest.get("target"),
                 now_db() if applied else None, now_db(),
             ),
         )
+
+
+def destination_coverage(uid: str | None = None, since_ms: int | None = None) -> list[dict]:
+    """Applications grouped by (channel, tier) — the shadow-mode readout.
+
+    This is the number the whole routing effort turns on: what share of real
+    discovered listings resolve to a destination we may submit unattended. It is
+    deliberately a query rather than a counter so a week of existing rows can be
+    read back without having planned for it.
+    """
+    where, params = ["apply_channel IS NOT NULL"], []
+    if uid:
+        where.append("user_id=?")
+        params.append(uid)
+    if since_ms:
+        where.append("created_at >= ?")
+        params.append(time_ago_db(since_ms))
+    with conn() as c:
+        _ensure_app_columns(c)
+        rows = c.execute(
+            "SELECT apply_channel AS channel, apply_tier AS tier, COUNT(*) AS n "
+            f"FROM applications WHERE {' AND '.join(where)} "
+            "GROUP BY apply_channel, apply_tier ORDER BY n DESC",
+            tuple(params),
+        ).fetchall()
+    return [
+        {"channel": r["channel"], "tier": r["tier"], "count": int(r["n"])}
+        for r in rows
+    ]
 
 
 def pipeline_depth(uid: str) -> int:
@@ -1119,10 +1227,17 @@ def add_audit(action: str, *, user_id: str | None = None,
 
 
 def get_approved_applications(uid: str) -> list[dict]:
-    """Return applications with status='approved' for this user, joined with job source."""
+    """Return applications with status='approved' for this user, joined with job source.
+
+    Carries the resolved destination (channel/tier/target) so the worker can send
+    an approved row through the same employer channel discovery picked for it,
+    instead of re-resolving it — the row is the record of that decision.
+    """
     with conn() as c:
+        _ensure_app_columns(c)
         rows = c.execute("""
             SELECT a.id, a.job_title, a.company, a.url, a.match_score,
+                   a.apply_channel, a.apply_tier, a.apply_target,
                    COALESCE(j.source, '') AS source,
                    COALESCE(j.skills, '[]') AS skills,
                    COALESCE(j.external_id, '') AS external_id

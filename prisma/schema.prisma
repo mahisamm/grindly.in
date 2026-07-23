@@ -351,6 +351,31 @@ model Application {
   // immutable snapshot of the exact resume sent for this application
   resumeVersionId String?        @map("resume_version_id")
   resumeVersion   ResumeVersion? @relation(fields: [resumeVersionId], references: [id])
+  // Where this application was actually delivered, and under which risk tier.
+  //
+  // A listing found on a board is usually a cross-post: the real application
+  // lives on the employer's own Google Form, HR mailbox or ATS portal, where the
+  // candidate holds no account and an unattended submit is therefore safe. The
+  // resolver (agent/resolver.py) picks that destination; these three columns are
+  // the record of what it picked, so coverage is measurable per channel and per
+  // vendor rather than guessed at.
+  //
+  //   applyChannel  google_form | email | ats | platform
+  //   applyTier     A (no account at stake) | B (hosted, consented) | C (never server-side)
+  //   applyTarget   the resolved form URL / mailbox / ATS page
+  applyChannel String? @map("apply_channel")
+  applyTier    String? @map("apply_tier")
+  applyTarget  String? @map("apply_target")
+  // When the user approved this application — i.e. when it started reserving a
+  // slice of that day's cap.
+  //
+  // Without it, remainingForApproval() counted EVERY approved-and-unsubmitted row
+  // for all time. Most people never come back to tick "yes, I submitted it", so
+  // after one full day of approvals the count permanently equalled the cap and
+  // the user could never approve anything again — greeted forever by "your daily
+  // limit is reached, try again tomorrow", on a tomorrow that never arrived.
+  // Dating the reservation lets it expire with the day it belongs to.
+  approvedAt DateTime? @map("approved_at")
   // When this match is due to be surfaced to the user for a one-tap send.
   //
   // A single discovery sweep finds ~a month of work (plan cap x 30). Dumping all

@@ -70,15 +70,24 @@ export async function GET(req: Request) {
     }),
   });
 
-  const tokens = await tokenRes.json() as { access_token?: string; refresh_token?: string; error?: string };
+  const tokens = await tokenRes.json() as {
+    access_token?: string; refresh_token?: string; scope?: string; error?: string;
+  };
   if (!tokenRes.ok || !tokens.refresh_token) {
     return NextResponse.redirect(`${base}/dashboard?gmailError=token`);
   }
 
-  // Store encrypted refresh token in PlatformCredential (platform = "gmail")
+  // Store encrypted refresh token in PlatformCredential (platform = "gmail").
+  //
+  // `scope` is recorded alongside it because a stored token is only as capable
+  // as the consent that minted it: a token granted before gmail.send was
+  // switched on cannot send, and the agent needs to know that *before* it tries
+  // to mail an application — the alternative is discovering it from a 403 in the
+  // middle of someone's job search. See agent/channel_email.py.
   const ciphertext = encryptSecret(JSON.stringify({
     refresh_token: tokens.refresh_token,
     access_token: tokens.access_token,
+    scope: tokens.scope ?? "",
   }));
 
   await prisma.platformCredential.upsert({

@@ -58,6 +58,14 @@ type App = {
   // JSON array [{q, a, source}] — only present on platforms the agent can read
   // screening questions from ahead of time. See agent/questions.py.
   answersJson: string | null;
+  // Where this application is actually delivered, decided by agent/resolver.py.
+  // "google_form" | "email" | "ats" mean an employer's own intake, where the
+  // candidate holds no account — those the agent can send unattended.
+  // "platform" means it only exists on a board that holds their account, and
+  // still needs their own browser. Null on rows banked before routing shipped.
+  applyChannel: string | null;
+  applyTier: string | null;
+  applyTarget: string | null;
 };
 type Report = {
   id: string;
@@ -169,6 +177,13 @@ type Me = {
     outcomeReported: number;
     interviewRate: number | null;
   };
+  // What the agent is allowed to send on this deploy. The dashboard used to state
+  // "you always submit it yourself" as an absolute; that is true in shadow mode
+  // and a lie in live mode, so the copy reads this instead of hardcoding either.
+  autoApply?: {
+    mode: "off" | "shadow" | "live";
+    sendsAny: boolean;
+  };
   quota: {
     kind: "trial" | "daily";
     cap: number;
@@ -220,6 +235,11 @@ const STATUS_STYLE: Record<string, string> = {
   matched:  "bg-surface-2 text-muted",
   skipped:  "bg-surface-2 text-muted",
   failed:   "bg-danger/15 text-danger",
+  // The agent submitted but the page gave no confirmation. Not a success (that
+  // would overstate what happened) and not a failure (something probably did
+  // send) — the user needs to look. It used to fall through to the default and
+  // render the raw string "needs_review" with no explanation and no action.
+  needs_review: "bg-warn/15 text-warn",
 };
 
 // One consistent vocabulary the user can actually model:
@@ -230,7 +250,76 @@ const STATUS_LABEL: Record<string, string> = {
   matched:  "Matched",
   skipped:  "Skipped",
   failed:   "Failed",
+  needs_review: "Check it",
 };
+
+// Every status the user can be shown needs a plain-English gloss. A badge on its
+// own tells someone what bucket a row is in, never what to do about it.
+const STATUS_HELP: Record<string, string> = {
+  applied: "This one went in.",
+  approved: "Waiting for you to send it and confirm.",
+  matched: "Found for you — open it to send.",
+  skipped: "Not sent — the reason is on the row.",
+  failed: "Didn't go through. Open it and send it yourself.",
+  needs_review: "Sent, but the site didn't confirm it. Open it and check before re-sending.",
+};
+
+/** Did the agent deliver this itself, with no action from the user?
+ *
+ *  Mirrors src/lib/applyPolicy.ts. Kept in sync deliberately rather than derived
+ *  from a mode flag alone: a row only counts as agent-sent if its destination was
+ *  an employer's own intake, which is a property of the row, not of the deploy. */
+function sentByAgent(a: App): boolean {
+  return a.status === "applied" && (a.applyChannel === "google_form" || a.applyChannel === "email");
+}
+
+/** The single "what should I do next" strip.
+ *
+ *  One component, one at a time. The dashboard previously composed this state out
+ *  of six independently-conditioned boxes that could all render together, which
+ *  left the user to work out the priority order themselves.
+ */
+function Banner({
+  tone, title, body, action, secondary,
+}: {
+  tone: "brand" | "warn" | "muted";
+  title: string;
+  body?: string;
+  action?: { label: string; onClick: () => void };
+  secondary?: { label: string; onClick: () => void; disabled?: boolean };
+}) {
+  const skin =
+    tone === "brand" ? "border-brand/40 bg-brand/10"
+    : tone === "warn" ? "border-warn/40 bg-warn/10"
+    : "border-border bg-surface-2";
+  return (
+    <div className={`mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${skin}`}>
+      <div className="min-w-0">
+        <span className="font-medium">{title}</span>
+        {body && <span className="text-muted"> {body}</span>}
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {secondary && (
+          <button
+            onClick={secondary.onClick}
+            disabled={secondary.disabled}
+            className="rounded-lg border border-border px-3 py-1.5 text-xs hover:border-brand/50 transition disabled:opacity-50"
+          >
+            {secondary.label}
+          </button>
+        )}
+        {action && (
+          <button
+            onClick={action.onClick}
+            className="press rounded-lg brand-gradient px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition"
+          >
+            {action.label}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // user-reported outcomes per applied job — the beta interview-rate signal
 const OUTCOME_OPTIONS: { value: string; label: string }[] = [
@@ -543,6 +632,9 @@ export default function Dashboard() {
   const [usingVariant, setUsingVariant] = useState<string | null>(null);
   const [uploading, setUploading] = useState<"master" | "tex" | null>(null);
   const [editingSkills, setEditingSkills] = useState(false);
+  // Resume Intelligence is reference material, not the daily job — collapsed by
+  // default so the matches list isn't pushed below the fold on every visit.
+  const [resumePanelOpen, setResumePanelOpen] = useState(false);
   const [skillsDraft, setSkillsDraft] = useState<string[]>([]);
   const [skillsSaving, setSkillsSaving] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -708,11 +800,29 @@ export default function Dashboard() {
   async function togglePause() {
     if (!me) return;
     const action = me.user.status === "paused" ? "resume" : "pause";
-    await fetch("/api/agent/pause", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
-    });
+    // The response used to be discarded, so a refused resume (access still
+    // pending) looked identical to a successful one: the toggle snapped back on
+    // the next poll with nothing said. Say what happened either way.
+    try {
+      const r = await fetch("/api/agent/pause", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const j = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) {
+        setNotice({ kind: "err", text: j.error || "Couldn't change that just now — try again." });
+      } else {
+        setNotice({
+          kind: "ok",
+          text: action === "pause"
+            ? "Agent paused. It won't search or apply until you turn it back on."
+            : "Agent is back on. It'll search for you again from the next run.",
+        });
+      }
+    } catch {
+      setNotice({ kind: "err", text: "Couldn't reach the server — check your connection." });
+    }
     load();
   }
 
@@ -1122,11 +1232,39 @@ export default function Dashboard() {
     setApprovingAll(true);
     const res = await fetch("/api/applications/approve-all", { method: "POST" }).catch(() => null);
     setApprovingAll(false);
-    if (!res || !res.ok) {
-      setNotice({ kind: "err", text: "Couldn't prepare those applications — please try again." });
+    if (!res) {
+      setNotice({ kind: "err", text: "Couldn't reach the server — check your connection and try again." });
       return;
     }
-    setNotice({ kind: "ok", text: `Lined up ${readyCount} to submit — each carries its link, and we emailed you the list. Open the "To submit" tab.` });
+    const body = (await res.json().catch(() => ({}))) as {
+      approved?: number; agentWillSend?: number; error?: string;
+    };
+    if (!res.ok) {
+      // A 402 here is the daily cap, not a transient failure. Reporting "please
+      // try again" made a hard limit look like a glitch, and users retried it.
+      setNotice({
+        kind: "err",
+        text: body.error || "Couldn't prepare those applications — please try again.",
+      });
+      load();
+      return;
+    }
+    // Report what the SERVER approved, not how many were on screen. The cap can
+    // approve fewer than the list shows, and claiming the larger number sent
+    // people looking for applications that were never lined up.
+    const n = body.approved ?? 0;
+    const byAgent = body.agentWillSend ?? 0;
+    const byUser = Math.max(0, n - byAgent);
+    setNotice({
+      kind: "ok",
+      text: n === 0
+        ? "Nothing new to line up right now."
+        : byAgent > 0 && byUser > 0
+          ? `Lined up ${n}. The agent sends ${byAgent} itself; ${byUser} need your tap under "To submit".`
+          : byAgent > 0
+            ? `Lined up ${n} — the agent sends ${n === 1 ? "it" : "them"} itself. Nothing for you to do.`
+            : `Lined up ${n} to submit — each carries its link, and we emailed you the list. Open the "To submit" tab.`,
+    });
     load();
   }
 
@@ -1419,10 +1557,16 @@ export default function Dashboard() {
   const isRunning = running
     || me.activeRun?.status === "queued"
     || me.activeRun?.status === "running";
-  const outcomeApps = me.applications.filter((a) => a.status === "applied" && a.outcome);
-  const responseRate = outcomeApps.length > 0
-    ? Math.round((outcomeApps.filter((a) => a.outcome !== "no_response").length / outcomeApps.length) * 100)
-    : null;
+  // The old header-line "response rate" is gone: it was computed here over the
+  // page of applications the client happens to hold, while the Outcomes panel
+  // below shows the server's interview rate over ALL of them. Two different
+  // numbers for the same idea, a few hundred pixels apart. The server's wins.
+  //
+  // Is the agent actually sending anything for THIS user? Drives whether the copy
+  // says "you submit these" or "the agent sends what it can". Server-computed
+  // from their real rows (/api/me), so it can't drift from what the agent does.
+  const agentSendsSome = me.autoApply?.sendsAny ?? false;
+  const agentSentCount = me.applications.filter(sentByAgent).length;
 
   return (
     <main className="grid-bg min-h-screen">
@@ -1664,19 +1808,14 @@ export default function Dashboard() {
             <h1 className="font-display text-3xl font-semibold tracking-tight">
               Hi {me.user.name || me.user.email.split("@")[0]}
             </h1>
+            {/* Two facts, not five. "min match ≥55" is a scoring threshold the
+                agent uses internally and nobody outside this codebase can act
+                on; "N platforms connected" duplicates the Integrations tab; the
+                response rate has its own Outcomes panel below with the sample
+                size next to it. A header line is for orienting, not reporting. */}
             <p className="text-muted text-sm mt-1">
-              Plan: <span className="capitalize text-foreground font-medium">{me.user.plan}</span>
-              {" "}· {me.quota.remaining}/{me.quota.cap} applications left today
-              {" "}· <span title="The agent only surfaces roles that score at least this on resume fit.">min match ≥{me.profile?.minMatchScore ?? 55}</span>
-              {" "}· <span className={connectedCount > 0 ? "text-accent" : "text-muted"}>
-                {connectedCount} platform{connectedCount !== 1 ? "s" : ""} connected
-              </span>
-              {responseRate !== null && (
-                <>
-                  {" "}· {responseRate}% response rate
-                  <span className="text-xs"> (of {outcomeApps.length} tracked — quality of match matters more than volume)</span>
-                </>
-              )}
+              <span className="capitalize text-foreground font-medium">{me.user.plan}</span> plan
+              {" "}· {me.quota.remaining} of {me.quota.cap} applications left today
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1846,47 +1985,84 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* banners */}
-        {connectedCount === 0 && (
-          <div className="mt-5 rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
-            <span className="font-medium">Hit “Run now” to find your first matches.</span>{" "}
-            <span className="text-muted">The agent searches for you automatically — connecting a platform is optional (it lets the agent auto-fill applications for you later).</span>{" "}
-            <button onClick={() => setTab("integrations")} className="underline text-brand-2 ml-1">Integrations →</button>
-          </div>
-        )}
-        {readyCount > 0 && (
-          <div className="mt-3 flex items-center justify-between rounded-xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm">
-            <div>
-              <span className="font-medium">
-                {readyCount} match{readyCount !== 1 ? "es" : ""} matched to you.
-              </span>{" "}
-              <span className="text-muted">
-                Open each to submit it yourself — Grindly never submits on your behalf.
-              </span>{" "}
-              <button onClick={() => { setTab("applications"); setFilter("matched"); }} className="underline text-brand-2 ml-1">See matched list →</button>
-            </div>
-            <button
-              onClick={approveAllApplications}
-              disabled={approvingAll}
-              title="Lines up every ready match under 'To submit' and emails you the links."
-              className="ml-4 shrink-0 rounded-lg border border-brand/40 px-3 py-1.5 text-xs text-brand-2 hover:bg-brand/10 transition disabled:opacity-50"
-            >
-              {approvingAll ? "Lining up…" : `Line up all ${readyCount}`}
-            </button>
-          </div>
-        )}
-        {readyCount === 0 && me.stats.queued > 0 && (
-          <div className="mt-3 rounded-xl border border-border bg-surface-2 px-4 py-3 text-sm text-muted">
-            <span className="font-medium text-foreground">You&apos;re all caught up for today.</span>{" "}
-            The agent has already found{" "}
-            <span className="font-medium text-foreground">
-              {me.stats.queued} more {me.stats.queued === 1 ? "role" : "roles"}
-            </span>{" "}
-            for you and releases a fresh batch each day. It&apos;s working — spacing
-            applications out is what keeps your accounts from getting flagged. Check
-            back tomorrow for the next batch.
-          </div>
-        )}
+        {/* ONE next-action banner.
+
+            This used to be a stack: a no-platform banner, a ready-count banner and
+            a caught-up banner, each with its own independent condition, sitting on
+            top of the on-duty line, the readiness nudge, the quota notice and the
+            reconnect warnings. A user could face six boxes at once and none of
+            them said which to do first — and two of them contradicted each other
+            ("you're all caught up" printed while approved applications sat unsent).
+
+            So: decide the single most important thing, and say only that. The
+            order below IS the priority order. */}
+        {(() => {
+          const toSubmit = apps.filter((a) => a.status === "approved").length;
+          const needsCheck = apps.filter((a) => a.status === "needs_review").length;
+
+          // 1. Something is waiting on the user, in the order it blocks them.
+          if (toSubmit > 0) {
+            return (
+              <Banner tone="brand"
+                title={`${toSubmit} application${toSubmit !== 1 ? "s" : ""} ready to send`}
+                body="You opened these. Send each one, then tick it off so your count stays right."
+                action={{ label: "Open the list →", onClick: () => { setTab("applications"); setFilter("approved"); } }}
+              />
+            );
+          }
+          if (readyCount > 0) {
+            return (
+              <Banner tone="brand"
+                title={`${readyCount} match${readyCount !== 1 ? "es" : ""} found for you`}
+                body={agentSendsSome
+                  ? "The agent sends the ones it can on its own. The rest are on sites that hold your account, so those need one tap from you."
+                  : "Open each one to send it. The agent has already written the resume and cover letter for it."}
+                action={{ label: "See matches →", onClick: () => { setTab("applications"); setFilter("matched"); } }}
+                secondary={{
+                  label: approvingAll ? "Lining up…" : `Line up all ${readyCount}`,
+                  onClick: approveAllApplications,
+                  disabled: approvingAll,
+                }}
+              />
+            );
+          }
+          if (needsCheck > 0) {
+            return (
+              <Banner tone="warn"
+                title={`${needsCheck} application${needsCheck !== 1 ? "s" : ""} to double-check`}
+                body="The agent submitted these but the site didn't confirm it. Open each one and check before sending again."
+                action={{ label: "Check them →", onClick: () => { setTab("applications"); setFilter("all"); } }}
+              />
+            );
+          }
+
+          // 2. Nothing waiting. Say what the agent is doing, not "you're done".
+          if (me.quota.remaining === 0) {
+            return (
+              <Banner tone="muted"
+                title={`That's today's ${me.quota.cap} applications.`}
+                body="The agent picks up again tomorrow. Spacing them out is what keeps your accounts safe."
+              />
+            );
+          }
+          if (me.stats.queued > 0) {
+            return (
+              <Banner tone="muted"
+                title="You're all caught up for today."
+                body={`The agent has already found ${me.stats.queued} more ${me.stats.queued === 1 ? "role" : "roles"} for you and releases a fresh batch each day. Check back tomorrow.`}
+              />
+            );
+          }
+          if (apps.length === 0) {
+            return (
+              <Banner tone="brand"
+                title="Your agent is searching."
+                body="It runs on its own every day. Hit Run now if you want a search this minute."
+              />
+            );
+          }
+          return null;
+        })()}
 
         {/* reconnect warnings */}
         {integrations.filter((i) => i.status === "needs_login").map((i) => (
@@ -1902,15 +2078,27 @@ export default function Dashboard() {
             list (src/lib/pipeline.ts). We deliberately dropped the old "Avg match"
             tile: it averaged over skipped low-score rows too, so it could read "10"
             under a "min match ≥65" header — a contradiction that just confused. */}
-        <div className={`mt-6 grid grid-cols-2 gap-3 ${me.stats.failed > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
+        {/* Tiles are labelled by WHO ACTS NEXT, because that is the only thing a
+            user needs from a number. "Applied" hid the distinction that now
+            matters most — whether the agent sent it or the user did — so it
+            splits once the agent has actually sent something. */}
+        <div className={`mt-6 grid grid-cols-2 gap-3 ${me.stats.failed > 0 || agentSentCount > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
           {([
-            ["Matched", me.stats.ready, "text-foreground", "Matched to you and ready now — open and submit each one"],
+            ["Needs you", me.stats.ready, "text-foreground", "Ready now — open each one and send it"],
             ["Lined up", me.stats.queued, "text-muted", "Found for you and waiting — the agent releases a fresh batch each day so your applications stay paced"],
-            ["Applied", me.stats.applied, "text-accent", "You've submitted these"],
+            ...(agentSentCount > 0
+              ? [
+                  ["Agent sent", agentSentCount, "text-accent", "The agent submitted these to the company itself — nothing was needed from you"] as const,
+                  ["You sent", Math.max(0, me.stats.applied - agentSentCount), "text-accent", "Applications you submitted and confirmed"] as const,
+                ]
+              : [["Applied", me.stats.applied, "text-accent", "Submitted and confirmed"] as const]),
             // "Failed" only surfaces when there's actually a failure to act on — a
             // resting "Failed: 0" tile just added noise and worried testers.
+            // It no longer claims a retry: nothing in the codebase re-attempts a
+            // failed row, and telling a user to wait for a retry that never comes
+            // is how a real application quietly dies.
             ...(me.stats.failed > 0
-              ? [["Failed", me.stats.failed, "text-danger", "The submission didn't go through — the agent retries these on its next run"] as const]
+              ? [["Failed", me.stats.failed, "text-danger", "These didn't go through. Open them and send them yourself — the agent won't retry them on its own"] as const]
               : []),
           ] as const).map(([label, val, c, help]) => (
             <div key={label} className="sticker tilt rounded-2xl bg-surface p-4" role="region" aria-label={`${label}: ${val}. ${help}`} title={help}>
@@ -1998,11 +2186,46 @@ export default function Dashboard() {
         </>
         )}
 
-        {/* Resume intelligence panel */}
-        {me.profile && (
+        {/* Resume intelligence.
+            Collapsed by default. This panel is genuinely useful — and it is a
+            screenful of scores, issues, suggestions, skill chips and generated
+            resume variants that sat ABOVE the tab strip permanently, so a user
+            who clicked "Applications" to look at their matches had to scroll
+            past all of it every single time. It is reference material, not the
+            daily job, so it opens on request and shows a one-line summary
+            otherwise. */}
+        {me.profile && !resumePanelOpen && (
+          <button
+            onClick={() => setResumePanelOpen(true)}
+            className="mt-6 flex w-full items-center justify-between rounded-xl border border-border bg-surface px-4 py-3 text-left text-sm hover:border-brand/40 transition"
+          >
+            <span className="flex items-center gap-3">
+              <span className="text-xs uppercase tracking-wide text-muted">Resume</span>
+              {me.profile.resumeScore != null ? (
+                <span className={resumeScoreColor(me.profile.resumeScore)}>
+                  {me.profile.resumeScore}/100
+                </span>
+              ) : (
+                <span className="text-muted">
+                  {me.profile.resumeName ? "Not analysed yet" : "No resume uploaded"}
+                </span>
+              )}
+              {skills.length > 0 && (
+                <span className="text-muted">· {skills.length} skills the agent matches on</span>
+              )}
+            </span>
+            <span className="text-xs text-brand-2">Open →</span>
+          </button>
+        )}
+        {me.profile && resumePanelOpen && (
           <div className="mt-6 rounded-xl border border-border bg-surface p-4">
             <div className="flex items-center justify-between mb-3">
-              <div className="text-xs uppercase tracking-wide text-muted">Resume Intelligence</div>
+              <button
+                onClick={() => setResumePanelOpen(false)}
+                className="text-xs uppercase tracking-wide text-muted hover:text-foreground transition"
+              >
+                Resume Intelligence ▾
+              </button>
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => { setSkillsDraft(skills); setEditingSkills((v) => !v); }}
@@ -2771,8 +2994,11 @@ export default function Dashboard() {
                         <div className={`font-mono text-lg ${scoreColor(a.matchScore)}`}>{a.matchScore}</div>
                         <div className="text-[10px] text-muted">match</div>
                       </div>
-                      <span className={`rounded-md px-2 py-1 text-xs ${STATUS_STYLE[a.status] || "bg-surface-2 text-muted"}`}>
-                        {STATUS_LABEL[a.status] ?? a.status}
+                      <span
+                        title={STATUS_HELP[a.status] ?? ""}
+                        className={`rounded-md px-2 py-1 text-xs ${STATUS_STYLE[a.status] || "bg-surface-2 text-muted"}`}
+                      >
+                        {sentByAgent(a) ? "Agent sent" : (STATUS_LABEL[a.status] ?? a.status)}
                       </span>
                       {a.status === "applied" && (
                         <select
@@ -2792,7 +3018,7 @@ export default function Dashboard() {
                           disabled={approvingId === a.id || me.quota.remaining === 0}
                           title={me.quota.remaining === 0
                             ? "You've hit today's application limit — resets tomorrow."
-                            : "Opens the listing so you submit it yourself. Grindly never submits on your behalf."}
+                            : "Opens the listing so you can submit it. This one is on a site that holds your account, so Grindly won't click submit for you."}
                           className="press rounded-md brand-gradient px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition disabled:opacity-50"
                         >
                           {approvingId === a.id ? "Opening…" : "Open & submit ↗"}
@@ -3123,16 +3349,22 @@ export default function Dashboard() {
               )}
             </div>
 
+            {/* Six steps became four, and the contradiction went with them: the
+                old list said "Grindly never logs in and submits on your behalf"
+                one line after describing what it does submit. Two paths, named
+                plainly, is the whole model a user needs. */}
             <div className="mt-5 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
               <p className="font-medium text-foreground mb-1">How applications work</p>
-              <ol className="list-decimal pl-5 space-y-1 text-sm">
-                <li>Click <strong>Run now</strong> (or let the daily run go) — the agent finds matches and drafts each one: tailored resume, cover letter, and screening answers.</li>
-                <li>Connecting a platform is optional — it only powers the pre-filled answer draft. Discovery works with nothing connected.</li>
-                <li>For each prepared match, tap <strong>Open &amp; submit ↗</strong> — Grindly opens the listing in your own browser so you review and submit it yourself.</li>
-                <li><strong>What you do on the platform:</strong> attach your resume and press Submit. Grindly prepares the wording and the answers, but it does not upload your file or click Submit for you — the platforms&apos; terms forbid automated submission, and it&apos;s your account that would be banned for it.</li>
-                <li>Come back and tap <strong>✓ I submitted it</strong> so your Applied count and daily limit stay accurate. We&apos;ll ask you automatically when you return to this tab.</li>
-                <li>Grindly never logs in and submits on your behalf. External and unsupported complex applications are skipped.</li>
-                <li>You can prepare up to <strong>{cap}</strong> matches/day on the free plan.</li>
+              <ol className="list-decimal pl-5 space-y-1.5 text-sm">
+                <li>The agent runs every day on its own and scores each listing against your resume. <strong>Run now</strong> just starts one extra search.</li>
+                <li>
+                  <strong className="text-foreground">If the application goes to the company directly</strong> — their own form or hiring inbox — the agent fills it in, attaches your tailored resume and sends it. Those show as <strong>Agent sent</strong>. Nothing needed from you.
+                </li>
+                <li>
+                  <strong className="text-foreground">If it only exists on LinkedIn, Internshala, Naukri, Unstop or Indeed</strong> — the agent prepares everything and you tap <strong>Open &amp; submit ↗</strong>, then attach your resume and press Submit there. It won&apos;t click submit for you on those: their terms forbid it and it&apos;s your account that gets banned.
+                </li>
+                <li>Come back and tap <strong>✓ I submitted it</strong> so your counts stay right — we&apos;ll ask automatically when you return to this tab.</li>
+                <li>Up to <strong>{cap}</strong> applications a day on your plan. The agent never invents an answer about you; anything it can&apos;t answer honestly it hands back to you.</li>
               </ol>
             </div>
 

@@ -5,6 +5,7 @@ import { dueNow } from "@/lib/pipeline";
 import { getQuota, remainingForApproval } from "@/lib/quota";
 import { notifyUser } from "@/lib/notify";
 import { hasAppAccess } from "@/lib/access";
+import { agentWillSend, approvalOutcomeMessage } from "@/lib/applyPolicy";
 
 /**
  * Approve a matched application — and actually send it.
@@ -62,11 +63,21 @@ export async function POST(req: Request) {
   });
   if (!app) return NextResponse.json({ error: "not found or not ready to send" }, { status: 404 });
 
+  // What happens next depends on where this application is actually delivered.
+  // A row routed to an employer's own intake (Google Form, HR mailbox) is sent
+  // by the agent on its next run; one that only exists on a board still needs
+  // the user's own browser. Telling someone to go finish an application the
+  // agent already sent is the same failure as promising one that never goes.
+  const willSend = agentWillSend(app);
+  const outcome = approvalOutcomeMessage(app);
+
   await prisma.application.update({
     where: { id: body.id },
     data: {
       status: "approved",
-      reason: (app.reason ?? "") + " — ready for your final browser submission",
+      reason: (app.reason ?? "") + ` — ${outcome}`,
+      // Dates the quota reservation so it expires with today (see lib/quota.ts).
+      approvedAt: new Date(),
     },
   });
 
@@ -74,13 +85,14 @@ export async function POST(req: Request) {
   // later without living on the dashboard. Best-effort: never block the approve.
   void notifyUser(uid, {
     tier: "urgent",
-    title: "Application ready to submit",
-    body:
-      `${app.jobTitle} at ${app.company} is prepared and ready for your final submit.` +
-      (app.url ? `\nOpen & submit: ${app.url}` : "") +
-      `\nOr finish it from your dashboard.`,
+    title: willSend ? "Application queued to send" : "Application ready to submit",
+    body: willSend
+      ? `${app.jobTitle} at ${app.company} — ${outcome}. You'll see it on your dashboard once it's sent.`
+      : `${app.jobTitle} at ${app.company} is prepared and ready for your final submit.` +
+        (app.url ? `\nOpen & submit: ${app.url}` : "") +
+        `\nOr finish it from your dashboard.`,
   });
 
-  // Safe Apply Mode never queues a server-side browser session to click submit.
-  return NextResponse.json({ ok: true, requiresUserSubmit: true });
+  // Board destinations never queue a server-side browser session to click submit.
+  return NextResponse.json({ ok: true, requiresUserSubmit: !willSend });
 }

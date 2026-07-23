@@ -61,10 +61,21 @@ describe("pendingApprovedCount / remainingForApproval (approval-accumulation gua
     expect(await remainingForApproval("u1", "free")).toBe(0);
   });
 
-  it("counts only status=approved rows", async () => {
+  it("counts only rows approved TODAY, so the reservation expires with its day", async () => {
+    // Counting every approved row for all time bricked the product: almost
+    // nobody ticks "yes, I submitted it", so after one day of approvals the
+    // pending count permanently equalled the cap and the user could never
+    // approve again — told to "try again tomorrow" on every tomorrow.
     mockCount.mockResolvedValueOnce(7);
     await pendingApprovedCount("u1");
-    expect(mockCount).toHaveBeenCalledWith({ where: { userId: "u1", status: "approved" } });
+    const arg = mockCount.mock.calls[0][0];
+    expect(arg.where.userId).toBe("u1");
+    expect(arg.where.status).toBe("approved");
+    expect(arg.where.approvedAt.gte).toBeInstanceOf(Date);
+    // The boundary is the start of today, not "24h ago".
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    expect(arg.where.approvedAt.gte.getTime()).toBe(start.getTime());
   });
 });
 

@@ -740,7 +740,12 @@ export default function OnboardingPage() {
                 ))}
               </div>
 
-              {/* Safe Apply acknowledgement — final submission always remains user-controlled. */}
+              {/* Consent for what the agent will actually do.
+                  This used to read "I must complete every final submission
+                  myself", which describes only half of what happens: the agent
+                  sends applications itself when they go to a company's own form
+                  or inbox. A consent checkbox has to name the thing being
+                  consented to, or it consents to nothing. */}
               <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
                 <input
                   type="checkbox"
@@ -749,8 +754,11 @@ export default function OnboardingPage() {
                   className="mt-0.5 size-4 accent-brand"
                 />
                 <span className="text-sm leading-relaxed text-muted">
-                  I understand that Grindly prepares matches but I must complete every final
-                  submission myself in the job platform. I have read the{" "}
+                  I authorise Grindly to submit applications on my behalf when they go to a
+                  company&apos;s own application form or hiring inbox, and I understand that
+                  applications on LinkedIn, Internshala, Naukri, Unstop and Indeed are prepared
+                  for me to submit myself. I can turn this off any time in my profile. I have
+                  read the{" "}
                   <a href="/terms" target="_blank" className="text-brand-2 underline">
                     Terms of Service
                   </a>
