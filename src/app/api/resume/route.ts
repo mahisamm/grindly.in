@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
-import { getUid } from "@/lib/session";
+import { requireAccess } from "@/lib/access";
 import { spawnWorkerKick } from "@/lib/workerKick";
 import { enqueueAgentRun } from "@/lib/agentRunQueue";
 
@@ -32,8 +32,12 @@ type Kind = "master" | "tex";
  * used from the next run on.
  */
 export async function POST(req: Request) {
-  const uid = await getUid();
-  if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
+  // Gated beta: uploading a resume enqueues a worker + LLM job (analyze / latex_check),
+  // so an unapproved account must not reach it — otherwise a pending user could spin up
+  // the agent with no rate limit, the exact bypass the access gate exists to prevent.
+  const access = await requireAccess();
+  if ("error" in access) return access.error;
+  const { uid } = access;
 
   let form: FormData;
   try {

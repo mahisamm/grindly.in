@@ -872,6 +872,26 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
 
         log.info("total fetched: %d listings across all sources", len(all_jobs))
 
+        # Core-value alarm: discovery yielding >0 is the whole product. If every
+        # rotated board fetched nothing, the scrapers are almost certainly broken
+        # (anti-bot / markup drift) — the exact "ran done but banked 0 matches"
+        # failure we hit before. The drift monitor below only fires on APPLY
+        # attempts, which never happen in Safe Apply Mode, so a total-zero discovery
+        # would otherwise pass completely silently. Page it here instead.
+        if active_sources and not all_jobs:
+            log.error(
+                "DISCOVERY YIELD 0: %s returned no listings this run — scrapers likely broken",
+                active_sources,
+            )
+            db.add_audit("discovery_zero_yield", user_id=uid, target=",".join(active_sources))
+            notify.send(
+                _OPS_CHANNEL,
+                f":rotating_light: Discovery returned *0 listings* across "
+                f"{', '.join(active_sources)} for user `{uid}` — every rotated board "
+                f"fetched nothing. Anti-bot block or selector drift; investigate before "
+                f"matches dry up.",
+            )
+
     # 4. score + apply within firewall + daily cap
     # Wipe the previous verdict on anything we just re-fetched, so a re-run
     # replaces a stale skip instead of stacking a second row beside it. Paired
@@ -1607,9 +1627,14 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     today = datetime.date.today().isoformat()
     ready = db.ready_today_count(uid)
     depth = db.pipeline_depth(uid)
+    # Safe Apply Mode never submits, so `applied` is structurally 0 for virtually
+    # every user. Leading the report with "Recorded 0 submitted internship(s) today"
+    # every single day reads as a dead agent — so lead with what actually happened
+    # (matches ready for the user to submit) and mention submissions only when there
+    # genuinely are any.
+    submitted_bit = f"{applied} submitted by you today. " if applied else ""
     summary = (
-        f"Recorded {applied} submitted internship(s) today. "
-        f"{ready} more ready for you to prepare. "
+        f"{submitted_bit}{ready} match(es) ready for you to prepare and submit. "
         f"{depth} lined up over the coming weeks."
     )
     db.add_report(uid, date=today, matched=matched, applied=applied, failed=failed,
@@ -1623,9 +1648,12 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         if ready
         else ""
     )
+    # Lead with the actionable number (ready for you); show "submitted" only when
+    # nonzero, so the headline never announces the always-zero apply count.
+    applied_bit = f"  ·  :white_check_mark: Submitted by you: {applied}" if applied else ""
     msg = (
         f":robot_face: *Grindly daily report — {today}*\n"
-        f":white_check_mark: Applied: *{applied}*  ·  :inbox_tray: Ready for you: {ready}  ·  "
+        f":inbox_tray: Ready for you: *{ready}*{applied_bit}  ·  "
         f":x: Failed: {failed}\n"
         f"Sources: {sources_used}\n\n"
         f"{summary}\n\nI'll keep working through your queue. Pause anytime from the "

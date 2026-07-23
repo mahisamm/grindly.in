@@ -532,14 +532,24 @@ export default function Dashboard() {
   const [slackSetupOpen, setSlackSetupOpen] = useState(false);
   const [extTokens, setExtTokens] = useState<{ id: string; label: string; createdAt: string; lastUsedAt: string | null }[]>([]);
   const [extBusy, setExtBusy] = useState<string | null>(null); // token id being revoked, or "all"
+  // True after a non-401 /api/me failure (500, network throw). Distinguishes a real
+  // server problem from a genuine logged-out state so a transient blip doesn't render
+  // "Not logged in." to a user who very much is.
+  const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await fetch("/api/me");
-    if (res.status === 401) {
-      router.replace("/login");
-      return;
-    }
-    if (res.ok) {
+    try {
+      const res = await fetch("/api/me");
+      if (res.status === 401) {
+        router.replace("/login");
+        return;
+      }
+      if (!res.ok) {
+        // Transient server error. Keep the last-good `me` (a poll blip must not
+        // wipe the screen); surface a retry instead of falsely claiming logout.
+        setLoadError(true);
+        return;
+      }
       const data = await res.json() as Me;
       // Gated beta: an unapproved account never reaches the app UI. Use the
       // server's owner-aware verdict (honors OWNER_EMAIL); fall back to the old
@@ -550,6 +560,7 @@ export default function Dashboard() {
         return;
       }
       setMe(data);
+      setLoadError(false);
       setProfileForm((prev) => {
         if (!data.profile) return prev;
         const fresh = profileToForm(data.profile);
@@ -566,8 +577,12 @@ export default function Dashboard() {
           gpa: prev.gpa && prev.gpa !== "8.0" ? prev.gpa : fresh.gpa,
         };
       });
+    } catch {
+      // Network throw (offline / DNS). Same handling as a non-ok response.
+      setLoadError(true);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [router]);
 
   useEffect(() => {
@@ -1221,14 +1236,32 @@ export default function Dashboard() {
   }
 
   if (!me) {
+    // Two very different states share this screen: a real server error (loadError)
+    // vs. genuinely no session. Never tell a logged-in user they're logged out.
     return (
       <main className="grid-bg min-h-screen flex items-center justify-center px-5">
         <div className="glass rounded-2xl p-8 text-center max-w-sm glow">
           <Logo size={30} />
-          <p className="mt-4 text-muted">Not logged in.</p>
-          <div className="mt-5 flex justify-center gap-2">
-            <Link href="/login" className="inline-block press rounded-lg brand-gradient px-5 py-2.5 font-medium text-white">Log in</Link>
-          </div>
+          {loadError ? (
+            <>
+              <p className="mt-4 text-muted">Couldn&apos;t reach the server. Your session is fine — this is on our end.</p>
+              <div className="mt-5 flex justify-center gap-2">
+                <button
+                  onClick={() => { setLoading(true); setLoadError(false); load(); }}
+                  className="inline-block press rounded-lg brand-gradient px-5 py-2.5 font-medium text-white"
+                >
+                  Retry
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-4 text-muted">Not logged in.</p>
+              <div className="mt-5 flex justify-center gap-2">
+                <Link href="/login" className="inline-block press rounded-lg brand-gradient px-5 py-2.5 font-medium text-white">Log in</Link>
+              </div>
+            </>
+          )}
         </div>
       </main>
     );
@@ -1384,13 +1417,17 @@ export default function Dashboard() {
               <span className={`size-2 rounded-full ${
                 isRunning ? "bg-brand pulse-dot"
                 : me.user.status === "paused" ? "bg-warn"
-                : me.user.status === "active" && connectedCount > 0 ? "bg-accent pulse-dot"
+                : me.user.status === "active" ? "bg-accent pulse-dot"
                 : "bg-muted"
               }`} />
               <span className="hidden sm:inline">
+                {/* Connecting a platform is optional (discovery scrapes public
+                    listings with no login), so an active user is "Agent active"
+                    regardless — gating this on connectedCount told every default
+                    beta user "Setup incomplete" when nothing was actually wrong. */}
                 {isRunning ? "Agent working…"
                  : me.user.status === "paused" ? "Paused"
-                 : me.user.status === "active" && connectedCount > 0 ? "Agent active"
+                 : me.user.status === "active" ? "Agent active"
                  : "Setup incomplete"}
               </span>
             </span>
@@ -1604,9 +1641,10 @@ export default function Dashboard() {
         </div>
 
         {/* Always-on reassurance: the agent runs on its own daily (see agent/sweep.py),
-            so a finished manual run must not read as "the agent stopped." Shown only
-            when it's actually on duty — a platform is connected and not paused. */}
-        {connectedCount > 0 && me.user.status === "active" && !isRunning && (
+            so a finished manual run must not read as "the agent stopped." Shown for any
+            active, not-running user — platform connect is optional (discovery needs no
+            login), so a no-platform user is on duty too. */}
+        {me.user.status === "active" && !isRunning && (
           <p className="mt-3 flex items-start gap-2 text-xs text-muted">
             <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent pulse-dot" />
             <span>Your agent is on duty — it searches and prepares matches automatically every day, on its own. You never have to press anything; <span className="text-foreground">Run now</span> just starts one extra search this minute.</span>
@@ -2931,13 +2969,13 @@ export default function Dashboard() {
             </div>
 
             <div className="mt-5 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
-              <p className="font-medium text-foreground mb-1">How live applications work</p>
+              <p className="font-medium text-foreground mb-1">How applications work</p>
               <ol className="list-decimal pl-5 space-y-1 text-sm">
-                <li>Connect any supported platform above and log in yourself in the live browser window.</li>
-                <li>Once connected, the agent reuses that session to log in on our server.</li>
-                <li>Click <strong>Run now</strong> to find matches. External and unsupported complex applications are skipped.</li>
-                <li>Review each prepared application and tap <strong>Approve</strong> to submit it.</li>
-                <li>The agent sends up to <strong>{cap}</strong> applications/day across connected platforms.</li>
+                <li>Click <strong>Run now</strong> (or let the daily run go) — the agent finds matches and drafts each one: tailored resume, cover letter, and screening answers.</li>
+                <li>Connecting a platform is optional — it only powers the pre-filled answer draft. Discovery works with nothing connected.</li>
+                <li>For each prepared match, tap <strong>Open &amp; submit ↗</strong> — Grindly opens the listing in your own browser so you review and submit it yourself.</li>
+                <li>Grindly never logs in and submits on your behalf. External and unsupported complex applications are skipped.</li>
+                <li>You can prepare up to <strong>{cap}</strong> matches/day on the free plan.</li>
               </ol>
             </div>
 

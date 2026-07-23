@@ -32,6 +32,19 @@ function statesMatch(a: string, b: string): boolean {
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const base = baseUrl(url.origin);
+  // Every *handled* failure below redirects cleanly to /login?error=…. This outer
+  // guard catches the UNhandled ones — a network blip to Google's token/userinfo
+  // endpoints, or a DB hiccup during create/find/update — so the one path every
+  // user hits first degrades to a clean "try again" redirect instead of a raw 500.
+  try {
+    return await handleGoogleCallback(req, url, base);
+  } catch (e) {
+    console.error("[google-callback] unexpected failure:", e);
+    return NextResponse.redirect(`${base}/login?error=google_failed`);
+  }
+}
+
+async function handleGoogleCallback(req: Request, url: URL, base: string) {
   const code = url.searchParams.get("code");
   const error = url.searchParams.get("error");
   const returnedState = url.searchParams.get("state");
@@ -56,10 +69,13 @@ export async function GET(req: Request) {
 
   // Per-IP cap on completed OAuth callbacks. The CSRF state above stops junk
   // hits, but a valid-state flood — or one host spinning up many accounts from
-  // many Google identities — is still capped here. Generous enough that a real
-  // person re-logging in never hits it; the point is a ceiling on account churn.
+  // many Google identities — is still capped here. Kept high (100/hr) because the
+  // target audience (Indian students) shares public IPs heavily via mobile-carrier
+  // CGNAT and campus/college NAT: dozens of distinct real users can front the same
+  // IP, so a tight cap would lock out whole clusters of legitimate logins. This is
+  // only an anti-churn backstop, not the primary abuse control (CSRF state is).
   const ip = getIp(req);
-  if (await isRateLimited(`oauth_cb:${ip}`, 20, 60 * 60 * 1000)) {
+  if (await isRateLimited(`oauth_cb:${ip}`, 100, 60 * 60 * 1000)) {
     return NextResponse.redirect(`${base}/login?error=rate_limited`);
   }
 

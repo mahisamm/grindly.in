@@ -100,13 +100,14 @@ describe("POST /api/agent/run", () => {
     expect(res.status).toBe(500);
   });
 
-  it("returns 400 for a live run with no connected platform", async () => {
+  it("allows a live run with no connected platform (discovery scrapes public listings, no login)", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: false, accessStatus: "approved", role: "user", email: "u1@example.com" });
     mockUserIntegrationCount.mockResolvedValue(0);
     const res = await POST(postReq());
-    expect(res.status).toBe(400);
-    expect(mockAgentRunCreate).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect((await res.json()).mode).toBe("live");
+    expect(mockAgentRunCreate).toHaveBeenCalledWith({ data: { userId: "u1", mode: "live" } });
   });
 
   it("always creates a live run — there is no mock/demo mode", async () => {

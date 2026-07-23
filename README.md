@@ -76,16 +76,16 @@ Grindly/
 
 1. **Sign up** → Google OAuth → signed httpOnly cookie session.
 2. **Onboarding** → upload resume → profile questions (domains, locations, stipend floor,
-   min match score, max/day, excluded companies, auto-apply) → connect Slack → pay.
-3. **Payment confirm** → user marked `active`, Slack onboarding DM fired.
+   min match score, max/day, excluded companies, auto-apply) → pick email/Slack reports → activate (free during beta).
+3. **Activation** → user marked `active`, onboarding report/DM fired.
 4. **Agent run** (dashboard button or scheduled) → `agent/worker.py`:
    - Parses resume → extracts skills (LLM ensemble).
    - Builds a plan from firewall constraints.
-   - Fetches listings from all connected platforms in parallel.
+   - Fetches listings from public search / guest APIs across the 5 boards in parallel.
    - Scores each job, drops anything the firewall forbids or below your threshold.
-   - Auto-applies to strong matches up to your daily cap.
-   - Writes a daily report + sends it to Slack.
-5. **Dashboard** polls every 4s — applications + reports appear in real time.
+   - Prepares strong matches (tailored resume + cover letter + answers) up to your daily cap — Safe Apply Mode; **you** submit the final application in your own browser.
+   - Writes a daily report + sends it to email/Slack.
+5. **Dashboard** polls every 12s — matches + reports appear in near real time.
 
 ---
 

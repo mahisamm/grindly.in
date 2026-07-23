@@ -188,12 +188,21 @@ export default function OnboardingPage() {
 
   async function savePasted() {
     if (!resumeText.trim()) return;
-    await fetch("/api/profile", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ resumeText, resumeName: resumeName || "pasted-resume.txt" }),
-    });
-    setResumeName(resumeName || "pasted-resume.txt");
+    // Route pasted text through /api/resume as a .txt (same path as an uploaded
+    // file) so it resets derived skills/score AND enqueues the "analyze" job.
+    // Posting straight to /api/profile stored the text but queued nothing, so the
+    // dashboard's Resume Intelligence panel showed a permanent, false "Analysis in
+    // progress" for anyone who pasted instead of uploading.
+    const name = (resumeName || "pasted-resume").replace(/\.[^.]+$/, "") + ".txt";
+    const file = new File([resumeText], name, { type: "text/plain" });
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/resume", { method: "POST", body: fd });
+    if (res.ok) {
+      setResumeName(name);
+    } else {
+      setMsg("Could not save your resume — please try again.");
+    }
   }
 
   async function saveProff() {

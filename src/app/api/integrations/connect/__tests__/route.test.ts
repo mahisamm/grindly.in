@@ -40,7 +40,9 @@ function makeReq(body: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv("NODE_ENV", "development");
-  mockUserFindUnique.mockResolvedValue({ id: "u1" });
+  // Approved by default so the access gate (route.ts hasAppAccess check) passes;
+  // individual tests override to exercise 404 / pending.
+  mockUserFindUnique.mockResolvedValue({ id: "u1", accessStatus: "approved", role: "user", email: "u1@example.com" });
   mockUpsert.mockResolvedValue({});
   mockExistsSync.mockReturnValue(true); // connect_platform.py + log dir "exist"
   mockOpenSync.mockReturnValue(3);
@@ -82,6 +84,15 @@ describe("POST /api/integrations/connect", () => {
     mockUserFindUnique.mockResolvedValue(null);
     const res = await POST(makeReq({ platform: "linkedin" }));
     expect(res.status).toBe(404);
+  });
+
+  it("blocks a pending (unapproved) account with 403 access_pending", async () => {
+    mockGetUid.mockResolvedValue("u1");
+    mockUserFindUnique.mockResolvedValue({ id: "u1", accessStatus: "pending", role: "user", email: "u1@example.com" });
+    const res = await POST(makeReq({ platform: "linkedin" }));
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("access_pending");
+    expect(mockUpsert).not.toHaveBeenCalled();
   });
 
   it("marks the integration as connecting and spawns the connect script", async () => {

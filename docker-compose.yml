@@ -2,6 +2,24 @@
 # A one-shot `migrate` service creates the Postgres schema + seeds the admin
 # before web/worker start. See PHASE3_DEPLOY_REPORT.md for the deploy runbook.
 # Redis is provisioned for when the queue moves off the DB to BullMQ/Celery.
+#
+# ── MEMORY BUDGET (read before deploying on a small VPS) ─────────────────────
+# Sum of the persistent services' `limits.memory`:
+#   postgres 512M · redis 128M · web 768M · worker 1.5G · sweep 256M ·
+#   connect 1.28G · caddy 128M · backup 256M  ≈  4.75 GB of hard caps.
+# The two big ones — worker and connect — each drive a REAL headed Chromium and
+# can momentarily spike toward their cap when a heavy job/login page loads. On a
+# 4 GB box that oversubscribes and the kernel OOM-kills whichever hits its cgroup
+# cap first (usually worker mid-apply or connect mid-login), i.e. a core feature
+# dies silently. Requirements:
+#   • Provision ≥ 6 GB RAM, and add swap regardless (`fallocate -l 2G /swapfile
+#     && mkswap /swapfile && swapon /swapfile`, persist in /etc/fstab).
+#   • Verify on the VPS with `free -h` and, during a concurrent real apply +
+#     connect, `docker stats` — no service should sit pinned at its cap.
+#   • Stuck on a 4 GB box for the beta? Platform-connect is OPTIONAL (discovery
+#     scrapes public listings with no login), so you can run WITHOUT the `connect`
+#     service — start the stack with `--scale connect=0` to reclaim ~1.28 GB. The
+#     "connect a platform" button then just won't have a browser to drive.
 
 x-logging: &default-logging
   driver: json-file

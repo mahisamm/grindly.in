@@ -380,6 +380,10 @@ _SKILL_HINTS = {
 
 
 def _infer_skills(title: str) -> list[str]:
+    # Return [] — not ["communication"] — when nothing matches. A placeholder skill
+    # reads to matcher.score_job as a real requirement the candidate misses, dragging
+    # every unrecognised title down to a near-zero role-skill score. [] means
+    # "requirements unknown" and scores on relevance instead. (Same fix as internshala.)
     low = (title or "").lower()
     out: list[str] = []
     for k, v in _SKILL_HINTS.items():
@@ -387,4 +391,4 @@ def _infer_skills(title: str) -> list[str]:
             for s in v:
                 if s not in out:
                     out.append(s)
-    return out or ["communication"]
+    return out

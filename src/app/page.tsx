@@ -10,21 +10,21 @@ const STEPS = [
   ["02", "Answer a few profile questions", "Domains, locations, stipend, daily limits. These become the agent's firewall — what it may and may not apply to."],
   ["03", "Start free & choose updates", "Activate the free plan — 5 applications a day — then pick email or Slack reports. Connect Gmail to auto-detect interview calls."],
   ["04", "You prepare, then submit", "It reads listings, scores each against your resume, and prepares supported matches for you to complete in your own browser."],
-  ["05", "Daily progress reports", "Every day you get a report: who it applied to, match scores, and what it skipped (and why). Update outcomes to track your interview rate."],
+  ["05", "Daily progress reports", "Every day you get a report: what it prepared for you, match scores, and what it skipped (and why). Mark what you submitted to track your interview rate."],
 ] as const;
 
 const FEATURES = [
   ["Resume-aware matching", "Skills extracted from your resume score every role 0–100. Only real fits get an application.", Target],
   ["You set the firewall", "Min match score, max/day, excluded companies, stipend floor — hard constraints the agent can't cross.", Bolt],
-  ["Real applications", "Opens supported listings, fills the form, and prepares it for your approval — not just a list of links.", Doc],
+  ["Application-ready matches", "Opens supported listings and drafts each application — tailored resume, cover letter, screening answers — ready for you to submit, not just a list of links.", Doc],
   ["You control every submission", "The agent prepares the match; you complete the final submission in your own browser. Pause anytime from the dashboard.", Clock],
   ["Daily reports your way", "Get progress reports via Slack DM or email — whichever you prefer. Connect Gmail to auto-detect interview calls.", Slack],
   ["Private by design", "Resume analysis uses only the AI providers configured for this service and degrades safely if they're unavailable. Your data is never sold.", Sparkle],
 ] as const;
 
 const MOCK_ROWS = [
-  ["Frontend Developer Intern", "Razorpay", 86, "applied"],
-  ["Data Science Intern", "Swiggy", 81, "applied"],
+  ["Frontend Developer Intern", "Razorpay", 86, "ready"],
+  ["Data Science Intern", "Swiggy", 81, "ready"],
   ["ML Research Intern", "Sarvam AI", 74, "ready"],
   ["Sales Intern", "LocalBiz", 38, "skipped"],
 ] as const;
@@ -124,8 +124,8 @@ export default function Home() {
             </h2>
             <p className="mt-3.5 max-w-[44ch] text-[var(--ink-soft)]">
               The agent drives job platforms like a human would — reads listings,
-              scores them against your resume, fills the forms, and prepares each
-              one for your approval. You watch it happen from one dashboard.
+              scores them against your resume, and drafts each application ready for
+              you to submit. You watch it happen from one dashboard.
             </p>
           </Reveal>
           {/* dashboard mock — proto panel (relocated here from the hero) */}
@@ -138,7 +138,7 @@ export default function Home() {
                 <span className="text-[0.68rem] uppercase tracking-[0.12em] text-[var(--ink-mute)]">Today</span>
               </div>
               <div className="mb-4 grid grid-cols-3 gap-2.5">
-                {[["Applied", 5, "brand"], ["Avg match", 78, ""], ["Ready", 3, "mute"]].map(([label, n, kind]) => (
+                {[["Prepared", 5, "brand"], ["Avg match", 78, ""], ["Ready", 3, "mute"]].map(([label, n, kind]) => (
                   <div key={label as string} className="rounded-[6px] border border-[var(--line)] bg-[var(--paper)] px-3 py-2.5">
                     <b className={`block font-display text-[1.9rem] leading-none tabular-nums ${kind === "brand" ? "text-brand" : kind === "mute" ? "text-[var(--ink-mute)]" : ""}`}>
                       <CountUp value={n as number} />

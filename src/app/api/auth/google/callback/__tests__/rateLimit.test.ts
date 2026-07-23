@@ -45,8 +45,8 @@ describe("google callback rate limiting", () => {
     const res = await GET(req());
     expect(res.status).toBe(307); // NextResponse.redirect default
     expect(res.headers.get("location")).toBe("http://localhost/login?error=rate_limited");
-    // Keyed per IP, capped over an hour.
-    expect(mockIsRateLimited).toHaveBeenCalledWith("oauth_cb:1.2.3.4", 20, 60 * 60 * 1000);
+    // Keyed per IP, capped over an hour (kept high for shared campus/CGNAT IPs).
+    expect(mockIsRateLimited).toHaveBeenCalledWith("oauth_cb:1.2.3.4", 100, 60 * 60 * 1000);
     // Blocked before Google is ever contacted.
     expect(mockLoginClient).not.toHaveBeenCalled();
   });

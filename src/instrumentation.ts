@@ -7,7 +7,7 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     await import("../sentry.server.config");
 
-    const { serviceStatus, missingProdConfig, encryptionKeyValid } = await import("@/lib/serverConfig");
+    const { serviceStatus, missingProdConfig, encryptionKeyValid, googleOAuthConfigured, baseUrlConfigured } = await import("@/lib/serverConfig");
     console.log("[startup] service config:", JSON.stringify(serviceStatus()));
 
     if (process.env.NODE_ENV === "production") {
@@ -19,6 +19,26 @@ export async function register() {
         throw new Error(
           "[startup] FATAL: APP_ENCRYPTION_KEY missing or not 64 hex chars. " +
             "Refusing to start in production — sessions would be forgeable. Run `npm run setup`."
+        );
+      }
+
+      // Google OAuth is the ONLY door into the app and the redirect_uri is built
+      // from NEXT_PUBLIC_APP_URL. If either is missing the server still boots and
+      // /api/health still passes, yet every login either 500s (no client) or dies
+      // with redirect_uri_mismatch (redirect falls back to localhost) — an invisible
+      // outage where nobody can sign in. Fail fast so a misconfigured deploy refuses
+      // to boot instead of booting a login-dead app.
+      if (!googleOAuthConfigured()) {
+        throw new Error(
+          "[startup] FATAL: GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET missing. " +
+            "Google is the only login method — refusing to start with no way in."
+        );
+      }
+      if (!baseUrlConfigured()) {
+        throw new Error(
+          "[startup] FATAL: NEXT_PUBLIC_APP_URL (or NEXT_PUBLIC_BASE_URL) missing. " +
+            "The OAuth redirect_uri would fall back to http://localhost:3000 and every " +
+            "Google login would fail with redirect_uri_mismatch. Set it to your public origin."
         );
       }
 

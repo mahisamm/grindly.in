@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const {
   mockGetUid,
+  mockUserFindUnique,
   mockMkdir,
   mockWriteFile,
   mockAccess,
@@ -12,6 +13,7 @@ const {
   mockSpawnWorkerKick,
 } = vi.hoisted(() => ({
   mockGetUid: vi.fn(),
+  mockUserFindUnique: vi.fn(),
   mockMkdir: vi.fn(),
   mockWriteFile: vi.fn(),
   mockAccess: vi.fn(),
@@ -25,6 +27,8 @@ const {
 vi.mock("@/lib/session", () => ({ getUid: mockGetUid }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    // requireAccess() (the route's access gate) loads the user before doing work.
+    user: { findUnique: mockUserFindUnique },
     profile: { upsert: mockProfileUpsert },
     agentRun: { create: mockAgentRunCreate },
     resumeVariant: { deleteMany: mockVariantDeleteMany },
@@ -50,6 +54,9 @@ function makeReq(file: File | null) {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  // Approved by default so requireAccess() lets the upload through; the 401 test
+  // sets getUid null and never reaches this lookup.
+  mockUserFindUnique.mockResolvedValue({ id: "u1", accessStatus: "approved", role: "user", email: "u1@example.com" });
   mockMkdir.mockResolvedValue(undefined);
   mockWriteFile.mockResolvedValue(undefined);
   mockRm.mockResolvedValue(undefined);

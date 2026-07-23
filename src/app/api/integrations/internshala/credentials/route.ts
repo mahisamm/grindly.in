@@ -12,7 +12,7 @@ const PLATFORM = "internshala";
 const Body = z.object({
   email: z.string().trim().email("Enter a valid email."),
   password: z.string().min(1, "Password is required.").max(200),
-  consent: z.literal(true, { message: "Please authorize Grindly to apply on your behalf." }),
+  consent: z.literal(true, { message: "Please authorize Grindly to prepare Internshala applications for you to submit." }),
 });
 
 /**
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
   // Staged rollout gate — enforced server-side, not just hidden in the UI.
   if (!internshalaLoginEnabled(user)) {
     return NextResponse.json(
-      { error: "Internshala auto-apply is rolling out — your account isn't enabled yet." },
+      { error: "Internshala hosted login is rolling out — your account isn't enabled yet." },
       { status: 403 },
     );
   }
