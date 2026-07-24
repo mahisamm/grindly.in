@@ -131,6 +131,19 @@ def _daily_cap_for_today(uid: str, plan_cap: int, today: str | None = None) -> i
     return min(cap, rng.randint(low, cap))
 
 
+def _daily_apply_limit(uid: str, plan_cap: int, today: str | None = None) -> int:
+    """The free/Plus promise is five slots every day, not a random 3â€“5.
+
+    Higher-volume plans retain the human-paced ceiling above so they do not hit
+    a board with the exact same large count every day. The hard plan cap still
+    bounds both paths.
+    """
+    cap = max(1, int(plan_cap))
+    if cap <= 5:
+        return cap
+    return _daily_cap_for_today(uid, cap, today)
+
+
 def _platforms_for_today(uid: str, available: list[str], today: str | None = None) -> list[str]:
     """Rotate which connected platforms actually get touched today. Hitting
     all 5 platforms every single day is itself a bot signal — a human
@@ -943,7 +956,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     plan_cap = db.get_plan_cap(uid)
     # Free beta: free is a DAILY plan (5/day), same shape as paid — human-paced
     # and counted per day. No lifetime trial, so it resets each day like Plus/Pro.
-    cap = _daily_cap_for_today(uid, plan_cap)
+    cap = _daily_apply_limit(uid, plan_cap)
     quota_used = db.todays_applied_count(uid)
     quota_kind = "today"
     log.info("=== run for %s (%s) mode=%s cap=%d used=%d (%s) ===", name, uid, mode, cap, quota_used, quota_kind)
