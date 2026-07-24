@@ -17,7 +17,9 @@ CREATE TABLE users (
     role TEXT DEFAULT 'user'
 );
 CREATE TABLE profiles (
-    id TEXT PRIMARY KEY, user_id TEXT, resume_text TEXT, resume_name TEXT,
+    -- UNIQUE, as in prisma/schema.prisma (Profile.userId @unique). A test schema
+    -- laxer than production hides exactly the bugs the tests exist to catch.
+    id TEXT PRIMARY KEY, user_id TEXT UNIQUE, resume_text TEXT, resume_name TEXT,
     skills TEXT DEFAULT '[]', education TEXT, experience_level TEXT,
     preferred_domains TEXT DEFAULT '[]', preferred_locations TEXT DEFAULT '[]',
     work_mode TEXT DEFAULT 'any', stipend_min INTEGER DEFAULT 0,
@@ -552,3 +554,51 @@ def test_add_resume_version_creates_table_and_returns_id(testdb):
     row = c.execute("SELECT * FROM resume_versions WHERE id=?", (vid,)).fetchone()
     c.close()
     assert row["label"] == "Frontend @ Acme"
+
+
+# ---------- the profile row has to exist before you can UPDATE it ----------
+
+def test_agent_writes_survive_a_user_with_no_profile_row(testdb):
+    """Every profile write in db.py is a bare `UPDATE profiles ... WHERE
+    user_id=?`. On a user with no profile row that affects zero rows and reports
+    success, so the worker's whole output — resume score, extracted skills,
+    the parse-failed flag, the variant status — vanished with no error, the
+    dashboard kept showing an unanalyzed resume, and the next run paid for the
+    same LLM extraction because resume_hash had nowhere to persist. Seen in
+    production: `SELECT count(*) FROM profiles` was 0 while runs were scoring
+    resumes 62/100 every single time."""
+    with db.conn() as c:
+        c.execute("INSERT INTO users (id, email) VALUES (?,?)", ("u_noprof", "a@b.com"))
+        assert c.execute("SELECT count(*) n FROM profiles").fetchone()["n"] == 0
+
+    db.set_resume_text("u_noprof", "Python, React")
+    db.update_skills("u_noprof", ["python", "react"])
+    db.set_resume_analysis("u_noprof", 71, "{}", resume_hash="abc123")
+
+    with db.conn() as c:
+        row = c.execute("SELECT * FROM profiles WHERE user_id=?", ("u_noprof",)).fetchone()
+    assert row is not None, "the write should have created the row it needed"
+    assert row["resume_text"] == "Python, React"
+    assert row["resume_score"] == 71
+    assert row["resume_hash"] == "abc123"
+
+
+def test_an_existing_profile_row_is_never_duplicated(testdb):
+    """user_id is UNIQUE in the real schema; creating a second row would make
+    every read non-deterministic."""
+    with db.conn() as c:
+        c.execute("INSERT INTO users (id, email) VALUES (?,?)", ("u_prof", "c@d.com"))
+        c.execute(
+            "INSERT INTO profiles (id, user_id, resume_name, updated_at) VALUES (?,?,?,?)",
+            ("p1", "u_prof", "mine.pdf", 1),
+        )
+
+    db.set_resume_text("u_prof", "text")
+    db.set_variant_status("u_prof", "ready", "3 versions")
+
+    with db.conn() as c:
+        rows = c.execute("SELECT * FROM profiles WHERE user_id=?", ("u_prof",)).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["id"] == "p1"
+    assert rows[0]["resume_name"] == "mine.pdf", "an unrelated column must survive"
+    assert rows[0]["resume_variant_status"] == "ready"

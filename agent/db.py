@@ -223,6 +223,33 @@ def _ensure_profile_columns(c):
         c.execute("ALTER TABLE profiles ADD COLUMN resume_variant_detail TEXT")
 
 
+def _ensure_profile_row(c, uid: str):
+    """Make sure the user HAS a profile row before we try to update one.
+
+    Every profile write in this module is a bare `UPDATE profiles ... WHERE
+    user_id=?`, which affects zero rows and reports success when the row is
+    missing. The web only creates it lazily — on resume upload, on a profile
+    save, on the OAuth callback — so a user who reaches the agent by any other
+    path (or whose row was removed) silently loses every result the worker
+    produces: the resume score, the extracted skills, the parse-failed flag, the
+    variant status. Nothing errors. The dashboard just keeps showing an
+    unanalyzed resume, and the next run pays for the same LLM extraction again
+    because resume_hash had nowhere to persist.
+
+    Only id / user_id / updated_at are NOT NULL without a default, so a minimal
+    insert is enough; every other column takes its schema default.
+    """
+    row = c.execute("SELECT 1 FROM profiles WHERE user_id=?", (uid,)).fetchone()
+    if row:
+        return
+    c.execute(
+        "INSERT INTO profiles (id, user_id, updated_at) VALUES (?,?,?) "
+        "ON CONFLICT (user_id) DO NOTHING",
+        (cuid(), uid, now_db()),
+    )
+    print(f"[db] created the missing profile row for {uid}")
+
+
 def get_user(uid: str) -> dict | None:
     with conn() as c:
         _ensure_profile_columns(c)
@@ -356,6 +383,7 @@ def total_applied_count(uid: str) -> int:
 
 def update_skills(uid: str, skills: list[str], plan_json: dict | None = None):
     with conn() as c:
+        _ensure_profile_row(c, uid)
         c.execute(
             "UPDATE profiles SET skills=?, plan_json=?, updated_at=? WHERE user_id=?",
             (
@@ -375,6 +403,7 @@ def update_contact(uid: str, phone: str | None = None, gpa: float | None = None)
     filled: dict = {}
     with conn() as c:
         _ensure_profile_columns(c)
+        _ensure_profile_row(c, uid)
         row = c.execute("SELECT phone, gpa FROM profiles WHERE user_id=?", (uid,)).fetchone()
         if not row:
             return filled
@@ -748,6 +777,7 @@ def get_user_plan(uid: str) -> str:
 
 def set_resume_text(uid: str, text: str):
     with conn() as c:
+        _ensure_profile_row(c, uid)
         c.execute(
             "UPDATE profiles SET resume_text=?, updated_at=? WHERE user_id=?",
             (text[:20000], now_db(), uid),
@@ -1332,6 +1362,7 @@ def set_resume_analysis(uid: str, score: int, suggestions_json: str,
     """
     with conn() as c:
         _ensure_profile_columns(c)
+        _ensure_profile_row(c, uid)
         c.execute(
             "UPDATE profiles SET resume_score=?, resume_suggestions=?, "
             "resume_hash=COALESCE(?, resume_hash), updated_at=? WHERE user_id=?",
@@ -1343,6 +1374,7 @@ def set_tex_status(uid: str, status: str, detail: str = ""):
     """Record whether the user's uploaded .tex is actually usable for tailoring."""
     with conn() as c:
         _ensure_profile_columns(c)
+        _ensure_profile_row(c, uid)
         c.execute(
             "UPDATE profiles SET resume_tex_status=?, resume_tex_detail=?, "
             "updated_at=? WHERE user_id=?",
@@ -1355,6 +1387,7 @@ def set_resume_parse_failed(uid: str, failed: bool):
     prompt the user to fill skills manually instead of silently scoring nothing."""
     with conn() as c:
         _ensure_profile_columns(c)
+        _ensure_profile_row(c, uid)
         c.execute(
             "UPDATE profiles SET resume_parse_failed=?, updated_at=? WHERE user_id=?",
             (bool(failed), now_db(), uid),
@@ -1388,6 +1421,7 @@ def set_variant_status(uid: str, status: str, detail: str = ""):
     generating | ready | failed | no_gain (see Profile.resumeVariantStatus)."""
     with conn() as c:
         _ensure_profile_columns(c)
+        _ensure_profile_row(c, uid)
         c.execute(
             "UPDATE profiles SET resume_variant_status=?, resume_variant_detail=?, "
             "updated_at=? WHERE user_id=?",
