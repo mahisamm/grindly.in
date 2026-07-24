@@ -568,6 +568,26 @@ def _scrape_jd_if_available(src: str, mod, url: str, uid: str) -> str:
     try:
         return fn(url, uid) or ""
     except Exception as e:  # noqa: BLE001
+        # Playwright's synchronous API refuses to start on a thread that happens
+        # to own a running asyncio loop. Some LLM/provider clients leave exactly
+        # that state behind on the main worker thread. Retry the read-only scrape
+        # on a fresh thread, and close its browser on that same thread because
+        # Playwright objects are thread-bound.
+        if "Sync API inside the asyncio loop" in str(e):
+            def scrape_in_isolated_thread() -> str:
+                try:
+                    return fn(url, uid) or ""
+                finally:
+                    close = getattr(mod, "close", None)
+                    if callable(close):
+                        close(uid)
+
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    return executor.submit(scrape_in_isolated_thread).result()
+            except Exception as retry_error:  # noqa: BLE001
+                log.warning("%s isolated scrape_jd retry error: %s", src, retry_error)
+                return ""
         log.warning("%s scrape_jd error: %s", src, e)
         return ""
 
