@@ -411,7 +411,17 @@ def answer_fields(
         # with the question effectively unanswered instead of waiting for the
         # candidate. Anything genuinely known (CGPA, phone, email) was already
         # answered from the profile above and never reaches here.
-        if _WANTS_A_DATUM.search(f["label"] or ""):
+        # A checkable claim about the candidate is theirs to make, so it never
+        # reaches the model either. The model only ever sees the parsed resume,
+        # so when extraction misses something it answers "My resume does not
+        # mention a B.Tech degree" — volunteering a DENIAL of a credential the
+        # candidate may well hold, under their name, to an employer, permanently.
+        # That is the same failure as the old auto-"Yes" pointed the other way.
+        #
+        # The cost is real and accepted: more applications stop for the
+        # candidate to finish. An application that waits is recoverable; a
+        # misstatement sent to an employer is not.
+        if _WANTS_A_DATUM.search(f["label"] or "") or _FACTUAL_CLAIM.search(f["label"] or ""):
             out.append({
                 "question": f["label"], "answer": "",
                 "source": "unanswerable", "kind": f["kind"], "_i": i,

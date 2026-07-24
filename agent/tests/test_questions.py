@@ -192,6 +192,24 @@ def test_a_checkable_claim_is_never_auto_answered(label):
     assert out[0]["answer"] == "", f"{label!r} was answered {out[0]['answer']!r}"
 
 
+@pytest.mark.parametrize("label", FABRICABLE)
+def test_a_checkable_claim_is_never_sent_to_the_model_either(label):
+    """The model only sees the parsed resume, so when extraction misses
+    something it answers "My resume does not mention a B.Tech degree" — a
+    volunteered DENIAL of a credential the candidate may actually hold, sent
+    under their name. Observed in production with the real providers up."""
+    called = {"n": 0}
+
+    def _spy(*a, **k):
+        called["n"] += 1
+        return {"0": "My resume does not mention that."}
+
+    with patch.object(questions.llm_mod, "chat_json_ensemble", side_effect=_spy):
+        out = _answer([_field(label, kind="text", required=True)])
+    assert out[0]["answer"] == ""
+    assert called["n"] == 0, f"{label!r} was sent to the LLM"
+
+
 @pytest.mark.parametrize("label,options", [
     ("Do you require visa sponsorship?", ["Yes", "No"]),
     ("What is your notice period?", ["Immediately", "15 days", "1 month"]),
