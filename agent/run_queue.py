@@ -21,12 +21,19 @@ import db
 log = logging.getLogger("grindly.queue")
 
 STALE_LOCK_MS = 30 * 60 * 1000  # a job locked longer than this is presumed crashed
-# Absolute wall-clock cap on a single run. The heartbeat renews locked_at every
+# Absolute wall-clock cap on a single ATTEMPT. The heartbeat renews locked_at every
 # ~60s regardless of whether the run is making progress, so a genuinely wedged run
 # (e.g. a hung browser close) never trips STALE_LOCK_MS and would block the user's
-# queue forever. Any run still 'running' this long after it was created is failed
-# regardless of its lease. 45min is far past any real run (human-paced runs yield
-# back to 'queued' rather than holding the lock), so this won't cut a live one.
+# queue forever. Enforced by the heartbeat thread itself (_heartbeat_loop), which
+# is the only place that knows when THIS attempt started.
+#
+# It used to be enforced in SQL as `status='running' AND created_at < cutoff`, and
+# created_at is the row's birth, not the attempt's. A human-paced run yields with
+# reschedule() and is re-claimed minutes later on the same row — so once the row
+# was 45 minutes old, every subsequent attempt was force-'failed' the moment
+# reclaim_stale next ran, no matter how long it had actually been executing. A
+# spread run (5-15 min between platforms, times the daily cap) crosses that line
+# by design and could never finish.
 MAX_RUN_MS = 45 * 60 * 1000
 BACKOFF_BASE_MS = 2 * 60 * 1000  # linear backoff: 2min * attempts already made
 HEARTBEAT_INTERVAL_SECONDS = max(
@@ -122,15 +129,10 @@ def reclaim_stale(now_ms: int | None = None):
             "AND attempts < max_attempts",
             (ts, cutoff),
         )
-        # Absolute-duration backstop: a run wedged past MAX_RUN_MS is failed
-        # regardless of its (heartbeat-renewed) lock, freeing active_key so the
-        # user's next enqueue isn't blocked forever. See MAX_RUN_MS.
-        c.execute(
-            "UPDATE agent_runs SET status='failed', error='run exceeded max duration', "
-            "active_key=NULL, locked_by=NULL, locked_at=NULL, updated_at=? "
-            "WHERE status='running' AND created_at < ?",
-            (ts, db.time_ago_db(MAX_RUN_MS)),
-        )
+        # The absolute-duration backstop lives in _heartbeat_loop, not here — see
+        # MAX_RUN_MS. Once that loop stops renewing, locked_at goes stale and the
+        # two statements above reclaim the row, so active_key is still freed
+        # without a clause that cannot tell a long run from an old one.
 
 
 def heartbeat(run_id: str, worker_id: str) -> bool:
@@ -341,19 +343,53 @@ def mark_failed(run_id: str, worker_id: str, error: str) -> bool:
 
 
 def _heartbeat_loop(run_id: str, worker_id: str, stop: threading.Event) -> None:
+    """Renew this attempt's lease until it finishes, its lease is taken, or it
+    runs past MAX_RUN_MS.
+
+    This loop is where the duration cap belongs: it is the only thing that knows
+    when THIS attempt began. Stopping renewal lets locked_at go stale, and
+    reclaim_stale then requeues or fails the row on its usual terms — so a wedged
+    run still gives its active_key back, and a legitimately long one is never cut
+    for the sin of being on an old row.
+
+    A DB blip must not end the attempt. This thread is a daemon: an exception
+    escaping it kills the lease silently while run_fn carries on working, and the
+    row is later reclaimed underneath a run that is still going. Log and retry on
+    the next tick instead — a single missed renewal has 30 minutes of
+    STALE_LOCK_MS slack behind it."""
+    started = time.monotonic()
     while not stop.wait(HEARTBEAT_INTERVAL_SECONDS):
-        if not heartbeat(run_id, worker_id):
-            log.error("job %s lease was lost by worker %s", run_id, worker_id)
+        if (time.monotonic() - started) * 1000 >= MAX_RUN_MS:
+            log.error(
+                "job %s exceeded the %d-minute cap on one attempt; releasing its lease",
+                run_id, MAX_RUN_MS // 60000,
+            )
             return
+        try:
+            if not heartbeat(run_id, worker_id):
+                log.error("job %s lease was lost by worker %s", run_id, worker_id)
+                return
+        except Exception:  # noqa: BLE001
+            log.exception("heartbeat for job %s failed; retrying next tick", run_id)
 
 
 def drain(worker_id: str, run_fn) -> int:
     """Claim + run every available job once. `run_fn(uid, mode) -> dict`.
     Returns number of jobs processed. Per-job failures are caught + retried."""
-    reclaim_stale()
+    try:
+        reclaim_stale()
+    except Exception:  # noqa: BLE001
+        # Housekeeping, not the work itself. A DB blip here used to abort the whole
+        # drain and (from serve) exit the process, leaving every 'running' row
+        # locked with nothing left alive to release it.
+        log.exception("reclaim_stale failed; draining anyway")
     processed = 0
     while True:
-        job = claim_next(worker_id)
+        try:
+            job = claim_next(worker_id)
+        except Exception:  # noqa: BLE001
+            log.exception("claim_next failed; ending this drain")
+            break
         if not job:
             break
         processed += 1
@@ -378,7 +414,13 @@ def drain(worker_id: str, run_fn) -> int:
                 log.error("job %s completed after its lease was lost; result discarded", job["id"])
         except Exception as e:  # noqa: BLE001
             log.error("job %s failed (attempt %d): %s", job["id"], job["attempts"], e)
-            mark_failed(job["id"], worker_id, str(e))
+            try:
+                mark_failed(job["id"], worker_id, str(e))
+            except Exception:  # noqa: BLE001
+                # If this one raises too, the row stays 'running' and its
+                # active_key keeps blocking the user's next enqueue until
+                # reclaim_stale gets to it. Nothing to do but say so.
+                log.exception("could not record the failure of job %s", job["id"])
         finally:
             stop_heartbeat.set()
             heartbeat_thread.join(timeout=1)
@@ -389,7 +431,16 @@ def serve(worker_id: str, run_fn, interval: int = 10):
     """Drain in a loop forever (simple service mode)."""
     log.info("serve loop as %s, poll %ds", worker_id, interval)
     while True:
-        n = drain(worker_id, run_fn)
+        try:
+            n = drain(worker_id, run_fn)
+        except Exception:  # noqa: BLE001
+            # The service loop outlives any one failure. Letting an exception out
+            # of here exits the worker process; under Compose's restart policy
+            # that is a container flap, and in the window before it comes back
+            # nothing polls the queue at all — the user presses Run and waits on a
+            # worker that is not there.
+            log.exception("drain raised; retrying after the poll interval")
+            n = 0
         if n:
             log.info("drained %d job(s)", n)
         time.sleep(interval)

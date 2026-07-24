@@ -128,6 +128,38 @@ def test_tailor_key_separates_the_same_title_at_different_companies():
     assert acme != bolt
 
 
+def test_tailor_key_separates_titles_that_share_a_long_prefix():
+    """The readable part of the key is the title cut to 30 characters. These two
+    roles at one company are identical for 30 characters and want opposite
+    resumes, so the truncated form handed the backend listing the frontend
+    tailoring — and the run logged a tailored resume for a role that never got
+    one."""
+    back = worker._tailor_key("Software Development Engineer Intern - Backend", "Acme")
+    front = worker._tailor_key("Software Development Engineer Intern - Frontend", "Acme")
+    assert back != front
+
+
+def test_tailor_key_separates_titles_that_differ_only_in_punctuation():
+    """Non-alphanumerics collapse to "_", so the two below were one key. The
+    languages are not the same language."""
+    assert worker._tailor_key("C++ Developer", "Acme") != \
+        worker._tailor_key("C Developer", "Acme")
+
+
+def test_tailor_key_does_not_move_the_field_boundary():
+    """A digest over "title + company" alone would let a longer title eat into
+    the company's characters and match a shorter title at a longer company."""
+    assert worker._tailor_key("Data Science", "Intern Corp") != \
+        worker._tailor_key("Data Science Intern", "Corp")
+
+
+def test_tailor_key_is_stable_for_the_same_role():
+    """It is a cache key: the same listing seen twice in one run must hit, or
+    every match re-runs the LaTeX tailoring."""
+    assert worker._tailor_key("Backend Intern", "Acme") == \
+        worker._tailor_key(" Backend Intern ", "ACME")
+
+
 # ---------- _schedule_day ----------
 
 def test_a_full_pipeline_spreads_evenly_over_the_month():

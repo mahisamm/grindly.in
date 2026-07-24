@@ -246,7 +246,22 @@ def compile_report(tex_source: str, out_pdf: str) -> CompileResult:
 
     Never raises — a resume that won't build must degrade to sending the master
     PDF, not blow up the run. On any failure returns CompileResult(ok=False).
+
+    "Never raises" was a claim, not a guarantee: the subprocess call was guarded
+    but the filesystem work around it was not. A full disk or an unwritable
+    output directory raised OSError out of tempfile / open / makedirs /
+    copyfile, past the caller in worker._get_resume, and killed the entire run —
+    for a resume tailoring that the caller was fully prepared to skip. The
+    fallback is always the master PDF, so nothing here is worth a run.
     """
+    try:
+        return _compile_report(tex_source, out_pdf)
+    except Exception as e:  # noqa: BLE001
+        print(f"[latex] compile aborted: {type(e).__name__}: {e}")
+        return CompileResult(False)
+
+
+def _compile_report(tex_source: str, out_pdf: str) -> CompileResult:
     bad = unsafe_commands(tex_source)
     if bad:
         print(f"[latex] refusing to compile — unsafe command(s): {bad}")

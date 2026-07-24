@@ -293,12 +293,20 @@ def _latex_body_is_safe(new_body: str, old_body: str) -> bool:
     return True
 
 
-def _no_invented_skills(new_body: str, old_body: str, master_skills: list[str]) -> bool:
+def _no_invented_content(new_body: str, old_body: str, master_skills: list[str]) -> bool:
     """The truthfulness guard, at the LaTeX level. Every word-ish token in the new
-    Skills body must be something the candidate can actually defend: it was already
-    in that section, or it is in their master skill set. Reordering and dropping
+    body must be something the candidate can actually defend: it was already in
+    that section, or it is in their master skill set. Reordering and dropping
     are free; inventing is not — a fabricated skill is a wasted interview and a
-    burnt reputation."""
+    burnt reputation.
+
+    Applies to EVERY editable section, not only Skills. Hobbies used to be
+    accepted on structural checks alone, and the same prompt that writes it
+    carries 400 characters of untrusted listing text — so "Hobbies: chess,
+    photography" could come back as "AWS certification study group" and go to a
+    recruiter with nothing between it and the PDF. The rule the system prompt
+    already states ("You may REORDER and you may REMOVE. You may not INVENT")
+    was only ever enforced on one of the two sections it was given."""
     allowed = set()
     for s in master_skills:
         allowed.update(re.findall(r"[a-z0-9+#.]+", s.lower()))
@@ -365,7 +373,7 @@ def tailor_latex(
             continue
         if not _latex_body_is_safe(new_body, old_body):
             continue
-        if slot == "skills" and not _no_invented_skills(new_body, old_body, master_skills):
+        if not _no_invented_content(new_body, old_body, master_skills):
             continue
         edits[slot] = new_body
 

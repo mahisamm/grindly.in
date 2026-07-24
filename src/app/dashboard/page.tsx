@@ -899,12 +899,14 @@ export default function Dashboard() {
     if (pollingRunId.current === runId || finishedRunId.current === runId) return;
     pollingRunId.current = runId;
     const started = Date.now();
+    let consecutiveErrors = 0;
     const step = async () => {
       if (unmounted.current) { pollingRunId.current = null; return; }
       try {
         const r = await fetch(`/api/agent/run?id=${runId}`);
         const s = await r.json();
         if (unmounted.current) { pollingRunId.current = null; return; }
+        consecutiveErrors = 0;
         if (s.status === "done" || s.status === "failed" || s.status === "cancelled") {
           pollingRunId.current = null;
           finishedRunId.current = runId;
@@ -920,11 +922,36 @@ export default function Dashboard() {
         // clears when the run finishes (or ages out, see /api/me's staleness
         // guard). Without this a run longer than the window left `running` stuck
         // true after activeRun cleared, freezing the CTA until a reload.
-        if (Date.now() - started > 240_000) { pollingRunId.current = null; setRunning(false); load(); return; }
+        //
+        // Say so, too. Giving up silently looked identical to a run that had
+        // finished and found nothing — the spinner stopped, the list didn't move,
+        // and there was no way to tell "still working" from "done, no matches".
+        if (Date.now() - started > 240_000) {
+          pollingRunId.current = null;
+          setRunning(false);
+          setNotice({
+            kind: "info",
+            text: "Your agent is still working — a full run can take a while. This page updates on its own; nothing is stuck.",
+          });
+          load();
+          return;
+        }
         setTimeout(step, 2500);
       } catch {
-        pollingRunId.current = null;
-        if (!unmounted.current) load();
+        if (unmounted.current) { pollingRunId.current = null; return; }
+        // A blip is not an ending. This used to abandon the poll on the first
+        // failed fetch WITHOUT clearing `running`, so one dropped request left
+        // the header on "Agent working…" until a reload — for a run that had
+        // very likely already finished.
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= 4) {
+          pollingRunId.current = null;
+          setRunning(false);
+          setNotice({ kind: "err", text: "Lost contact with the server while your agent was running. Reload to see where it got to." });
+          load();
+          return;
+        }
+        setTimeout(step, 2500 * consecutiveErrors);   // back off, keep watching
       }
     };
     setTimeout(step, 2000);

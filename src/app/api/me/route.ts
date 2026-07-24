@@ -22,6 +22,10 @@ const OTP_TIMEOUT_MS = 360_000;
 // the run button. Generous enough to never cut a genuinely-running job short.
 const ACTIVE_RUN_MAX_AGE_MS = 20 * 60_000;
 
+// The web flips resumeVariantStatus to "generating" and enqueues the optimize run
+// a moment later. Inside that gap "generating with no run" is normal, not wedged.
+const VARIANT_ENQUEUE_GRACE_MS = 30_000;
+
 export async function GET() {
   const uid = await getUid();
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
@@ -68,6 +72,39 @@ export async function GET() {
   const activeRun = activeRunRow
     ? { id: activeRunRow.id, status: activeRunRow.status, startedAt: activeRunRow.createdAt }
     : null;
+
+  // "Building…" is written by the web the instant Generate is pressed, and only
+  // ever cleared by the worker. So any way the worker fails to reach its own
+  // status write — container restart, a run reclaimed as stale, an exception
+  // before the first set_variant_status — leaves the card reading "Building…"
+  // with the Generate button hidden. Forever: nothing but re-uploading the master
+  // resume resets it, and there is no reason a user would guess that.
+  //
+  // Derive it from the job instead of trusting the flag. No optimize run queued
+  // or running means nothing is being built, whatever the column says. Same
+  // shape as ACTIVE_RUN_MAX_AGE_MS above, with the grace window covering the
+  // gap between the status write and the enqueue that follows it.
+  let profile = user.profile;
+  if (
+    profile?.resumeVariantStatus === "generating" &&
+    Date.now() - new Date(profile.updatedAt).getTime() > VARIANT_ENQUEUE_GRACE_MS
+  ) {
+    const building = await prisma.agentRun
+      .findFirst({
+        where: { userId: uid, mode: "optimize", status: { in: ["queued", "running"] } },
+        select: { id: true },
+      })
+      // A DB blip must not wipe out a build that is genuinely running.
+      .catch(() => ({ id: "assume-building" }));
+    if (!building) {
+      profile = {
+        ...profile,
+        resumeVariantStatus: "error",
+        resumeVariantDetail:
+          "That build stopped before it finished — press Generate to try again.",
+      };
+    }
+  }
 
   // In-app notifications feed — folded into /api/me (already polled) so the
   // dashboard bell costs no extra request. Two cheap indexed queries.
@@ -250,7 +287,7 @@ export async function GET() {
       internshalaLoginEnabled: internshalaLoginEnabled(user),
       paymentsEnabled: process.env.PAYMENTS_ENABLED === "true",
     },
-    profile: user.profile,
+    profile,
     applications: slimApps,
     reports: user.reports,
     stats,

@@ -660,12 +660,26 @@ def _fetch_source_all_kw(
 
 
 def _tailor_key(title: str, company: str = "") -> str:
-    """Cache key for a tailored resume. Includes the company: two listings can
-    share a title ("Web Development Internship" is on Internshala a hundred times)
-    while asking for very different things, and reusing one company's tailored
-    resume for another is exactly the kind of silent wrongness nobody would catch."""
-    raw = f"{title.lower()[:30]}_{company.lower()[:20]}"
-    return re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+    """Cache key for a tailored resume — unique per (title, company).
+
+    Includes the company because two listings can share a title ("Web Development
+    Internship" is on Internshala a hundred times) while asking for very different
+    things, and reusing one company's tailored resume for another is exactly the
+    kind of silent wrongness nobody would catch.
+
+    The readable part is truncated so filenames and logs stay legible, which is
+    why it cannot BE the key on its own. "Software Development Engineer Intern -
+    Backend" and "... - Frontend" share their first 30 characters, and collapsing
+    punctuation makes "C++ Developer" and "C Developer" the same string. Either
+    collision hands one role the resume that was tailored for another — within a
+    single run, since the cache is keyed on exactly this. The digest is taken over
+    the untruncated pair, separated by a character normalization cannot produce,
+    so it is the part that actually tells the roles apart.
+    """
+    t, c = (title or "").strip().lower(), (company or "").strip().lower()
+    digest = hashlib.sha1(f"{t}\x1f{c}".encode()).hexdigest()[:10]
+    slug = re.sub(r"[^a-z0-9]+", "_", f"{t[:30]}_{c[:20]}").strip("_")
+    return f"{slug}_{digest}" if slug else digest
 
 
 def _schedule_day(slot: int, cap: int, days: int = PIPELINE_DAYS) -> int:
@@ -1222,6 +1236,28 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     def _get_resume(
         title: str, company: str, job_skills: list[str], jd_text: str = ""
     ) -> tuple[str | None, str | None]:
+        """_resume_for_role, with the guarantee its callers assume.
+
+        Every call site sits OUTSIDE the try that wraps the apply itself, so
+        anything raising in here took down the whole run — every remaining user
+        in the sweep included. And nothing in here is worth that: the answer to
+        any failure is "send the master resume untouched", which is already the
+        answer to most of the paths below.
+        """
+        if not live:
+            return None, None
+        try:
+            return _resume_for_role(title, company, job_skills, jd_text)
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "resume selection for %s @ %s failed (%s) — sending the master unchanged",
+                title, company, e,
+            )
+            return master_pdf, None
+
+    def _resume_for_role(
+        title: str, company: str, job_skills: list[str], jd_text: str = ""
+    ) -> tuple[str | None, str | None]:
         """Decide which resume this role gets, and record an immutable snapshot.
 
         Returns (pdf_path, resume_version_id) so the application row points at the
@@ -1236,9 +1272,9 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         the whole resume with fpdf2, which threw away the user's college template
         — the exact "it looks patched together" failure this is meant to fix. A
         resume we cannot edit correctly is one we must not edit at all.
+
+        Call it through _get_resume, which is the guarded entry point.
         """
-        if not live:
-            return None, None
         ckey = _tailor_key(title, company)
         if ckey in tailor_cache:
             return tailor_cache[ckey]
@@ -1283,7 +1319,17 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         if not edited:
             return _snapshot(master_pdf, text, False, "master, unchanged (no safe edit found)")
 
-        pdf = os.path.join(_tailored_dir, f"{ckey}.pdf")
+        # The filename carries a digest of the EDIT, not only of the role.
+        # `resume_versions` promises an immutable snapshot of the exact document a
+        # recruiter received, but the row stores a path — so writing every
+        # tailoring of this role to one `{ckey}.pdf` let the next run's edit
+        # silently replace the bytes behind every earlier row pointing there. The
+        # user would open last week's application and be shown this week's resume.
+        # Identical LaTeX still lands on one file (nothing is lost by that); a
+        # different edit gets its own.
+        pdf = os.path.join(
+            _tailored_dir, f"{ckey}_{hashlib.sha1(edited.encode()).hexdigest()[:10]}.pdf"
+        )
         result = latex_resume.compile_report(edited, pdf)
         if not result.ok:
             return _snapshot(master_pdf, text, False, "master, unchanged (LaTeX compile failed)")
@@ -1731,11 +1777,21 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         # Board-only pacing gates. An employer's own form is not the board and
         # has no shared rate limit with it, so a captcha cooldown or a per-run
         # board cap must not strand an application that never touches the board.
+        #
+        # Both bank through the pipeline, exactly like the two gates above. They
+        # used to file with no scheduled_for, which means due IMMEDIATELY — so
+        # hitting a captcha cooldown mid-sweep dumped every remaining match onto
+        # the dashboard at once, the mass-apply outcome the pipeline exists to
+        # prevent. Taking a slot matters just as much: without it the next banked
+        # row reuses this `slot` and two matches land on the same release.
         if is_platform_channel and _platform_blocked(src):
+            slot = pipeline + queued
+            queued += 1
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
                 reason=f"{reason} — {src} paused (captcha/challenge cooldown)", applied=False,
+                scheduled_for=_release_at(slot, plan_cap),
                 destination=dest,
             )
             continue
@@ -1743,11 +1799,14 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         # per-platform safety cap — keep a human-like pace on any one platform
         if (is_platform_channel and SAFETY_CAP_PER_PLATFORM > 0
                 and per_src_applied.get(src, 0) >= SAFETY_CAP_PER_PLATFORM):
+            slot = pipeline + queued
+            queued += 1
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
                 reason=f"{reason} — {src} per-run cap ({SAFETY_CAP_PER_PLATFORM}) reached",
-                applied=False, destination=dest,
+                applied=False, scheduled_for=_release_at(slot, plan_cap),
+                destination=dest,
             )
             continue
 
@@ -2102,7 +2161,11 @@ def optimize_variants(uid: str) -> dict:
     """
     user = db.get_user(uid)
     if not user:
+        # Still write a terminal status. The web set "generating" before enqueueing
+        # this run, and every early return that skips the write leaves the card on
+        # "Building…" with no way back but re-uploading the master resume.
         log.warning("optimize: no user %s", uid)
+        db.set_variant_status(uid, "error", "Couldn't load your profile — try again.")
         return {"error": "no user"}
 
     profile = user.get("profile") or {}

@@ -49,12 +49,19 @@ export async function POST() {
     );
   }
 
+  // `take` without `orderBy` is whatever order the DB feels like returning, so
+  // when there are more due matches than today's allowance this quietly approved
+  // an arbitrary subset — a different one each time, and not the ones the user
+  // was looking at when they pressed the button. Spend a capped allowance on the
+  // strongest matches, deterministically, with id as the final tiebreak so two
+  // rows of equal score and timestamp can never swap places between calls.
   const matched = await prisma.application.findMany({
     where: { userId: uid, ...dueNow() },
     select: {
       id: true, reason: true, jobTitle: true, company: true, url: true,
       applyChannel: true, applyTier: true, applyTarget: true,
     },
+    orderBy: [{ matchScore: "desc" }, { createdAt: "desc" }, { id: "asc" }],
     take: approvable,
   });
   if (matched.length === 0) return NextResponse.json({ ok: true, approved: 0 });

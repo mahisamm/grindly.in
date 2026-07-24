@@ -183,7 +183,7 @@ def test_reordering_and_dropping_skills_is_allowed():
     old = "Python, JavaScript, React, Node, SQL"
     new = "React, JavaScript, Node"          # reordered + dropped, nothing invented
     assert resume_ai._latex_body_is_safe(new, old) is True
-    assert resume_ai._no_invented_skills(new, old, ["python", "react"]) is True
+    assert resume_ai._no_invented_content(new, old, ["python", "react"]) is True
 
 
 def test_inventing_a_skill_is_rejected():
@@ -191,7 +191,7 @@ def test_inventing_a_skill_is_rejected():
     candidate cannot defend it in the room."""
     old = "Python, JavaScript"
     new = "Python, JavaScript, Kubernetes"   # never on the resume, never in master
-    assert resume_ai._no_invented_skills(new, old, ["python", "javascript"]) is False
+    assert resume_ai._no_invented_content(new, old, ["python", "javascript"]) is False
 
 
 def test_a_master_skill_absent_from_the_section_may_be_surfaced():
@@ -199,7 +199,43 @@ def test_a_master_skill_absent_from_the_section_may_be_surfaced():
     not currently listed in that section — is the whole point of tailoring."""
     old = "Python, JavaScript"
     new = "Python, JavaScript, Docker"
-    assert resume_ai._no_invented_skills(new, old, ["python", "javascript", "docker"]) is True
+    assert resume_ai._no_invented_content(new, old, ["python", "javascript", "docker"]) is True
+
+
+def test_the_hobbies_section_is_guarded_too(monkeypatch):
+    """The guard ran on `slot == "skills"` only, so Hobbies reached the PDF on
+    structural checks alone — and the prompt that writes it carries 400
+    characters of the listing's own text. A credential invented there is exactly
+    as damaging in the interview room as one invented under Skills."""
+    tex = (
+        "\\documentclass{article}\\begin{document}\n"
+        "\\section*{Skills}\nPython, JavaScript\n"
+        "\\section*{Hobbies}\nChess, Photography\n"
+        "\\end{document}\n"
+    )
+    monkeypatch.setattr(resume_ai.llm_mod, "chat_json_ensemble", lambda *a, **k: {
+        "hobbies": "Chess, Photography, AWS certification study group",
+    })
+    assert resume_ai.tailor_latex(
+        tex, "Cloud Intern", "Acme", ["aws"], master_skills=["python", "javascript"]
+    ) is None
+
+
+def test_a_truthful_hobbies_rewrite_still_goes_through(monkeypatch):
+    """Guarding it must not freeze it — reordering and dropping stay free."""
+    tex = (
+        "\\documentclass{article}\\begin{document}\n"
+        "\\section*{Skills}\nPython, JavaScript\n"
+        "\\section*{Hobbies}\nChess, Photography, Cricket\n"
+        "\\end{document}\n"
+    )
+    monkeypatch.setattr(resume_ai.llm_mod, "chat_json_ensemble", lambda *a, **k: {
+        "hobbies": "Photography, Chess",
+    })
+    out = resume_ai.tailor_latex(
+        tex, "Design Intern", "Acme", [], master_skills=["python"]
+    )
+    assert out is not None and "Photography, Chess" in out
 
 
 # --- fit: when do we bother editing at all? ---------------------------------

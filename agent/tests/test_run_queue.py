@@ -2,7 +2,10 @@
 import sqlite3
 import sys
 import os
+import threading
 import time
+from unittest import mock
+
 import pytest
 
 # Ensure agent/ is on the path
@@ -349,3 +352,108 @@ def test_maintenance_warning_is_throttled(_maintenance_on, caplog):
             run_queue.claim_next("w1")
     hits = [r for r in caplog.records if "MAINTENANCE MODE" in r.getMessage()]
     assert len(hits) == 1
+
+
+# ─── the duration cap ─────────────────────────────────────────────────────
+
+def test_a_long_lived_row_is_not_failed_for_being_old():
+    """The cap used to read `created_at < now - MAX_RUN_MS`, which is the row's
+    age, not the attempt's. Human-paced work yields with reschedule() and is
+    re-claimed on the SAME row for hours — so once the row passed 45 minutes,
+    every later attempt was force-'failed' the next time reclaim_stale ran, no
+    matter that it had been executing for seconds."""
+    rid = run_queue.enqueue("u1")
+    c = _get_conn()
+    old = _db_module.now_db() - (run_queue.MAX_RUN_MS * 3)
+    c.execute("UPDATE agent_runs SET created_at=? WHERE id=?", (old, rid))
+    c.commit()
+    assert run_queue.claim_next("w1")["id"] == rid   # fresh attempt, right now
+
+    run_queue.reclaim_stale()
+
+    row = c.execute("SELECT * FROM agent_runs WHERE id=?", (rid,)).fetchone()
+    assert row["status"] == "running"
+    assert row["active_key"] is not None
+
+
+def test_a_wedged_attempt_still_gives_its_lease_back():
+    """What the cap is actually for. The heartbeat renews locked_at every ~60s
+    whether or not the run is progressing, so a wedged run never trips
+    STALE_LOCK_MS on its own — the loop has to stop renewing."""
+    run_queue.enqueue("u1")
+    job = run_queue.claim_next("w1")
+    stop = threading.Event()
+
+    renewals = []
+    real = run_queue.heartbeat
+    monkey = lambda *a, **k: (renewals.append(1), real(*a, **k))[1]
+
+    with mock.patch.object(run_queue, "heartbeat", monkey), \
+         mock.patch.object(run_queue, "HEARTBEAT_INTERVAL_SECONDS", 0.01), \
+         mock.patch.object(run_queue, "MAX_RUN_MS", 400):   # >> Windows timer granularity
+        run_queue._heartbeat_loop(job["id"], "w1", stop)   # returns on its own
+
+    assert renewals, "it should renew while inside the cap"
+    # Renewal stopped, so locked_at now ages out and reclaim_stale takes the row.
+    c = _get_conn()
+    c.execute("UPDATE agent_runs SET locked_at=? WHERE id=?",
+              (_db_module.now_db() - run_queue.STALE_LOCK_MS - 1, job["id"]))
+    c.commit()
+    run_queue.reclaim_stale()
+    assert c.execute("SELECT status FROM agent_runs WHERE id=?",
+                     (job["id"],)).fetchone()["status"] == "queued"
+
+
+def test_a_heartbeat_blip_does_not_end_the_attempt():
+    """The thread is a daemon; an exception escaping it kills the lease silently
+    while run_fn keeps working, and the row gets reclaimed out from under a run
+    that is still going."""
+    run_queue.enqueue("u1")
+    job = run_queue.claim_next("w1")
+    stop = threading.Event()
+    calls = []
+
+    def flaky(rid, wid):
+        calls.append(1)
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        stop.set()
+        return True
+
+    with mock.patch.object(run_queue, "heartbeat", flaky), \
+         mock.patch.object(run_queue, "HEARTBEAT_INTERVAL_SECONDS", 0.01):
+        run_queue._heartbeat_loop(job["id"], "w1", stop)
+
+    assert len(calls) == 2, "it must retry on the next tick, not give up"
+
+
+# ─── the loops outlive a blip ─────────────────────────────────────────────
+
+def test_drain_runs_even_if_housekeeping_fails():
+    run_queue.enqueue("u1")
+    ran = []
+    with mock.patch.object(run_queue, "reclaim_stale",
+                           side_effect=sqlite3.OperationalError("db is locked")):
+        assert run_queue.drain("w1", lambda uid, mode: ran.append(uid) or {}) == 1
+    assert ran == ["u1"]
+
+
+def test_serve_survives_a_drain_that_raises():
+    """Letting an exception out of serve exits the worker process. Under
+    Compose's restart policy that is a container flap, and nothing polls the
+    queue in the window before it returns — the user presses Run and waits on a
+    worker that is not running."""
+    calls = []
+
+    def boom(*_a, **_k):
+        calls.append(1)
+        if len(calls) >= 3:
+            raise KeyboardInterrupt        # the only way out of `while True`
+        raise sqlite3.OperationalError("db is locked")
+
+    with mock.patch.object(run_queue, "drain", boom), \
+         mock.patch.object(run_queue.time, "sleep", lambda _s: None):
+        with pytest.raises(KeyboardInterrupt):
+            run_queue.serve("w1", lambda uid, mode: {}, interval=0)
+
+    assert len(calls) == 3, "it must keep polling after a failed drain"
