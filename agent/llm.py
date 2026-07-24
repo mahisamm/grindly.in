@@ -63,8 +63,18 @@ def _set_degraded(value: bool) -> None:
 
 
 def last_ensemble_was_degraded() -> bool:
-    """True when the last ensemble in THIS thread returned a lone answer."""
+    """True when the last ensemble in THIS thread returned a lone answer.
+
+    Only meaningful immediately after a chat_json_ensemble call. Callers that
+    care should reset_ensemble_state() first, so a stale value from an earlier,
+    unrelated call on the same thread cannot be mistaken for this one's.
+    """
     return bool(getattr(_ensemble_state, "degraded", False))
+
+
+def reset_ensemble_state() -> None:
+    """Clear the degraded flag before a call whose result will be trusted."""
+    _set_degraded(False)
 
 
 def _retry_delay(error: Exception, attempt: int) -> float:

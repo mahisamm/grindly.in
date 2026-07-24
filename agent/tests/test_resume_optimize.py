@@ -87,6 +87,50 @@ def test_a_wholly_empty_struct_is_still_rejected():
     assert ro._sanitize_struct({"name": "", "contact_line": "", "sections": []}) is None
 
 
+# --- the truthfulness gate must not reject a skill the candidate has ---------
+
+_SRC = (
+    "SKILLS\nPython, TypeScript, JavaScript, React, Next.js, Node.js, "
+    "PostgreSQL, SQL, Docker, Git, Linux, REST APIs, Playwright"
+)
+_MASTER = ["python", "typescript", "react", "next.js", "node.js", "postgresql", "docker"]
+
+
+@pytest.mark.parametrize("token", ["node", "node.js", "next", "next.js", "js", "python"])
+def test_a_dotted_skill_defends_its_parts(token):
+    """The token pattern includes ".", so "Node.js" produced only the token
+    "node.js" — never "node". KNOWN_SKILLS lists plain "node", so the gate could
+    not defend it and rejected the rewrite for inventing a skill printed on the
+    candidate's own resume. Live, all three variants dropped on ['node'] and the
+    optimizer produced nothing at all."""
+    assert token in ro._allowed_tokens(_SRC, _MASTER)
+
+
+def test_a_realistic_rewrite_passes_the_gate():
+    allowed = ro._allowed_tokens(_SRC, _MASTER)
+    variant = {
+        "name": "A B", "contact_line": "Hyderabad, India | a@b.com",
+        "sections": [{"heading": "SKILLS", "items": [{"head": "", "sub": "", "bullets": [
+            "Frameworks: React, Next.js, Node.js",
+            "Data & Tools: PostgreSQL, Docker, Git, Linux",
+        ]}]}],
+    }
+    assert ro._fabricated_skills(variant, allowed) == []
+
+
+def test_a_genuinely_invented_skill_is_still_caught():
+    """The gate's whole purpose — relaxing the dotted-name case must not relax
+    this one."""
+    allowed = ro._allowed_tokens(_SRC, _MASTER)
+    variant = {
+        "name": "A", "contact_line": "Hyderabad, India",
+        "sections": [{"heading": "SKILLS", "items": [{"head": "", "sub": "", "bullets": [
+            "Kubernetes, AWS and Terraform at scale",
+        ]}]}],
+    }
+    assert set(ro._fabricated_skills(variant, allowed)) >= {"aws", "kubernetes"}
+
+
 def test_a_sanitized_struct_renders_to_a_real_document():
     r = ro._sanitize_struct({
         "name": "A B", "contact_line": "a@b.com",

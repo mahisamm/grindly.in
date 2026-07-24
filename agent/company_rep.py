@@ -94,6 +94,10 @@ def check_company(company: str, jd_text: str = "", block_threshold: float = 0.7)
             "cached": True,
         }
 
+    # Clear first: the degraded flag is thread-local and only describes the most
+    # recent ensemble, so a stale True from an unrelated call on this thread must
+    # not be read as this verdict's provenance.
+    llm_mod.reset_ensemble_state()
     obj = llm_mod.chat_json_ensemble(
         _prompt(company, jd_text), system=_SYSTEM, n=3, timeout=45, validator=_valid
     )

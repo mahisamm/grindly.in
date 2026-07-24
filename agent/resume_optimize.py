@@ -329,10 +329,30 @@ def _rewrite_struct(base_struct: dict, instruction: str, master_skills: list[str
 def _allowed_tokens(source_text: str, master_skills: list[str]) -> set[str]:
     """Every alnum-ish token the candidate can defend: it appears in their resume
     text, or it's in their extracted master skill set. A variant may use only
-    these as skill/tool vocabulary."""
-    allowed: set[str] = set(re.findall(r"[a-z0-9+#.]+", (source_text or "").lower()))
+    these as skill/tool vocabulary.
+
+    Dotted names are also registered by their parts. The token pattern includes
+    ".", so "Node.js" produced the single token "node.js" and never "node" —
+    then _fabricated_skills, whose KNOWN_SKILLS vocabulary lists plain "node",
+    could not defend it and rejected the rewrite for "inventing" a skill printed
+    on the candidate's own resume. Observed live: all three variants dropped on
+    ['node'], so the optimizer produced nothing at all. The same held for
+    ".NET", "Vue.js" and anything else punctuated.
+    """
+    def _add(target: set[str], text: str) -> None:
+        for tok in re.findall(r"[a-z0-9+#.]+", text):
+            tok = tok.strip(".")
+            if not tok:
+                continue
+            target.add(tok)
+            if "." in tok:
+                # "node.js" also defends "node" and "js".
+                target.update(p for p in tok.split(".") if len(p) >= 2)
+
+    allowed: set[str] = set()
+    _add(allowed, (source_text or "").lower())
     for s in master_skills or []:
-        allowed.update(re.findall(r"[a-z0-9+#.]+", s.lower()))
+        _add(allowed, s.lower())
     return allowed
 
 
