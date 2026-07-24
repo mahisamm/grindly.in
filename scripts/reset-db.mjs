@@ -46,23 +46,36 @@ async function resetDb() {
   // Order matters — delete children before parents (FK constraints)
   const results = await prisma.$transaction([
     prisma.auditLog.deleteMany(),
+    prisma.supportTicket.deleteMany(),
     prisma.notification.deleteMany(),
+    prisma.extensionToken.deleteMany(),
     prisma.report.deleteMany(),
     prisma.otpToken.deleteMany(),
+    prisma.otpAttempt.deleteMany(),
+    prisma.passwordResetToken.deleteMany(),
+    prisma.rateLimitEntry.deleteMany(),
     prisma.agentRun.deleteMany(),
     prisma.platformCredential.deleteMany(),
     prisma.userIntegration.deleteMany(),
     prisma.application.deleteMany(),
+    prisma.resumeVariant.deleteMany(),
     prisma.resumeVersion.deleteMany(),
     prisma.profile.deleteMany(),
+    prisma.companyReputation.deleteMany(),
     prisma.job.deleteMany(),
     prisma.user.deleteMany(),
+    prisma.backupHealth.deleteMany(),
+    prisma.accessAllowlist.deleteMany(),
+    prisma.pageView.deleteMany(),
   ]);
 
   const labels = [
-    "audit_logs", "notifications", "reports", "otp_tokens", "agent_runs",
-    "platform_credentials", "user_integrations", "applications",
-    "resume_versions", "profiles", "jobs", "users",
+    "audit_logs", "support_tickets", "notifications", "extension_tokens",
+    "reports", "otp_tokens", "otp_attempts", "password_reset_tokens",
+    "rate_limit_entries", "agent_runs", "platform_credentials",
+    "user_integrations", "applications", "resume_variants",
+    "resume_versions", "profiles", "company_reputation", "jobs", "users",
+    "backup_health", "access_allowlist", "page_views",
   ];
   results.forEach((r, i) => console.log(`  deleted ${r.count} ${labels[i]}`));
 
