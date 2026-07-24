@@ -30,11 +30,14 @@ export default function AdminSupport() {
     const params = new URLSearchParams({ status, page: String(page) });
     fetch(`/api/admin/support?${params}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then(setD)
+      .then((data) => {
+        setErr("");
+        setD(data);
+      })
       .catch(() => setErr("Failed to load."));
   }, [status, page]);
 
-  useEffect(() => { setErr(""); load(); }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   async function act(id: string, action: "resolve" | "reopen") {
     setBusy(id);
