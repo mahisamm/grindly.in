@@ -439,38 +439,96 @@ def _render_latex(struct: dict) -> str:
 
 # ---------------- sanitizers ----------------
 
+def _coerce_bullets(raw: object) -> list[str]:
+    """Bullets, from whatever the model actually returned.
+
+    A plain string is ONE bullet, never an iterable of characters. Iterating it
+    is the bug this whole path exists to stop: `[b for b in "Python, React"]`
+    emits one \\item per letter, which still compiles, still clears the length
+    check, and reaches the user as a resume of single characters.
+    """
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        # Models often pack several bullets into one string.
+        parts = [p.strip(" -•\t") for p in re.split(r"[\r\n]+|(?<=[.;])\s{2,}", text)]
+        return [p for p in parts if p][:_MAX_BULLETS]
+    if isinstance(raw, list):
+        return [str(b).strip() for b in raw if str(b).strip()][:_MAX_BULLETS]
+    return []
+
+
+def _coerce_items(raw: object) -> list[dict]:
+    """Items, tolerant of the shapes models actually emit."""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    items: list[dict] = []
+    for it in raw[:_MAX_ITEMS]:
+        if isinstance(it, str):
+            # A bare string is a bullet with no heading — common for SKILLS.
+            bullets = _coerce_bullets(it)
+            if bullets:
+                items.append({"head": "", "sub": "", "bullets": bullets})
+            continue
+        if not isinstance(it, dict):
+            continue
+        items.append({
+            "head": str(it.get("head") or it.get("title") or "").strip(),
+            "sub": str(it.get("sub") or it.get("subtitle") or "").strip(),
+            # "content"/"points" are the aliases seen most often after "bullets".
+            "bullets": _coerce_bullets(
+                it.get("bullets") if it.get("bullets") is not None
+                else it.get("content") if it.get("content") is not None
+                else it.get("points")
+            ),
+        })
+    return items
+
+
 def _sanitize_struct(struct: dict) -> dict | None:
-    """Coerce an LLM struct into the exact shape _render_latex expects, dropping
-    anything malformed. Returns None if there's no usable content at all."""
+    """Coerce an LLM struct into the exact shape _render_latex expects.
+
+    Tolerant on purpose. Strictly dropping every off-shape response meant a
+    model that returned items as plain strings, bullets as one string, or
+    sections as a dict lost all its content — the render then produced a
+    ~100-character .tex, the compiled PDF tripped the readability check, and the
+    user was told "the compiled PDF came out unreadable — a bug on our side" for
+    all three variants. Observed live.
+
+    Coercing keeps the content while still refusing to iterate a string into
+    per-character bullets, which is the failure that actually reaches a
+    recruiter.
+    """
     name = str(struct.get("name") or "").strip()
-    contact = str(struct.get("contact_line") or "").strip()
+    contact = str(struct.get("contact_line") or struct.get("contact") or "").strip()
     sections_in = struct.get("sections")
+
+    # {"SKILLS": [...], "PROJECTS": [...]} instead of a list of sections.
+    if isinstance(sections_in, dict):
+        sections_in = [
+            {"heading": k, "items": v} for k, v in sections_in.items()
+        ]
+
     sections: list[dict] = []
     if isinstance(sections_in, list):
         for sec in sections_in[:_MAX_SECTIONS]:
             if not isinstance(sec, dict):
                 continue
-            heading = str(sec.get("heading") or "").strip()
+            heading = str(sec.get("heading") or sec.get("title") or "").strip()
             if not heading:
                 continue
-            items_in = sec.get("items")
-            items: list[dict] = []
-            if isinstance(items_in, list):
-                for it in items_in[:_MAX_ITEMS]:
-                    if not isinstance(it, dict):
-                        continue
-                    bullets_in = it.get("bullets")
-                    bullets = (
-                        [str(b).strip() for b in bullets_in if str(b).strip()][:_MAX_BULLETS]
-                        if isinstance(bullets_in, list)
-                        else []
-                    )
-                    items.append({
-                        "head": str(it.get("head") or "").strip(),
-                        "sub": str(it.get("sub") or "").strip(),
-                        "bullets": bullets,
-                    })
+            items = _coerce_items(
+                sec.get("items") if sec.get("items") is not None else sec.get("content")
+            )
             sections.append({"heading": heading, "items": items})
+
+    # A struct whose sections all came back empty is not usable — rendering it
+    # produces a near-blank page, which is worse than reporting nothing.
+    if not any(s["items"] for s in sections):
+        return None
     if not name and not sections:
         return None
     return {"name": name, "contact_line": contact, "sections": sections}
