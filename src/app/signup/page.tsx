@@ -13,6 +13,13 @@ import { readAdminSettings } from "@/lib/adminSettings";
 // account, which is the only moment a new sign-up is distinguishable from a
 // returning user — /login is deliberately left alone so existing accounts sign
 // in exactly as before.
+// Must render per request. readAdminSettings() reads a file on disk that the
+// admin toggles at runtime, but this route has no other dynamic input, so Next
+// prerendered it as static — baking in whatever the flag happened to be at
+// BUILD time. The first deploy of this page shipped a permanent redirect to
+// /login and ignored the switch entirely.
+export const dynamic = "force-dynamic";
+
 export default function SignupPage() {
   if (!readAdminSettings().signupMaintenance) redirect("/login");
 
