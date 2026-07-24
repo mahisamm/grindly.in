@@ -547,13 +547,49 @@ def _expand_search_keywords(domains: list[str], skills: list[str]) -> list[list[
     return result[:4]  # cap at 4 to avoid hammering platforms
 
 
+# One dedicated thread per source for its Playwright work. Sync Playwright
+# objects are bound to the thread that created them, and discovery fetches each
+# source inside a ThreadPoolExecutor — so calling scrape_jd() straight from the
+# main thread afterwards hit "Sync API inside the asyncio loop" every time and
+# silently returned "". Live that cost real quality: indeed listings were scored
+# on title and skills alone, and with no JD text the resolver can never find the
+# employer's own Google Form or ATS link, so routing coverage sat at 0% and
+# auto-apply had nothing it was allowed to send.
+#
+# Keyed by source and reused, so every Playwright call for a given adapter
+# happens on the same thread for the life of the run.
+_source_threads: dict[str, concurrent.futures.ThreadPoolExecutor] = {}
+
+
+def _source_executor(src: str) -> concurrent.futures.ThreadPoolExecutor:
+    ex = _source_threads.get(src)
+    if ex is None:
+        ex = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix=f"pw-{src}"
+        )
+        _source_threads[src] = ex
+    return ex
+
+
+def _shutdown_source_threads() -> None:
+    for src, ex in list(_source_threads.items()):
+        try:
+            ex.shutdown(wait=False)
+        except Exception:  # noqa: BLE001
+            pass
+        _source_threads.pop(src, None)
+
+
 def _scrape_jd_if_available(src: str, mod, url: str, uid: str) -> str:
-    """Call mod.scrape_jd() if it exists; return '' otherwise."""
+    """Call mod.scrape_jd() if it exists; return '' otherwise.
+
+    Runs on the source's own thread — see _source_executor for why.
+    """
     fn = getattr(mod, "scrape_jd", None)
     if fn is None:
         return ""
     try:
-        return fn(url, uid) or ""
+        return _source_executor(src).submit(fn, url, uid).result(timeout=60) or ""
     except Exception as e:  # noqa: BLE001
         log.warning("%s scrape_jd error: %s", src, e)
         return ""
@@ -578,7 +614,8 @@ def _prepare_answers_if_available(
     if fn is None or not url:
         return None
     try:
-        fields = fn(url, uid)
+        # Same source thread as scrape_jd — this drives Playwright too.
+        fields = _source_executor(src).submit(fn, url, uid).result(timeout=90)
         if not fields:
             return None
         answers = questions.answer_fields(
@@ -2279,12 +2316,26 @@ def run_job(uid: str, mode: str) -> dict:
 
 
 def _close_all_adapter_contexts(uid: str) -> None:
+    # Close each adapter's context ON the thread that owns it. A context created
+    # by the source thread (scrape_jd / harvest_questions) cannot be closed from
+    # here — Playwright sync objects are thread-bound, the close silently fails,
+    # and the leftover Chromium holds the persistent-profile lock so the NEXT run
+    # cannot launch at all.
     for modname in ("internshala", "linkedin", "naukri", "unstop", "indeed"):
         try:
             mod = importlib.import_module(modname)
-            mod.close(uid)
+        except Exception:  # noqa: BLE001
+            log.exception("failed to import %s for context cleanup", modname)
+            continue
+        ex = _source_threads.get(modname)
+        try:
+            if ex is not None:
+                ex.submit(mod.close, uid).result(timeout=30)
+            else:
+                mod.close(uid)
         except Exception:  # noqa: BLE001
             log.exception("failed to close %s browser context for %s", modname, uid)
+    _shutdown_source_threads()
 
 
 def main():
