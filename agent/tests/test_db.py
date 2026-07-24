@@ -202,6 +202,31 @@ def test_applied_external_ids_excludes_skipped(testdb):
     assert ids == {"https://x/1", "https://x/3"}  # committed / awaiting a human
 
 
+def test_committed_role_keys_dedupes_the_same_role_across_boards(testdb):
+    """URL dedup only catches the SAME posting twice. One role cross-posted to two
+    boards has two URLs, so the worker also keys on (company, title) — and that
+    set has to survive across runs or the identical role is applied to again,
+    under the candidate's real name, at the same employer.
+
+    This runs real SQL on purpose: the first version selected `title`, but the
+    column is `job_title`, and the mistake raised inside run_for_user and failed
+    the whole live run rather than just this lookup."""
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="Backend Intern", company="Acme",
+                       url="https://internshala/1", score=90, status="applied",
+                       reason="r", applied=True)
+    db.add_application("u1", job_id=None, title="Frontend Intern", company="Acme",
+                       url="https://x/2", score=21, status="skipped",
+                       reason="below 65", applied=False)
+
+    keys = db.committed_role_keys("u1")
+
+    assert ("acme", "backend intern") in keys
+    # A skip is a scoring judgement that never reached the platform — it must
+    # stay re-considerable, exactly like applied_external_ids treats it.
+    assert ("acme", "frontend intern") not in keys
+
+
 def test_clear_skipped_only_removes_skipped_rows(testdb):
     _insert_user(testdb, "u1")
     db.add_application("u1", job_id=None, title="A", company="C", url="https://x/1",

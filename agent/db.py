@@ -281,15 +281,18 @@ def committed_role_keys(uid: str) -> set[tuple[str, str]]:
     must stay re-considerable.
     """
     with conn() as c:
+        # job_title, not title — the column is `job_title` on this table, and
+        # getting it wrong here raised inside run_for_user and failed the entire
+        # live run, not just this lookup.
         rows = c.execute(
-            "SELECT company, title FROM applications "
+            "SELECT company, job_title FROM applications "
             "WHERE user_id=? AND status <> 'skipped'",
             (uid,),
         ).fetchall()
         return {
-            ((r["company"] or "").lower(), (r["title"] or "").lower()[:40])
+            ((r["company"] or "").lower(), (r["job_title"] or "").lower()[:40])
             for r in rows
-            if r["company"] or r["title"]
+            if r["company"] or r["job_title"]
         }
 
 
