@@ -96,6 +96,7 @@ export default function GlobalError({
               </button>
             )}
             {/* A plain anchor, not next/link — routing is part of what may be broken. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a
               href="/"
               style={{
