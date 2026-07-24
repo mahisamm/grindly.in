@@ -166,10 +166,14 @@ export default function WaitlistPage() {
           )}
 
           <div className="mt-7 border-t border-[var(--line-2)] pt-5 text-xs text-muted">
-            <button onClick={signOut} className="underline hover:text-ink">
-              Sign out
-            </button>
-            <span className="mx-2">·</span>
+            {state !== "signedout" && (
+              <>
+                <button onClick={signOut} className="underline hover:text-ink">
+                  Sign out
+                </button>
+                <span className="mx-2">·</span>
+              </>
+            )}
             <Link href="/" className="underline hover:text-ink">
               Back to home
             </Link>
