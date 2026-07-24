@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { serviceStatus, missingProdConfig, encryptionKeyValid } from "@/lib/serverConfig";
 import { getAdminOrNull } from "@/lib/admin";
+import { databaseSchemaReady } from "@/lib/databaseHealth";
 
 /**
  * GET /api/health — readiness probe for deploys + manual checks.
@@ -21,8 +21,7 @@ export async function GET() {
   checks.encryptionKey = encryptionKeyValid();
 
   try {
-    await prisma.user.count();
-    checks.database = true;
+    checks.database = await databaseSchemaReady();
   } catch {
     checks.database = false;
   }
