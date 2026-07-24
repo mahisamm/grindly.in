@@ -31,6 +31,10 @@ export default function LoginPage() {
     if (e === "google_token") return "Google sign-in failed: could not retrieve your profile. Please try again.";
   if (e === "google_no_email") return "Your Google account does not have a verified email address. Please use an account with a verified email.";
   if (e === "google_not_configured") return "Google sign-in is temporarily unavailable.";
+    // These two can never succeed on a retry, so "Please try again" put the user
+    // in a loop with no way out and no idea why.
+    if (e === "google_disabled") return "Sign-in is paused right now while we do some maintenance. Please check back a little later.";
+    if (e === "domain_banned") return "We can't create an account for that email domain. If you think that's a mistake, write to mahendharsammeta21@gmail.com.";
     return "Google sign-in failed. Please try again.";
   });
 

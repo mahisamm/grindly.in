@@ -2,7 +2,7 @@
 // not just displayed in the admin UI. File-backed (single-instance-friendly;
 // same seam as rateLimit.ts if this ever needs to move to the DB).
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import path from "path";
 
 const SETTINGS_PATH = path.join(process.cwd(), "data", "admin-settings.json");
@@ -57,12 +57,30 @@ export function readAdminSettings(): AdminSettings {
 export function writeAdminSettings(s: AdminSettings): void {
   const dir = path.dirname(SETTINGS_PATH);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(SETTINGS_PATH, JSON.stringify(s, null, 2), "utf-8");
+  // Write to a temp file and rename. writeFileSync straight onto the live path
+  // is not atomic: a crash or a full disk mid-write leaves truncated JSON, and
+  // readAdminSettings() falls back to DEFAULTS on a parse error — which would
+  // silently lift maintenance mode, re-open the signup gate and clear every
+  // banned domain, with nothing to indicate it had happened. rename(2) is
+  // atomic on the same filesystem, so a reader sees either the old file or the
+  // complete new one.
+  const tmp = `${SETTINGS_PATH}.tmp`;
+  writeFileSync(tmp, JSON.stringify(s, null, 2), "utf-8");
+  renameSync(tmp, SETTINGS_PATH);
+}
+
+/** Normalize a domain the way both sides of the ban check must agree on. */
+function normalizeDomain(d: string): string {
+  return d.trim().toLowerCase().replace(/^@/, "").replace(/^www\./, "");
 }
 
 export function isEmailDomainBanned(email: string, settings?: AdminSettings): boolean {
-  const domain = email.split("@")[1]?.toLowerCase();
+  const domain = normalizeDomain(email.split("@")[1] ?? "");
   if (!domain) return false;
-  const list = (settings ?? readAdminSettings()).bannedDomains;
+  // Normalize BOTH sides. The stored list is only type-filtered when written, so
+  // an admin who typed "Gmail.com", " gmail.com" or "@gmail.com" got an entry
+  // that rendered as active in the UI, echoed back on save, and blocked nobody —
+  // a ban that silently did nothing.
+  const list = (settings ?? readAdminSettings()).bannedDomains.map(normalizeDomain);
   return list.includes(domain);
 }

@@ -30,7 +30,7 @@ export type SupportAI = {
 // Canned reply used when the model is unavailable. The ticket is still filed and
 // a human still sees it — this just keeps the chat from going silent.
 export const SUPPORT_FALLBACK_REPLY =
-  "Thanks — I've logged this and someone on the team will follow up by email. " +
+  "Thanks — I've logged this for the team to read. " +
   "If it helps, add any extra detail (what you expected, a screenshot) and we'll get on it.";
 
 // Fixed reply for out-of-scope requests. Server-controlled (NOT the model's own
@@ -48,7 +48,7 @@ export const SUPPORT_OFFTOPIC_REPLY =
 // reasons" four times to a student asking WHICH security reasons.
 export const SUPPORT_ESCALATION_REPLY =
   "I've given you the same answer twice and it clearly hasn't actually answered your question — sorry. " +
-  "I'm handing this to a human on the team; they'll follow up on this exact point by email. " +
+  "I've logged this for the team to read. " +
   "Anything you add here now goes to them with the thread.";
 
 // Two assistant replies "mean the same thing" if their word sets overlap heavily.

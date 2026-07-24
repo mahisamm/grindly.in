@@ -352,6 +352,13 @@ def apply(
     manual_final_submit, hold_reason = safety.requires_manual_final_submit("internshala")
     if manual_final_submit:
         return "needs_review", hold_reason
+    # Once the submit click lands, no error below may be reported as a plain
+    # "failed". worker._dispatch_apply retries a failure whose reason mentions a
+    # selector or an element, and a retry after a click that already went through
+    # files a SECOND real application on the candidate's account. `failed` is
+    # also not counted against their daily cap, so an application that really was
+    # sent would come back free. Same guard channel_ats.py carries.
+    submitted = False
     page = _context(uid).new_page()
     try:
         try:
@@ -485,6 +492,7 @@ def apply(
             return "skipped", "complex Internshala application requires manual completion"
 
         _human_click(page, submit)
+        submitted = True
         page.wait_for_timeout(random.randint(2000, 3500))
 
         status, why = safety.classify_submit(page, [
@@ -509,6 +517,11 @@ def apply(
             safety.screenshot(page, uid, f"exception_{job.get('external_id','')}")
         except Exception:
             pass
+        if submitted:
+            return safety.APPLY_STATUS.NEEDS_REVIEW, (
+                "submitted, but the page could not be read afterwards — "
+                f"check before re-sending ({err[:100]})"
+            )
         return "failed", f"error: {err[:120]}"
     finally:
         page.close()

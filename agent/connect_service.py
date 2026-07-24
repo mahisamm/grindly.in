@@ -140,14 +140,31 @@ def _run_session(
     except Exception as error:  # noqa: BLE001
         print(f"{log_prefix} session error for {uid}/{platform}: {error}")
     finally:
-        db.clear_connect_token(uid, platform)
-        _write_token_file(None)
-        _terminate(x11vnc)
-        _terminate(xvfb)
-        if not connected:
-            db.set_integration_status(uid, platform, "disconnected")
-        if worker_id is not None:
-            db.release_connect_request(uid, platform, worker_id)
+        # Every step is independently guarded and ordered so the ones that free
+        # real resources come first. Previously db.clear_connect_token was the
+        # first bare statement here: if it raised — and a DB blip at the end of a
+        # 7-minute session is exactly when it would — the X display and the VNC
+        # port stayed bound, the integration row was left on "connecting"
+        # forever, and the worker slot was never released. One transient error
+        # took out the whole connect service for every later user.
+        for step, fn in (
+            ("terminate x11vnc", lambda: _terminate(x11vnc)),
+            ("terminate xvfb", lambda: _terminate(xvfb)),
+            ("clear connect token", lambda: db.clear_connect_token(uid, platform)),
+            ("clear token file", lambda: _write_token_file(None)),
+            (
+                "mark disconnected",
+                lambda: None if connected else db.set_integration_status(uid, platform, "disconnected"),
+            ),
+            (
+                "release request",
+                lambda: None if worker_id is None else db.release_connect_request(uid, platform, worker_id),
+            ),
+        ):
+            try:
+                fn()
+            except Exception as cleanup_error:  # noqa: BLE001
+                print(f"{log_prefix} cleanup step '{step}' failed for {uid}/{platform}: {cleanup_error}")
         print(f"{log_prefix} session ended: {uid} / {platform} (connected={connected})")
 
 

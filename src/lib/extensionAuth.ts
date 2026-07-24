@@ -5,6 +5,7 @@
 // server-side, so a database leak yields nothing replayable.
 import crypto from "node:crypto";
 import { prisma } from "./prisma";
+import { hasAppAccess } from "./access";
 
 export type ExtensionAuth = { userId: string; tokenId: string };
 
@@ -39,9 +40,23 @@ export function bearerFrom(req: Request): string | null {
 export async function verifyToken(raw: string | null): Promise<ExtensionAuth | null> {
   if (!raw || !raw.startsWith(PREFIX)) return null;
   const row = await prisma.extensionToken
-    .findUnique({ where: { tokenHash: hashToken(raw) }, select: { id: true, userId: true, revokedAt: true } })
+    .findUnique({
+      where: { tokenHash: hashToken(raw) },
+      select: {
+        id: true,
+        userId: true,
+        revokedAt: true,
+        user: { select: { accessStatus: true, role: true, email: true } },
+      },
+    })
     .catch(() => null);
   if (!row || row.revokedAt) return null;
+  // The token is only as valid as the account behind it. Without this a paired
+  // browser kept reading Apply-Kit data — cover letters, tailored resumes,
+  // screening answers — after the account was denied or revoked, because
+  // nothing on this path ever consulted access. Revoking someone did not
+  // actually cut them off.
+  if (!row.user || !hasAppAccess(row.user)) return null;
   prisma.extensionToken
     .update({ where: { id: row.id }, data: { lastUsedAt: new Date() } })
     .catch(() => {});

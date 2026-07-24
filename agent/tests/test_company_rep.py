@@ -14,6 +14,39 @@ import db
 import company_rep
 
 
+def test_a_lone_provider_scam_verdict_is_downgraded_and_not_cached(monkeypatch):
+    """This cache is keyed by company name and shared by the whole fleet, so a
+    single hallucinated is_scam would block that employer for every user until
+    the TTL expired. chat_json_ensemble returns one provider's answer verbatim
+    when the others fail, bypassing the merge — so a lone verdict is a signal,
+    not a consensus."""
+    cached: list = []
+    monkeypatch.setattr(company_rep.db, "get_company_reputation", lambda *a, **k: None)
+    monkeypatch.setattr(company_rep.db, "set_company_reputation",
+                        lambda *a, **k: cached.append(a))
+    monkeypatch.setattr(company_rep.llm_mod, "chat_json_ensemble",
+                        lambda *a, **k: {"is_scam": True, "confidence": 0.99, "reason": "hallucinated"})
+    monkeypatch.setattr(company_rep.llm_mod, "last_ensemble_was_degraded", lambda: True)
+
+    out = company_rep.check_company("Acme Corp", "some jd")
+    assert out["verdict"] == company_rep.VERDICT_CAUTION
+    assert cached == [], "a lone-provider verdict must not enter the shared cache"
+
+
+def test_a_merged_scam_verdict_still_blocks_and_caches(monkeypatch):
+    cached: list = []
+    monkeypatch.setattr(company_rep.db, "get_company_reputation", lambda *a, **k: None)
+    monkeypatch.setattr(company_rep.db, "set_company_reputation",
+                        lambda *a, **k: cached.append(a))
+    monkeypatch.setattr(company_rep.llm_mod, "chat_json_ensemble",
+                        lambda *a, **k: {"is_scam": True, "confidence": 0.99, "reason": "fee demand"})
+    monkeypatch.setattr(company_rep.llm_mod, "last_ensemble_was_degraded", lambda: False)
+
+    out = company_rep.check_company("Acme Corp", "some jd")
+    assert out["verdict"] == company_rep.VERDICT_SCAM
+    assert len(cached) == 1
+
+
 def _real_conn(path):
     @contextmanager
     def conn():

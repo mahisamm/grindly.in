@@ -165,7 +165,18 @@ def _one_variant(
     if not rewritten:
         print(f"[optimize] {label}: rewrite produced nothing")
         return None, f"{label}: the rewrite step returned nothing (model unavailable)"
-    struct = rewritten.get("resume") if isinstance(rewritten.get("resume"), dict) else rewritten
+    raw_struct = rewritten.get("resume") if isinstance(rewritten.get("resume"), dict) else rewritten
+    # Sanitize the REWRITE too, not just the extraction. _extract_struct returns
+    # _sanitize_struct(out); this path returned the model's JSON untouched and
+    # handed it straight to _render_latex. A response with "bullets" as a plain
+    # string instead of a list is then iterated character by character, emitting
+    # one \item per letter: the section's content vanishes, the PDF still
+    # compiles, it clears the length check, gets scored, stored, and is offered
+    # to the user behind a button that overwrites their real master resume.
+    struct = _sanitize_struct(raw_struct) if isinstance(raw_struct, dict) else None
+    if not struct:
+        print(f"[optimize] {label}: rewrite came back malformed")
+        return None, f"{label}: the rewrite came back in a shape we couldn't use"
     changes = _clean_changes(rewritten.get("changes"))
 
     invented = _fabricated_skills(struct, allowed)

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/admin";
+import { requireAdmin, adminAudit } from "@/lib/admin";
 import { readAdminSettings, writeAdminSettings, type AdminSettings } from "@/lib/adminSettings";
 
 export const dynamic = "force-dynamic";
@@ -35,5 +35,26 @@ export async function POST(req: Request) {
   };
 
   writeAdminSettings(updated);
+
+  // Audit it. This is the highest-blast-radius mutation an admin can make —
+  // re-opening signups, lifting maintenance mode, disabling auto-apply for the
+  // whole fleet — and it was the one admin route with no adminAudit call, so
+  // those changes left no trace in /admin/audit at all. Records only what
+  // actually changed, so the log reads as a history rather than a snapshot.
+  const changes: string[] = [];
+  const note = (k: string, before: unknown, after: unknown) => {
+    if (JSON.stringify(before) !== JSON.stringify(after)) changes.push(`${k}: ${before} -> ${after}`);
+  };
+  note("maintenanceMode", current.maintenanceMode, updated.maintenanceMode);
+  note("signupMaintenance", current.signupMaintenance, updated.signupMaintenance);
+  note("openSignups", current.openSignups, updated.openSignups);
+  note("globalDailyCap", current.globalDailyCap, updated.globalDailyCap);
+  note("featureFlags.googleAuth", current.featureFlags.googleAuth, updated.featureFlags.googleAuth);
+  note("featureFlags.autoApply", current.featureFlags.autoApply, updated.featureFlags.autoApply);
+  note("bannedDomains", current.bannedDomains, updated.bannedDomains);
+  if (changes.length) {
+    await adminAudit(g.admin, "settings_update", changes.join("; ").slice(0, 500));
+  }
+
   return NextResponse.json({ ok: true, settings: updated });
 }

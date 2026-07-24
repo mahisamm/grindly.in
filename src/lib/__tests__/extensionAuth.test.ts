@@ -33,8 +33,10 @@ describe("extension token", () => {
     expect(stored).not.toBe(raw);
   });
 
+  const APPROVED = { accessStatus: "approved", role: "user", email: "u1@example.com" };
+
   it("verifies a valid token by hash and returns its owner", async () => {
-    mockFindUnique.mockResolvedValue({ id: "t1", userId: "u1", revokedAt: null });
+    mockFindUnique.mockResolvedValue({ id: "t1", userId: "u1", revokedAt: null, user: APPROVED });
     const auth = await verifyToken("gx_whatever");
     expect(auth).toEqual({ userId: "u1", tokenId: "t1" });
     // looked up by HASH, never by the raw token
@@ -42,7 +44,26 @@ describe("extension token", () => {
   });
 
   it("rejects a revoked token", async () => {
-    mockFindUnique.mockResolvedValue({ id: "t1", userId: "u1", revokedAt: new Date() });
+    mockFindUnique.mockResolvedValue({ id: "t1", userId: "u1", revokedAt: new Date(), user: APPROVED });
+    expect(await verifyToken("gx_x")).toBeNull();
+  });
+
+  it("rejects a live token whose ACCOUNT lost access", async () => {
+    // A token is only as valid as the account behind it. Nothing on this path
+    // consulted access, so a paired browser kept reading Apply-Kit data — cover
+    // letters, tailored resumes, screening answers — after the account was
+    // denied or revoked. Revoking someone did not actually cut them off.
+    for (const status of ["denied", "pending"]) {
+      mockFindUnique.mockResolvedValue({
+        id: "t1", userId: "u1", revokedAt: null,
+        user: { accessStatus: status, role: "user", email: "u1@example.com" },
+      });
+      expect(await verifyToken("gx_x")).toBeNull();
+    }
+  });
+
+  it("rejects a token whose user row is missing", async () => {
+    mockFindUnique.mockResolvedValue({ id: "t1", userId: "u1", revokedAt: null, user: null });
     expect(await verifyToken("gx_x")).toBeNull();
   });
 

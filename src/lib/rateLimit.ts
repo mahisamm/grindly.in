@@ -66,7 +66,16 @@ export function getIp(req: Request): string {
     const xri = req.headers.get("x-real-ip");
     if (xri) return xri;
   }
-  // Fallback — not spoofable but may be proxy IP on cloud deployments
-  return req.headers.get("x-real-ip") ?? "unknown";
+  // Untrusted deployment: read NO client-supplied header. This used to return
+  // `x-real-ip` under a comment claiming it was "not spoofable" — but any client
+  // can set that header, so rotating it defeated every IP-keyed limit here,
+  // including the OAuth callback abuse cap. x-real-ip is only trustworthy when a
+  // proxy we control writes it, which is precisely the TRUST_PROXY branch above.
+  //
+  // Everything untrusted therefore shares one bucket. That is deliberately
+  // conservative: a shared limit throttles honest traffic in an unusual
+  // deployment, while a spoofable one protects nothing anywhere. Production sets
+  // TRUST_PROXY=1 (docker-compose.yml, behind Caddy) and never reaches this.
+  return "unknown";
 }
 

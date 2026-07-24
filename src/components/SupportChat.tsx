@@ -10,7 +10,7 @@ const GREETING: Msg = {
   role: "assistant",
   content:
     "Hi! I'm Grindly's assistant. Tell me what's going wrong or what you'd like help with — " +
-    "I'll try to sort it right here, and a human on the team sees this too.",
+    "I'll try to sort it right here, and it's logged for the team to read.",
 };
 
 export default function SupportChat({ onClose }: { onClose: () => void }) {
@@ -106,7 +106,7 @@ export default function SupportChat({ onClose }: { onClose: () => void }) {
             <span className="flex size-8 items-center justify-center rounded-full brand-gradient text-sm text-white">✦</span>
             <div>
               <p className="text-sm font-semibold text-foreground">Grindly support</p>
-              <p className="text-xs text-muted">Replies here · a human sees this too</p>
+              <p className="text-xs text-muted">Replies here · logged for the team</p>
             </div>
           </div>
           <button

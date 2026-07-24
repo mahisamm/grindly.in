@@ -110,5 +110,21 @@ def check_company(company: str, jd_text: str = "", block_threshold: float = 0.7)
     else:
         verdict = VERDICT_OK
 
+    # A verdict from ONE provider is not a consensus. chat_json_ensemble falls
+    # back to returning that single answer verbatim when the others fail or time
+    # out, bypassing the merge this check is named for — and this cache is keyed
+    # by company name and shared by the whole fleet, so a single hallucinated
+    # "is_scam" would block that employer for every user until the TTL expired.
+    #
+    # Downgrade a lone SCAM verdict to CAUTION, which records the signal without
+    # blocking anyone, and leave it out of the cache so the next run asks again.
+    single = bool(llm_mod.last_ensemble_was_degraded())
+    if single and verdict == VERDICT_SCAM:
+        print(f"[company_rep] {norm}: lone-provider scam verdict downgraded to caution (not cached)")
+        return {
+            "verdict": VERDICT_CAUTION, "confidence": confidence,
+            "evidence": reason, "cached": False,
+        }
+
     db.set_company_reputation(norm, verdict, confidence, evidence=reason, source="llm")
     return {"verdict": verdict, "confidence": confidence, "evidence": reason, "cached": False}
