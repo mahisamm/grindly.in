@@ -10,6 +10,8 @@
  * Run: node scripts/reset-db.mjs --yes
  */
 import { PrismaClient } from "@prisma/client";
+import fsp from "node:fs/promises";
+import path from "node:path";
 
 const args = process.argv.slice(2);
 const confirmed = args.includes("--yes");
@@ -39,6 +41,47 @@ if (looksLikeProd && !forceProd) {
 }
 
 const prisma = new PrismaClient();
+const root = path.resolve(process.cwd());
+
+const USER_DATA_DIRECTORIES = [
+  path.join(root, "data", "resumes"),
+  path.join(root, "data", "resume_tex"),
+  path.join(root, "data", "resume_variants"),
+  path.join(root, "data", "screenshots"),
+  path.join(root, "data", "browser_profile"),
+  path.join(root, "data", "logs"),
+  // Legacy location used by older platform adapters; may contain live sessions.
+  path.join(root, "agent", "browser_profile"),
+];
+const USER_DATA_FILES = [
+  path.join(root, "data", "email-outbox.jsonl"),
+  path.join(root, "data", "slack-outbox.jsonl"),
+];
+
+function assertWorkspaceTarget(target) {
+  const resolved = path.resolve(target);
+  if (resolved === root || !resolved.startsWith(root + path.sep)) {
+    throw new Error(`Refusing unsafe cleanup target: ${resolved}`);
+  }
+  return resolved;
+}
+
+async function resetUserFiles() {
+  console.log("\nClearing runtime user files...");
+  for (const target of [...USER_DATA_DIRECTORIES, ...USER_DATA_FILES]) {
+    const safeTarget = assertWorkspaceTarget(target);
+    await fsp.rm(safeTarget, { recursive: true, force: true });
+    console.log(`  deleted ${path.relative(root, safeTarget)}`);
+  }
+
+  // Recreate active storage roots so the first beta user's upload/log write
+  // does not depend on a separate setup command.
+  for (const target of USER_DATA_DIRECTORIES.filter(
+    (entry) => !entry.endsWith(path.join("agent", "browser_profile")),
+  )) {
+    await fsp.mkdir(assertWorkspaceTarget(target), { recursive: true });
+  }
+}
 
 async function resetDb() {
   console.log("Resetting database...");
@@ -79,6 +122,7 @@ async function resetDb() {
   ];
   results.forEach((r, i) => console.log(`  deleted ${r.count} ${labels[i]}`));
 
+  await resetUserFiles();
   console.log("\nDatabase is clean. Fresh start ready.");
   await prisma.$disconnect();
 }
