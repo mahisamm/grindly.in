@@ -1,6 +1,8 @@
 import datetime
 import re
 
+import pytest
+
 import worker
 import safety
 
@@ -443,14 +445,43 @@ def test_cooldown_active_false_when_updated_at_missing():
 
 # ---------- _requires_approval (one-tap apply gate) ----------
 
-def test_requires_approval_true_for_adversarial_platform_even_with_auto_apply_on():
+@pytest.fixture
+def fail_closed_default(monkeypatch):
+    """Pin the fleet auto-apply switches to their unconfigured (fail-closed)
+    state. `_requires_approval` delegates to safety.requires_manual_final_submit,
+    which reads GRINDLY_AUTO_APPLY_MODE / GRINDLY_TIER_B_APPLY from the
+    environment — and db.py loads the project-root .env at import, so a developer
+    whose local .env sets mode=live + tier_b=1 (a legitimate way to exercise the
+    beta contract) would otherwise see internshala, a Tier B board, resolve to
+    'no approval needed' here and flip these assertions. Fail-closed is the
+    default this test means to assert, so make it explicit instead of ambient."""
+    monkeypatch.delenv("GRINDLY_AUTO_APPLY_MODE", raising=False)
+    monkeypatch.delenv("GRINDLY_TIER_B_APPLY", raising=False)
+
+
+def test_requires_approval_true_for_adversarial_platform_even_with_auto_apply_on(fail_closed_default):
     for src in worker.ADVERSARIAL_PLATFORMS:
         assert worker._requires_approval(src, auto_apply=True) is True
 
 
-def test_requires_approval_true_for_adversarial_platform_with_auto_apply_off():
+def test_requires_approval_true_for_adversarial_platform_with_auto_apply_off(fail_closed_default):
     for src in worker.ADVERSARIAL_PLATFORMS:
         assert worker._requires_approval(src, auto_apply=False) is True
+
+
+def test_tier_c_boards_still_require_approval_even_in_live_tier_b_mode(monkeypatch):
+    """The safety floor that must hold in the most permissive real config. With
+    the fleet live AND Tier B switched on — the exact beta hosted-apply setting —
+    Internshala (Tier B, consented) may submit unattended, but LinkedIn, Naukri,
+    Unstop and Indeed (Tier C) must STILL fail closed. A regression that let a
+    Tier C board through here is an account-ban risk for the user."""
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
+    for src in ("linkedin", "naukri", "unstop", "indeed"):
+        assert worker._requires_approval(src, auto_apply=True) is True, src
+    # The one board the beta contract does allow, so the test can't pass by the
+    # gate simply being stuck on for everything.
+    assert worker._requires_approval("internshala", auto_apply=True) is False
 
 
 def test_requires_approval_true_for_an_unknown_future_platform_with_auto_apply_on():
