@@ -1208,7 +1208,7 @@ export default function Dashboard() {
 
   /** Promote one optimized variant to the master resume. Server copies the PDF,
    *  resets derived skills/score, and re-analyzes — load() shows the new state. */
-  async function useVariant(v: ResumeVariant) {
+  async function selectResumeVariant(v: ResumeVariant) {
     setUsingVariant(v.id);
     try {
       const res = await fetch(`/api/resume/variants/${v.id}/use`, { method: "POST" });
@@ -2624,7 +2624,7 @@ export default function Dashboard() {
                                 Preview
                               </a>
                               <button
-                                onClick={() => useVariant(v)}
+                                onClick={() => selectResumeVariant(v)}
                                 disabled={usingVariant === v.id}
                                 title={delta > 0
                                   ? "Make this your master resume"
