@@ -140,6 +140,31 @@ def to_user(user: dict, subject: str, text: str) -> bool:
                 print(f"[notify] {chosen} failed for {user.get('id')}; delivered via {ch}")
             return True
 
+    # Nothing external worked. Fall back to the in-app bell, which needs no
+    # configuration and is the one channel that cannot be unreachable.
+    #
+    # Without this the message was simply lost: production has neither
+    # SLACK_BOT_TOKEN nor EMAIL_SMTP_*, and this function only ever recorded
+    # rows on the 'slack'/'email' channels — while /api/notifications and
+    # /api/me both read `channel: "inapp"` exclusively. So every daily report,
+    # every ready-to-send alert and every session-expired warning was written to
+    # a table nothing displayed, and the user saw an agent that never spoke.
+    try:
+        import db
+
+        db.add_notification(
+            user.get("id") or "", channel="inapp", title=subject,
+            body=_plain(text), delivered=True,
+        )
+        print(
+            f"[notify] no external channel for user {user.get('id')} "
+            f"(slack_configured={slack_configured()}, smtp_configured={email_notify.configured()}) "
+            f"— delivered in-app instead"
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        print(f"[notify] could not record the in-app fallback: {e}")
+
     print(
         f"[notify] UNDELIVERABLE for user {user.get('id')}: no channel worked "
         f"(slack_configured={slack_configured()}, smtp_configured={email_notify.configured()})"

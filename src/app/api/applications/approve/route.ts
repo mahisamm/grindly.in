@@ -8,6 +8,7 @@ import { hasAppAccess } from "@/lib/access";
 import { agentWillSend, approvalOutcomeMessage } from "@/lib/applyPolicy";
 import { enqueueAgentRun } from "@/lib/agentRunQueue";
 import { spawnWorkerKick } from "@/lib/workerKick";
+import { readAdminSettings } from "@/lib/adminSettings";
 
 /**
  * Approve a matched application — and actually send it.
@@ -70,8 +71,18 @@ export async function POST(req: Request) {
   // by the agent on its next run; one that only exists on a board still needs
   // the user's own browser. Telling someone to go finish an application the
   // agent already sent is the same failure as promising one that never goes.
-  const willSend = agentWillSend(app);
-  const outcome = approvalOutcomeMessage(app);
+  // The admin kill switch has to count here too. It was enforced only in
+  // api/agent/run, so an admin turning auto-apply off stopped new discovery runs
+  // while Approve went on enqueueing submit runs — applications kept going out
+  // from the one surface nobody thought to check. Folding it into `willSend`
+  // rather than bolting it onto the enqueue keeps the user's message honest as
+  // well: they get "ready for your final browser submission", not a promise the
+  // fleet has been told not to keep.
+  const autoApplyEnabled = readAdminSettings().featureFlags.autoApply;
+  const willSend = autoApplyEnabled && agentWillSend(app);
+  const outcome = willSend
+    ? approvalOutcomeMessage(app)
+    : "ready for your final browser submission";
 
   await prisma.application.update({
     where: { id: body.id },

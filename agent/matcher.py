@@ -225,6 +225,12 @@ def _fuzzy_company_match(company: str, excluded: str) -> bool:
     e = excluded.lower().strip()
     if not e:
         return False
+    # An unscraped company name matches nothing. Without this, `c in e` below is
+    # True for every exclusion the moment c is "" — so a listing whose company
+    # failed to scrape was firewall-blocked as an "excluded company" as soon as
+    # the user excluded any employer at all.
+    if not c:
+        return False
     # exact substring match in either direction
     if e in c or c in e:
         return True
@@ -287,15 +293,20 @@ def _parse_stipend(s) -> int | None:
     st = str(s).lower()
     if re.search(r"\b(unpaid|none|no stipend|nil)\b", st):
         return 0
-    vals: list[int] = []
+    # Ranges and loose figures are kept apart on purpose — see the return below.
+    range_lows: list[int] = []
+    loose: list[int] = []
     consumed: list[tuple[int, int]] = []
     for mm in re.finditer(r"(\d[\d,]*\.?\d*)\s*(?:-|–|—|to)\s*(\d[\d,]*\.?\d*)\s*(k|l|lpa|lakh|lac)?", st):
         mult = _unit_mult(mm.group(3) or "")
+        ends: list[int] = []
         for num in (mm.group(1), mm.group(2)):
             try:
-                vals.append(int(round(float(num.replace(",", "")) * mult)))
+                ends.append(int(round(float(num.replace(",", "")) * mult)))
             except ValueError:
                 continue
+        if ends:
+            range_lows.append(min(ends))
         consumed.append((mm.start(), mm.end()))
     for mm in re.finditer(r"(\d[\d,]*\.?\d*)\s*(k|l|lpa|lakh|lac)?", st):
         if any(cs <= mm.start() < ce for cs, ce in consumed):
@@ -304,5 +315,18 @@ def _parse_stipend(s) -> int | None:
             v = float(mm.group(1).replace(",", ""))
         except ValueError:
             continue
-        vals.append(int(round(v * _unit_mult(mm.group(2) or ""))))
-    return min(vals) if vals else None
+        loose.append(int(round(v * _unit_mult(mm.group(2) or ""))))
+
+    # A stated RANGE gives its low end: "10-15k" is 10000, because that is what
+    # the candidate is actually guaranteed and the floor is what stipend_min is
+    # asking about.
+    if range_lows:
+        return min(range_lows)
+    # Loose figures are a different problem. Everything unconsumed lands here,
+    # including durations and counts, so the old min() over the combined list
+    # read "₹15,000 /month for 6 months" as a stipend of 6 and firewall_block
+    # rejected a good listing for underpaying. "3 month internship" and "2
+    # openings" did the same. Durations and counts are small and a monthly
+    # stipend is not, so the largest figure is the stipend far more often than
+    # the smallest is.
+    return max(loose) if loose else None

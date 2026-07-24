@@ -141,10 +141,21 @@ def test_a_failing_channel_falls_back_to_the_other_one():
     mail.assert_called_once()
 
 
-def test_to_user_reports_failure_when_nothing_works():
+def test_no_external_channel_falls_back_to_the_in_app_bell():
+    """Production has neither SLACK_BOT_TOKEN nor EMAIL_SMTP_*, and this function
+    only ever wrote 'slack'/'email' rows — while /api/notifications and /api/me
+    read `channel: "inapp"` exclusively. So every daily report and every
+    ready-to-send alert went into a table nothing displayed, and the user saw an
+    agent that never spoke. The bell needs no configuration and cannot be
+    unreachable, so it is the floor."""
+    recorded = []
     with patch.object(notify, "send", return_value=False), \
-         patch.object(notify.email_notify, "send", return_value=False):
-        assert notify.to_user(USER, "s", "t") is False
+         patch.object(notify.email_notify, "send", return_value=False), \
+         patch("db.add_notification", side_effect=lambda uid, **kw: recorded.append(kw)):
+        assert notify.to_user(USER, "s", "t") is True
+
+    assert recorded[-1]["channel"] == "inapp"
+    assert recorded[-1]["delivered"] is True
 
 
 def test_every_attempt_is_recorded_with_its_true_outcome():
@@ -156,9 +167,21 @@ def test_every_attempt_is_recorded_with_its_true_outcome():
          patch("db.add_notification", side_effect=lambda uid, **kw: recorded.append(kw)):
         notify.to_user(USER, "subject", "text")
 
-    assert len(recorded) == 2                       # both channels were tried
-    assert {r["channel"] for r in recorded} == {"email", "slack"}
-    assert all(r["delivered"] is False for r in recorded)   # ...and neither lied
+    external = [r for r in recorded if r["channel"] in ("email", "slack")]
+    assert len(external) == 2                        # both channels were tried
+    assert {r["channel"] for r in external} == {"email", "slack"}
+    assert all(r["delivered"] is False for r in external)   # ...and neither lied
+
+
+def test_the_in_app_fallback_does_not_fire_when_a_channel_worked():
+    """One message, one place. The bell is a floor, not a duplicate."""
+    recorded = []
+    with patch.object(notify, "send", return_value=False), \
+         patch.object(notify.email_notify, "send", return_value=True), \
+         patch("db.add_notification", side_effect=lambda uid, **kw: recorded.append(kw)):
+        assert notify.to_user(USER, "s", "t") is True
+
+    assert "inapp" not in {r["channel"] for r in recorded}
 
 
 def test_slack_markup_is_stripped_from_the_email_version():

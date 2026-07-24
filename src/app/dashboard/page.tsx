@@ -544,7 +544,32 @@ function describeRun(x: {
     return { kind: "info", text: "Your agent's automatic daily run stays inside 9am–9pm IST — but you can start one any time. Tap Run now to go immediately." };
   }
   if (x.error || (x.message && x.ready == null && x.matched == null && x.applied == null)) {
-    return { kind: "info", text: x.message || "Connect a job platform, then run the agent." };
+    // Say what actually went wrong. This used to fall through to "Connect a job
+    // platform" for EVERY worker error, because no agent result ever sets
+    // `message` — so a missing resume, an unreadable PDF or a dead run all told
+    // the user to do the one thing this deploy deliberately made optional
+    // (api/agent/run no longer requires a connected platform at all).
+    //
+    // Codes come from agent/worker.py: run_for_user / analyze_only.
+    const ERRORS: Record<string, string> = {
+      no_resume: "Upload your resume first — the agent scores every match against it.",
+      "no resume": "Upload your resume first — the agent scores every match against it.",
+      resume_unreadable:
+        "We couldn't read any text from your resume — it may be a scanned image. Upload a text-based PDF or DOCX.",
+      no_platforms_connected:
+        "No job platform is connected. Connect one, or just run again — discovery works without it.",
+      "no user": "Your account could not be loaded. Sign out and back in, and contact support if it persists.",
+    };
+    const known = x.error ? ERRORS[x.error] : undefined;
+    return {
+      kind: "info",
+      text:
+        known ??
+        x.message ??
+        (x.error
+          ? `The run stopped: ${x.error}. Try again — if it repeats, tell us from the support chat.`
+          : "The run didn't complete. Try again — if it repeats, tell us from the support chat."),
+    };
   }
   const matched = x.matched ?? 0;
   const ready = x.ready ?? 0;
@@ -951,11 +976,22 @@ export default function Dashboard() {
     connectAbort.current = false;
     setConnectingPlatform(platform);
     setNotice({ kind: "info", text: "Preparing your secure login window…" });
-    const res = await fetch("/api/integrations/connect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ platform }),
-    });
+    // Wrapped: an unhandled throw here left connectingPlatform set forever, and
+    // every platform's Connect button is disabled on `connectingPlatform !== null`
+    // — so one dropped request bricked the entire Connect section until reload,
+    // and Cancel never cleared it either.
+    let res: Response;
+    try {
+      res = await fetch("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform }),
+      });
+    } catch {
+      setNotice({ kind: "err", text: "Network error — check your connection and try again." });
+      setConnectingPlatform(null);
+      return;
+    }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       setNotice({ kind: "err", text: data.error || "Couldn't open the login browser." });
@@ -1049,18 +1085,26 @@ export default function Dashboard() {
       ...profileForm,
       gpa: parseFloat(profileForm.gpa) || 8.0,
     };
-    const res = await fetch("/api/profile", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setProfileSaving(false);
-    if (res.ok) {
-      setProfileSaved(true);
-      setTimeout(() => setProfileSaved(false), 3000);
-      load();
-    } else {
-      setNotice({ kind: "err", text: "Failed to save profile. Please try again." });
+    // try/finally: an unhandled throw skipped setProfileSaving(false) and left
+    // the Save button spinning and disabled until a reload, with the user's
+    // edits still unsaved and nothing on screen saying so.
+    try {
+      const res = await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setProfileSaved(true);
+        setTimeout(() => setProfileSaved(false), 3000);
+        load();
+      } else {
+        setNotice({ kind: "err", text: "Failed to save profile. Please try again." });
+      }
+    } catch {
+      setNotice({ kind: "err", text: "Network error — your changes weren't saved. Try again." });
+    } finally {
+      setProfileSaving(false);
     }
   }
 

@@ -8,6 +8,7 @@ import { hasAppAccess } from "@/lib/access";
 import { agentWillSend, approvalOutcomeMessage } from "@/lib/applyPolicy";
 import { enqueueAgentRun } from "@/lib/agentRunQueue";
 import { spawnWorkerKick } from "@/lib/workerKick";
+import { readAdminSettings } from "@/lib/adminSettings";
 
 /** Approve TODAY'S matches and enqueue ONE submit-only run to send them. See
  *  api/applications/approve for why the run is needed at all.
@@ -60,8 +61,13 @@ export async function POST() {
 
   // Split the batch by who acts next. A digest that lumps both together sends
   // the user off to "finish" applications the agent is about to send itself.
-  const agentSends = matched.filter(agentWillSend);
-  const userSends = matched.filter((a) => !agentWillSend(a));
+  // Same admin kill switch as the single-approve route: it was enforced only in
+  // api/agent/run, so turning auto-apply off left this path still enqueueing
+  // submit runs. Folding it in here keeps the digest honest too.
+  const autoApplyEnabled = readAdminSettings().featureFlags.autoApply;
+  const sends = (a: Parameters<typeof agentWillSend>[0]) => autoApplyEnabled && agentWillSend(a);
+  const agentSends = matched.filter(sends);
+  const userSends = matched.filter((a) => !sends(a));
 
   const approvedAt = new Date();
   await prisma.$transaction(
@@ -70,7 +76,9 @@ export async function POST() {
         where: { id: a.id },
         data: {
           status: "approved",
-          reason: (a.reason ?? "") + ` — ${approvalOutcomeMessage(a)}`,
+          reason:
+            (a.reason ?? "") +
+            ` — ${sends(a) ? approvalOutcomeMessage(a) : "ready for your final browser submission"}`,
           // Dates the quota reservation so it expires with today (lib/quota.ts).
           approvedAt,
         },

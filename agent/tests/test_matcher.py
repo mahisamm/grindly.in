@@ -1,6 +1,57 @@
 import json
 
+import pytest
+
 import matcher
+
+
+# --- stipend parsing: a duration is not a salary --------------------------
+#
+# `min()` over every number in the string read "₹15,000 /month for 6 months" as
+# a stipend of 6, so firewall_block rejected a perfectly good listing for paying
+# under the user's floor. "3 month internship" and "2 openings" did the same.
+
+@pytest.mark.parametrize("text,expected", [
+    ("Rs 15,000 /month for 6 months", 15000),
+    ("Stipend: 8000 per month, 3 month internship", 8000),
+    ("Rs 12,000 per month, 2 openings", 12000),
+    ("Rs 5,000/month", 5000),
+    ("20k per month", 20000),
+    ("6 LPA", 600000),
+])
+def test_a_trailing_duration_or_count_is_not_read_as_the_stipend(text, expected):
+    assert matcher._parse_stipend(text) == expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Rs 10,000-15,000 /month", 10000),
+    ("10-15k", 10000),
+    ("10 to 15 lpa", 1000000),
+])
+def test_a_stated_range_still_reports_its_low_end(text, expected):
+    """The floor is what stipend_min is asking about — it is what the candidate
+    is actually guaranteed."""
+    assert matcher._parse_stipend(text) == expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Unpaid", 0),
+    ("No stipend", 0),
+    ("Performance based", None),
+])
+def test_unpaid_is_zero_and_unknown_stays_unknown(text, expected):
+    assert matcher._parse_stipend(text) == expected
+
+
+def test_an_unscraped_company_is_not_treated_as_excluded():
+    """`c in e` is True for every exclusion when the company is "", so a listing
+    whose company failed to scrape was firewall-blocked the moment the user
+    excluded any employer at all."""
+    assert matcher._fuzzy_company_match("", "Amazon") is False
+    assert matcher.firewall_block(
+        {"company": "", "location": "Remote"},
+        {"excluded_companies": '["Amazon"]'},
+    ) is None
 
 
 def test_score_rewards_skill_overlap():

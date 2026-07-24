@@ -147,6 +147,15 @@ export async function POST(req: Request) {
     // from a resume that no longer exists. Clear the status; rows dropped below.
     resumeVariantStatus: null,
     resumeVariantDetail: null,
+    // ...and it invalidates the LaTeX source just as completely. This was
+    // missing, and it was the worst of the three: resumeTexStatus stayed "ok",
+    // the old .tex stayed on disk, and agent/worker.py went on tailoring every
+    // application from the PREVIOUS resume's source — then, with auto-apply on,
+    // sent it. The user had replaced their resume and the employer received a
+    // document built from the one they replaced.
+    resumeTexName: null,
+    resumeTexStatus: null,
+    resumeTexDetail: null,
   };
 
   // Old resumes on disk for this uid, under a different extension, would otherwise
@@ -155,6 +164,11 @@ export async function POST(req: Request) {
     if (old === ext) continue;
     await fsp.rm(path.join(RESUME_DIR, `${uid}${old}`), { force: true }).catch(() => {});
   }
+  // The .tex describes the resume that was just replaced, so it goes too —
+  // clearing only the status would leave find-the-file logic able to pick it up.
+  // Re-upload the source to get tailoring back; until then the agent sends the
+  // new master untouched, which is the honest fallback it already has.
+  await fsp.rm(path.join(TEX_DIR, `${uid}.tex`), { force: true }).catch(() => {});
 
   try {
     await prisma.profile.upsert({

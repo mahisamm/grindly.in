@@ -93,6 +93,24 @@ export async function POST(req: Request) {
   // (The dashboard already disables the button; this enforces it server-side so
   // a direct API call can't queue a run with nothing connected.)
   if (!analyzeOnly) {
+    // A live run without a resume is guaranteed to do nothing: worker.py scores
+    // every listing against it and bails with "no resume". Nothing checked for
+    // one here, and the dashboard's "upload your resume" nudge only renders when
+    // a platform is connected — so a user who connected nothing (explicitly
+    // supported) got an enabled Run button, a doomed run, and no explanation.
+    const profile = await prisma.profile.findUnique({
+      where: { userId: uid },
+      select: { resumeName: true, resumeText: true },
+    });
+    if (!profile?.resumeName && !profile?.resumeText) {
+      return NextResponse.json(
+        {
+          error: "Upload your resume first — the agent scores every match against it.",
+          code: "no_resume",
+        },
+        { status: 400 },
+      );
+    }
     if (!settings.featureFlags.autoApply) {
       return NextResponse.json(
         { error: "Auto-apply is temporarily disabled by an admin.", code: "auto_apply_disabled" },

@@ -61,17 +61,21 @@ function parseStipend(s?: string | null): number | null {
   if (!s) return null;
   const str = String(s).toLowerCase();
   if (/\b(unpaid|none|no stipend|nil)\b/.test(str)) return 0;
-  const vals: number[] = [];
+  // Ranges and loose figures are kept apart on purpose — see the return below.
+  const rangeLows: number[] = [];
+  const loose: number[] = [];
   const consumed: Array<[number, number]> = [];
 
   // 1) ranges first — "10-15k", "10 to 15 lpa": apply the unit after B to A too.
   const rangeRe = /(\d[\d,]*\.?\d*)\s*(?:-|–|—|to)\s*(\d[\d,]*\.?\d*)\s*(k|l|lpa|lakh|lac)?/g;
   for (const m of str.matchAll(rangeRe)) {
     const mult = unitMult(m[3]);
+    const ends: number[] = [];
     for (const num of [m[1], m[2]]) {
       const v = parseFloat(num.replace(/,/g, ""));
-      if (!isNaN(v)) vals.push(Math.round(v * mult));
+      if (!isNaN(v)) ends.push(Math.round(v * mult));
     }
+    if (ends.length) rangeLows.push(Math.min(...ends));
     const start = m.index ?? 0;
     consumed.push([start, start + m[0].length]);
   }
@@ -82,9 +86,18 @@ function parseStipend(s?: string | null): number | null {
     if (consumed.some(([cs, ce]) => cs <= start && start < ce)) continue;
     const v = parseFloat(m[1].replace(/,/g, ""));
     if (isNaN(v)) continue;
-    vals.push(Math.round(v * unitMult(m[2])));
+    loose.push(Math.round(v * unitMult(m[2])));
   }
-  return vals.length ? Math.min(...vals) : null;
+
+  // A stated RANGE gives its low end — that is what the candidate is actually
+  // guaranteed, and the floor is what stipendMin is asking about.
+  if (rangeLows.length) return Math.min(...rangeLows);
+  // Loose figures are a different problem: everything unconsumed lands here,
+  // durations and counts included, so a single Math.min over the combined list
+  // read "₹15,000 /month for 6 months" as a stipend of 6 and blocked a good
+  // listing for underpaying. "3 month internship" and "2 openings" did the same.
+  // A duration or a count is small; a monthly stipend is not.
+  return loose.length ? Math.max(...loose) : null;
 }
 
 export function canApply(job: FirewallJob, profile: FirewallProfile): FirewallResult {

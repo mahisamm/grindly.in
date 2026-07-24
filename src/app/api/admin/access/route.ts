@@ -82,8 +82,24 @@ export async function POST(req: Request) {
 
   if (data.action === "deny" || data.action === "revoke") {
     const status = data.action === "deny" ? "denied" : "pending";
-    const user = await prisma.user.findUnique({ where: { id: data.userId }, select: { email: true } });
+    const user = await prisma.user.findUnique({
+      where: { id: data.userId },
+      select: { email: true, role: true },
+    });
     if (!user) return NextResponse.json({ error: "not found" }, { status: 404 });
+    // hasAppAccess() returns true for role==='admin' before it ever reads
+    // accessStatus, so denying an admin wrote the row, dropped them out of the
+    // pending queue, returned ok — and changed nothing. Refuse instead of
+    // silently doing nothing; demoting first is a deliberate, separate act.
+    if (user.role === "admin") {
+      return NextResponse.json(
+        {
+          error:
+            "This account is an admin, and admins always keep access. Change their role to 'user' first, then deny.",
+        },
+        { status: 409 },
+      );
+    }
     await prisma.user.update({
       where: { id: data.userId },
       data: { accessStatus: status, accessGrantedAt: null },

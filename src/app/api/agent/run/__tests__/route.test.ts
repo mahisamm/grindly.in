@@ -9,6 +9,7 @@ const {
   mockUserIntegrationCount,
   mockSpawnWorkerKick,
   mockGetQuota,
+  mockProfileFindUnique,
 } = vi.hoisted(() => ({
   mockGetUid: vi.fn(),
   mockAccess: vi.fn(),
@@ -18,12 +19,14 @@ const {
   mockUserIntegrationCount: vi.fn(),
   mockSpawnWorkerKick: vi.fn(),
   mockGetQuota: vi.fn(),
+  mockProfileFindUnique: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getUid: mockGetUid }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: { findUnique: mockUserFindUnique },
+    profile: { findUnique: mockProfileFindUnique },
     userIntegration: { count: mockUserIntegrationCount },
     agentRun: {
       findFirst: mockAgentRunFindFirst,
@@ -56,6 +59,9 @@ beforeEach(() => {
   // override to exercise the no-platform gate.
   mockUserFindUnique.mockResolvedValue({ id: "u1", internshalaConnected: true, accessStatus: "approved", role: "user", email: "u1@example.com" });
   mockUserIntegrationCount.mockResolvedValue(1);
+  // A resume on file by default — a live run without one is refused up front
+  // (it would otherwise be a guaranteed no-op inside the worker).
+  mockProfileFindUnique.mockResolvedValue({ resumeName: "cv.pdf", resumeText: "Python." });
   mockAgentRunFindFirst.mockResolvedValue(null);
   mockAgentRunCreate.mockResolvedValue({ id: "run1" });
   mockGetQuota.mockResolvedValue({ kind: "daily", cap: 5, used: 0, remaining: 5 });
@@ -146,6 +152,29 @@ describe("POST /api/agent/run", () => {
     const body = await res.json();
     expect(body.mode).toBe("analyze");
     expect(mockAgentRunCreate).toHaveBeenCalledWith({ data: { userId: "u1", mode: "analyze" } });
+  });
+
+  it("refuses a live run with no resume, and says why", async () => {
+    // worker.py scores every listing against the resume and bails with
+    // "no resume". Nothing checked here, and the dashboard's upload nudge only
+    // renders once a platform is connected — so a user who connected nothing
+    // (explicitly supported) got an enabled Run button and a doomed run.
+    mockGetUid.mockResolvedValue("u1");
+    mockProfileFindUnique.mockResolvedValue({ resumeName: null, resumeText: null });
+    const res = await POST(postReq());
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("no_resume");
+    expect(mockAgentRunCreate).not.toHaveBeenCalled();
+  });
+
+  it("still allows an analyze-only run with no resume row yet", async () => {
+    // Analyze is how the resume gets parsed in the first place; gating it on a
+    // parsed resume would be circular.
+    mockGetUid.mockResolvedValue("u1");
+    mockProfileFindUnique.mockResolvedValue(null);
+    const res = await POST(postReq({ analyzeOnly: true }));
+    expect(res.status).toBe(200);
   });
 
   it("kicks the local worker on success", async () => {

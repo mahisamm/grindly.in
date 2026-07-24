@@ -265,6 +265,34 @@ def applied_external_ids(uid: str) -> set[str]:
         return {r["url"] for r in rows}
 
 
+def committed_role_keys(uid: str) -> set[tuple[str, str]]:
+    """(company, title-prefix) pairs this user is already committed to.
+
+    `applied_external_ids` above dedups by URL, which only catches the SAME
+    posting seen twice. The same role cross-posted to two boards has two
+    different URLs, so the worker also dedups on (company, title) — but it kept
+    that set in memory, rebuilt empty on every invocation. Across runs, and
+    across the segments a spread-mode run is split into, the identical role
+    therefore got applied to more than once, under the candidate's real name, at
+    the same employer.
+
+    Same status rule as `applied_external_ids`, and for the same reason: a
+    'skipped' row is a scoring judgement that left no trace on the platform and
+    must stay re-considerable.
+    """
+    with conn() as c:
+        rows = c.execute(
+            "SELECT company, title FROM applications "
+            "WHERE user_id=? AND status <> 'skipped'",
+            (uid,),
+        ).fetchall()
+        return {
+            ((r["company"] or "").lower(), (r["title"] or "").lower()[:40])
+            for r in rows
+            if r["company"] or r["title"]
+        }
+
+
 def clear_skipped(uid: str, urls: list[str]) -> int:
     """Drop stale 'skipped' rows for listings we are about to re-score, so a
     re-run replaces the old verdict rather than filing a duplicate row beside it.
@@ -288,11 +316,24 @@ def clear_skipped(uid: str, urls: list[str]) -> int:
 
 
 def todays_applied_count(uid: str) -> int:
+    """How much of today's cap this user has actually spent.
+
+    Counts 'needs_review' as well as 'applied', because it also cost a real
+    submission: the submit landed and only the CONFIRMATION was unreadable (see
+    safety.classify_submit). Counting 'applied' alone made the cap refundable —
+    the worker decrements its in-memory `remaining` for an ambiguous submit, but
+    a spread-mode run yields and requeues, and the next segment recomputes
+    remaining as `cap - todays_applied_count`, restoring every ambiguous one. A
+    channel returning needs_review repeatedly could then submit well past the
+    number of applications the user agreed to send per day.
+
+    'failed' is deliberately NOT counted: those did not reach the employer.
+    """
     start = _start_of_day_db()
     with conn() as c:
         r = c.execute(
             "SELECT COUNT(*) n FROM applications "
-            "WHERE user_id=? AND status='applied' AND created_at>=?",
+            "WHERE user_id=? AND status IN ('applied','needs_review') AND created_at>=?",
             (uid, start),
         ).fetchone()
         return r["n"]
@@ -942,13 +983,22 @@ def pipeline_depth(uid: str) -> int:
 
 
 def has_live_run_today(uid: str) -> bool:
-    """True if a full sweep is already queued, running, or finished for this user
-    today. Guards the daily sweep against re-enqueueing on a container restart."""
+    """True if a full sweep is already queued, running, or DONE for this user
+    today. Guards the daily sweep against re-enqueueing on a container restart.
+
+    'failed' is excluded on purpose. Counting it meant a run that died — a stale
+    lease reclaimed by run_queue.reclaim_stale, three exhausted attempts, a
+    container killed mid-run — still satisfied "already ran today", so the sweep
+    skipped that user until UTC midnight and their agent simply never ran. No
+    log, no audit, no notification; from the user's side the product did nothing
+    all day for no stated reason. A failed run is precisely the case that should
+    be retried.
+    """
     start = _start_of_today_db()
     with conn() as c:
         row = c.execute(
             "SELECT 1 FROM agent_runs WHERE user_id=? AND mode='live' "
-            "AND created_at >= ? LIMIT 1",
+            "AND status <> 'failed' AND created_at >= ? LIMIT 1",
             (uid, start),
         ).fetchone()
     return row is not None

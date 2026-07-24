@@ -10,6 +10,7 @@ export default function WaitlistPage() {
   const [state, setState] = useState<State>("loading");
   const [email, setEmail] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -37,9 +38,25 @@ export default function WaitlistPage() {
 
   async function requestAccess() {
     setSubmitting(true);
+    setErr("");
     try {
       const r = await fetch("/api/access/request", { method: "POST" });
-      if (r.ok) setState("requested");
+      if (r.ok) {
+        setState("requested");
+        return;
+      }
+      // A non-ok used to fall straight through the `finally` and just re-enable
+      // the button, which is indistinguishable from a dead button — on the only
+      // action this page has.
+      const d = await r.json().catch(() => ({}));
+      setErr(
+        r.status === 401
+          ? "Your session expired. Sign in with Google again, then request access."
+          : (d as { error?: string }).error ||
+            "Could not send your request. Please try again in a moment.",
+      );
+    } catch {
+      setErr("Network error — check your connection and try again.");
     } finally {
       setSubmitting(false);
     }
@@ -106,6 +123,7 @@ export default function WaitlistPage() {
               >
                 {submitting ? "Requesting…" : "Request access"}
               </button>
+              {err && <p className="mt-3 text-sm text-danger">{err}</p>}
             </>
           )}
 
@@ -120,8 +138,12 @@ export default function WaitlistPage() {
               <p className="mt-2 text-sm text-[var(--ink-soft)]">
                 You&apos;re on the list for{" "}
                 <span className="font-medium text-ink">{email}</span>. We review
-                requests daily and will email you as soon as your access is live.
-                Nothing more to do for now.
+                requests daily.{" "}
+                <span className="font-medium text-ink">
+                  Sign in again in a day or two to check
+                </span>{" "}
+                — the moment you&apos;re approved this page takes you straight to
+                setup.
               </p>
             </>
           )}
@@ -134,8 +156,11 @@ export default function WaitlistPage() {
               <p className="mt-2 text-sm text-[var(--ink-soft)]">
                 We aren&apos;t able to grant access to{" "}
                 <span className="font-medium text-ink">{email}</span> right now. If
-                you think this is a mistake, reply to any Grindly email and we&apos;ll
-                take another look.
+                you think this is a mistake, write to{" "}
+                <a href="mailto:mahendharsammeta21@gmail.com" className="underline hover:text-ink">
+                  mahendharsammeta21@gmail.com
+                </a>{" "}
+                and we&apos;ll take another look.
               </p>
             </>
           )}

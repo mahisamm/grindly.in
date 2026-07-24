@@ -1124,7 +1124,12 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # email, and agent/questions.py needs both to answer "Your name" / "Email"
     # fields from stored fact instead of letting a model guess at them.
     apply_profile = {**profile, "name": name, "email": user.get("email") or ""}
-    applied_keys: set[tuple[str, str]] = set()
+    # Seeded from the DB, not empty. Rebuilt empty this set only deduped WITHIN
+    # one invocation, so the same role cross-posted to a second board was applied
+    # to again on the next run — and, under spread mode, on the next segment of
+    # the same run, since a requeue re-enters here. Two applications to one
+    # employer for one role, under the candidate's real name.
+    applied_keys: set[tuple[str, str]] = db.committed_role_keys(uid)
     per_src_applied: dict[str, int] = {}   # per-platform applies this run (bot-pace guard)
     per_src_failed:  dict[str, int] = {}   # per-platform failures this run (reliability monitor)
     per_src_reasons: dict[str, list[str]] = {}  # per-platform failure-reason codes (drift signal)
@@ -1360,16 +1365,38 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 if src not in connected_platforms:
                     # Platform genuinely not connected (session gone / never set) —
                     # can't submit; leave it approved for a run where it's connected.
+                    #
+                    # Say so on the row. Both of these `continue`s used to write
+                    # nothing at all: the application sat on "approved" with its
+                    # old reason, run after run, and the user was never told why
+                    # their tap had produced nothing. An `src` of "" (an approved
+                    # row whose job was deleted) can never match a connected
+                    # platform, so that one waits forever by construction.
+                    db.update_application_status(
+                        app_row["id"], "approved",
+                        f"waiting to send — reconnect {src or 'the platform'} and it goes out "
+                        f"on the next run",
+                    )
+                    log.info("approved row %s waiting: %s not connected", app_row["id"], src or "(unknown)")
                     continue
                 mod = source_modules.get(src)
                 if mod is None:
                     mod = _load_module(src)
                     if mod is None:
+                        db.update_application_status(
+                            app_row["id"], "needs_review",
+                            f"Grindly can't submit on {src} right now — open it and send it yourself",
+                        )
+                        log.warning("approved row %s: no adapter for %s", app_row["id"], src)
                         continue
                     source_modules[src] = mod  # so end-of-run close() cleans it up too
                 if _platform_blocked(src):
+                    # Stays 'approved', NOT 'matched'. get_approved_applications
+                    # only reads status='approved', so downgrading it here meant
+                    # the row never came back and the user's tap was discarded —
+                    # while the reason text promised it would be retried.
                     db.update_application_status(
-                        app_row["id"], "matched", f"{src} paused — captcha/challenge cooldown active",
+                        app_row["id"], "approved", f"{src} paused — captcha/challenge cooldown active",
                     )
                     continue
             job = {
@@ -1601,6 +1628,32 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             if jd_text:
                 job["jd_text"] = jd_text
                 resolve_fetches += 1
+
+                # Re-run the scam gate now that we can actually READ the listing.
+                #
+                # Both gates above fired against whatever text the board's search
+                # results happened to carry, which for most sources is nothing at
+                # all — so a demand for a "registration fee" or an MLM pitch that
+                # lives in the description body, which is exactly where it always
+                # lives, sailed through unscanned. Worse, this JD is about to be
+                # fed to the cover-letter writer and the resume tailorer, so the
+                # agent would work up a tailored application for the scam and,
+                # with auto-apply on, send it.
+                #
+                # Deliberately here rather than fetching earlier for everything:
+                # the fetch is budgeted and only listings that cleared the cheap
+                # gates are worth spending a page load on.
+                scam_reason = scam.scam_block(job, jd_text)
+                if scam_reason:
+                    db.add_application(
+                        uid, job_id=job_id, title=job["title"], company=job["company"],
+                        url=job["url"], score=score, status="skipped",
+                        reason=f"scam risk: {scam_reason}", applied=False,
+                    )
+                    log.info("scam gate (post-JD): skipped %s @ %s — %s",
+                             job.get("title"), job.get("company"), scam_reason)
+                    matched -= 1
+                    continue
         allow_fetch = live and resolve_fetches < RESOLVE_FETCH_BUDGET
         dest, page_loads = _resolve_destination(job, jd_text, allow_fetch=allow_fetch)
         resolve_fetches += page_loads
