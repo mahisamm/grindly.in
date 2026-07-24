@@ -43,12 +43,16 @@ export function googleOAuthBrandVerified(): boolean {
 // interview tracker is live. See src/lib/googleOAuth.ts.
 export { gmailScanEnabled } from "./googleOAuth";
 
-// Payment is Razorpay (see src/lib/adapters/payment.ts). Stub checkout is
-// development-only; production needs both keys so trial users can upgrade.
+// Payment is Razorpay (see src/lib/adapters/payment.ts). A free beta does not
+// require it; once PAYMENTS_ENABLED=true, readiness requires both keys.
 export function paymentMode(): "razorpay" | "unconfigured" {
   return process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET
     ? "razorpay"
     : "unconfigured";
+}
+
+export function paymentsEnabled(): boolean {
+  return process.env.PAYMENTS_ENABLED === "true";
 }
 
 export function encryptionKeyValid(): boolean {
@@ -72,6 +76,7 @@ export function serviceStatus() {
     llm: llmConfigured(),
     googleOAuth: googleOAuthConfigured(),
     gmailScan: gmailScanEnabled(),      // false until gmail.readonly is verified
+    paymentsEnabled: paymentsEnabled(),
     payment: paymentMode(),             // "razorpay" | "unconfigured"
     encryptionKey: encryptionKeyValid(),
     baseUrl: baseUrlConfigured(),
@@ -92,7 +97,9 @@ export function missingProdConfig(): string[] {
   if (!googleOAuthConfigured()) miss.push("GOOGLE_CLIENT_ID/SECRET — the only login method");
   if (!googleOAuthBrandVerified()) miss.push("GOOGLE_OAUTH_BRAND_VERIFIED — consent screen must show Grindly");
   if (!baseUrlConfigured()) miss.push("NEXT_PUBLIC_APP_URL — OAuth redirect + email links");
-  if (paymentMode() !== "razorpay") miss.push("RAZORPAY_KEY_ID/SECRET — paid upgrades are unavailable");
+  if (paymentsEnabled() && paymentMode() !== "razorpay") {
+    miss.push("RAZORPAY_KEY_ID/SECRET — paid checkout is enabled but unavailable");
+  }
   // NOT required: EMAIL_SMTP_HOST/USER/PASS. This line was previously here and
   // contradicted the comment above — Google-only auth means there's no password
   // to reset, so a missing SMTP config can't legitimately block a production
