@@ -621,3 +621,33 @@ def test_platforms_for_today_biases_toward_two_when_multiple_connected():
         if len(worker._platforms_for_today(f"user{i}", worker.SOURCE_PRIORITY, today="2026-07-09")) == 2
     )
     assert two_days > 30  # majority land on 2 platforms
+
+
+# ---------- analyze_only must not fail silently ----------
+#
+# The real failure: a resume file that exists but yields no text (a scanned or
+# image-only PDF). analyze_only returned an error and left resume_parse_failed
+# False, so the dashboard showed a happily-uploaded resume that silently powered
+# no matching, no skills and no score — with nothing anywhere saying why.
+
+def test_analyze_only_flags_a_resume_it_cannot_read(monkeypatch):
+    flagged = {}
+    monkeypatch.setattr(worker.db, "get_user", lambda uid: {"profile": {}})
+    monkeypatch.setattr(worker.resume_parse, "find_resume_file", lambda uid: "/tmp/cv.pdf")
+    monkeypatch.setattr(worker.resume_parse, "extract_text", lambda p: "")
+    monkeypatch.setattr(worker.db, "set_resume_parse_failed",
+                        lambda uid, v: flagged.update({uid: v}))
+    assert worker.analyze_only("u1") == {"error": "resume_unreadable"}
+    assert flagged == {"u1": True}
+
+
+def test_analyze_only_does_not_flag_a_user_with_no_resume_at_all(monkeypatch):
+    """Never uploaded is not a parse failure. Flagging it would put a "we
+    couldn't read your resume" warning on someone who never gave us one."""
+    calls = []
+    monkeypatch.setattr(worker.db, "get_user", lambda uid: {"profile": {}})
+    monkeypatch.setattr(worker.resume_parse, "find_resume_file", lambda uid: None)
+    monkeypatch.setattr(worker.db, "set_resume_parse_failed",
+                        lambda uid, v: calls.append((uid, v)))
+    assert worker.analyze_only("u1") == {"error": "no resume"}
+    assert calls == []

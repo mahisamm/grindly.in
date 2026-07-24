@@ -812,6 +812,19 @@ def analyze_only(uid: str) -> dict:
             text = resume_parse.extract_text(path)
             if text:
                 db.set_resume_text(uid, text)
+            else:
+                # The file is there and both extractors got nothing out of it —
+                # a scanned/image-only PDF, or a format neither can read. That
+                # is a parse failure the user has to be told about, because from
+                # their side the upload succeeded: without this flag the
+                # dashboard shows a happily-uploaded resume that silently powers
+                # no matching, no skills and no score.
+                #
+                # Distinct from "no file at all" below, which is not a failure —
+                # it is simply someone who has not uploaded yet.
+                db.set_resume_parse_failed(uid, True)
+                log.warning("resume at %s produced no text for %s", path, uid)
+                return {"error": "resume_unreadable"}
 
     if not text:
         log.warning("no resume text for %s", uid)
@@ -905,9 +918,10 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     profile = user.get("profile") or {}
     name = user.get("name") or (user.get("email") or "").split("@")[0]
 
-    # "approved" is retained only to drain legacy queued work safely.  Safe
-    # Apply Mode never submits from this worker; current dashboard approvals do
-    # not enqueue this mode.
+    # "approved" is a submit-only run: drain the approved queue, no scraping and
+    # no scoring.  The dashboard's approve endpoint enqueues it whenever the
+    # agent is the one that will send, so a tap on Approve results in a submit
+    # rather than waiting for the next full run or the daily sweep.
     submit_only = mode == "approved"
     live = mode in ("live", "approved")
 

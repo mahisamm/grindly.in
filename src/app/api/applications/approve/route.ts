@@ -6,6 +6,8 @@ import { getQuota, remainingForApproval } from "@/lib/quota";
 import { notifyUser } from "@/lib/notify";
 import { hasAppAccess } from "@/lib/access";
 import { agentWillSend, approvalOutcomeMessage } from "@/lib/applyPolicy";
+import { enqueueAgentRun } from "@/lib/agentRunQueue";
+import { spawnWorkerKick } from "@/lib/workerKick";
 
 /**
  * Approve a matched application — and actually send it.
@@ -92,6 +94,30 @@ export async function POST(req: Request) {
         (app.url ? `\nOpen & submit: ${app.url}` : "") +
         `\nOr finish it from your dashboard.`,
   });
+
+  // Actually queue the submit run the docstring and the notification above both
+  // promise. This was missing: the row was flipped to "approved", the user was
+  // told "queued to send", and nothing was enqueued — the submit waited for the
+  // next manual run or the daily sweep, which is exactly the confusing
+  // Run -> Approve -> Run again flow this endpoint was written to remove.
+  //
+  // Only when the agent is the one sending. A board row the user has to submit
+  // in their own browser gives the worker nothing to do, and queuing a run for
+  // it would spend a slot to no effect.
+  //
+  // Idempotent: enqueueAgentRun collapses on activeKey `${uid}:approved`, so
+  // "Approve all" over twelve rows still enqueues one run, and an already
+  // queued/running one picks up everything newly approved when it gets there.
+  if (willSend) {
+    try {
+      await enqueueAgentRun(uid, "approved");
+      spawnWorkerKick(process.cwd(), uid);
+    } catch (e) {
+      // Never fail the approve over this. The row is approved either way, and
+      // the daily sweep still sends it if the kick did not land.
+      console.error("[approve] could not enqueue the submit run:", e);
+    }
+  }
 
   // Board destinations never queue a server-side browser session to click submit.
   return NextResponse.json({ ok: true, requiresUserSubmit: !willSend });

@@ -6,6 +6,8 @@ import { getQuota, remainingForApproval } from "@/lib/quota";
 import { notifyUser } from "@/lib/notify";
 import { hasAppAccess } from "@/lib/access";
 import { agentWillSend, approvalOutcomeMessage } from "@/lib/applyPolicy";
+import { enqueueAgentRun } from "@/lib/agentRunQueue";
+import { spawnWorkerKick } from "@/lib/workerKick";
 
 /** Approve TODAY'S matches and enqueue ONE submit-only run to send them. See
  *  api/applications/approve for why the run is needed at all.
@@ -99,6 +101,24 @@ export async function POST() {
     title: `${matched.length} application${matched.length === 1 ? "" : "s"} approved`,
     body: sections.join("\n\n"),
   });
+
+  // Queue the one submit run that covers the whole batch. Same omission as the
+  // single-approve endpoint had: rows were marked approved and the digest said
+  // "I'll send these myself", but nothing was enqueued, so the sends waited for
+  // the next full run or the daily sweep.
+  //
+  // One run for the batch, not one per row — enqueueAgentRun collapses on
+  // activeKey `${uid}:approved`, and the worker's approved-queue step picks up
+  // everything that is approved when it gets there.
+  if (agentSends.length > 0) {
+    try {
+      await enqueueAgentRun(uid, "approved");
+      spawnWorkerKick(process.cwd(), uid);
+    } catch (e) {
+      // The rows are approved either way; the sweep still sends them.
+      console.error("[approve-all] could not enqueue the submit run:", e);
+    }
+  }
 
   // Board destinations never queue a server-side browser session to click submit.
   return NextResponse.json({

@@ -306,3 +306,46 @@ def test_delayed_job_becomes_claimable_when_due():
     claimed = run_queue.claim_next("next-worker")
     assert claimed is not None
     assert claimed["id"] == rid
+
+
+# ─── maintenance mode must never fail silently ────────────────────────────────
+#
+# The outage these cover: maintenance mode was left on in production, so every
+# claim_next() returned None. The worker logged "serve loop as ..." once and then
+# nothing for seventeen hours, while a user's resume analysis and agent run sat
+# queued. The product looked broken with no error anywhere.
+
+@pytest.fixture
+def _maintenance_on(monkeypatch):
+    monkeypatch.setattr(run_queue.admin_settings, "maintenance_mode", lambda: True)
+    monkeypatch.setattr(run_queue, "_last_maintenance_log", 0.0)
+
+
+def test_maintenance_mode_blocks_claiming(_maintenance_on):
+    run_queue.enqueue("u1", "analyze")
+    assert run_queue.claim_next("w1") is None
+
+
+def test_maintenance_mode_warns_while_work_is_queued(_maintenance_on, caplog):
+    run_queue.enqueue("u1", "analyze")
+    with caplog.at_level("WARNING"):
+        run_queue.claim_next("w1")
+    assert any("MAINTENANCE MODE" in r.getMessage() for r in caplog.records)
+
+
+def test_maintenance_mode_is_quiet_with_an_empty_queue(_maintenance_on, caplog):
+    """A maintenance window with no work in it is not an incident, and must not
+    train anyone to ignore the warning."""
+    with caplog.at_level("WARNING"):
+        run_queue.claim_next("w1")
+    assert not any("MAINTENANCE MODE" in r.getMessage() for r in caplog.records)
+
+
+def test_maintenance_warning_is_throttled(_maintenance_on, caplog):
+    """It repeats so a later reader still sees it, but not on every 10s poll."""
+    run_queue.enqueue("u1", "analyze")
+    with caplog.at_level("WARNING"):
+        for _ in range(5):
+            run_queue.claim_next("w1")
+    hits = [r for r in caplog.records if "MAINTENANCE MODE" in r.getMessage()]
+    assert len(hits) == 1

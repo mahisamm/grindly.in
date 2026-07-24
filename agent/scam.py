@@ -140,7 +140,18 @@ def scam_block(job: dict, jd_text: str = "") -> str | None:
     for pat, reason in _HARD_PATTERNS:
         for m in pat.finditer(blob):
             adjacent = blob[max(0, m.start() - 8):m.start()]
-            window = blob[max(0, m.start() - 48):m.start()]
+            # Clip the negator lookback at a sentence boundary. Unclipped, the
+            # 48-char window reached into the PREVIOUS sentence, so the ordinary
+            # phrase "No prior experience required." cancelled the fee demand
+            # that followed it:
+            #
+            #   "No prior experience required. Registration fee of Rs 500 to
+            #    confirm your seat."   -> not blocked
+            #
+            # which is the single commonest phrasing of the exact scam this
+            # module exists to catch. A negation only counts inside its own
+            # sentence.
+            window = re.split(r"[.!?;\n]", blob[max(0, m.start() - 48):m.start()])[-1]
             after = blob[m.end():m.end() + 16]
             if _NEG_ADJACENT.search(adjacent) or _NEG_DEMAND.search(window) or _NEG_AFTER.search(after):
                 continue  # negated reassurance ("no fee", "never ask for", "waived")

@@ -4,6 +4,8 @@ submitted that the user can't read back afterwards."""
 import json
 from unittest.mock import patch
 
+import pytest
+
 import questions
 
 
@@ -158,3 +160,93 @@ def test_unanswered_fields_stay_out_of_the_record():
     with patch.object(questions.llm_mod, "chat_json_ensemble", return_value={}):
         out = _answer([_field("Optional extra?", required=False)])
     assert json.loads(questions.to_record(out)) == []
+
+
+# --- a checkable fact is never auto-answered --------------------------------
+#
+# The worst bug this module can have. `_CONFIRM` matched "do you (have|...)",
+# "willing" and "relocat", so all of these were answered with a literal "Yes"
+# and stored with source="profile" — which is how the user reads them back, as
+# verified fact. Three fabricated claims, submitted unattended to a real
+# employer under the candidate's real name.
+#
+# They must come back blank. A required one then blocks the submit
+# (channel_ats._unanswered_required / channel_google_form.blocking_reason) and
+# the candidate answers it themselves.
+
+FABRICABLE = [
+    "Do you have 2+ years of experience with Django?",
+    "Do you have a B.Tech degree in Computer Science?",
+    "Are you willing to relocate to Gurgaon?",
+    "Do you have a valid certification in AWS?",
+    "Have you worked with Kubernetes before?",
+    "Do you need visa sponsorship?",
+    "What is your notice period?",
+]
+
+
+@pytest.mark.parametrize("label", FABRICABLE)
+def test_a_checkable_claim_is_never_auto_answered(label):
+    with patch.object(questions.llm_mod, "chat_json_ensemble", return_value={}):
+        out = _answer([_field(label, kind="text")])
+    assert out[0]["answer"] == "", f"{label!r} was answered {out[0]['answer']!r}"
+
+
+@pytest.mark.parametrize("label,options", [
+    ("Do you require visa sponsorship?", ["Yes", "No"]),
+    ("What is your notice period?", ["Immediately", "15 days", "1 month"]),
+])
+def test_a_choice_question_is_read_before_its_options(label, options):
+    """_pick_option used to scan only the options, so any question offering an
+    affirmative-looking choice got one: sponsorship became "Yes", notice period
+    became "Immediately". channel_google_form maps every radio and dropdown
+    through here, so both were POSTed unattended."""
+    with patch.object(questions.llm_mod, "chat_json_ensemble", return_value={}):
+        out = _answer([_field(label, kind="select", options=options)])
+    assert out[0]["answer"] == ""
+
+
+def test_genuine_availability_questions_still_answer_yes():
+    """The narrowing must not swallow the case the confirm set exists for — the
+    candidate did declare these by applying at all."""
+    labels = ["Are you available to start immediately?",
+              "Can you join in June?",
+              "Available for work from home?"]
+    with patch.object(questions.llm_mod, "chat_json_ensemble", return_value={}):
+        out = _answer([_field(l, kind="text") for l in labels])
+    assert [r["answer"] for r in out] == ["Yes", "Yes", "Yes"]
+
+
+# --- the stored CGPA is the COLLEGE one -------------------------------------
+
+@pytest.mark.parametrize("label", [
+    "Class 12 percentage (%)", "Your 10th marks", "Class 12 CGPA", "SSC percentage",
+])
+def test_school_marks_are_not_answered_from_the_college_cgpa(label):
+    """`percentage|marks|score` were in the CGPA pattern, so a form asking for
+    class 10 or 12 results got the college CGPA — a false credential, filed as
+    source="profile"."""
+    with patch.object(questions.llm_mod, "chat_json_ensemble", return_value={}):
+        out = _answer([_field(label, kind="text")])
+    assert out[0]["answer"] == ""
+
+
+@pytest.mark.parametrize("label", ["Your CGPA", "CGPA / Percentage", "Current GPA"])
+def test_the_college_cgpa_is_still_answered(label):
+    with patch.object(questions.llm_mod, "chat_json_ensemble", return_value={}):
+        out = _answer([_field(label, kind="text")])
+    assert out[0]["answer"] == "8.4"
+
+
+# --- the generic paragraph never lands in a number box ----------------------
+
+@pytest.mark.parametrize("label", [
+    "Expected stipend", "Hours per week", "Year of graduation?", "Class 12 percentage (%)",
+])
+def test_the_fallback_paragraph_stays_out_of_datum_fields(label):
+    """The required-field fallback is written for "why do you want this role".
+    In a stipend or percentage box it is nonsense to the recruiter, and a
+    numeric input rejects it outright."""
+    with patch.object(questions.llm_mod, "chat_json_ensemble", return_value={}):
+        out = _answer([_field(label, kind="text", required=True)])
+    assert out[0]["answer"] == ""

@@ -125,7 +125,53 @@ def read_fields(page) -> list[dict]:
 
 # --- answering --------------------------------------------------------------
 
-_CGPA = re.compile(r"\b(cgpa|gpa|grade point|percentage|marks|score)\b", re.I)
+_CGPA = re.compile(r"\b(cgpa|gpa|grade point)\b", re.I)
+# "percentage", "marks" and "score" were in the pattern above and had to come
+# out. The stored `gpa` is the candidate's COLLEGE result; a form asking for
+# "Class 12 percentage (%)" or "Your 10th marks" wants a different number
+# entirely, and both were being answered "8.5" from the college CGPA — filed
+# with source="profile", so it reads back to the user as verified fact.
+#
+# This catches the remaining half: a field that does say CGPA but asks for the
+# school one ("Class 12 CGPA").
+_SCHOOL_LEVEL = re.compile(
+    r"\b(class\s*(x|xii|10|12)|10th|12th|tenth|twelfth|high\s*school|"
+    r"secondary|intermediate|hsc|ssc|matric)\b",
+    re.I,
+)
+
+# Questions that assert a CHECKABLE FACT about the candidate — a credential, a
+# length of experience, a legal status, a commitment with consequences. These
+# may never be auto-answered.
+#
+# `_CONFIRM` below used to swallow them whole. "Do you have 2+ years of
+# experience with Django?", "Do you have a B.Tech degree in Computer Science?"
+# and "Are you willing to relocate to Gurgaon?" all matched it and were answered
+# "Yes" — recorded with source="profile" so the user saw them as verified. Three
+# fabricated claims, typed into a real employer's form, under a real name, with
+# nobody in the loop.
+#
+# Unanswered instead. A REQUIRED one then blocks the submit
+# (channel_ats._unanswered_required, channel_google_form.blocking_reason) and the
+# application waits for the candidate — the trade this module already makes
+# everywhere else.
+_FACTUAL_CLAIM = re.compile(
+    # `are you (?:an?|currently)\b` needs that trailing boundary: without it the
+    # bare `a` matched the first letter of "Are you AVAILABLE to start
+    # immediately?", which is a genuine availability question and must still be
+    # answerable.
+    r"\b(do you have|have you|did you|are you (?:an?|currently)\b|"
+    r"years?\s+of\s+experience|how\s+many\s+years|experience\s+(?:with|in)|"
+    # NOTE the \w* on every truncated stem. Written as a bare prefix it would be
+    # followed by the group's closing \b, which cannot match inside a word — so
+    # "relocat" missed "relocate", "certif" missed "certification", "graduat"
+    # missed "graduation" and "sponsor" missed "sponsorship". The relocation case
+    # was live: "Are you willing to relocate to Gurgaon?" was still answered Yes.
+    r"b\.?\s?tech|m\.?\s?tech|mba|bachelor|master|diploma|degree|graduat\w*|"
+    r"certif\w*|licen[cs]e|clearance|sponsor\w*|visa|work\s+permit|"
+    r"notice\s+period|relocat\w*)",
+    re.I,
+)
 _PHONE = re.compile(r"\b(phone|mobile|contact number|whatsapp)\b", re.I)
 _EMAIL = re.compile(r"\b(e-?mail)\b", re.I)
 # Availability/logistics questions. These are yes/no in practice, and the user
@@ -167,6 +213,18 @@ _LAST_NAME = re.compile(r"\b(last|sur|family)\s*name\b", re.I)
 
 # Options that mean "yes" on a choice question. A choice question is only
 # auto-answered when one of its own options matches this — see _pick_option.
+# Questions that want a specific datum — a number, a figure, a date — not prose.
+# The generic fallback paragraph further down is written for "why do you want
+# this role"; dropped into "Expected stipend", "Hours per week" or "Class 12
+# percentage (%)" it is useless to the recruiter and usually rejected outright
+# by a numeric input.
+_WANTS_A_DATUM = re.compile(
+    r"\b(percentage|marks|score|cgpa|gpa|stipend|salary|ctc|expected\s+pay|"
+    r"hours?\s+per|how\s+many|how\s+much|passing\s+year|year\s+of|"
+    r"date\s+of|duration|number\s+of|age)\b",
+    re.I,
+)
+
 _AFFIRMATIVE_OPTION = re.compile(
     r"^\s*(yes|yeah|yep|sure|available|immediately|i (can|am|do|will|agree)|"
     r"agree|accept|confirm|true|ok(ay)?)\b",
@@ -206,6 +264,15 @@ def _pick_option(field: dict) -> str | None:
     is left unanswered — which makes a REQUIRED one block the submission
     (channel_google_form.apply returns needs_review) instead of guessing.
     """
+    # Read the QUESTION before the options. Picking the affirmative from the
+    # options alone answered "Do you require visa sponsorship?" [Yes/No] with
+    # "Yes", and "What is your notice period?" [Immediately/15 days/1 month]
+    # with "Immediately" — because those option words are themselves
+    # affirmatives. Both are checkable claims about the candidate, and
+    # channel_google_form maps every radio and dropdown here, so both were being
+    # POSTed unattended to real employers.
+    if _FACTUAL_CLAIM.search(field.get("label") or ""):
+        return None
     options = field.get("options") or []
     for o in options:
         if _AFFIRMATIVE_OPTION.match(o):
@@ -227,7 +294,7 @@ def _deterministic(field: dict, profile: dict, name: str, email: str) -> str | N
         return str(profile.get("phone") or "") or None
     if _EMAIL.search(label):
         return email or None
-    if _CGPA.search(label):
+    if _CGPA.search(label) and not _SCHOOL_LEVEL.search(label):
         gpa = profile.get("gpa")
         return str(gpa) if gpa else None
     named = _name_answer(label, name)
@@ -238,7 +305,11 @@ def _deterministic(field: dict, profile: dict, name: str, email: str) -> str | N
     # NOT a select: a dropdown's answer has to be one of ITS OWN option labels, and
     # a bare "Yes" won't match an option that reads "Yes, immediately" —
     # select_option() would throw. Selects fall through to the option picker.
-    if _CONFIRM.search(label) and kind not in ("textarea", "select"):
+    if (
+        _CONFIRM.search(label)
+        and not _FACTUAL_CLAIM.search(label)
+        and kind not in ("textarea", "select")
+    ):
         return "Yes"
     return None
 
@@ -345,6 +416,13 @@ def answer_fields(
     # *something*. Say only what is verifiably true from the skill list rather than
     # inventing enthusiasm — a real sentence beats the old canned one.
     for rec, f in zip(out, fields):
+        # Never let the generic paragraph stand in for a checkable fact. Put it
+        # in a "Do you have a B.Tech degree?" or "Years of experience" box and it
+        # is both nonsense to the recruiter and an implied claim; leaving it
+        # blank blocks the submit instead, and the candidate answers it.
+        label_l = f["label"] or ""
+        if _FACTUAL_CLAIM.search(label_l) or _WANTS_A_DATUM.search(label_l):
+            continue
         if not rec["answer"] and f["required"] and rec["kind"] in ("textarea", "text"):
             top = ", ".join(skills[:3]) if skills else "the tools this role uses"
             rec["answer"] = (

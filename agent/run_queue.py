@@ -209,6 +209,50 @@ def _claim_guarded(c, candidate) -> bool:
     return running is None
 
 
+# How often the maintenance-mode notice repeats while work is piling up behind
+# it. Long enough not to fill the log, short enough that "why is nothing
+# running?" is answered by the last few lines rather than by a database query.
+_MAINTENANCE_LOG_INTERVAL_SECONDS = 300
+_last_maintenance_log = 0.0
+
+
+def _warn_if_maintenance_is_holding_work() -> None:
+    """Say so, loudly and repeatedly, when maintenance mode is why nothing runs.
+
+    Silence here cost a real outage. Maintenance mode was left on, so every
+    claim_next() returned None; the worker logged a cheerful "serve loop as ..."
+    once and then said nothing for seventeen hours while a user's resume
+    analysis and their agent run sat queued and untouched. From the outside the
+    product looked broken with no error anywhere — the resume simply never got
+    analysed.
+
+    An empty queue under maintenance is genuinely fine and stays quiet. Queued
+    work that cannot be claimed is not fine, and now says so.
+    """
+    global _last_maintenance_log
+    now = time.time()
+    if now - _last_maintenance_log < _MAINTENANCE_LOG_INTERVAL_SECONDS:
+        return
+    try:
+        with db.conn() as c:
+            _ensure_table(c)
+            row = c.execute(
+                "SELECT count(*) AS n FROM agent_runs WHERE status='queued'"
+            ).fetchone()
+        waiting = int(dict(row).get("n") or 0) if row else 0
+    except Exception:  # noqa: BLE001
+        # Never let the warning path be the thing that breaks the loop.
+        waiting = -1
+    if waiting == 0:
+        return
+    _last_maintenance_log = now
+    log.warning(
+        "MAINTENANCE MODE is ON — %s queued job(s) are waiting and will not run "
+        "until it is switched off in /admin/settings",
+        waiting if waiting >= 0 else "an unknown number of",
+    )
+
+
 def claim_next(worker_id: str) -> dict | None:
     """Atomically claim the oldest eligible queued job whose user has nothing
     running. Postgres uses row-level locking (FOR UPDATE SKIP LOCKED) plus a
@@ -217,6 +261,7 @@ def claim_next(worker_id: str) -> dict | None:
     with a running job is never double-claimed — so replicas > 1 is safe.
     Jobs still inside their post-failure backoff window are skipped too."""
     if admin_settings.maintenance_mode():
+        _warn_if_maintenance_is_holding_work()
         return None
     with db.conn() as c:
         _ensure_table(c)

@@ -145,3 +145,23 @@ def test_unrelated_no_does_not_suppress_real_fee():
     # An unrelated "no" ("no experience needed") must not shield a real demand.
     jd = "No experience needed! A registration fee of ₹999 confirms your enrollment."
     assert scam.scam_block(_job(), jd) is not None
+
+
+def test_a_negator_in_the_previous_sentence_does_not_suppress_a_fee():
+    """The case above passed only because "!" happened to fall inside the 48-char
+    lookback as a non-word character. With a full stop the negator "No prior
+    experience required" sat plainly in the window and cancelled the demand — and
+    that is the commonest phrasing of this exact scam."""
+    jd = "No prior experience required. Registration fee of Rs 500 to confirm your seat."
+    assert scam.scam_block(_job(), jd) is not None
+
+
+def test_a_real_reassurance_in_its_own_sentence_still_passes():
+    """The other half must keep working: a legitimate listing saying it charges
+    nothing has the scam word present but negated, in the same sentence."""
+    for jd in (
+        "There is no registration fee for this internship.",
+        "We never ask for any deposit from candidates.",
+        "Joining fee waived for all selected interns.",
+    ):
+        assert scam.scam_block(_job(), jd) is None, jd

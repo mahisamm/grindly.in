@@ -145,8 +145,16 @@ export async function POST(req: Request) {
   if (analyzeOnly) {
     run = await enqueueAgentRun(uid, "analyze");
   } else {
+    // Scoped to this MODE, not to the user. Without the mode filter this matched
+    // any in-flight job — so uploading a resume (which queues an "analyze") and
+    // then pressing Run agent handed that analyze row straight back as `existing`,
+    // enqueueAgentRun short-circuited on it, and the response claimed
+    // {ok:true, mode:"live"} while no live run had been created. The button did
+    // nothing, visibly succeeded, and /api/me then filtered the run out because it
+    // was the wrong mode. Per-mode is also the real contract: the uniqueness the
+    // DB enforces is activeKey = `${userId}:${mode}`.
     const existing = await prisma.agentRun.findFirst({
-      where: { userId: uid, status: { in: ["queued", "running"] } },
+      where: { userId: uid, mode: runMode, status: { in: ["queued", "running"] } },
     });
     run = await enqueueAgentRun(uid, runMode, existing);
   }
