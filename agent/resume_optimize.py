@@ -177,6 +177,12 @@ def _one_variant(
     if not struct:
         print(f"[optimize] {label}: rewrite came back malformed")
         return None, f"{label}: the rewrite came back in a shape we couldn't use"
+    # This one IS rendered, so an empty body has to stop here. Letting it through
+    # produces a near-blank PDF that still compiles and only fails later at the
+    # readability check, where the user is told it is "a bug on our side".
+    if not any(s["items"] for s in struct["sections"]):
+        print(f"[optimize] {label}: rewrite returned no content")
+        return None, f"{label}: the rewrite came back empty"
     changes = _clean_changes(rewritten.get("changes"))
 
     invented = _fabricated_skills(struct, allowed)
@@ -525,10 +531,13 @@ def _sanitize_struct(struct: dict) -> dict | None:
             )
             sections.append({"heading": heading, "items": items})
 
-    # A struct whose sections all came back empty is not usable — rendering it
-    # produces a near-blank page, which is worse than reporting nothing.
-    if not any(s["items"] for s in sections):
-        return None
+    # Deliberately NOT rejecting a struct whose sections came back empty here.
+    # This function is shared: _extract_struct feeds the result into the rewrite
+    # prompt rather than rendering it, so a skeletal extraction is still useful
+    # input — and rejecting it aborted the whole optimize run with
+    # "structured extraction failed" on nothing worse than ensemble variance.
+    # The near-blank-render guard lives in _variant, on the path that actually
+    # compiles a PDF.
     if not name and not sections:
         return None
     return {"name": name, "contact_line": contact, "sections": sections}

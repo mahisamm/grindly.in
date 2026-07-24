@@ -70,12 +70,20 @@ def test_a_multiline_string_splits_into_real_bullets():
     assert out == ["Built the API", "Shipped the UI", "Wrote tests"]
 
 
-def test_a_struct_with_no_usable_items_is_rejected():
-    """Rendering it produces a near-blank page, which is worse than saying
-    nothing was produced."""
-    assert ro._sanitize_struct(
+def test_a_skeletal_extraction_is_kept_not_rejected():
+    """_sanitize_struct is shared by extraction and rewrite. Extraction feeds the
+    rewrite prompt rather than rendering, so a section that came back with no
+    items is still usable input — rejecting it here aborted the entire optimize
+    run with "structured extraction failed" on nothing worse than ensemble
+    variance. The near-blank-render guard belongs in _variant."""
+    r = ro._sanitize_struct(
         {"name": "A", "contact_line": "c", "sections": [{"heading": "S", "items": []}]}
-    ) is None
+    )
+    assert r is not None
+    assert r["sections"][0]["heading"] == "S"
+
+
+def test_a_wholly_empty_struct_is_still_rejected():
     assert ro._sanitize_struct({"name": "", "contact_line": "", "sections": []}) is None
 
 
