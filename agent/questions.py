@@ -400,6 +400,24 @@ def answer_fields(
             })
             continue
 
+        # A question wanting a specific figure never goes to the LLM. Anything
+        # it can honestly say there is prose, and prose is the wrong shape: live
+        # in production the model answered "Class 12 percentage (%)" with
+        # "Information not available" and "Do you have a B.Tech degree?" with
+        # "My resume does not mention...". Neither is a lie, but a numeric input
+        # rejects them outright and a recruiter reading a percentage box wants a
+        # number — and, worse, a non-empty answer defeats the required-field
+        # block in channel_ats/channel_google_form, so the application goes out
+        # with the question effectively unanswered instead of waiting for the
+        # candidate. Anything genuinely known (CGPA, phone, email) was already
+        # answered from the profile above and never reaches here.
+        if _WANTS_A_DATUM.search(f["label"] or ""):
+            out.append({
+                "question": f["label"], "answer": "",
+                "source": "unanswerable", "kind": f["kind"], "_i": i,
+            })
+            continue
+
         # Free text — this is what the LLM is for.
         out.append({
             "question": f["label"], "answer": "",

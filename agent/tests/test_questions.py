@@ -250,3 +250,26 @@ def test_the_fallback_paragraph_stays_out_of_datum_fields(label):
     with patch.object(questions.llm_mod, "chat_json_ensemble", return_value={}):
         out = _answer([_field(label, kind="text", required=True)])
     assert out[0]["answer"] == ""
+
+
+@pytest.mark.parametrize("label", [
+    "Expected stipend", "Class 12 percentage (%)", "Hours per week", "Your 10th marks",
+])
+def test_a_datum_question_is_never_sent_to_the_model(label):
+    """Caught in production with the real providers up. The model answers these
+    honestly — "Information not available", "My resume does not mention..." —
+    which is not a lie but is the wrong shape: a numeric input rejects it, and a
+    NON-EMPTY answer defeats the required-field block in channel_ats and
+    channel_google_form, so the application ships with the question effectively
+    unanswered instead of waiting for the candidate."""
+    called = {"n": 0}
+
+    def _spy(*a, **k):
+        called["n"] += 1
+        return {"0": "Information not available"}
+
+    with patch.object(questions.llm_mod, "chat_json_ensemble", side_effect=_spy):
+        out = _answer([_field(label, kind="text", required=True)])
+    assert out[0]["answer"] == ""
+    assert out[0]["source"] == "unanswerable"
+    assert called["n"] == 0, "a datum question was sent to the LLM"
