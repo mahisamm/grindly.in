@@ -1,11 +1,13 @@
 # Grindly
 
-Your AI preps internship applications while you sleep — you review and submit. A
+Your AI finds and submits safe internship applications while you sleep, and
+prepares the rest for one final user review. A
 local-first SaaS: users sign up, upload a resume, answer a few **proff questions**
 (which become the agent's firewall), start a trial, connect a platform — then an
-agent reads the resume, finds matching internships, prepares supported applications
-for approval, and sends a **daily report**. The final submission is always performed
-by the user (Safe Apply Mode — see `agent/safety.py`); Grindly never auto-submits.
+agent reads the resume, finds matching internships, applies through supported
+employer-owned intake forms (and explicitly consented staged platforms), and sends
+a **daily report**. Account-sensitive boards stay in Safe Apply Mode, where Grindly
+prepares the application and the user performs the final submit.
 
 Supported integrations are **LinkedIn, Internshala, Naukri, Unstop, and Indeed**.
 External and unsupported complex application flows are skipped. Payment + Slack run in **stub mode**
@@ -83,7 +85,8 @@ Grindly/
    - Builds a plan from firewall constraints.
    - Fetches listings from public search / guest APIs across the 5 boards in parallel.
    - Scores each job, drops anything the firewall forbids or below your threshold.
-   - Prepares strong matches (tailored resume + cover letter + answers) up to your daily cap — Safe Apply Mode; **you** submit the final application in your own browser.
+   - Submits eligible matches through policy-approved employer intake channels, up to the daily cap.
+   - Prepares account-sensitive board applications (tailored resume + cover letter + answers) for the user's final browser submit.
    - Writes a daily report + sends it to email/Slack.
 5. **Dashboard** polls every 12s — matches + reports appear in near real time.
 
@@ -110,8 +113,8 @@ npm run setup             # generates APP_ENCRYPTION_KEY
 npm run dev               # http://localhost:3000
 ```
 
-Open the site → sign up → onboard → pay (stub) → on the dashboard hit
-**Run agent now (demo)**. Applications stream in.
+Open the site → sign up → onboard → activate the free beta → on the dashboard
+hit **Run agent**. Real matches stream in; eligible safe destinations are submitted.
 
 ### Docker (production-like)
 
@@ -127,11 +130,12 @@ The compose stack starts: Postgres → migrate (schema + seed) → web + 2 worke
 
 ---
 
-## Demo vs live
+## Live agent
 
-- **Run agent now (demo)** → `mode=mock`: fake board, full pipeline, no external site.
-- **Run live** → `mode=live`: drives real platforms. Requires logging into each platform
-  once (agent saves the browser session). Without login it reports `login_required`.
+The product has no mock/demo path. **Run agent** discovers real public listings.
+Employer-owned destinations can be submitted without a board login. Internshala
+submission requires the user to connect and consent once; account-sensitive boards
+remain prepared for the user's final browser submit.
 
 ### Scheduled service mode
 
@@ -152,6 +156,8 @@ RAZORPAY_KEY_SECRET=...          # server-only: signs orders + verifies payments
 SLACK_BOT_TOKEN=xoxb-...         # real Slack DMs
 TRUST_PROXY=1                    # when behind Caddy/Nginx
 GRINDLY_SPREAD_APPLIES=1         # human pacing (5-15 min between applies)
+GRINDLY_AUTO_APPLY_MODE=live     # send policy-approved Tier A destinations
+GRINDLY_TIER_B_APPLY=1           # allow explicitly consented Tier B submissions
 INTERNSHALA_BETA_OPEN=1          # open Internshala auto-apply to all users
 ```
 
@@ -168,8 +174,9 @@ as signup or password-reset flows.
 
 ## Connect a platform (live mode)
 
-On the dashboard → **Integrations** → connect platform → logs in once → browser session
-persists in `agent/browser_profile/`. After that, **Run live** applies for real.
+On the dashboard → **Integrations** → connect Internshala → log in once → the
+encrypted credential/session persists on the shared app-data volume. After that,
+**Run agent** may submit eligible Internshala applications under the staged policy.
 
 ---
 
