@@ -55,6 +55,7 @@ import safety
 import scam
 import company_rep
 import drift
+import channel_ats
 import channel_email
 import channel_google_form
 import llm as llm_mod
@@ -164,9 +165,15 @@ def _platforms_for_today(uid: str, available: list[str], today: str | None = Non
 def _requires_approval(src: str, auto_apply: bool) -> bool:
     """True when discovery must stop before final *board* submission.
 
-    Safe Apply Mode fails closed for every browser source, including an
-    unrecognised future source.  The profile setting controls whether the agent
-    prepares matches, never whether it may impersonate a user at final submit.
+    Delegates to `safety.requires_manual_final_submit`, which answers by the
+    board's tier: a Tier B board the user gave credentials to may be submitted
+    when the fleet is live and Tier B is switched on; Tier C and every
+    unrecognised source still fail closed.
+
+    `auto_apply` is deliberately unused.  The profile toggle is a separate
+    question — "may the agent act for me at all" — and the caller applies it
+    one step earlier, so a user who switched it off is never overridden by a
+    policy that happens to say yes.
 
     Only governs the board channel.  Applications routed to an employer's own
     intake go through `safety.destination_policy()` instead — see
@@ -188,32 +195,48 @@ RESOLVE_FETCH_BUDGET = int(os.environ.get("GRINDLY_RESOLVE_FETCH_BUDGET", "12"))
 _CHANNEL_MODULES = {
     resolver.CHANNEL_GOOGLE_FORM: channel_google_form,
     resolver.CHANNEL_EMAIL: channel_email,
+    resolver.CHANNEL_ATS: channel_ats,
 }
 
 # Tier A says "safe to submit unattended". It does NOT say "we have something
-# that can submit it". ATS portals (Greenhouse, Lever, Ashby, ...) resolve to
-# Tier A correctly — no candidate account is involved — but no sender exists for
-# them yet, and the two facts must not be conflated: a dict miss in
+# that can submit it, switched on, right now". Those are three separate facts and
+# conflating any two of them has already caused one real bug: a dict miss in
 # _CHANNEL_MODULES used to fall straight through to the BOARD adapter, so an
 # ATS-routed listing found on LinkedIn would be handed to linkedin.apply(). That
 # is the exact thing this whole design exists to prevent, and it survived only
 # because Safe Apply Mode caught it one layer further down.
 #
-# So deliverability is now an explicit question with an explicit answer.
+# So deliverability is an explicit question with an explicit answer.
 def channel_deliverable(dest: dict | None) -> bool:
-    """Do we actually have a sender for this destination's channel?"""
+    """Do we have a sender for this channel, and is that sender switched on?
+
+    The second half matters as much as the first. A sender that exists but is
+    disabled — `channel_email` while gmail.send is still waiting on Google's
+    restricted-scope review, `channel_ats` with its kill switch off — cannot
+    deliver today, and calling it deliverable spends one of the user's daily
+    quota slots on a dispatch that can only come back as needs_review.
+    """
     if not dest:
         return False
     channel = dest.get("channel")
     if channel == resolver.CHANNEL_PLATFORM:
         return True          # board adapters exist; policy decides if they may run
-    return channel in _CHANNEL_MODULES and bool(dest.get("target"))
+    mod = _CHANNEL_MODULES.get(channel)
+    if mod is None or not dest.get("target"):
+        return False
+    # Channels without a kill switch (Google Form) are always on.
+    is_on = getattr(mod, "enabled", None)
+    return bool(is_on()) if callable(is_on) else True
 
 
 _UNDELIVERABLE_REASON = {
     resolver.CHANNEL_ATS: (
-        "found the company's own application page — Grindly can't submit to it "
-        "automatically yet, so open it and send it in one step"
+        "found the company's own application portal, but portal auto-apply is "
+        "switched off right now — open it and send it in one step"
+    ),
+    resolver.CHANNEL_EMAIL: (
+        "found the company's hiring inbox, but Grindly can't send mail from your "
+        "account yet — open it and send it yourself"
     ),
 }
 

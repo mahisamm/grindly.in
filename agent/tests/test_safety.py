@@ -31,19 +31,43 @@ def test_can_apply_allows_good_job():
     assert reason is None
 
 
-def test_safe_apply_requires_a_manual_final_submit_for_known_and_unknown_sources():
-    for source in ("linkedin", "internshala", "naukri", "unstop", "indeed", "future_source", None):
+def test_tier_c_and_unknown_sources_require_a_manual_final_submit(monkeypatch):
+    """No combination of switches releases a Tier C board, or a source we do not
+    recognise. Turning Tier B on must not widen the blast radius by one board."""
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
+    for source in ("linkedin", "naukri", "unstop", "indeed", "future_source", None):
         required, reason = safety.requires_manual_final_submit(source)
-        assert required is True
+        assert required is True, source
         assert "own browser" in reason
 
 
-def test_every_browser_adapter_fails_closed_before_opening_a_submit_form():
+def test_tier_c_adapters_fail_closed_before_opening_a_submit_form(monkeypatch):
+    """The four Tier C adapters must refuse before they touch a browser, even
+    with every switch on.
+
+    internshala is deliberately absent: it is Tier B, and with both switches on
+    it is *supposed* to proceed — which would launch a real browser, so its
+    permitted path belongs in the policy tests, not here.
+    """
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
     job = {"url": "https://example.test/job"}
-    for adapter in (linkedin, internshala, naukri, unstop, indeed):
+    for adapter in (linkedin, naukri, unstop, indeed):
         status, reason = adapter.apply(job, "", "test-user")
         assert status == safety.APPLY_STATUS.NEEDS_REVIEW
-        assert reason == safety.SAFE_APPLY_REASON
+        assert "own browser" in reason
+
+
+def test_internshala_fails_closed_while_tier_b_is_off(monkeypatch):
+    """With the switches off the Tier B adapter refuses before opening a browser
+    too. The gate is what stops it — not the happy accident of a missing
+    session, which is what would be left if the gate were removed."""
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "shadow")
+    monkeypatch.delenv("GRINDLY_TIER_B_APPLY", raising=False)
+    status, reason = internshala.apply({"url": "https://example.test/job"}, "", "test-user")
+    assert status == safety.APPLY_STATUS.NEEDS_REVIEW
+    assert "prepared the application" in reason
 
 
 def test_session_ok_detects_login_url():

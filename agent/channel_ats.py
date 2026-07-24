@@ -1,0 +1,431 @@
+"""ATS channel — submit to the employer's own applicant-tracking portal.
+
+Why this is a different risk class from a board adapter
+------------------------------------------------------
+Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Zoho and friends host the
+*employer's* public intake page. The candidate has no account there; the page
+exists to receive applications from strangers. So unlike internshala.py or
+linkedin.py there is nothing to log into, nothing to rate-limit against a user's
+identity, and nothing that can be banned. `resolver.py` already classifies these
+as Tier A for exactly that reason — this module is the sender that Tier A was
+missing, and until it existed an ATS-routed listing was resolved correctly and
+then banked undelivered (see `_UNDELIVERABLE_REASON` in worker.py).
+
+Why Playwright and not raw HTTP
+-------------------------------
+`channel_google_form.py` can POST directly because a Google Form has one
+documented response endpoint and a machine-readable schema. An ATS has neither:
+Ashby is a React/GraphQL app, Workable and SmartRecruiters render their form
+client-side, and every vendor guards its POST with its own CSRF/token dance. The
+part that decides it, though, is the resume: nearly every ATS form requires a
+file upload, and reproducing nine vendors' multipart contracts by hand is a much
+larger and more brittle surface than driving the form the way a person does.
+
+Because there is no account, the browser here is deliberately *ephemeral* — no
+persistent profile, no cookie reuse, launched and torn down per application.
+That also sidesteps the profile-lock/asyncio cascade the board adapters have to
+manage (see stealth.clear_stale_lock and the pw.stop() notes in unstop.py).
+
+The discipline this module keeps
+--------------------------------
+It refuses rather than invents. A required question we cannot answer honestly,
+a missing resume, a form we cannot read — each returns `needs_review` with the
+reason, exactly like `channel_google_form.blocking_reason`. An application sent
+under someone's real name with a made-up answer is worse than one not sent.
+"""
+from __future__ import annotations
+
+import os
+import random
+import re
+
+import questions
+import safety
+import selector_ai
+import stealth
+
+
+def enabled() -> bool:
+    """Fleet kill switch for this sender, independent of the auto-apply mode.
+
+    Fail-closed like every other capability flag (GMAIL_SEND_ENABLED,
+    GRINDLY_TIER_B_APPLY): a brand-new sender that files real applications under
+    a user's name should be switchable off without a redeploy, and should never
+    turn itself on because some other flag flipped.
+    """
+    return os.environ.get("GRINDLY_ATS_APPLY") == "1"
+
+
+def _headless() -> bool:
+    """Headless by default — unlike a board adapter there is never an OTP or a
+    login for a human to complete, so a visible window serves no purpose on a
+    server. Overridable for local debugging."""
+    return os.environ.get("GRINDLY_ATS_HEADLESS", "1") != "0"
+
+
+# Nav timeout is generous: ATS pages are client-rendered and the slow ones
+# (Ashby, Workable) routinely take several seconds before the form exists.
+_NAV_TIMEOUT_MS = int(os.environ.get("GRINDLY_ATS_NAV_TIMEOUT_MS", "45000"))
+
+# The listing is gone. Worth distinguishing from a failure: a closed role should
+# be skipped quietly, not retried or surfaced as something the user must fix.
+_CLOSED_RE = re.compile(
+    r"(no longer accepting|position (has been )?closed|job (is )?closed|"
+    r"posting (is )?(closed|expired|no longer)|this role has been filled|"
+    r"not accepting applications|404|page not found)",
+    re.I,
+)
+
+# A cover-letter-shaped box gets the letter we already wrote for this role,
+# rather than whatever generic paragraph the question engine would produce.
+_COVER_RE = re.compile(
+    r"(cover letter|why (should|do) (we|you)|why (this|our) (role|company|job)|"
+    r"tell us about yourself|motivation|additional information|"
+    r"anything else|introduce yourself)",
+    re.I,
+)
+
+# Which file input is the resume, when a form offers more than one.
+_RESUME_INPUT_RE = re.compile(r"(resume|cv|curriculum)", re.I)
+
+# Reveals the form on vendors that keep it behind a button (Lever's "Apply for
+# this job", Ashby's "Apply for this Job", SmartRecruiters' "I'm interested").
+_APPLY_BUTTON_CANDIDATES = [
+    "a:has-text('Apply for this job')",
+    "button:has-text('Apply for this Job')",
+    "a#apply_button",
+    "button:has-text(\"I'm interested\")",
+    "a:has-text('Apply now')",
+    "button:has-text('Apply now')",
+    "a:has-text('Apply')",
+    "button:has-text('Apply')",
+]
+
+_SUBMIT_CANDIDATES = [
+    "#submit_app",                                    # greenhouse
+    "button[data-ui='submit-application']",           # workable
+    "button:has-text('Submit application')",
+    "button:has-text('Submit Application')",
+    "button:has-text('Submit my application')",
+    "input[type='submit']",
+    "button[type='submit']",
+]
+
+_SUCCESS_SELECTORS = [
+    ":text('Thank you for applying')",
+    ":text('Application submitted')",
+    ":text('Your application has been submitted')",
+    ":text('Thanks for applying')",
+    ":text('successfully submitted')",
+    ":text('We have received your application')",
+    ":text('Thank you for your application')",
+]
+
+# Cookie/consent walls sit on top of the form on several EU-hosted ATS tenants.
+_CONSENT_CANDIDATES = [
+    "button:has-text('Accept all')",
+    "button:has-text('Accept All')",
+    "button:has-text('Accept')",
+    "button:has-text('I agree')",
+    "#onetrust-accept-btn-handler",
+]
+
+
+def _human_type(page, el, text: str) -> None:
+    """Type at a human pace. Same contract `questions.fill` expects from every
+    adapter: pacing belongs to the caller, not the question engine."""
+    try:
+        stealth.scroll_to(page, el)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        el.click()
+    except Exception:  # noqa: BLE001
+        pass
+    el.type(text, delay=random.randint(18, 55))
+
+
+def _pause(page, lo: int = 300, hi: int = 900) -> None:
+    try:
+        page.wait_for_timeout(random.randint(lo, hi))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _dismiss_consent(page) -> None:
+    """Best-effort. A consent overlay intercepts clicks on the form beneath it,
+    so this runs before anything is filled — but never blocks the apply if no
+    banner is present, which is the common case."""
+    for sel in _CONSENT_CANDIDATES:
+        try:
+            el = page.query_selector(sel)
+            if el and el.is_visible():
+                el.click(timeout=2000)
+                _pause(page, 200, 500)
+                return
+        except Exception:  # noqa: BLE001
+            continue
+
+
+def _page_text(page) -> str:
+    try:
+        return (page.inner_text("body") or "")[:20000]
+    except Exception:  # noqa: BLE001
+        try:
+            return (page.content() or "")[:20000]
+        except Exception:  # noqa: BLE001
+            return ""
+
+
+def _file_inputs(page) -> list:
+    try:
+        return list(page.query_selector_all("input[type='file']"))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _attach_resume(page, inputs: list, resume_path: str) -> bool:
+    """Upload the resume to the likeliest input. Returns True on success.
+
+    `set_input_files` is used on the element handle directly because ATS forms
+    almost always hide the real <input type=file> behind a styled button — a
+    visible-element click would open the OS file picker, which is not something
+    a server can answer.
+    """
+    ranked = sorted(
+        inputs,
+        key=lambda el: 0 if _RESUME_INPUT_RE.search(
+            " ".join(filter(None, [
+                el.get_attribute("name") or "",
+                el.get_attribute("id") or "",
+                el.get_attribute("aria-label") or "",
+            ]))
+        ) else 1,
+    )
+    for el in ranked:
+        try:
+            el.set_input_files(resume_path)
+            _pause(page, 700, 1600)   # let the vendor's async upload settle
+            return True
+        except Exception as e:  # noqa: BLE001
+            print(f"[ats] resume upload failed on one input: {e}")
+            continue
+    return False
+
+
+def _reveal_form(page) -> None:
+    """Some vendors keep the form behind an Apply button. Click it once if the
+    page shows no answerable fields yet — once, because a second click on an
+    already-open form is as likely to hit a submit as to help."""
+    try:
+        if page.query_selector("input[type='file'], textarea"):
+            return
+    except Exception:  # noqa: BLE001
+        return
+    btn = selector_ai.find_element(page, "apply / open application form button",
+                                   _APPLY_BUTTON_CANDIDATES)
+    if not btn:
+        return
+    try:
+        stealth.human_click(page, btn)
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception:  # noqa: BLE001
+        pass
+    _pause(page, 600, 1400)
+
+
+def _apply_cover_letter(fields: list[dict], answers: list[dict], cover_letter: str) -> None:
+    """Put the tailored letter in the cover-letter box, replacing whatever the
+    question engine generated for it."""
+    if not cover_letter:
+        return
+    for rec in answers:
+        f = fields[rec["_i"]]
+        if f["kind"] == "textarea" and _COVER_RE.search(f["label"] or ""):
+            rec["answer"] = cover_letter[:4000]
+            rec["source"] = "cover_letter"
+            return
+
+
+def _unanswered_required(fields: list[dict], answers: list[dict]) -> list[str]:
+    """Required questions still blank after answering — the refuse-don't-invent
+    check. Mirrors channel_google_form.blocking_reason."""
+    answered = {r["_i"] for r in answers if (r.get("answer") or "").strip()}
+    return [
+        (f["label"] or "(unlabelled)")[:60]
+        for i, f in enumerate(fields)
+        if f.get("required") and i not in answered
+    ]
+
+
+def apply(
+    job: dict,
+    cover_letter: str,
+    uid: str = "",
+    profile: dict | None = None,
+    resume_path: str | None = None,
+    record: dict | None = None,
+    *,
+    target: str = "",
+    skills: list[str] | None = None,
+) -> tuple[str, str]:
+    """Submit an application on an employer's ATS portal.
+
+    Same (status, reason) contract as every other channel and platform adapter,
+    so the worker treats it identically.
+
+    status ∈ {applied, skipped, failed, needs_review}
+    """
+    profile = profile or {}
+    record = record if record is not None else {}
+    url = target or job.get("url") or ""
+    if not url:
+        return "skipped", "no ATS URL resolved"
+    if not enabled():
+        return "needs_review", "ATS auto-apply is switched off — open it yourself to send it"
+    if not resume_path or not os.path.exists(resume_path):
+        # Not a failure of this listing — it is a gap in the user's profile, and
+        # it would recur on every ATS application until they fix it.
+        return "needs_review", "no resume file available to upload — add one in your profile"
+
+    from playwright.sync_api import sync_playwright
+
+    pw = sync_playwright().start()
+    browser = None
+    # Once the submit click lands, nothing below may be reported as a plain
+    # "failed". worker._dispatch_apply retries selector/element-shaped failures,
+    # and a retry after a click that already went through files a SECOND real
+    # application under the candidate's name — the one error in this module that
+    # a user cannot undo.
+    submitted = False
+    try:
+        try:
+            browser = pw.chromium.launch(
+                headless=_headless(),
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+        except Exception as e:  # noqa: BLE001
+            return "failed", f"could not start a browser: {str(e)[:120]}"
+
+        ctx = browser.new_context(
+            user_agent=stealth.random_ua(),
+            viewport=stealth.random_viewport(),
+            accept_downloads=False,
+        )
+        stealth.apply_stealth(ctx)
+        page = ctx.new_page()
+
+        try:
+            page.goto(url, timeout=_NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+        except Exception as e:  # noqa: BLE001
+            return "failed", f"could not open the application page: {str(e)[:120]}"
+
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:  # noqa: BLE001
+            pass          # client-rendered pages often never go fully idle
+
+        _dismiss_consent(page)
+
+        body = _page_text(page)
+        if _CLOSED_RE.search(body[:4000]):
+            return "skipped", "listing is closed — the ATS is no longer accepting applications"
+
+        if safety.detect_challenge(page) == safety.FAILURE_REASON.CAPTCHA:
+            return "needs_review", "the application page shows a human-check — open it yourself"
+
+        _reveal_form(page)
+
+        uploads = _file_inputs(page)
+        if not uploads:
+            return "needs_review", "could not find the application form — open it yourself to send it"
+        if not _attach_resume(page, uploads, resume_path):
+            return "needs_review", "the form would not accept the resume upload — open it yourself"
+
+        # Read the form only AFTER the upload: several vendors parse the resume
+        # and prefill name/email/phone from it, and read_fields deliberately
+        # skips already-filled inputs so we do not clobber that.
+        fields = questions.read_fields(page)
+        answers: list[dict] = []
+        if fields:
+            answers = questions.answer_fields(
+                fields,
+                profile=profile,
+                resume_text=profile.get("resume_text") or "",
+                skills=skills or profile.get("skills") or [],
+                job=job,
+                name=profile.get("name") or "",
+                email=profile.get("email") or "",
+            )
+            _apply_cover_letter(fields, answers, cover_letter)
+
+            missing = _unanswered_required(fields, answers)
+            if missing:
+                record["answers"] = questions.to_record(answers)
+                return "needs_review", (
+                    "could not answer required question(s): " + "; ".join(missing[:3])
+                )
+
+            filled = questions.fill(page, fields, answers, _human_type)
+            record["answers"] = questions.to_record(answers)
+            if filled:
+                print(f"[ats] answered {filled} question(s)")
+            _pause(page, 500, 1200)
+
+        submit = selector_ai.find_element(page, "submit application button", _SUBMIT_CANDIDATES)
+        if not submit:
+            safety.screenshot(page, uid, f"ats_no_submit_{job.get('external_id', '')}")
+            return "needs_review", "could not find the submit button — open it yourself to send it"
+
+        record["destination"] = url
+
+        try:
+            stealth.human_click(page, submit)
+        except Exception as e:  # noqa: BLE001
+            return "failed", f"could not click submit: {str(e)[:120]}"
+        submitted = True
+
+        # One wait, then classify. Never re-click and never retry from here: the
+        # click may well have gone through, and a second submit files a real
+        # duplicate application under the candidate's name.
+        try:
+            page.wait_for_load_state("networkidle", timeout=20000)
+        except Exception:  # noqa: BLE001
+            pass
+        _pause(page, 1500, 3000)
+
+        status, why = safety.classify_submit(page, _SUCCESS_SELECTORS)
+
+        # Proof for the states the user most needs it for: the success they are
+        # being asked to believe, and the ambiguous one they may have to check.
+        if status in (safety.APPLY_STATUS.APPLIED, safety.APPLY_STATUS.NEEDS_REVIEW):
+            shot = safety.screenshot(page, uid, f"ats_{job.get('external_id', '')}")
+            if shot:
+                record["screenshot_path"] = shot
+
+        if status == safety.APPLY_STATUS.APPLIED:
+            return "applied", "submitted on the company's own application portal"
+        return status, why
+    except Exception as e:  # noqa: BLE001
+        if submitted:
+            return "needs_review", (
+                "the application was submitted but the page could not be read "
+                f"afterwards — check before re-sending ({str(e)[:100]})"
+            )
+        return "failed", f"ATS application error: {str(e)[:160]}"
+    finally:
+        try:
+            if browser is not None:
+                browser.close()
+        except Exception:  # noqa: BLE001
+            pass
+        # Stop the driver too. close() alone leaves the sync_playwright node
+        # process alive, and this runs inside the long-lived --serve worker where
+        # those accumulate until it dies. Same fix as the board adapters carry.
+        try:
+            pw.stop()
+        except Exception:  # noqa: BLE001
+            pass

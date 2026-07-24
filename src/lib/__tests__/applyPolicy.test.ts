@@ -17,6 +17,8 @@ const ENV = { ...process.env };
 beforeEach(() => {
   delete process.env.GRINDLY_AUTO_APPLY_MODE;
   delete process.env.GRINDLY_TIER_B_APPLY;
+  delete process.env.GMAIL_SEND_ENABLED;
+  delete process.env.GRINDLY_ATS_APPLY;
 });
 
 afterEach(() => {
@@ -69,12 +71,13 @@ describe("isEmployerChannel", () => {
     expect(isEmployerChannel(mailbox)).toBe(true);
   });
 
-  it("does NOT claim an ATS page is sendable — Tier A, but no sender exists yet", () => {
+  it("recognises an ATS page now that agent/channel_ats.py can send one", () => {
     const ats = { applyChannel: "ats", applyTier: "A", applyTarget: "https://jobs.lever.co/a/b" };
-    expect(isEmployerChannel(ats)).toBe(false);
+    expect(isEmployerChannel(ats)).toBe(true);
     process.env.GRINDLY_AUTO_APPLY_MODE = "live";
-    expect(agentWillSend(ats)).toBe(false);
-    expect(approvalOutcomeMessage(ats)).toContain("your final browser submission");
+    process.env.GRINDLY_ATS_APPLY = "1";
+    expect(agentWillSend(ats)).toBe(true);
+    expect(approvalOutcomeMessage(ats)).toContain("application portal");
   });
 
   it("rejects a board, and an employer channel with no target", () => {
@@ -93,8 +96,24 @@ describe("agentWillSend", () => {
 
   it("sends Tier A employer channels in live mode", () => {
     process.env.GRINDLY_AUTO_APPLY_MODE = "live";
+    process.env.GMAIL_SEND_ENABLED = "1";
     expect(agentWillSend(form)).toBe(true);
     expect(agentWillSend(mailbox)).toBe(true);
+  });
+
+  it("will not promise a send from a sender that is switched off", () => {
+    // Built, safe, and still unable to send today: gmail.send is behind
+    // Google's restricted-scope review and the ATS sender has its own switch.
+    // Saying "the agent will send this" about either would be the exact lie
+    // this module exists to prevent.
+    process.env.GRINDLY_AUTO_APPLY_MODE = "live";
+    const ats = { applyChannel: "ats", applyTier: "A", applyTarget: "https://jobs.lever.co/a/b" };
+    expect(agentWillSend(mailbox)).toBe(false);
+    expect(agentWillSend(ats)).toBe(false);
+    expect(approvalOutcomeMessage(mailbox)).toContain("your final browser submission");
+    expect(approvalOutcomeMessage(ats)).toContain("your final browser submission");
+    // A Google Form posts directly — no switch, so live mode is enough.
+    expect(agentWillSend(form)).toBe(true);
   });
 
   it("never sends a Tier C board, at any setting", () => {
@@ -130,7 +149,15 @@ describe("approvalOutcomeMessage", () => {
 
   it("names the mailbox when the agent will email it", () => {
     process.env.GRINDLY_AUTO_APPLY_MODE = "live";
+    process.env.GMAIL_SEND_ENABLED = "1";
     expect(approvalOutcomeMessage(mailbox)).toContain("careers@acme.in");
+  });
+
+  it("says the agent submits on the platform for a Tier B board", () => {
+    process.env.GRINDLY_AUTO_APPLY_MODE = "live";
+    process.env.GRINDLY_TIER_B_APPLY = "1";
+    const tierB = { applyChannel: "platform", applyTier: "B", applyTarget: "" };
+    expect(approvalOutcomeMessage(tierB)).toContain("the agent will submit this for you");
   });
 
   it("says the agent submits the form when it will", () => {

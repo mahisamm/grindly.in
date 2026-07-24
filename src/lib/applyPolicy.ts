@@ -22,13 +22,25 @@ export type AutoApplyMode =
 /** Channels the agent can actually DELIVER — i.e. an employer's own intake, where
  *  the candidate holds no account, AND a sender exists for it.
  *
- *  "ats" is deliberately absent. Greenhouse/Lever/Ashby pages resolve to Tier A
- *  correctly (no candidate account is involved, so submitting is safe), but no
- *  ATS sender is built yet. Listing it here would make the dashboard tell a user
- *  "the agent will submit this" about an application nothing can submit — which
- *  is the precise failure this whole file exists to prevent. Add "ats" the same
- *  day agent/worker.py gains an ATS module in _CHANNEL_MODULES, not before. */
-export const EMPLOYER_CHANNELS = ["google_form", "email"] as const;
+ *  "ats" joined this list when agent/channel_ats.py was added to worker.py's
+ *  _CHANNEL_MODULES — not before, because listing a channel here tells the user
+ *  "the agent will submit this", and saying that about an application nothing
+ *  can send is the precise failure this file exists to prevent. */
+export const EMPLOYER_CHANNELS = ["google_form", "email", "ats"] as const;
+
+/** Per-sender kill switches, mirroring each Python module's `enabled()` and the
+ *  `channel_deliverable` check in agent/worker.py.
+ *
+ *  A channel can be built, safe, and still be unable to send today: gmail.send
+ *  is stuck behind Google's restricted-scope review, and the ATS sender has its
+ *  own switch so a brand-new sender filing real applications can be stopped
+ *  without a redeploy. Both have to be visible here, or the dashboard promises a
+ *  submission that the worker will decline to make. */
+function channelEnabled(channel: string): boolean {
+  if (channel === "email") return process.env.GMAIL_SEND_ENABLED === "1";
+  if (channel === "ats") return process.env.GRINDLY_ATS_APPLY === "1";
+  return true; // google_form posts directly; nothing to switch off
+}
 
 /** Fleet-wide auto-apply switch. Fails closed: anything unrecognised reads as
  *  shadow, never as live, so a typo in the environment cannot start sending
@@ -69,7 +81,9 @@ export function isEmployerChannel(app: Routed): boolean {
  *  happens. */
 export function agentWillSend(app: Routed): boolean {
   if (autoApplyMode() !== AUTO_APPLY_LIVE) return false;
-  if (isEmployerChannel(app) && app.applyTier === "A") return true;
+  if (isEmployerChannel(app) && app.applyTier === "A") {
+    return channelEnabled(app.applyChannel ?? "");
+  }
   if (app.applyTier === "B") return tierBEnabled();
   return false;
 }
@@ -82,6 +96,15 @@ export function approvalOutcomeMessage(app: Routed): string {
   }
   if (app.applyChannel === "email") {
     return `the agent will email this application to ${app.applyTarget} from your Gmail`;
+  }
+  if (app.applyChannel === "ats") {
+    return "the agent will submit this on the company's own application portal";
+  }
+  if (app.applyTier === "B") {
+    // Tier B is the board itself, using the credentials the user handed over in
+    // the hosted-login consent flow — so name the board rather than implying an
+    // employer-side form that does not exist here.
+    return "the agent will submit this for you on the platform";
   }
   return "the agent will submit this to the company's own application form";
 }

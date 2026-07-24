@@ -9,6 +9,7 @@ import { CountUp } from "@/components/Motion";
 import SupportChat from "@/components/SupportChat";
 import { PROFF_FIELDS, CONTACT_FIELDS } from "@/lib/proffQuestions";
 import { planCap, normalizePlan } from "@/lib/plans";
+import { EMPLOYER_CHANNELS } from "@/lib/applyPolicy";
 
 // @novnc/novnc touches `window`/browser globals at module load time — a
 // static import crashes Next's server-side prerender of this page ("window
@@ -61,8 +62,9 @@ type App = {
   // Where this application is actually delivered, decided by agent/resolver.py.
   // "google_form" | "email" | "ats" mean an employer's own intake, where the
   // candidate holds no account — those the agent can send unattended.
-  // "platform" means it only exists on a board that holds their account, and
-  // still needs their own browser. Null on rows banked before routing shipped.
+  // "platform" means the board itself, and there the tier decides: Tier B is a
+  // board the user connected, which the agent may submit; Tier C still needs
+  // their own browser. Null on rows banked before routing shipped.
   applyChannel: string | null;
   applyTier: string | null;
   applyTarget: string | null;
@@ -244,6 +246,11 @@ const STATUS_STYLE: Record<string, string> = {
 
 // One consistent vocabulary the user can actually model:
 //   Matched → (you open + submit on the platform) → To submit → (you confirm) → Applied
+//
+// That path is now the EXCEPTION, not the rule. Anything the agent can deliver
+// itself — a company form, an HR inbox, a careers portal, Internshala — is sent
+// during the run and lands on Applied without stopping here. A row only reaches
+// Matched when the agent declined to send it, and its `reason` says why.
 const STATUS_LABEL: Record<string, string> = {
   applied:  "Applied",
   approved: "To submit",
@@ -257,8 +264,8 @@ const STATUS_LABEL: Record<string, string> = {
 // own tells someone what bucket a row is in, never what to do about it.
 const STATUS_HELP: Record<string, string> = {
   applied: "This one went in.",
-  approved: "Waiting for you to send it and confirm.",
-  matched: "Found for you — open it to send.",
+  approved: "Lined up. The row says whether the agent sends it or you do.",
+  matched: "Found for you — this one needs your tap to send.",
   skipped: "Not sent — the reason is on the row.",
   failed: "Didn't go through. Open it and send it yourself.",
   needs_review: "Sent, but the site didn't confirm it. Open it and check before re-sending.",
@@ -266,11 +273,21 @@ const STATUS_HELP: Record<string, string> = {
 
 /** Did the agent deliver this itself, with no action from the user?
  *
- *  Mirrors src/lib/applyPolicy.ts. Kept in sync deliberately rather than derived
- *  from a mode flag alone: a row only counts as agent-sent if its destination was
- *  an employer's own intake, which is a property of the row, not of the deploy. */
+ *  A row counts as agent-sent because of its own destination, not because of a
+ *  mode flag — the deploy can change after the row was filed.
+ *
+ *  The channel list is imported rather than hand-copied. This function is a
+ *  mirror of src/lib/applyPolicy.ts and it has already drifted once: "ats" was
+ *  added there and silently not here, so an application the agent really had
+ *  sent showed up as a plain "Applied" and went uncounted.
+ *
+ *  Tier B is a separate check. The agent submits those on the board the user
+ *  connected, so their channel is "platform" and the employer-channel test
+ *  above never sees them. */
 function sentByAgent(a: App): boolean {
-  return a.status === "applied" && (a.applyChannel === "google_form" || a.applyChannel === "email");
+  if (a.status !== "applied") return false;
+  if ((EMPLOYER_CHANNELS as readonly string[]).includes(a.applyChannel ?? "")) return true;
+  return a.applyTier === "B";
 }
 
 /** The single "what should I do next" strip.
@@ -1588,7 +1605,7 @@ export default function Dashboard() {
               </li>
               <li className="flex gap-3">
                 <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">3</span>
-                <span><span className="font-medium">Run the agent.</span> It scores and prepares matches. You tap <span className="font-medium">Open &amp; submit</span> to send each one yourself — <span className="font-medium">on the platform you attach your resume and press Submit</span>; Grindly doesn&apos;t submit or upload files for you. Then track the outcome here.</span>
+                <span><span className="font-medium">Run the agent.</span> It scores matches and <span className="font-medium">applies for you</span> wherever it can send on its own — a company&apos;s application form, an HR inbox, a careers portal, or Internshala. Anything it can&apos;t send itself lands here with an <span className="font-medium">Open &amp; submit</span> button for you. Then track the outcome here.</span>
               </li>
             </ol>
             <p className="mt-4 text-xs text-muted">Tip: <span className="text-foreground">Run now</span> searches every day for you — connecting a platform is optional (for auto-fill).</p>
@@ -2738,7 +2755,7 @@ export default function Dashboard() {
                         >
                           <span className={`size-5 rounded-full bg-white shadow-sm transition-transform ${profileForm.autoApply ? "translate-x-5" : "translate-x-0"}`} />
                         </button>
-                        <span className="text-sm">{profileForm.autoApply ? "On — agent preps every match, you tap Approve to send" : "Off — agent only shortlists, nothing gets prepped until you turn this on"}</span>
+                        <span className="text-sm">{profileForm.autoApply ? "On — agent sends what it can on its own, the rest wait for your tap" : "Off — agent only shortlists, nothing gets prepped until you turn this on"}</span>
                       </label>
                     )}
                   </div>
@@ -3018,7 +3035,7 @@ export default function Dashboard() {
                           disabled={approvingId === a.id || me.quota.remaining === 0}
                           title={me.quota.remaining === 0
                             ? "You've hit today's application limit — resets tomorrow."
-                            : "Opens the listing so you can submit it. This one is on a site that holds your account, so Grindly won't click submit for you."}
+                            : "Opens the listing so you can submit it. The agent couldn't send this one itself — the row says why."}
                           className="press rounded-md brand-gradient px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition disabled:opacity-50"
                         >
                           {approvingId === a.id ? "Opening…" : "Open & submit ↗"}

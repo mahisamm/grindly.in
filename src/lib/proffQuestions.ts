@@ -85,7 +85,7 @@ export const PROFF_FIELDS: ProffField[] = [
     // reads it before any unattended submit (agent/worker.py), so the label had
     // to stop describing it as a prep-only switch.
     label: "Let the agent apply for me",
-    help: "On = when an application goes to a company's own form or HR inbox, the agent fills it in and sends it — nothing needed from you. Applications that only exist on LinkedIn/Internshala/Naukri still wait for your tap, because those sit behind your account. Off = the agent only finds and prepares; nothing is ever sent without you.",
+    help: "On = the agent fills in and sends every application it can deliver on its own — a company's own form, an HR inbox, a careers portal like Greenhouse or Lever, and Internshala if you've connected it. Nothing needed from you. Applications that only exist on LinkedIn/Naukri/Indeed/Unstop still wait for your tap, because those sit behind an account you can't afford to lose. Off = the agent only finds and prepares; nothing is ever sent without you.",
     type: "toggle",
     group: "Limits & rules",
   },

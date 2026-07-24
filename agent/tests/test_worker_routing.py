@@ -105,17 +105,34 @@ def test_an_undeliverable_channel_never_falls_back_to_the_board():
     assert "automatically" in why or "yourself" in why
 
 
-def test_channel_deliverable_separates_permitted_from_possible():
+def test_channel_deliverable_separates_permitted_from_possible(monkeypatch):
     def d(channel, target="x"):
         return resolver.destination(channel=channel, tier=resolver.TIER_A, target=target)
 
+    monkeypatch.setenv("GMAIL_SEND_ENABLED", "1")
+    monkeypatch.setenv("GRINDLY_ATS_APPLY", "1")
     assert worker.channel_deliverable(d(resolver.CHANNEL_GOOGLE_FORM)) is True
     assert worker.channel_deliverable(d(resolver.CHANNEL_EMAIL)) is True
-    assert worker.channel_deliverable(d(resolver.CHANNEL_ATS)) is False
+    assert worker.channel_deliverable(d(resolver.CHANNEL_ATS)) is True
     assert worker.channel_deliverable(d(resolver.CHANNEL_PLATFORM, "")) is True
     # An employer channel with no resolved target is not deliverable either.
     assert worker.channel_deliverable(d(resolver.CHANNEL_GOOGLE_FORM, "")) is False
     assert worker.channel_deliverable(None) is False
+
+
+def test_a_switched_off_sender_is_not_deliverable(monkeypatch):
+    """"Built" and "switched on" are different facts. Calling a disabled sender
+    deliverable spends one of the user's daily quota slots on a dispatch that
+    can only come back as needs_review."""
+    def d(channel):
+        return resolver.destination(channel=channel, tier=resolver.TIER_A, target="x")
+
+    monkeypatch.delenv("GMAIL_SEND_ENABLED", raising=False)
+    monkeypatch.delenv("GRINDLY_ATS_APPLY", raising=False)
+    assert worker.channel_deliverable(d(resolver.CHANNEL_EMAIL)) is False
+    assert worker.channel_deliverable(d(resolver.CHANNEL_ATS)) is False
+    # Google Form posts directly and has no switch, so it stays deliverable.
+    assert worker.channel_deliverable(d(resolver.CHANNEL_GOOGLE_FORM)) is True
 
 
 def test_a_missing_platform_module_is_skipped_not_faked():

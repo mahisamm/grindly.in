@@ -46,29 +46,14 @@ class FAILURE_REASON:
 _LOGIN_URL_HINTS = ("login", "signin", "sign-in", "/account/login", "authwall")
 _CAPTCHA_HINTS = ("captcha", "are you a human", "verify you", "recaptcha", "hcaptcha")
 
-# Safe Apply Mode is deliberately fail-closed.  The platforms currently
-# supported by Grindly are browser-driven sites, not documented partner APIs.
-# We can find and prepare a relevant application, but the user must perform the
-# final submission in their own browser.  Keeping this as a single helper gives
-# the worker and every future adapter one policy boundary to enforce.
+# Safe Apply Mode is the fallback answer, not the only one.  It is what a user
+# sees whenever policy cannot say yes: auto-apply switched off, an unknown tier,
+# or a destination with no sender behind it.  Keeping it as one string gives the
+# worker and every adapter a single sentence for "we prepared this, you send it".
 SAFE_APPLY_REASON = (
     "Safe Apply Mode: open this application in your own browser and complete "
     "the final submission yourself."
 )
-
-
-def requires_manual_final_submit(source: str | None = None) -> tuple[bool, str]:
-    """Return the mandatory final-submit policy for a *board* source.
-
-    Unknown sources intentionally receive the same answer.  A future official
-    partner API must be explicitly designed and reviewed before it can receive
-    a different policy; a new source never inherits unattended submission.
-
-    This governs the board channel only.  Applications routed to an employer's
-    own intake — Google Form, HR mailbox, ATS portal — never reach a platform
-    adapter and are governed by `destination_policy()` below instead.
-    """
-    return True, SAFE_APPLY_REASON
 
 
 # ── Destination policy ──────────────────────────────────────────────────────
@@ -129,6 +114,37 @@ def tier_b_enabled() -> bool:
     separate switch from `live`.  Turning Tier A on must never silently turn on
     the one path that can cost a user their account."""
     return os.environ.get("GRINDLY_TIER_B_APPLY") == "1"
+
+
+def requires_manual_final_submit(source: str | None = None) -> tuple[bool, str]:
+    """Must a human perform the final submit on this *board*? -> (yes, reason).
+
+    The answer is the board's tier, never the board's name.  `platform_tier`
+    owns that mapping, so this function and `destination_policy` below cannot
+    drift apart into two different opinions about the same listing:
+
+      Tier B  the user handed us credentials through the hosted-login consent
+              flow, so submitting there is the thing they asked us to do.
+              Allowed when the fleet is live AND Tier B is separately switched
+              on — both, because turning Tier A on must never silently start
+              submitting under someone's account.
+      Tier C  an account the user cannot afford to lose, on a board that fights
+              automation.  Never submitted from our servers, at any setting.
+
+    Unknown sources fall to Tier C by construction (see `platform_tier`), so a
+    new adapter still never inherits unattended submission by accident.
+
+    This governs the board channel only.  Applications routed to an employer's
+    own intake — Google Form, HR mailbox, ATS portal — never reach a platform
+    adapter and are governed by `destination_policy()` below instead.
+    """
+    from resolver import TIER_B, platform_tier  # local: keeps import graph acyclic
+
+    if platform_tier(source or "") != TIER_B:
+        return True, TIER_C_HOLD_REASON
+    if auto_apply_mode() != AUTO_APPLY_LIVE or not tier_b_enabled():
+        return True, TIER_B_HOLD_REASON
+    return False, f"auto-apply (hosted): {(source or 'platform').lower()}"
 
 
 def destination_policy(dest: dict | None) -> tuple[bool, str]:

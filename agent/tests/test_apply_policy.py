@@ -105,10 +105,35 @@ def test_missing_or_unknown_destination_is_refused(monkeypatch):
         assert ok is False
 
 
-def test_board_channel_still_fails_closed_independently():
-    """Safe Apply Mode remains a second lock: even a policy bug that said yes
-    for a board cannot get past requires_manual_final_submit."""
-    for source in ("linkedin", "internshala", "naukri", "unstop", "indeed", None):
+def test_tier_c_boards_never_submit_unattended_at_any_setting(monkeypatch):
+    """The board gate stays a second lock for Tier C. Even with the fleet live
+    and Tier B switched on — the most permissive configuration that exists —
+    a board holding an account the user cannot afford to lose still says no,
+    and so does any source we do not recognise."""
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
+    for source in ("linkedin", "naukri", "unstop", "indeed", "future_source", None):
         required, reason = safety.requires_manual_final_submit(source)
-        assert required is True
+        assert required is True, source
         assert "own browser" in reason
+
+
+def test_internshala_needs_both_switches_before_it_submits(monkeypatch):
+    """Tier B is the one board that may be submitted for the user, because they
+    handed over credentials through the hosted-login consent flow. It still
+    needs live mode AND its own switch: either alone holds the application, so
+    turning Tier A on can never silently start submitting under an account."""
+    for mode, tier_b, manual_expected in (
+        ("shadow", None, True),
+        ("shadow", "1", True),
+        ("live", None, True),
+        ("off", "1", True),
+        ("live", "1", False),
+    ):
+        monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", mode)
+        if tier_b is None:
+            monkeypatch.delenv("GRINDLY_TIER_B_APPLY", raising=False)
+        else:
+            monkeypatch.setenv("GRINDLY_TIER_B_APPLY", tier_b)
+        required, _ = safety.requires_manual_final_submit("internshala")
+        assert required is manual_expected, f"mode={mode!r} tier_b={tier_b!r}"
