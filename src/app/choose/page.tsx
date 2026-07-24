@@ -14,12 +14,23 @@ export default async function ChoosePage() {
   const admin = await getAdminOrNull();
   if (!admin) redirect("/dashboard");
 
-  // Route the "user" card to onboarding if the owner hasn't finished it yet,
-  // otherwise to the dashboard — mirrors the normal post-login destination.
+  // Route the "user" card to onboarding when setup isn't done, else the
+  // dashboard. "Done" is having a resume, not the status string: the resume is
+  // the one thing the whole app is useless without (every match scores against
+  // it), the dashboard's upload only appears once a profile row exists, and the
+  // onboarding page is the sole always-available upload surface. Keying on
+  // status alone stranded an account whose status was anything but "onboarding"
+  // yet had no resume — it was sent to a dashboard that then showed nowhere to
+  // upload. Onboarding re-hydrates existing preferences, so a finished user who
+  // lost their resume lands back here to re-add it without losing settings.
   const row = await prisma.user
-    .findUnique({ where: { id: admin.id }, select: { status: true } })
+    .findUnique({
+      where: { id: admin.id },
+      select: { status: true, profile: { select: { resumeName: true } } },
+    })
     .catch(() => null);
-  const userHref = row?.status === "onboarding" ? "/onboarding" : "/dashboard";
+  const needsSetup = row?.status === "onboarding" || !row?.profile?.resumeName;
+  const userHref = needsSetup ? "/onboarding" : "/dashboard";
 
   return (
     <main className="grid-bg flex min-h-screen items-center justify-center px-5">
