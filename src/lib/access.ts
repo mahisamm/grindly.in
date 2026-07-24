@@ -23,6 +23,21 @@ export function hasAppAccess(u: AccessFields): boolean {
   return u.accessStatus === "approved";
 }
 
+/** Is this email blocked from creating a NEW account right now?
+ *
+ *  Only ever consulted for an email with no existing user — signing in is never
+ *  affected, which is the whole point of a separate switch.
+ *
+ *  The owner is exempt on purpose. /login and /signup are the same Google
+ *  button, so if the owner's account is ever missing (fresh environment, a wipe,
+ *  a restore) the pause would lock them out of their own admin console with no
+ *  second way in — and no way to turn the pause off again. */
+export function signupPausedFor(email: string, signupMaintenance: boolean): boolean {
+  if (!signupMaintenance) return false;
+  if (OWNER_EMAIL && email === OWNER_EMAIL) return false;
+  return true;
+}
+
 /**
  * Decide a brand-new account's access at signup time. The owner and any email an
  * admin pre-allowlisted come in already approved. While `openSignups` is on

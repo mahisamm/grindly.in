@@ -5,6 +5,7 @@ import { PageTitle, Panel } from "../ui";
 
 type Settings = {
   maintenanceMode: boolean;
+  signupMaintenance: boolean;
   globalDailyCap: number;
   openSignups: boolean;
   featureFlags: { googleAuth: boolean; autoApply: boolean };
@@ -116,6 +117,25 @@ export default function AdminSettings() {
           {s.maintenanceMode && (
             <div className="mt-3 rounded border border-brand/30 bg-brand/10 px-3 py-2 font-sans text-xs text-brand">
               ⚠ Maintenance mode ON — agent runs are blocked for all users.
+            </div>
+          )}
+        </Panel>
+
+        {/* Signup maintenance */}
+        <Panel className="p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-sans text-sm font-bold text-foreground">Pause new sign-ups</div>
+              <div className="mt-1 font-sans text-xs text-muted">
+                New accounts get a &ldquo;down for maintenance&rdquo; page instead of being created.
+                Existing users sign in as normal, and your owner email is always let through.
+              </div>
+            </div>
+            <Toggle value={s.signupMaintenance} onChange={() => toggle("signupMaintenance")} />
+          </div>
+          {s.signupMaintenance && (
+            <div className="mt-3 rounded border border-warn/30 bg-warn/10 px-3 py-2 font-sans text-xs text-warn">
+              Sign-ups paused — new visitors see the maintenance page at /signup. Logins still work.
             </div>
           )}
         </Panel>

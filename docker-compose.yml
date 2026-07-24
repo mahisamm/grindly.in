@@ -364,7 +364,12 @@ services:
   backup:
     image: postgres:16-alpine
     environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD}
+      # DATABASE_URL, not PGPASSWORD. POSTGRES_PASSWORD holds the password in
+      # its URL-ENCODED form (it exists to be substituted into DATABASE_URL),
+      # so handing it to libpq as a literal password authenticated with the
+      # wrong string and every dump failed — silently, for four days. Connect
+      # exactly the way the app does.
+      DATABASE_URL: ${DATABASE_URL}
     entrypoint: []
     command: ["sh", "/scripts/backup-drill.sh"]
     volumes:

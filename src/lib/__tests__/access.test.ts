@@ -18,6 +18,7 @@ vi.mock("@/lib/adminSettings", () => ({
 // done here via a scoped dynamic import in beforeAll, not a static import.
 let resolveInitialAccess: typeof import("@/lib/access").resolveInitialAccess;
 let hasAppAccess: typeof import("@/lib/access").hasAppAccess;
+let signupPausedFor: typeof import("@/lib/access").signupPausedFor;
 
 beforeAll(async () => {
   process.env.ADMIN_EMAIL = "owner@example.com";
@@ -25,6 +26,26 @@ beforeAll(async () => {
   const mod = await import("@/lib/access");
   resolveInitialAccess = mod.resolveInitialAccess;
   hasAppAccess = mod.hasAppAccess;
+  signupPausedFor = mod.signupPausedFor;
+});
+
+describe("signupPausedFor", () => {
+  it("lets everyone through while the pause is off", () => {
+    expect(signupPausedFor("stranger@example.com", false)).toBe(false);
+    expect(signupPausedFor("owner@example.com", false)).toBe(false);
+  });
+
+  it("blocks a new account while the pause is on", () => {
+    expect(signupPausedFor("stranger@example.com", true)).toBe(true);
+  });
+
+  it("never blocks the owner", () => {
+    // /login and /signup are the same Google button. If the owner's row is ever
+    // missing — fresh environment, a wipe, a restore — blocking them here would
+    // lock them out of the admin console that turns this switch back off, with
+    // no second way in.
+    expect(signupPausedFor("owner@example.com", true)).toBe(false);
+  });
 });
 
 beforeEach(() => {

@@ -22,6 +22,32 @@ export function Magnifier({ className, size = 96 }: D) {
   );
 }
 
+/** Gear + wrench — shown when sign-ups are paused for maintenance. */
+export function Maintenance({ className, size = 96 }: D) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 100 100" aria-hidden>
+      {/* cog teeth */}
+      <path
+        d="M40 8 h14 l2 9 8 4 8-5 10 10 -5 8 4 8 9 2 v14 l-9 2 -4 8 5 8 -10 10 -8-5 -8 4 -2 9 H40 l-2-9 -8-4 -8 5 -10-10 5-8 -4-8 -9-2 V46 l9-2 4-8 -5-8 10-10 8 5 8-4 z"
+        {...base}
+        strokeWidth={2.2}
+        strokeLinejoin="round"
+      />
+      <circle cx="47" cy="53" r="17" fill="var(--vermilion)" fillOpacity="0.16" stroke="none" />
+      <circle cx="47" cy="53" r="17" {...base} />
+      {/* wrench laid across the cog */}
+      <path
+        d="M62 34 a11 11 0 0 0 -14 14 L28 68 a6 6 0 0 0 8 8 L56 56 a11 11 0 0 0 14-14 l-8 8 -6-6 z"
+        fill="var(--paper)"
+        stroke="currentColor"
+        strokeWidth={2.4}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function PaperPlane({ className, size = 86 }: D) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 100 100" aria-hidden>

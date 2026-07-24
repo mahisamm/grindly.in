@@ -8,7 +8,7 @@ import { baseUrl } from "@/lib/baseUrl";
 import { loginClient } from "@/lib/googleOAuth";
 import { DEFAULTS } from "@/lib/proffQuestions";
 import { isRateLimited, getIp } from "@/lib/rateLimit";
-import { resolveInitialAccess, hasAppAccess } from "@/lib/access";
+import { resolveInitialAccess, hasAppAccess, signupPausedFor } from "@/lib/access";
 import { readAdminSettings, isEmailDomainBanned } from "@/lib/adminSettings";
 
 interface GoogleTokenResponse {
@@ -130,6 +130,17 @@ async function handleGoogleCallback(req: Request, url: URL, base: string) {
   if (!user) {
     if (isEmailDomainBanned(email, settings)) {
       return NextResponse.redirect(`${base}/login?error=domain_banned`);
+    }
+    // Sign-ups paused. This is the only point where a new account can be told
+    // apart from a returning one — /login and /signup are the same Google
+    // button, and the email only exists after the round-trip — so the gate has
+    // to live here, before the create, rather than on the page.
+    //
+    // The owner is always exempt. With no account of their own they would
+    // otherwise be locked out by the very switch they turned on, and there is
+    // no second way in.
+    if (signupPausedFor(email, settings.signupMaintenance)) {
+      return NextResponse.redirect(`${base}/signup`);
     }
     // Owner + pre-allowlisted emails come in approved; everyone else waits.
     const accessStatus = await resolveInitialAccess(email);

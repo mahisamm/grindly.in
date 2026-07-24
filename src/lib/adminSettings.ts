@@ -9,6 +9,12 @@ const SETTINGS_PATH = path.join(process.cwd(), "data", "admin-settings.json");
 
 export type AdminSettings = {
   maintenanceMode: boolean;
+  /** Pause NEW accounts only. Deliberately separate from `maintenanceMode`,
+   *  which stops the worker claiming any job at all (see run_queue.claim_next)
+   *  and would silently halt the whole product. This one turns the sign-up half
+   *  of the Google flow into a "we're doing maintenance" page while everyone
+   *  who already has an account keeps signing in normally. */
+  signupMaintenance: boolean;
   globalDailyCap: number;
   openSignups: boolean;
   featureFlags: { googleAuth: boolean; autoApply: boolean };
@@ -17,6 +23,7 @@ export type AdminSettings = {
 
 const DEFAULTS: AdminSettings = {
   maintenanceMode: false,
+  signupMaintenance: false,
   globalDailyCap: 0,
   // Approval-gated beta (the intended default): a new Google sign-in lands in
   // "pending" and sees the waitlist until an admin approves it — or its email is
@@ -33,6 +40,7 @@ export function readAdminSettings(): AdminSettings {
     const parsed = JSON.parse(readFileSync(SETTINGS_PATH, "utf-8"));
     return {
       maintenanceMode: typeof parsed.maintenanceMode === "boolean" ? parsed.maintenanceMode : DEFAULTS.maintenanceMode,
+      signupMaintenance: typeof parsed.signupMaintenance === "boolean" ? parsed.signupMaintenance : DEFAULTS.signupMaintenance,
       globalDailyCap: typeof parsed.globalDailyCap === "number" ? parsed.globalDailyCap : DEFAULTS.globalDailyCap,
       openSignups: typeof parsed.openSignups === "boolean" ? parsed.openSignups : DEFAULTS.openSignups,
       featureFlags: {

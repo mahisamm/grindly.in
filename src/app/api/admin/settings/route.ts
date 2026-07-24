@@ -22,6 +22,7 @@ export async function POST(req: Request) {
   const current = readAdminSettings();
   const updated: AdminSettings = {
     maintenanceMode: typeof body.maintenanceMode === "boolean" ? body.maintenanceMode : current.maintenanceMode,
+    signupMaintenance: typeof body.signupMaintenance === "boolean" ? body.signupMaintenance : current.signupMaintenance,
     globalDailyCap: typeof body.globalDailyCap === "number" && body.globalDailyCap >= 0 ? body.globalDailyCap : current.globalDailyCap,
     openSignups: typeof body.openSignups === "boolean" ? body.openSignups : current.openSignups,
     featureFlags: {
