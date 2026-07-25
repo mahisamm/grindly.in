@@ -16,6 +16,7 @@ plus the resolver's existing link-following are enough to reach a real form.
 from __future__ import annotations
 import hashlib
 import html
+import json
 import re
 import urllib.request
 
@@ -162,6 +163,52 @@ _TAGS = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.S | re.I)
 _MARKUP = re.compile(r"<[^>]+>")
 
 
+# The big three ATSs publish their postings as JSON, and that is the ONLY way to
+# read them. Lever and Ashby render client-side, so fetching their HTML returns
+# "You need to enable JavaScript to run this app" — 51 characters, no
+# description. Greenhouse serves HTML, but it is the company's marketing site
+# navigation; the posting body is not in it. Scraping any of the three gave the
+# matcher boilerplate to score against, which is why real internships kept
+# coming back at 5-17 with the candidate's own skills listed on the page.
+_API_PATTERNS = [
+    (re.compile(r"greenhouse\.io/(?:embed/job_app\?for=)?([^/?#]+)/jobs/(\d+)", re.I),
+     lambda c, j: f"https://boards-api.greenhouse.io/v1/boards/{c}/jobs/{j}"),
+    (re.compile(r"lever\.co/([^/?#]+)/([0-9a-f-]{8,})", re.I),
+     lambda c, j: f"https://api.lever.co/v0/postings/{c}/{j}"),
+]
+
+
+def _jd_from_api(url: str) -> str:
+    """Read a posting through its ATS's own JSON API, when it has one."""
+    for pattern, build in _API_PATTERNS:
+        m = pattern.search(url)
+        if not m:
+            continue
+        try:
+            req = urllib.request.Request(
+                build(m.group(1), m.group(2)),
+                headers={"User-Agent": "Grindly/1.0", "Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8", "replace"))
+        except Exception as e:  # noqa: BLE001
+            print(f"[websource] ats api miss ({type(e).__name__}) for {url[:60]}")
+            return ""
+        # Greenhouse calls it `content` (HTML-escaped), Lever `descriptionPlain`
+        # plus a list of requirement sections.
+        parts = [
+            data.get("content") or "",
+            data.get("descriptionPlain") or data.get("description") or "",
+        ]
+        for block in data.get("lists") or []:
+            parts.append(block.get("text") or "")
+            parts.append(_MARKUP.sub(" ", block.get("content") or ""))
+        text = html.unescape(" ".join(p for p in parts if p))
+        text = _MARKUP.sub(" ", html.unescape(text))
+        return re.sub(r"\s+", " ", text).strip()[:6000]
+    return ""
+
+
 def scrape_jd(url: str, uid: str = "") -> str:
     """Fetch the real job description behind a search result.
 
@@ -177,6 +224,11 @@ def scrape_jd(url: str, uid: str = "") -> str:
     failure; the caller keeps the snippet and the listing simply scores as it
     did before.
     """
+    # An ATS API answer is authoritative; only fall back to HTML for pages that
+    # have no API (a company's own careers page, a Google Form).
+    api = _jd_from_api(url)
+    if len(api) > 200:
+        return api
     try:
         req = urllib.request.Request(url, headers={
             "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
