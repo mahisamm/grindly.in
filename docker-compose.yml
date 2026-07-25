@@ -231,6 +231,19 @@ services:
       GRINDLY_TIER_B_APPLY: ${GRINDLY_TIER_B_APPLY:-}
       GRINDLY_ATS_APPLY: ${GRINDLY_ATS_APPLY:-}
       GRINDLY_RESOLVE_FETCH_BUDGET: ${GRINDLY_RESOLVE_FETCH_BUDGET:-12}
+      # Autopilot kill switches (agent/flags.py). Named explicitly because a
+      # container sees only the vars listed here — a value in .env alone reaches
+      # compose for interpolation but never the process, which is exactly how
+      # discovery read "flag off" while .env plainly said 1.
+      GRINDLY_AUTOPILOT_ENABLED: ${GRINDLY_AUTOPILOT_ENABLED:-1}
+      GRINDLY_DIRECT_SUBMIT_ENABLED: ${GRINDLY_DIRECT_SUBMIT_ENABLED:-1}
+      GRINDLY_BROWSER_EXECUTOR_ENABLED: ${GRINDLY_BROWSER_EXECUTOR_ENABLED:-0}
+      GRINDLY_DAILY_REPORT_ENABLED: ${GRINDLY_DAILY_REPORT_ENABLED:-1}
+      # Web discovery of employer-hosted internships (the Tier A source).
+      GRINDLY_SEARCH_DISCOVERY_ENABLED: ${GRINDLY_SEARCH_DISCOVERY_ENABLED:-0}
+      GRINDLY_SEARCH_PROVIDER: ${GRINDLY_SEARCH_PROVIDER:-searxng}
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      SEARCH_API_KEY: ${SEARCH_API_KEY:-}
       # Emailing an application from the user's own Gmail needs BOTH the switch
       # and the OAuth client that minted their refresh token — agent/channel_email
       # refreshes the access token itself (email_scanner.refresh_access_token) and
