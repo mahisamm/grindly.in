@@ -594,9 +594,30 @@ function describeRun(x: {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
+type Autopilot = {
+  state: "paused" | "setup_incomplete" | "active";
+  readiness: { ready: boolean; missing: string[] };
+  today: {
+    submitted: number; limit: number; remaining: number;
+    attempted: number; date: string; timezone: string;
+  };
+  queued: number;
+  lifetimeSubmitted: number;
+  timeline: {
+    id: string; jobTitle: string; company: string; url: string | null;
+    status: string; appliedAt: string | null; applyChannel: string | null;
+    applyTier: string | null; reason: string | null;
+  }[];
+};
+
 export default function Dashboard() {
   const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
+  // Autopilot panel data. Kept separate from `me` because every number in it is
+  // derived server-side from what actually happened (the reservation ledger and
+  // application rows), never from optimistic UI state — a dashboard that
+  // inflates "applied" is lying to someone about their own job search.
+  const [autopilot, setAutopilot] = useState<Autopilot | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [tab, setTab] = useState<"profile" | "applications" | "integrations" | "reports">("applications");
@@ -713,6 +734,13 @@ export default function Dashboard() {
         return;
       }
       const data = await res.json() as Me;
+      // Autopilot numbers come from their own endpoint (the reservation ledger
+      // + application rows). Failure here must never blank the dashboard, so it
+      // simply leaves the panel on its last-good values.
+      fetch("/api/autopilot")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((a) => { if (a && !a.error) setAutopilot(a as Autopilot); })
+        .catch(() => {});
       // Gated beta: an unapproved account never reaches the app UI. Use the
       // server's owner-aware verdict (honors OWNER_EMAIL); fall back to the old
       // derivation only if an older payload lacks the field.
@@ -2000,6 +2028,107 @@ export default function Dashboard() {
             <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent pulse-dot" />
             <span>Your agent is on duty — it searches and prepares matches automatically every day, on its own. You never have to press anything; <span className="text-foreground">Run now</span> just starts one extra search this minute.</span>
           </p>
+        )}
+
+        {/* ── Autopilot ─────────────────────────────────────────────────────
+            What the agent actually did, from the same ledger that enforces the
+            daily cap — so the number here can never disagree with the number of
+            applications the employer received. "Submitted" is kept strictly
+            separate from queued/prepared: folding them together would inflate a
+            user's sense of their own job search. */}
+        {autopilot && me.user.status === "active" && (
+          <section className="mt-6 rounded-2xl border border-border bg-surface p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="font-display text-lg font-semibold">Autopilot</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    autopilot.state === "active"
+                      ? "bg-accent/15 text-accent"
+                      : autopilot.state === "paused"
+                        ? "bg-surface-2 text-muted"
+                        : "bg-amber-500/15 text-amber-600"
+                  }`}
+                >
+                  {autopilot.state === "active"
+                    ? "On duty"
+                    : autopilot.state === "paused"
+                      ? "Paused"
+                      : "Setup incomplete"}
+                </span>
+              </div>
+              <span className="text-xs text-muted">
+                Today is counted in {autopilot.today.timezone}
+              </span>
+            </div>
+
+            {/* Not-ready is never silent: name what is missing and link to it. */}
+            {!autopilot.readiness.ready && autopilot.readiness.missing.length > 0 && (
+              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                <p className="text-sm text-foreground">
+                  The agent is finding and preparing matches, but it will not send
+                  anything until this is done:
+                </p>
+                <ul className="mt-2 space-y-1 text-sm text-muted">
+                  {autopilot.readiness.missing.map((m) => (
+                    <li key={m} className="flex gap-2">
+                      <span aria-hidden className="text-amber-600">•</span>
+                      <span>{m}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Link href="/onboarding" className="mt-2 inline-block text-sm text-brand-2 underline">
+                  Finish setup →
+                </Link>
+              </div>
+            )}
+
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                { label: "Sent today", value: `${autopilot.today.submitted}/${autopilot.today.limit}`,
+                  hint: "applications the agent submitted for you" },
+                { label: "Left today", value: autopilot.today.remaining,
+                  hint: "your remaining daily allowance" },
+                { label: "In queue", value: autopilot.queued,
+                  hint: "matched and waiting their turn" },
+                { label: "Sent all-time", value: autopilot.lifetimeSubmitted,
+                  hint: "confirmed submissions" },
+              ].map((s) => (
+                <div key={s.label} className="rounded-xl border border-border bg-surface-2 p-3" title={s.hint}>
+                  <div className="text-xs text-muted">{s.label}</div>
+                  <div className="mt-1 text-2xl font-semibold text-foreground">{s.value}</div>
+                </div>
+              ))}
+            </div>
+
+            {autopilot.timeline.length > 0 && (
+              <div className="mt-5">
+                <div className="text-xs uppercase tracking-wide text-muted mb-2">
+                  Recent activity
+                </div>
+                <ul className="space-y-2">
+                  {autopilot.timeline.slice(0, 8).map((t) => (
+                    <li key={t.id} className="flex items-start justify-between gap-3 text-sm">
+                      <div className="min-w-0">
+                        <span className="font-medium text-foreground">{t.jobTitle}</span>
+                        <span className="text-muted"> · {t.company}</span>
+                        {/* Who acted is the point of this list — "the agent sent
+                            it" and "you sent it" must never look identical. */}
+                        {t.applyTier === "A" && (
+                          <span className="ml-2 rounded bg-accent/15 px-1.5 py-0.5 text-xs text-accent">
+                            agent sent
+                          </span>
+                        )}
+                      </div>
+                      <span className="shrink-0 text-xs text-muted">
+                        {t.status === "needs_review" ? "check it" : t.status}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </section>
         )}
 
         {/* run / connect result notice — a floating corner toast, not an inline

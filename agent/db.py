@@ -1495,6 +1495,27 @@ def get_outcome_stats(uid: str) -> dict:
     }
 
 
+def report_already_sent(uid: str, date: str) -> bool:
+    """Has this user already been told about this local day?
+
+    A sweep can run several times a day (the scheduler, plus every "Run now"),
+    and each pass used to deliver its own "daily" report — so an active user got
+    the same summary three times before lunch, each with different numbers,
+    which reads as the agent malfunctioning. The report is once per user per
+    local date; later runs update the row and stay quiet.
+    """
+    try:
+        with conn() as c:
+            row = c.execute(
+                "SELECT 1 FROM reports WHERE user_id=? AND date=? AND delivered=? LIMIT 1",
+                (uid, date, True),
+            ).fetchone()
+        return bool(row)
+    except Exception as e:  # noqa: BLE001 — never let this decide by crashing
+        print(f"[db] report dedupe check failed: {e}")
+        return False
+
+
 def add_report(uid: str, *, date: str, matched: int, applied: int, failed: int,
                summary: str, delivered: bool):
     with conn() as c:

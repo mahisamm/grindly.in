@@ -2278,7 +2278,14 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # one is an operational failure, not a cosmetic one. Say so loudly — the whole
     # point of the delivered flag is that a mute production install stops looking
     # exactly like a working one.
-    if not flags.daily_report_enabled():
+    # Once per user per LOCAL day. Several runs a day is normal (the scheduler
+    # plus any "Run now"), and each one delivering its own "daily" report meant
+    # the same user got three different summaries before lunch — which reads as
+    # a malfunction, not a service. Later runs still write their row above; they
+    # just stop announcing it.
+    if db.report_already_sent(uid, today):
+        log.info("daily report for %s already delivered — not repeating it", today)
+    elif not flags.daily_report_enabled():
         # Flagged off is an operator's choice, not a delivery failure: the report
         # row above is still written (counts stay truthful) and no ops alarm fires.
         log.info("daily report suppressed by GRINDLY_DAILY_REPORT_ENABLED=0")

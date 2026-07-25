@@ -137,3 +137,43 @@ def test_an_event_write_never_breaks_the_caller(capdb):
     # A bad row must be swallowed, not raised: a timeline write is never worth
     # failing a real submission over.
     db.add_application_event(None, "x")  # type: ignore[arg-type]
+
+
+# ---------- the daily report is once per local day ----------
+
+def test_a_second_run_the_same_day_does_not_re_announce(capdb):
+    """A sweep runs several times a day (scheduler + every "Run now"). Each pass
+    delivering its own "daily" report meant one user got three different
+    summaries before lunch, which reads as a malfunction rather than a service."""
+    with db.conn() as c:
+        c.execute("""CREATE TABLE reports (
+            id TEXT PRIMARY KEY, user_id TEXT, date TEXT, matched_count INTEGER,
+            applied_count INTEGER, failed_count INTEGER, summary TEXT,
+            delivered INTEGER, created_at INTEGER)""")
+
+    assert db.report_already_sent("u1", "2026-07-26") is False
+    db.add_report("u1", date="2026-07-26", matched=3, applied=1, failed=0,
+                  summary="s", delivered=True)
+    assert db.report_already_sent("u1", "2026-07-26") is True
+    # A new day is a new report.
+    assert db.report_already_sent("u1", "2026-07-27") is False
+    # And one user's report never silences another's.
+    assert db.report_already_sent("u2", "2026-07-26") is False
+
+
+def test_an_undelivered_report_does_not_count_as_announced(capdb):
+    """delivered=False means the user never actually heard about it, so the next
+    run must still try."""
+    with db.conn() as c:
+        c.execute("""CREATE TABLE reports (
+            id TEXT PRIMARY KEY, user_id TEXT, date TEXT, matched_count INTEGER,
+            applied_count INTEGER, failed_count INTEGER, summary TEXT,
+            delivered INTEGER, created_at INTEGER)""")
+    db.add_report("u1", date="2026-07-26", matched=1, applied=0, failed=0,
+                  summary="s", delivered=False)
+    assert db.report_already_sent("u1", "2026-07-26") is False
+
+
+def test_a_broken_reports_table_never_blocks_the_report(capdb):
+    """This check must never be the reason a user hears nothing."""
+    assert db.report_already_sent("u1", "2026-07-26") is False
