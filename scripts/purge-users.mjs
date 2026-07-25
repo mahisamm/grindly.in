@@ -1,5 +1,5 @@
 /**
- * Wipe EVERY user account and all data owned by them. Irreversible.
+ * Wipe every non-admin user account and all data owned by them. Irreversible.
  *
  * Intended for one thing: clearing out beta/test accounts before opening signups
  * to real users. It is not a maintenance script — there is no undo.
@@ -33,6 +33,7 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 const CONFIRM = "DELETE-ALL-USERS";
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "mahendharsammeta21@gmail.com").trim().toLowerCase();
 
 async function main() {
   if (process.env.CONFIRM_PURGE_USERS !== CONFIRM) {
@@ -41,34 +42,47 @@ async function main() {
     process.exit(1);
   }
 
-  const before = await prisma.user.count();
-  if (before === 0) {
-    console.log("No users to delete. Nothing to do.");
+  const admin = await prisma.user.findUnique({ where: { email: ADMIN_EMAIL } });
+  if (!admin) {
+    console.error(`REFUSING TO RUN - admin account ${ADMIN_EMAIL} does not exist.`);
+    console.error("Sign in with that account first, then run this purge again.");
+    process.exit(1);
+  }
+
+  const users = await prisma.user.findMany({ select: { id: true, email: true, role: true } });
+  const removable = users.filter((u) => u.id !== admin.id);
+  if (removable.length === 0) {
+    if (admin.role !== "admin") {
+      await prisma.user.update({ where: { id: admin.id }, data: { role: "admin" } });
+    }
+    console.log(`No non-admin users to delete. Preserved ${ADMIN_EMAIL} as admin.`);
     return;
   }
 
-  const users = await prisma.user.findMany({ select: { email: true, role: true } });
-  console.log(`About to delete ${before} user(s):`);
-  for (const u of users) console.log(`  - ${u.email}${u.role === "admin" ? "  (admin)" : ""}`);
+  console.log(`About to delete ${removable.length} non-admin user(s), preserving ${ADMIN_EMAIL}:`);
+  for (const u of removable) console.log(`  - ${u.email}${u.role === "admin" ? "  (admin role removed)" : ""}`);
+
+  await prisma.user.update({ where: { id: admin.id }, data: { role: "admin" } });
 
   // Orphans first: no FK relation means no cascade would ever clean these.
-  const tokens = await prisma.passwordResetToken.deleteMany({});
+  const tokens = await prisma.passwordResetToken.deleteMany({
+    where: { userId: { not: admin.id } },
+  });
   console.log(`password reset tokens removed: ${tokens.count}`);
 
   // Cascades through profiles, applications, integrations, credentials,
   // resume versions, agent runs, notifications, reports and audit logs.
-  const deleted = await prisma.user.deleteMany({});
-  console.log(`users removed: ${deleted.count}`);
+  const deleted = await prisma.user.deleteMany({ where: { id: { not: admin.id } } });
+  console.log(`non-admin users removed: ${deleted.count}`);
 
-  const after = await prisma.user.count();
-  if (after !== 0) {
+  const remaining = await prisma.user.findMany({ select: { id: true, email: true, role: true } });
+  const after = remaining.length;
+  if (remaining.length !== 1 || remaining[0]?.id !== admin.id || remaining[0]?.role !== "admin") {
     console.error(`FAILED — ${after} user(s) still present.`);
     process.exit(1);
   }
 
-  console.log("\nDone. 0 users remain.");
-  console.log("Admin is gone too. Sign in with Google, then run:");
-  console.log("  node scripts/make-admin.mjs <your-email>");
+  console.log(`\nDone. 1 user remains: ${ADMIN_EMAIL} (admin).`);
 }
 
 main()

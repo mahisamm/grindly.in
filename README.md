@@ -140,9 +140,13 @@ remain prepared for the user's final browser submit.
 ### Scheduled service mode
 
 ```bash
-python agent/worker.py --serve    # drains run queue in a 10s loop
-python agent/worker.py --loop     # sweeps all active users every 24h
+python agent/worker.py --serve    # drains queued work in a 10s loop
+python agent/sweep.py --serve     # schedules one live run per active user each day
 ```
+
+On Windows, `start.bat` starts both of these services and the web app. An
+active user with a completed profile is then discovered, scored, queued, and
+processed automatically according to their plan and auto-apply preferences.
 
 ---
 
