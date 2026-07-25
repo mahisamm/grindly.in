@@ -44,8 +44,27 @@ def test_job_boards_are_filtered_out(url):
     assert websearch._is_useful(url) is False
 
 
-def test_regional_board_subdomains_are_filtered_too():
-    assert websearch._is_useful("https://uk.linkedin.com/jobs/view/9") is False
+@pytest.mark.parametrize("url", [
+    "https://uk.linkedin.com/jobs/view/9",
+    "https://www.glassdoor.co.in/Job/india-web-developer-jobs.htm",
+    "https://in.indeed.com/viewjob?jk=1",
+])
+def test_regional_twins_are_filtered_too(url):
+    """These brands run one site per country. Matching full ".com" hosts let
+    every regional twin through — a Glassdoor link survived the very first
+    live run that way."""
+    assert websearch._is_useful(url) is False
+
+
+@pytest.mark.parametrize("url", [
+    "https://myinternships.in/internships/web-development",
+    "https://en.wikipedia.org/wiki/World_Wide_Web",
+    "https://web.whatsapp.com/",
+])
+def test_aggregators_and_noise_are_filtered(url):
+    """Straight from the first live search: an aggregator that reprints
+    listings and owns no form, plus two pages that are not jobs at all."""
+    assert websearch._is_useful(url) is False
 
 
 def test_an_employer_page_survives():

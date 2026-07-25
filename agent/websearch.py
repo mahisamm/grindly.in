@@ -28,12 +28,23 @@ TIMEOUT = int(os.environ.get("GRINDLY_SEARCH_TIMEOUT", "20"))
 # Domains whose "results" are never an employer's own application page. Boards
 # are handled by their own adapters, and aggregator/spam mirrors reprint the same
 # listing without ever owning an apply form.
-_EXCLUDED_HOSTS = {
-    "linkedin.com", "indeed.com", "naukri.com", "unstop.com", "internshala.com",
-    "glassdoor.com", "monster.com", "shine.com", "timesjobs.com",
-    "simplyhired.com", "ziprecruiter.com", "jooble.org", "neuvoo.com",
-    "facebook.com", "twitter.com", "x.com", "instagram.com", "reddit.com",
-    "youtube.com", "quora.com", "pinterest.com", "medium.com",
+# Matched as a DOMAIN LABEL, not a full host: these brands run one site per
+# country ("glassdoor.co.in", "indeed.co.uk", "uk.linkedin.com"), and a
+# suffix-match list of ".com" names lets every regional twin straight through —
+# which is how a Glassdoor link survived the filter in the first live run.
+_EXCLUDED_BRANDS = {
+    # Job boards. Either an adapter already owns them, or applying needs the
+    # user's account there, which is never submitted from our servers.
+    "linkedin", "indeed", "naukri", "unstop", "internshala", "glassdoor",
+    "monster", "shine", "timesjobs", "simplyhired", "ziprecruiter", "jooble",
+    "neuvoo", "foundit", "hirist", "cutshort", "instahyre", "apna",
+    # Aggregators and scraped mirrors: they reprint a listing and own no form.
+    "myinternships", "internshipdunia", "letsintern", "twenty19", "jobsuche",
+    "careerjet", "trovit", "adzuna", "talent", "jora", "whatjobs", "expertini",
+    # Social, docs and reference — never an application page.
+    "facebook", "twitter", "instagram", "reddit", "youtube", "quora",
+    "pinterest", "medium", "wikipedia", "wikimedia", "whatsapp", "telegram",
+    "blogspot", "wordpress", "amazon", "flipkart",
 }
 
 
@@ -61,11 +72,17 @@ def _host_of(url: str) -> str:
 
 
 def _is_useful(url: str) -> bool:
+    """Could this URL plausibly be an employer's own application page?
+
+    Rejects on any domain label matching an excluded brand, so "glassdoor.co.in",
+    "uk.linkedin.com" and "in.indeed.com" all go with the parent. Cheap and
+    deliberately blunt — the point is to stop spending the resolver's page
+    budget on hosts that can never hold a form the agent may submit."""
     host = _host_of(url)
     if not host:
         return False
-    # Suffix match so "in.indeed.com" and "uk.linkedin.com" are excluded too.
-    return not any(host == bad or host.endswith("." + bad) for bad in _EXCLUDED_HOSTS)
+    labels = set(host.split("."))
+    return not (labels & _EXCLUDED_BRANDS)
 
 
 def _get_json(url: str, headers: dict | None = None, payload: dict | None = None) -> dict | None:
