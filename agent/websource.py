@@ -59,6 +59,39 @@ def enabled() -> bool:
     return flags.search_discovery_enabled() and websearch.configured()
 
 
+# A real posting lives at a per-job path. A company's ATS landing page —
+# jobs.lever.co/acme — lists every opening and has no form of its own, so it can
+# never be applied to. Live proof: "Careers", "Level AI" and "Stable Money" all
+# arrived as candidates and scored on the aggregate text of dozens of unrelated
+# roles.
+_ATS_POSTING = re.compile(
+    r"(?:jobs\.lever\.co/[^/]+/[0-9a-f-]{8,}"          # lever: company/uuid
+    r"|greenhouse\.io/[^/]+/jobs/\d+"                   # greenhouse: company/jobs/id
+    r"|ashbyhq\.com/[^/]+/[0-9a-f-]{8,}"                # ashby: company/uuid
+    r"|docs\.google\.com/forms)", re.I,
+)
+_ATS_HOST = re.compile(r"(?:lever\.co|greenhouse\.io|ashbyhq\.com)", re.I)
+
+# Titles that belong to an index page rather than one role.
+_INDEX_TITLES = re.compile(
+    r"^(careers?|jobs?|openings?|work with us|current openings|"
+    r"job application for)?$", re.I,
+)
+
+
+def _is_a_single_posting(title: str, url: str) -> bool:
+    """Is this one applyable role, or a company's list of roles?
+
+    On a known ATS the URL settles it: a per-job path is a posting, a bare
+    company path is the index. Elsewhere we cannot tell from the URL, so fall
+    back to the title — an index page is usually titled just "Careers" or the
+    company's own name.
+    """
+    if _ATS_HOST.search(url):
+        return bool(_ATS_POSTING.search(url))
+    return not _INDEX_TITLES.match(title.strip())
+
+
 def _looks_like_an_internship(title: str, snippet: str) -> bool:
     """Cheap relevance gate before anything expensive touches this result.
 
@@ -97,8 +130,12 @@ def _company_from(title: str, url: str) -> str:
 
 
 def _clean_title(title: str) -> str:
-    # Strip the "| Company | Careers" tails that search results carry.
+    # Strip the "| Company | Careers" tails that search results carry, and the
+    # "Job Application for ..." prefix Greenhouse puts on every page title —
+    # left in, it becomes the role name shown on the user's dashboard.
     t = re.split(r"\s+[|\-–—]\s+", title.strip())[0]
+    t = re.sub(r"^job application for\s+", "", t, flags=re.I)
+    t = re.sub(r"\s+at\s+[A-Z][\w&.\- ]{2,40}$", "", t)
     return (t or title).strip()[:120]
 
 
@@ -172,6 +209,10 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                 if not _looks_like_an_internship(r["title"], r["snippet"]):
                     continue
                 title = _clean_title(r["title"])
+                # An index page has no form to submit; scoring it means scoring
+                # the aggregate text of every unrelated role the company lists.
+                if not _is_a_single_posting(title, url):
+                    continue
                 jobs.append({
                     # Stable across runs so the same posting dedupes instead of
                     # reappearing as new work every sweep.
