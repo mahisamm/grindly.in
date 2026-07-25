@@ -158,3 +158,22 @@ def test_firewall_allows_clean_job():
     job = {"company": "GoodCo", "location": "Remote", "stipend": "20000"}
     profile = {"excluded_companies": "[]", "work_mode": "remote", "stipend_min": 10000}
     assert matcher.firewall_block(job, profile) is None
+
+
+def test_requirements_below_the_first_screen_still_count():
+    """The JD window was 800 characters — enough for a board card's blurb, but on
+    a real posting page that covers only navigation and boilerplate. The
+    requirements section, the one part naming the stack, sits below it.
+
+    Live consequence: employer-hosted internships at DevRev, CloudSEK, Thena and
+    Enterpret scored 5-17 against a threshold of 65, with the candidate's own
+    skills printed further down the very same page, and every one was discarded
+    before routing."""
+    nav = "Home About Careers Contact " + "nav filler " * 90   # ~1000 chars
+    req = " Requirements: strong Python, React, PostgreSQL and Docker experience."
+    job = {"title": "Software Engineer Intern", "company": "Thena", "skills": []}
+    skills = ["python", "react", "postgresql", "docker", "typescript"]
+
+    buried, _ = matcher.score_job(job, skills, ["software developer"],
+                                  exp_level="student", jd_text=nav + req)
+    assert buried >= 65, f"a matching role scored {buried} — it would be thrown away"

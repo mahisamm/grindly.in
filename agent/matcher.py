@@ -123,7 +123,14 @@ def score_job(
         [_norm(job.get("title", "")), job.get("company", ""), " ".join(job_skills)]
     ).lower()
     if jd_text:
-        haystack += " " + _norm(jd_text[:800])
+        # 6000, not 800. An 800-character window covers a board card's blurb but
+        # only the navigation and boilerplate of a real posting page — the
+        # requirements section, which is the only part naming the stack, sits
+        # well below it. Employer-hosted internships (DevRev, CloudSEK, Thena,
+        # Enterpret) therefore scored 5-17 against a threshold of 65 with the
+        # candidate's own skills printed further down the same page. Bounded so
+        # a pathological page cannot make scoring quadratic.
+        haystack += " " + _norm(jd_text[:6000])
     hay_tokens = _tokens(haystack)
 
     if not skills:
