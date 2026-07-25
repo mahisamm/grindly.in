@@ -29,12 +29,22 @@ SOURCE = "websource"
 # ATS hosts are where a company's own postings live, and "apply"/"careers"
 # wording is what a real application page says about itself.
 _TEMPLATES = [
-    '"{domain} intern" India apply site:lever.co',
-    '"{domain} internship" India site:boards.greenhouse.io',
-    '"{domain} internship" India site:jobs.ashbyhq.com',
-    '{domain} internship India "apply now" careers 2026',
-    '{domain} internship India application form "google form"',
+    # site:-scoped ATS queries carry this source. Verified against the live
+    # instance: they return real Indian employers' own postings (Paytm, FamPay,
+    # Epifi, Graviton, Ogilvy...), many of them the /apply page itself. Every
+    # one is TIER_A — the candidate holds no account there.
+    "site:boards.greenhouse.io {domain} intern india",
+    "site:jobs.lever.co {domain} intern india",
+    "site:jobs.ashbyhq.com {domain} intern india",
+    # Employer-owned forms outside the big three ATSs.
+    "{domain} internship india apply site:docs.google.com/forms",
+    "{domain} internship india careers apply 2026",
 ]
+
+# Deliberately UNQUOTED. An exact-phrase query ("web development intern")
+# matches almost nothing on a real posting, whose title is "Software Developer
+# Intern" or "SDE Intern - Frontend"; the first live run returned zero for every
+# quoted template while the unquoted equivalents returned twenty.
 
 _INTERN_WORDS = ("intern", "internship", "trainee", "apprentice")
 _STALE_WORDS = ("2019", "2020", "2021", "2022", "2023")
