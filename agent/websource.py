@@ -101,9 +101,17 @@ def _looks_like_an_internship(title: str, snippet: str) -> bool:
     keeps the resolver's page budget for things that could plausibly be applied
     to.
     """
-    blob = f"{title} {snippet}".lower()
-    if not any(w in blob for w in _INTERN_WORDS):
+    # The TITLE must say intern, not merely the page somewhere.
+    #
+    # Matching on title-or-snippet let a company's ATS index through whenever
+    # any listed role happened to be an internship — "Level AI", "Drivetrain"
+    # and "Endpoint Clinical" all arrived that way, and one reached the queue as
+    # a "Director, Commercial Operations" internship. A real posting names the
+    # role in its title; that is the one reliable signal here, and a few missed
+    # listings cost far less than applying to the wrong job in someone's name.
+    if not any(w in title.lower() for w in _INTERN_WORDS):
         return False
+    blob = f"{title} {snippet}".lower()
     # A posting whose text advertises a long-past year is almost always an
     # archived page; applying there is noise to the employer and to the user.
     if any(y in blob for y in _STALE_WORDS) and "2026" not in blob:

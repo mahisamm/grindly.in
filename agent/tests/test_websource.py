@@ -279,3 +279,16 @@ def test_the_ats_title_prefix_is_stripped():
     becomes the role name on the user's dashboard."""
     assert websource._clean_title(
         "Job Application for Machine Learning Intern at CloudSEK") == "Machine Learning Intern"
+
+
+def test_an_index_page_is_not_saved_by_a_snippet_that_mentions_interns():
+    """Matching title-OR-snippet let a company's ATS index through whenever any
+    role it listed happened to be an internship. "Level AI", "Drivetrain" and
+    "Endpoint Clinical" all arrived that way, and one reached the queue as a
+    "Director, Commercial Operations" internship."""
+    assert websource._looks_like_an_internship("Level AI", "we hire interns across teams") is False
+    assert websource._looks_like_an_internship("Director, Commercial Operations", "internships available") is False
+
+
+def test_a_posting_that_names_the_role_survives():
+    assert websource._looks_like_an_internship("Software Engineer Intern @ Simular", "join us") is True
