@@ -77,6 +77,16 @@ export function serviceStatus() {
     googleOAuth: googleOAuthConfigured(),
     gmailScan: gmailScanEnabled(),      // false until gmail.readonly is verified
     paymentsEnabled: paymentsEnabled(),
+    // Autopilot kill switches — mirrors agent/flags.py so the admin health page
+    // and the worker can never disagree about what is switched on.
+    autopilot: process.env.GRINDLY_AUTOPILOT_ENABLED !== "0",
+    directSubmit:
+      process.env.GRINDLY_AUTOPILOT_ENABLED !== "0" &&
+      process.env.GRINDLY_DIRECT_SUBMIT_ENABLED !== "0",
+    browserExecutor:
+      process.env.GRINDLY_AUTOPILOT_ENABLED !== "0" &&
+      process.env.GRINDLY_BROWSER_EXECUTOR_ENABLED === "1",
+    searchDiscovery: process.env.GRINDLY_SEARCH_DISCOVERY_ENABLED === "1",
     payment: paymentMode(),             // "razorpay" | "unconfigured"
     encryptionKey: encryptionKeyValid(),
     baseUrl: baseUrlConfigured(),

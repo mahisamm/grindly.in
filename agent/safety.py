@@ -105,6 +105,13 @@ def auto_apply_mode() -> str:
     as shadow, never as live.  A misconfigured deploy must not start sending
     applications under a user's name.
     """
+    import flags  # local: flags imports nothing from safety, keeps graph acyclic
+
+    if not flags.autopilot_enabled():
+        # The master kill switch outranks the mode string. One flag, and every
+        # unattended path — Tier A executors and Tier B hosted submit alike —
+        # reads as off, with the queue left intact for the flip back.
+        return AUTO_APPLY_OFF
     mode = (os.environ.get("GRINDLY_AUTO_APPLY_MODE") or AUTO_APPLY_SHADOW).strip().lower()
     return mode if mode in (AUTO_APPLY_OFF, AUTO_APPLY_SHADOW, AUTO_APPLY_LIVE) else AUTO_APPLY_SHADOW
 

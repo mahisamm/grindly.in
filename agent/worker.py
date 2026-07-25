@@ -43,6 +43,7 @@ except Exception:  # noqa: BLE001
 sys.path.insert(0, os.path.dirname(__file__))
 
 import db
+import flags
 import notify
 import latex_resume
 import matcher
@@ -234,6 +235,11 @@ def channel_deliverable(dest: dict | None) -> bool:
     channel = dest.get("channel")
     if channel == resolver.CHANNEL_PLATFORM:
         return True          # board adapters exist; policy decides if they may run
+    # Fleet kill switch for every Tier A server executor at once. Checked here —
+    # the same single gate that already answers "can this dispatch today?" — so
+    # a flagged-off destination is banked as matched, not spent as a failed send.
+    if not flags.direct_submit_enabled():
+        return False
     mod = _CHANNEL_MODULES.get(channel)
     if mod is None or not dest.get("target"):
         return False
@@ -980,6 +986,8 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     quota_used = db.todays_applied_count(uid)
     quota_kind = "today"
     log.info("=== run for %s (%s) mode=%s cap=%d used=%d (%s) ===", name, uid, mode, cap, quota_used, quota_kind)
+    # One line per run answering "why did nothing send?" before anyone has to ask.
+    log.info("flags: %s | auto_apply_mode=%s", flags.snapshot(), safety.auto_apply_mode())
     db.add_audit("run_start", user_id=uid, detail=f"mode={mode} cap={cap}")
     if mode == "deliver":
         return deliver_ready_match(uid, user)
@@ -1088,7 +1096,9 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # A submit-only run does no discovery: the rotation exists to decide which
     # boards to *scrape* today, and there is nothing to scrape.
     active_sources = (
-        _platforms_for_today(uid, DISCOVERY_PLATFORMS)
+        _platforms_for_today(
+            uid, [s for s in DISCOVERY_PLATFORMS if flags.source_enabled(s)]
+        )
         if discover else []
     )
     if active_sources:
@@ -2150,7 +2160,11 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # one is an operational failure, not a cosmetic one. Say so loudly — the whole
     # point of the delivered flag is that a mute production install stops looking
     # exactly like a working one.
-    if not notify.to_user(user, f"Grindly daily report — {today}", msg):
+    if not flags.daily_report_enabled():
+        # Flagged off is an operator's choice, not a delivery failure: the report
+        # row above is still written (counts stay truthful) and no ops alarm fires.
+        log.info("daily report suppressed by GRINDLY_DAILY_REPORT_ENABLED=0")
+    elif not notify.to_user(user, f"Grindly daily report — {today}", msg):
         log.error(
             "daily report UNDELIVERED for %s — the user has no working channel", uid
         )
