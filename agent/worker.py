@@ -399,6 +399,14 @@ SOURCE_PRIORITY = ["linkedin", "internshala", "naukri", "unstop", "indeed"]
 # (_platforms_for_today always includes index 0).
 DISCOVERY_PLATFORMS = ["internshala", "naukri", "linkedin", "unstop", "indeed"]
 
+# Sources that are not job boards. `websource` searches the open web for
+# internships on employers' OWN pages — the only listings the agent can submit
+# unattended, because the candidate holds no account there (resolver.TIER_A).
+# It is always queried when enabled rather than entering the daily board
+# rotation: the rotation exists to look human to sites that watch for bots, and
+# a search backend is not one of those sites.
+ALWAYS_ON_SOURCES = ["websource"]
+
 # Platforms whose ToS prohibits automated submission (all 5 we currently
 # integrate — none of them are ATS-hosted company pages that welcome bots).
 # For these, the bot is never allowed to click the final submit button on its
@@ -1134,6 +1142,11 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         )
         if discover else []
     )
+    if discover:
+        # Appended after the rotation, never subject to it.
+        active_sources = active_sources + [
+            s for s in ALWAYS_ON_SOURCES if flags.source_enabled(s)
+        ]
     if active_sources:
         log.info("platform rotation today: %s (connected: %s)", active_sources, connected_platforms)
 
