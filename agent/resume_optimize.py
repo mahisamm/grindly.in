@@ -320,8 +320,35 @@ def _rewrite_struct(base_struct: dict, instruction: str, master_skills: list[str
         f"Resume JSON to rewrite:\n{json.dumps(base_struct, ensure_ascii=False)[:6000]}\n\n"
         "Return the {\"resume\": ..., \"changes\": ...} JSON object."
     )
-    out = llm_mod.chat_json_ensemble(prompt, system=_REWRITE_SYS, n=3, timeout=120)
-    return out if isinstance(out, dict) else None
+    # NOT chat_json_ensemble. That MERGES the N responses, and the merge votes on
+    # each list item by its exact content (llm._merge_lists keeps only items a
+    # majority of models produced verbatim). Extraction survives it because every
+    # model is told to copy the facts word-for-word, so the section items are
+    # identical and agree. A REWRITE is the opposite by construction — each model
+    # rewords the bullets its own way — so no rewritten section is ever produced
+    # identically by two models, the merge discards ALL of them, and `sections`
+    # comes back []. Every strategy then failed with "rewrite returned no content"
+    # and the whole feature produced nothing. (Proven: three reworded responses
+    # merge to sections=[].)
+    #
+    # Take whole, un-merged responses instead and keep the first coherent one.
+    # The cross-model diversity this feature wants comes from the three distinct
+    # STRATEGIES, each compiled and re-scored downstream — not from blending three
+    # rewrites of one strategy into their (empty) intersection.
+    parsed_dicts = []
+    for raw in llm_mod.chat_ensemble(prompt, system=_REWRITE_SYS, n=3, timeout=120):
+        parsed = llm_mod._extract_json(raw)
+        if not isinstance(parsed, dict):
+            continue
+        parsed_dicts.append(parsed)
+        raw_struct = parsed.get("resume") if isinstance(parsed.get("resume"), dict) else parsed
+        if isinstance(raw_struct, dict):
+            sanitized = _sanitize_struct(raw_struct)
+            if sanitized and any(sec["items"] for sec in sanitized["sections"]):
+                return parsed  # first response with real content wins
+    # None had usable content: hand back one anyway (if any parsed) so _variant
+    # reports an accurate "empty/malformed" reason rather than "model unavailable".
+    return parsed_dicts[0] if parsed_dicts else None
 
 
 # ---------------- truthfulness gate ----------------

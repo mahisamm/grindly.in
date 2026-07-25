@@ -140,3 +140,40 @@ def test_a_sanitized_struct_renders_to_a_real_document():
     # The live failure rendered ~94 characters and was rejected downstream.
     assert len(tex) > 300
     assert "Python, React" in tex
+
+
+# --- the rewrite must not be merged into an empty resume -----------------------
+
+def _rewrite_response(bullet):
+    import json
+    return json.dumps({
+        "resume": {"name": "A B", "contact_line": "a@b.com", "sections": [
+            {"heading": "SKILLS", "items": [{"head": "", "sub": "", "bullets": [bullet]}]}]},
+        "changes": ["reworded the skills line"],
+    })
+
+
+def test_rewrite_keeps_one_response_instead_of_merging_to_empty(monkeypatch):
+    """chat_json_ensemble majority-votes every list item by exact content
+    (llm._merge_lists). Extraction survives it — models copy facts verbatim, so
+    the items are identical — but a REWRITE rewords each bullet, so no section is
+    produced identically by two models and the merge drops all of them. Live,
+    every strategy came back "rewrite returned no content" and the feature made
+    nothing. _rewrite_struct must take whole un-merged responses and keep the
+    first coherent one."""
+    monkeypatch.setattr(ro.llm_mod, "chat_ensemble", lambda *a, **k: [
+        _rewrite_response("Languages: Python, SQL"),
+        _rewrite_response("Programming: Python and SQL"),
+        _rewrite_response("Tech stack: Python, SQL, Git"),
+    ])
+    out = ro._rewrite_struct(
+        {"name": "A B", "contact_line": "a@b.com", "sections": []}, "keywords", ["python", "sql"])
+    assert out is not None, "a coherent rewrite existed and must be returned"
+    struct = ro._sanitize_struct(out["resume"])
+    assert struct and any(s["items"] for s in struct["sections"]), \
+        "the rewritten content must survive — this is the bug"
+
+
+def test_rewrite_returns_none_when_no_provider_answers(monkeypatch):
+    monkeypatch.setattr(ro.llm_mod, "chat_ensemble", lambda *a, **k: [])
+    assert ro._rewrite_struct({"name": "A", "contact_line": "c", "sections": []}, "x", []) is None
