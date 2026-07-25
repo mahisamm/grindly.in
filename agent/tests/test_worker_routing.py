@@ -8,8 +8,34 @@ two failure modes this whole design exists to prevent.
 """
 import urllib.request
 
+import pytest
+
 import resolver
 import worker
+
+
+@pytest.fixture(autouse=True)
+def submission_ledger(monkeypatch):
+    """In-memory stand-in for the idempotency ledger (db.submission_receipts).
+
+    Dispatch claims a key before letting any sender run, and the real claim
+    fails CLOSED when the database is unreachable — correct in production (an
+    unprovable duplicate must not be sent) but it would make every routing test
+    here read "skipped". These tests are about which module gets called, so the
+    ledger is stubbed to a dict; test_idempotency.py covers the ledger itself.
+    """
+    claimed: set[str] = set()
+
+    def claim(key, uid):
+        if key in claimed:
+            return False
+        claimed.add(key)
+        return True
+
+    monkeypatch.setattr(worker.db, "claim_submission", claim)
+    monkeypatch.setattr(worker.db, "record_submission", lambda *a, **k: None)
+    monkeypatch.setattr(worker.db, "release_submission", lambda key: claimed.discard(key))
+    return claimed
 
 
 class _FakePlatform:

@@ -90,6 +90,7 @@ async function resetDb() {
   const results = await prisma.$transaction([
     prisma.auditLog.deleteMany(),
     prisma.applicationEvent.deleteMany(),
+    prisma.submissionReceipt.deleteMany(),
     prisma.dailyUsage.deleteMany(),
     prisma.userAnswer.deleteMany(),
     prisma.supportTicket.deleteMany(),
@@ -116,7 +117,7 @@ async function resetDb() {
   ]);
 
   const labels = [
-    "audit_logs", "application_events", "daily_usage", "user_answers",
+    "audit_logs", "application_events", "submission_receipts", "daily_usage", "user_answers",
     "support_tickets", "notifications", "extension_tokens",
     "reports", "otp_tokens", "otp_attempts", "password_reset_tokens",
     "rate_limit_entries", "agent_runs", "platform_credentials",

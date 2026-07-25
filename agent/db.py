@@ -1644,3 +1644,97 @@ def add_application_event(app_id: str, event_type: str, actor: str = "worker",
             )
     except Exception as e:  # noqa: BLE001
         print(f"[db] application event {event_type} not recorded: {e}")
+
+
+# ---------- idempotency: never send the same application twice ----------
+
+def _ensure_submissions_table(c):
+    if PG:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS submission_receipts (
+                key TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                detail TEXT,
+                created_at TIMESTAMP(3) NOT NULL
+            )
+        """)
+        return
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS submission_receipts (
+            key TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            detail TEXT,
+            created_at INTEGER NOT NULL
+        )
+    """)
+
+
+def submission_key(uid: str, job_url: str, channel: str, target: str = "") -> str:
+    """Stable identity for "this user applying to this job through this channel".
+
+    Includes the channel and target because the SAME listing can legitimately be
+    submitted twice by different routes (a Google Form today, the board later if
+    routing changes) — and must never be submitted twice by the SAME route.
+    """
+    import hashlib
+    raw = f"{uid}\x1f{(job_url or '').strip().lower()}\x1f{channel}\x1f{(target or '').strip().lower()}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def claim_submission(key: str, uid: str) -> bool:
+    """Reserve the right to send this exact application. False = already sent.
+
+    A queue message can be redelivered — a worker crash after the POST but
+    before the status write, a retry of an ambiguous timeout, a run reclaimed by
+    reclaim_stale. Without this the second attempt sends a duplicate application
+    to a real employer under the user's name, which cannot be undone and reads
+    to a recruiter as spam.
+
+    The INSERT is the lock: the primary key makes the database reject the second
+    claimant rather than two workers agreeing they are both first.
+    """
+    try:
+        with conn() as c:
+            _ensure_submissions_table(c)
+            cur = c.execute(
+                "INSERT INTO submission_receipts (key, user_id, status, created_at) "
+                "VALUES (?,?,?,?) ON CONFLICT (key) DO NOTHING",
+                (key, uid, "in_flight", now_db()),
+            )
+            return cur.rowcount == 1
+    except Exception as e:  # noqa: BLE001
+        # Fail CLOSED: if the ledger is unreachable we cannot prove this is not a
+        # duplicate, and re-sending is worse than skipping.
+        print(f"[db] submission claim failed for {key[:12]}: {e}")
+        return False
+
+
+def record_submission(key: str, status: str, detail: str = "") -> None:
+    """Write the outcome onto a claimed submission (the receipt)."""
+    try:
+        with conn() as c:
+            _ensure_submissions_table(c)
+            c.execute(
+                "UPDATE submission_receipts SET status=?, detail=? WHERE key=?",
+                (status, (detail or "")[:300], key),
+            )
+    except Exception as e:  # noqa: BLE001
+        print(f"[db] receipt write failed for {key[:12]}: {e}")
+
+
+def release_submission(key: str) -> None:
+    """Delete a claim when the send DEFINITELY did not happen, so a genuine
+    retry is possible later.
+
+    Only for definite non-sends. An ambiguous outcome keeps its claim on purpose:
+    the application may well have reached the employer, and a retry that turns
+    out to be a duplicate is the failure this whole ledger exists to prevent.
+    """
+    try:
+        with conn() as c:
+            _ensure_submissions_table(c)
+            c.execute("DELETE FROM submission_receipts WHERE key=?", (key,))
+    except Exception as e:  # noqa: BLE001
+        print(f"[db] receipt release failed for {key[:12]}: {e}")

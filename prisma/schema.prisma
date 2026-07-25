@@ -773,3 +773,27 @@ model DailyUsage {
   @@unique([userId, localDate])
   @@map("daily_usage")
 }
+
+// One row per (user, job, route) that has been submitted, or is in flight.
+// This is the ledger that stops a DUPLICATE application: a queue message can be
+// redelivered — a crash after the POST but before the status write, a retry of
+// an ambiguous timeout, a run reclaimed as stale — and without a claim the
+// second attempt sends the same application to a real employer under the user's
+// name. That cannot be undone and reads to a recruiter as spam.
+//
+// The primary key IS the lock: the database rejects the second claimant rather
+// than two workers each concluding they were first. Written by agent/db.py
+// (claim_submission / record_submission / release_submission); declared here so
+// Prisma owns the schema and reset-db clears it.
+model SubmissionReceipt {
+  // sha256(user + job url + channel + target), truncated — see db.submission_key.
+  key       String   @id
+  userId    String   @map("user_id")
+  // in_flight | applied | needs_review | exception
+  status    String
+  detail    String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, createdAt])
+  @@map("submission_receipts")
+}

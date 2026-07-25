@@ -347,10 +347,33 @@ def _dispatch_apply(
     channel = dest.get("channel")
     mod = _CHANNEL_MODULES.get(channel)
     if mod is not None:
-        return mod.apply(
-            job, letter, uid, profile=profile, resume_path=resume_path,
-            record=record, target=dest.get("target") or "", skills=skills,
-        )
+        # Idempotency. A queue message can be redelivered — a crash after the
+        # POST but before the status write, a retry of an ambiguous timeout, a
+        # run reclaimed as stale — and the second attempt would send a DUPLICATE
+        # application to a real employer under the user's name. That cannot be
+        # undone and reads to a recruiter as spam. The ledger claim is the lock.
+        key = db.submission_key(uid, job.get("url") or "", channel, dest.get("target") or "")
+        if not db.claim_submission(key, uid):
+            return "skipped", "already submitted through this channel — not sending it twice"
+        try:
+            status, why = mod.apply(
+                job, letter, uid, profile=profile, resume_path=resume_path,
+                record=record, target=dest.get("target") or "", skills=skills,
+            )
+        except Exception:
+            # An exception proves nothing about whether the POST landed, so the
+            # claim STAYS. Re-raising with the claim held is the safe direction:
+            # a missed application is recoverable, a duplicate one is not.
+            db.record_submission(key, "exception", "sender raised")
+            raise
+        # Release only on a definite non-send, so a real retry stays possible.
+        # "needs_review" keeps its claim on purpose: that submit landed and only
+        # its confirmation was unreadable (safety.classify_submit).
+        if status in ("failed", "skipped", "login_required"):
+            db.release_submission(key)
+        else:
+            db.record_submission(key, status, why)
+        return status, why
 
     if channel != resolver.CHANNEL_PLATFORM:
         return "needs_review", _UNDELIVERABLE_REASON.get(
