@@ -177,3 +177,69 @@ def test_an_unknown_provider_returns_nothing_rather_than_crashing(monkeypatch):
     monkeypatch.setenv("GRINDLY_SEARCH_PROVIDER", "nonesuch")
     monkeypatch.setenv("SEARCH_API_KEY", "k")
     assert websearch.search("x") == []
+
+
+# ---- the job description is what makes these listings scoreable --------------
+
+def test_scrape_jd_strips_scripts_and_keeps_the_skills(monkeypatch):
+    """A board card arrives with a skills list; a search result arrives with a
+    one-line snippet. Without the real posting text matcher.score_job saw "0 of
+    your skills mentioned" and scored every employer-hosted internship ~5
+    against a threshold of 65 — real roles at DevRev, CloudSEK, Thena and
+    Enterpret were thrown away that way."""
+    page = (
+        b"<html><head><style>.x{color:red}</style>"
+        b"<script>var t='Kubernetes';</script></head>"
+        b"<body><h1>Machine Learning Intern</h1>"
+        b"<p>You will use Python, SQL and Docker.</p></body></html>"
+    )
+
+    class _Resp:
+        def read(self, _n=None): return page
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(websource.urllib.request, "urlopen", lambda *a, **k: _Resp())
+    jd = websource.scrape_jd("https://jobs.lever.co/acme/1")
+    assert "Python, SQL and Docker" in jd
+    assert "Machine Learning Intern" in jd
+    # Script/style content must not leak in — a variable named after a tool the
+    # posting never asks for would score the listing on a skill nobody wants.
+    assert "Kubernetes" not in jd
+
+
+def test_scrape_jd_returns_empty_on_failure(monkeypatch):
+    """The caller keeps its snippet; a dead page must never break discovery."""
+    def boom(*a, **k):
+        raise TimeoutError("no response")
+
+    monkeypatch.setattr(websource.urllib.request, "urlopen", boom)
+    assert websource.scrape_jd("https://jobs.lever.co/acme/1") == ""
+
+
+def test_fetch_upgrades_the_snippet_and_reinfers_skills(monkeypatch):
+    monkeypatch.setattr(websearch, "configured", lambda: True)
+    monkeypatch.setattr(
+        websearch, "search",
+        lambda q, limit=10: _results("https://jobs.lever.co/acme/1"),
+    )
+    monkeypatch.setattr(
+        websource, "scrape_jd",
+        lambda url, uid="": "We need a Python and PostgreSQL intern with Docker experience. " * 4,
+    )
+    job = websource.fetch(["software"], limit=3)[0]
+    assert "PostgreSQL" in job["jd_text"]
+    # Skills are what the matcher compares on; the title alone rarely names the
+    # stack, so they must be re-derived from the full description.
+    assert {"python", "postgresql", "docker"} <= set(job["skills"])
+
+
+def test_a_failed_jd_fetch_leaves_the_listing_usable(monkeypatch):
+    monkeypatch.setattr(websearch, "configured", lambda: True)
+    monkeypatch.setattr(
+        websearch, "search",
+        lambda q, limit=10: _results("https://jobs.lever.co/acme/1"),
+    )
+    monkeypatch.setattr(websource, "scrape_jd", lambda url, uid="": "")
+    job = websource.fetch(["software"], limit=3)[0]
+    assert job["jd_text"], "the search snippet must survive as a fallback"

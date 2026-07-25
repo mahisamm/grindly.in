@@ -15,7 +15,9 @@ plus the resolver's existing link-following are enough to reach a real form.
 """
 from __future__ import annotations
 import hashlib
+import html
 import re
+import urllib.request
 
 import flags
 import websearch
@@ -111,6 +113,41 @@ def _infer_skills(text: str) -> list[str]:
     return [k for k in known if k in low][:8]
 
 
+_TAGS = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.S | re.I)
+_MARKUP = re.compile(r"<[^>]+>")
+
+
+def scrape_jd(url: str, uid: str = "") -> str:
+    """Fetch the real job description behind a search result.
+
+    Not an optimisation — it is what makes these listings scoreable at all. A
+    board card arrives with a skills list; a search result arrives with a
+    one-line snippet, so matcher.score_job saw "0 of your skills mentioned" and
+    scored every employer-hosted internship ~5 against a threshold of 65. Real
+    roles at DevRev, CloudSEK, Thena and Enterpret were discarded that way. The
+    worker's own JD re-scoring could not rescue them either: it only re-reads
+    the top few by initial score, which is exactly the score being starved.
+
+    Plain HTTP, no browser — ATS postings are server-rendered. Returns "" on any
+    failure; the caller keeps the snippet and the listing simply scores as it
+    did before.
+    """
+    try:
+        req = urllib.request.Request(url, headers={
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36"),
+            "Accept-Language": "en-IN,en;q=0.9",
+        })
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read(400_000).decode("utf-8", "replace")
+    except Exception as e:  # noqa: BLE001
+        print(f"[websource] jd fetch failed ({type(e).__name__}) for {url[:60]}")
+        return ""
+    text = _MARKUP.sub(" ", _TAGS.sub(" ", raw))
+    text = html.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()[:6000]
+
+
 def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     """Search the web for employer-hosted internships in these domains."""
     if not enabled():
@@ -152,7 +189,20 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                 if len(jobs) >= limit:
                     break
 
-    print(f"[websource] {len(jobs)} employer-hosted candidate(s) from {websearch.provider()}")
+    # Enrich with the real posting text BEFORE these are scored. Bounded by the
+    # candidate list itself (a dozen or so), each a plain HTTP GET.
+    enriched = 0
+    for j in jobs:
+        jd = scrape_jd(j["url"], uid)
+        if len(jd) > len(j["jd_text"]):
+            j["jd_text"] = jd
+            # Re-derive skills from the full text; the title alone rarely names
+            # the stack, and skills are what the matcher actually compares on.
+            j["skills"] = _infer_skills(f"{j['title']} {jd}") or j["skills"]
+            enriched += 1
+
+    print(f"[websource] {len(jobs)} employer-hosted candidate(s) from "
+          f"{websearch.provider()} ({enriched} with a full description)")
     return jobs
 
 
