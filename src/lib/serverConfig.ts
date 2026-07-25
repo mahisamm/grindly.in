@@ -51,6 +51,14 @@ export function paymentMode(): "razorpay" | "unconfigured" {
     : "unconfigured";
 }
 
+/** The user's-own-browser executor. Mirrors agent/flags.browser_executor_enabled. */
+export function browserExecutorEnabled(): boolean {
+  return (
+    process.env.GRINDLY_AUTOPILOT_ENABLED !== "0" &&
+    process.env.GRINDLY_BROWSER_EXECUTOR_ENABLED === "1"
+  );
+}
+
 export function paymentsEnabled(): boolean {
   return process.env.PAYMENTS_ENABLED === "true";
 }

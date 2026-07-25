@@ -1,0 +1,112 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { authenticateExtension } from "@/lib/extensionAuth";
+import { ownsTask, LEASE_MS } from "@/lib/browserTasks";
+
+// POST /api/extension/tasks/:id/event — the extension's only way to report.
+//
+// One endpoint for heartbeat, progress, human-gate and completion, because they
+// are all the same thing: a claim about what happened, which the server decides
+// whether to believe. The client never writes a state directly — it names an
+// event, and the transition table below decides the resulting state. A client
+// that could set `submitted` itself could inflate a user's application count.
+export const dynamic = "force-dynamic";
+
+/** event -> resulting task state. Anything not listed is rejected. */
+const TRANSITIONS: Record<string, string> = {
+  heartbeat: "filling",
+  filling: "filling",
+  awaiting_human: "awaiting_human",
+  submitted: "submitted",
+  failed: "failed",
+};
+
+/** Gate reasons we accept, so page text can never land in the database. */
+const GATES = new Set(["captcha", "otp", "login", "unknown_question", "payment", "changed_form"]);
+
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const auth = await authenticateExtension(req);
+  if (!auth) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const { id } = await ctx.params;
+  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+  const leaseToken = String(body.leaseToken ?? "");
+  const event = String(body.event ?? "");
+
+  const task = await ownsTask(auth.userId, id, leaseToken);
+  // A lost lease is not an error the extension should retry into: the task may
+  // already have been reclaimed and be running in another tab.
+  if (!task) return NextResponse.json({ error: "lease_lost" }, { status: 409 });
+
+  const nextState = TRANSITIONS[event];
+  if (!nextState) return NextResponse.json({ error: "unknown_event" }, { status: 400 });
+
+  // Terminal states are terminal. Re-reporting one must not resurrect a task
+  // or double-count an application.
+  if (["submitted", "failed", "cancelled"].includes(task.state)) {
+    return NextResponse.json({ ok: true, state: task.state, note: "already final" });
+  }
+
+  const data: Record<string, unknown> = {
+    state: nextState,
+    heartbeatAt: new Date(),
+  };
+
+  if (event === "heartbeat" || event === "filling") {
+    data.leaseExpiresAt = new Date(Date.now() + LEASE_MS);
+  }
+
+  if (event === "awaiting_human") {
+    const reason = String(body.reason ?? "");
+    // Unrecognised reasons collapse to a safe label rather than storing whatever
+    // string a page produced.
+    data.blockedReason = GATES.has(reason) ? reason : "unknown_question";
+    // The lease is released: the person now owns this page, and holding a lease
+    // would let it expire into a retry while they are mid-CAPTCHA.
+    data.leaseTokenHash = null;
+    data.leaseExpiresAt = null;
+  }
+
+  if (event === "submitted") {
+    // Proof only — an id or confirmation URL. Never page HTML, which would drag
+    // personal data into a table that admin views read.
+    data.receipt = String(body.receipt ?? "").slice(0, 500);
+    data.leaseTokenHash = null;
+    data.leaseExpiresAt = null;
+  }
+
+  if (event === "failed") {
+    data.leaseTokenHash = null;
+    data.leaseExpiresAt = null;
+  }
+
+  await prisma.browserTask.update({ where: { id: task.id }, data });
+
+  // Mirror onto the application the user actually sees, and onto its timeline.
+  // Only a real submission touches the application's status — that is what the
+  // dashboard counts, and it must mean an employer received something.
+  if (event === "submitted") {
+    await prisma.application
+      .update({
+        where: { id: task.applicationId },
+        data: {
+          status: "applied",
+          appliedAt: new Date(),
+          reason: "Submitted by the agent in your own browser",
+        },
+      })
+      .catch(() => {});
+  }
+  await prisma.applicationEvent
+    .create({
+      data: {
+        applicationId: task.applicationId,
+        type: event,
+        actor: "extension",
+        meta: JSON.stringify({ host: task.host, reason: data.blockedReason ?? null }),
+      },
+    })
+    .catch(() => {});
+
+  return NextResponse.json({ ok: true, state: nextState });
+}

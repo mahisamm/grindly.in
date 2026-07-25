@@ -797,3 +797,48 @@ model SubmissionReceipt {
   @@index([userId, createdAt])
   @@map("submission_receipts")
 }
+
+// One application for the user's OWN browser to complete.
+//
+// This is how a board application gets submitted without our servers ever
+// touching the user's account: the work runs in THEIR browser, in THEIR logged-
+// in session, and nothing of theirs is stored or replayed here. It is also the
+// only honest answer to a CAPTCHA — the extension stops and hands the page back
+// to the person, rather than trying to defeat a control that exists on purpose.
+//
+// A task is LEASED, not assigned: the extension claims it for a short window
+// and heartbeats to keep it. If the browser closes mid-fill the lease simply
+// expires and the task returns to the queue — but only after it is confirmed it
+// did not already submit, because re-running a submitted application is exactly
+// the duplicate this system spends so much effort preventing.
+model BrowserTask {
+  id            String @id @default(cuid())
+  userId        String @map("user_id")
+  applicationId String @map("application_id")
+
+  // Where the extension must go. Scoped to one host so a leaked lease cannot
+  // drive the browser anywhere else.
+  url   String
+  host  String
+  // queued | leased | filling | awaiting_human | submitted | failed | cancelled
+  state String @default("queued")
+
+  // sha256 of the lease token; the raw value is returned once, to one claimant.
+  leaseTokenHash String?   @map("lease_token_hash")
+  leaseExpiresAt DateTime? @map("lease_expires_at")
+  heartbeatAt    DateTime? @map("heartbeat_at")
+  attempts       Int       @default(0)
+
+  // Why it stopped for a human: captcha | otp | login | unknown_question | payment.
+  // Shown to the user verbatim, so it must stay a short reason, never page text.
+  blockedReason String?  @map("blocked_reason")
+  // Proof of submission: portal id / confirmation URL. Never page HTML — that
+  // would drag personal data into a table read by admin views.
+  receipt       String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, state])
+  @@index([state, leaseExpiresAt])
+  @@map("browser_tasks")
+}
