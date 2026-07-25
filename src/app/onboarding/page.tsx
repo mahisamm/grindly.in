@@ -76,6 +76,8 @@ const ACCEPT_ATTR = [
 
 export default function OnboardingPage() {
   const [step, setStep] = useState(0);
+  // Readiness gaps returned by activation, rendered as a fix-this list.
+  const [missing, setMissing] = useState<string[]>([]);
   const [form, setForm] = useState<Form>({ ...DEFAULTS });
   const [resumeName, setResumeName] = useState<string | null>(null);
   const [resumeText, setResumeText] = useState("");
@@ -143,6 +145,12 @@ export default function OnboardingPage() {
           minMatchScore: p.minMatchScore,
           maxPerDay: p.maxPerDay,
           autoApply: p.autoApply,
+          // Eligibility facts. Hydrated so returning here to fix one field does
+          // not blank the others back to defaults on the next save.
+          education: p.education || "",
+          gradYear: p.gradYear || 0,
+          availability: p.availability || "",
+          workAuthorization: p.workAuthorization || "",
         });
         if (p.resumeName) setResumeName(p.resumeName);
         if (d.user?.slackConnected) setSlackDone(true);
@@ -403,6 +411,15 @@ export default function OnboardingPage() {
     }
     const body = await response.json().catch(() => ({}));
     setBusy(false);
+    // Activation refuses while the agent lacks a fact it would have to state on
+    // a form (lib/readiness). Name the missing items — "setup incomplete" with
+    // no list is the kind of dead end a user cannot act on.
+    if (body.code === "setup_incomplete" && Array.isArray(body.missing)) {
+      setMissing(body.missing as string[]);
+      setMsg("Finish these before the agent can apply for you:");
+      return;
+    }
+    setMissing([]);
     setMsg(body.error || "Could not start your free plan. Please try again.");
   }
 
@@ -523,7 +540,7 @@ export default function OnboardingPage() {
                 These are the hard limits the agent plans and applies inside — it can never cross them.
               </p>
 
-              {(["Targeting", "Limits & rules"] as const).map((group) => (
+              {(["About you", "Targeting", "Limits & rules"] as const).map((group) => (
                 <div key={group} className="mt-6">
                   <div className="text-xs uppercase tracking-wide text-muted mb-3">{group}</div>
                   <div className="space-y-5">
@@ -551,6 +568,16 @@ export default function OnboardingPage() {
                               </option>
                             ))}
                           </select>
+                        )}
+                        {f.type === "text" && (
+                          <input
+                            type="text"
+                            aria-label={f.label}
+                            value={String(form[f.key] ?? "")}
+                            placeholder={f.placeholder}
+                            onChange={(e) => set(f.key, e.target.value)}
+                            className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand transition"
+                          />
                         )}
                         {f.type === "number" && (
                           <div className="flex items-center gap-2">
@@ -767,6 +794,16 @@ export default function OnboardingPage() {
               </label>
 
               {msg && <p className="mt-3 text-sm text-danger">{msg}</p>}
+              {missing.length > 0 && (
+                <ul className="mt-2 space-y-1 rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm text-muted">
+                  {missing.map((m) => (
+                    <li key={m} className="flex gap-2">
+                      <span aria-hidden className="text-danger">•</span>
+                      <span>{m}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
               <div className="mt-6 flex flex-wrap justify-between gap-3">
                 <button

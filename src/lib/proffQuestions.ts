@@ -4,7 +4,7 @@
  * and become the agent's hard limits (what it may / may not apply to).
  */
 
-export type FieldType = "tags" | "select" | "number" | "toggle";
+export type FieldType = "tags" | "select" | "number" | "toggle" | "text";
 
 export type ProffField = {
   key: string;
@@ -14,7 +14,7 @@ export type ProffField = {
   options?: string[];
   placeholder?: string;
   suffix?: string;
-  group: "Targeting" | "Limits & rules";
+  group: "About you" | "Targeting" | "Limits & rules";
 };
 
 export const CONTACT_FIELDS = [
@@ -23,6 +23,44 @@ export const CONTACT_FIELDS = [
 ] as const;
 
 export const PROFF_FIELDS: ProffField[] = [
+  // "About you" collects the FACTS screening forms ask on nearly every
+  // application. They live here rather than in a model's imagination because
+  // the agent states them under the user's name — agent/questions.py refuses to
+  // invent exactly this class of answer, so an application whose form asks for
+  // one we do not hold waits for the user instead of being sent with a guess.
+  // lib/readiness.ts gates auto-apply on them.
+  {
+    key: "education",
+    label: "Course and college",
+    help: "Written onto application forms exactly as you type it.",
+    type: "text",
+    placeholder: "e.g. B.Tech CSE, VIT Vellore",
+    group: "About you",
+  },
+  {
+    key: "gradYear",
+    label: "Expected graduation year",
+    help: "Nearly every internship form asks. Also decides which roles you are eligible for.",
+    type: "number",
+    suffix: "year",
+    group: "About you",
+  },
+  {
+    key: "availability",
+    label: "When can you start?",
+    help: "Stated verbatim on forms that ask about availability.",
+    type: "text",
+    placeholder: "e.g. Immediately, or June 2027",
+    group: "About you",
+  },
+  {
+    key: "workAuthorization",
+    label: "Work authorization",
+    help: "How you are eligible to work where you are applying. Copied as written, never guessed.",
+    type: "text",
+    placeholder: "e.g. Indian citizen",
+    group: "About you",
+  },
   {
     key: "preferredDomains",
     label: "Which domains do you want internships in?",
@@ -92,6 +130,14 @@ export const PROFF_FIELDS: ProffField[] = [
 ];
 
 export const DEFAULTS: Record<string, unknown> = {
+  // Eligibility facts start EMPTY on purpose. A plausible default here would be
+  // a fact invented on the user's behalf and then stated to an employer, which
+  // is the one thing this system must never do; readiness holds auto-apply
+  // until the user fills them in themselves.
+  education: "",
+  gradYear: 0,
+  availability: "",
+  workAuthorization: "",
   preferredDomains: [],
   preferredLocations: ["Remote"],
   workMode: "any",
