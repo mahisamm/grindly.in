@@ -44,6 +44,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import db
 import flags
+import readiness
 import notify
 import latex_resume
 import matcher
@@ -478,7 +479,12 @@ def _jlist(v):
         return []
 
 
-def build_plan(profile: dict, skills: list[str], cap: int) -> dict:
+def build_plan(profile: dict, skills: list[str], cap: int, user: dict | None = None) -> dict:
+    # `user` carries the name/email half of the readiness check. It is optional
+    # so older callers (and tests that only care about matching) keep working;
+    # without it readiness fails closed on `contact`, which is the safe default
+    # — a run that cannot prove readiness prepares instead of sending.
+    ready, not_ready = readiness.check({**(user or {}), "profile": profile})
     return {
         "skills": skills,
         "domains": _jlist(profile.get("preferred_domains")) or _infer_domains(skills),
@@ -490,6 +496,8 @@ def build_plan(profile: dict, skills: list[str], cap: int) -> dict:
         "auto_apply": bool(profile.get("auto_apply")),
         "excluded": _jlist(profile.get("excluded_companies")),
         "exp_level": profile.get("experience_level"),
+        "ready": ready,
+        "not_ready": not_ready,
     }
 
 
@@ -1026,7 +1034,11 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         _analyze_if_changed(uid, profile, text, skills)
 
     # 2. plan
-    plan = build_plan(profile, skills, cap)
+    plan = build_plan(profile, skills, cap, user)
+    if not plan["ready"]:
+        # Not fatal: discovery, scoring and preparation all still run, so the
+        # queue is warm the moment setup is finished. Only SENDING is held.
+        log.info("autopilot held — setup incomplete: %s", ", ".join(plan["not_ready"]))
     _stats = db.get_outcome_stats(uid)
     if _stats["total"] >= 10 and _stats["rejection_rate"] > 0.70:
         plan["min_match_score"] = min(80, plan["min_match_score"] + 8)
@@ -1763,6 +1775,18 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             policy_reason = (
                 "auto-apply is off in your profile — the agent prepared this "
                 "instead of sending it"
+            )
+        # Readiness, re-checked here rather than trusted from activation time.
+        # The web gates the toggle, but the facts can change afterwards — consent
+        # revoked, resume deleted, the consent wording bumped — and only the
+        # check that runs immediately before dispatch actually protects anyone.
+        # Not ready means PREPARED, never sent: the row banks like any other hold.
+        if auto_ok and not plan["ready"]:
+            auto_ok = False
+            policy_reason = (
+                "your setup isn't complete yet ("
+                + ", ".join(plan["not_ready"])
+                + ") — the agent prepared this instead of sending it"
             )
         # The board channel keeps its own fail-closed gate as a second lock: even
         # if a policy bug ever said yes for Tier C, Safe Apply Mode still says no.

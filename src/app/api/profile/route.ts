@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { audit } from "@/lib/audit";
+import { CONSENT_VERSION } from "@/lib/readiness";
 
 export async function GET() {
   const uid = await getUid();
@@ -29,7 +30,11 @@ const ARRAY_FIELDS = new Set([
   "excludedCompanies",
   "skills",
 ]);
-const NUM_FIELDS = new Set(["stipendMin", "minMatchScore", "maxPerDay", "gpa", "matchQualityRating"]);
+const NUM_FIELDS = new Set([
+  "stipendMin", "minMatchScore", "maxPerDay", "gpa", "matchQualityRating",
+  // Eligibility facts the agent will state on screening forms (see lib/readiness).
+  "gradYear", "gradMonth",
+]);
 // NOTE: `phone` is deliberately NOT here. Phone changes must go through the OTP
 // verify flow (which sets phoneVerified) — letting profile overwrite it would
 // keep a "verified" flag on an unverified number and reroute login OTPs.
@@ -39,6 +44,10 @@ const STR_FIELDS = new Set([
   "resumeText",
   "resumeName",
   "education",
+  // Stated verbatim on applications, never inferred.
+  "availability",
+  "workAuthorization",
+  "timezone",
 ]);
 const BOOL_FIELDS = new Set(["autoApply"]);
 
@@ -67,11 +76,21 @@ export async function POST(req: Request) {
   if (Object.keys(data).length === 0) return NextResponse.json({ ok: true });
 
   // Record explicit consent the moment the user enables auto-apply (audit trail
-  // for "the agent applied on my behalf"). We stamp it on enable and never
-  // silently clear it.
+  // for "the agent applied on my behalf"). We stamp it on enable, together with
+  // WHICH wording they agreed to — consent to v1 is not consent to v2, so
+  // readiness re-checks the version and holds sends until they re-agree.
   if (data.autoApply === true) {
     data.autoApplyConsentAt = new Date();
-    await audit("consent", { userId: uid, detail: "auto_apply enabled" });
+    data.consentVersion = CONSENT_VERSION;
+    await audit("consent", {
+      userId: uid, detail: `auto_apply enabled (consent ${CONSENT_VERSION})`,
+    });
+  }
+  // Revocation is a first-class event, not the absence of one. The timestamp
+  // stays (it is the audit trail of what was true when past applications went
+  // out); readiness fails on the toggle, which stops every future submission.
+  if (data.autoApply === false) {
+    await audit("consent", { userId: uid, detail: "auto_apply revoked" });
   }
 
   const profile = await prisma.profile.upsert({

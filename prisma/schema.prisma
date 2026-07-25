@@ -54,16 +54,16 @@ enum Outcome {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  email         String   @unique
-  name          String?
-  passwordHash  String?  @map("password_hash")
-  googleId      String?  @unique @map("google_id")
-  phone         String?  @unique
-  phoneVerified Boolean  @default(false) @map("phone_verified")
-  createdAt     DateTime @default(now()) @map("created_at")
+  id                    String   @id @default(cuid())
+  email                 String   @unique
+  name                  String?
+  passwordHash          String?  @map("password_hash")
+  googleId              String?  @unique @map("google_id")
+  phone                 String?  @unique
+  phoneVerified         Boolean  @default(false) @map("phone_verified")
+  createdAt             DateTime @default(now()) @map("created_at")
   // billing (stubbed, real-ready)
-  paid          Boolean  @default(false)
+  paid                  Boolean  @default(false)
   // Loose strings, not Postgres enums (PlanTier/UserStatus/Role): the live
   // production `users` table already has plan/status/role as plain `text`
   // columns (confirmed via \d users) — these enums were declared in schema
@@ -73,37 +73,37 @@ model User {
   // free | plus | pro.  "starter" is the legacy name for "plus" and may still be
   // present on old rows — every read goes through normalizePlan() (src/lib/plans.ts)
   // / _norm_plan() (agent/db.py) rather than comparing this string directly.
-  plan          String   @default("free")
+  plan                  String   @default("free")
   // slack (stubbed, real-ready)
-  slackUserId   String?  @map("slack_user_id")
-  slackChannel  String?  @map("slack_channel")
-  slackConnected Boolean @default(false) @map("slack_connected")
+  slackUserId           String?  @map("slack_user_id")
+  slackChannel          String?  @map("slack_channel")
+  slackConnected        Boolean  @default(false) @map("slack_connected")
   // internshala session (persistent browser profile) ready?
-  internshalaConnected Boolean @default(false) @map("internshala_connected")
+  internshalaConnected  Boolean  @default(false) @map("internshala_connected")
   // Opt-in waitlist for Gmail interview detection. While gmail.readonly is still
   // in Google verification the feature ships dark to the public; a user who taps
   // "Notify me when it's ready" flips this so we can email them the day it opens.
   // Idempotent (a flag, not an event) so repeat taps don't pile up rows.
-  gmailScanInterest Boolean @default(false) @map("gmail_scan_interest")
+  gmailScanInterest     Boolean  @default(false) @map("gmail_scan_interest")
   // Legacy flag, superseded by internshalaBetaAccess below — unused by any
   // current code path (verified via grep), but still live with real rows.
   // Declared here (not dropped) purely so `prisma db push` leaves it alone;
   // safe to actually drop later via a real migration once confirmed unused
   // in practice, not just in code.
-  internshalaAccess Boolean @default(false) @map("internshala_access")
+  internshalaAccess     Boolean  @default(false) @map("internshala_access")
   // staged-rollout grant: admin can enable Internshala auto-apply for this user
   // even when the global beta isn't open. OR'd with email/role/INTERNSHALA_BETA_OPEN.
-  internshalaBetaAccess Boolean @default(false) @map("internshala_beta_access")
+  internshalaBetaAccess Boolean  @default(false) @map("internshala_beta_access")
   // lifecycle: registered -> onboarding -> active -> paused
-  status        String   @default("registered")
+  status                String   @default("registered")
   // access role: user (default) | admin. Admin-only dashboard gates on this
   // column server-side — never on email or a client flag.
-  role          String   @default("user")
+  role                  String   @default("user")
   // Session revocation counter. Embedded in the signed session cookie; getUid()
   // rejects any cookie whose version is below this. Incremented on logout (and
   // any future force-logout / credential change) so a leaked or already-issued
   // cookie stops working immediately — a stateless HMAC alone can't be revoked.
-  tokenVersion  Int      @default(0) @map("token_version")
+  tokenVersion          Int      @default(0) @map("token_version")
 
   // Access gating (approval-gated beta). A new account is "pending" and sees the
   // waitlist; only "approved" users reach the app and can run the agent. The
@@ -117,18 +117,19 @@ model User {
   accessRequestedAt DateTime? @map("access_requested_at")
   accessGrantedAt   DateTime? @map("access_granted_at")
 
-  profile        Profile?
-  applications   Application[]
-  reports        Report[]
-  integrations   UserIntegration[]
-  resumeVersions ResumeVersion[]
-  auditLogs      AuditLog[]
-  notifications  Notification[]
-  agentRuns      AgentRun[]
-  credentials    PlatformCredential[]
+  profile         Profile?
+  applications    Application[]
+  reports         Report[]
+  integrations    UserIntegration[]
+  resumeVersions  ResumeVersion[]
+  auditLogs       AuditLog[]
+  notifications   Notification[]
+  agentRuns       AgentRun[]
+  credentials     PlatformCredential[]
   extensionTokens ExtensionToken[]
-  resumeVariants ResumeVariant[]
-  supportTickets SupportTicket[]
+  resumeVariants  ResumeVariant[]
+  supportTickets  SupportTicket[]
+  answers         UserAnswer[]
 
   @@map("users")
 }
@@ -137,7 +138,7 @@ model UserIntegration {
   id          String    @id @default(cuid())
   userId      String    @map("user_id")
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  platform    String    // linkedin | internshala | naukri | unstop | indeed
+  platform    String // linkedin | internshala | naukri | unstop | indeed
   // Loose string, not a Postgres enum: this session's captcha circuit
   // breaker added "challenge_detected" as a status value that was never
   // added to the old IntegrationStatus enum — would have thrown an invalid-
@@ -171,18 +172,18 @@ model UserIntegration {
 }
 
 model Profile {
-  id        String   @id @default(cuid())
-  userId    String   @unique @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String @unique @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  resumeText String? @map("resume_text")
-  resumeName String? @map("resume_name")
+  resumeText      String? @map("resume_text")
+  resumeName      String? @map("resume_name")
   // Optional LaTeX source of the master resume (data/resume_tex/<uid>.tex).
   // When present, per-job tailoring edits the .tex in place and recompiles, so
   // the output is byte-identical to the user's own template. When absent, the
   // agent sends the master PDF UNTOUCHED — it must never regenerate a resume
   // from plain text, which is what produced the "patched-looking" output.
-  resumeTexName String? @map("resume_tex_name")
+  resumeTexName   String? @map("resume_tex_name")
   // Result of compiling the UNEDITED .tex the moment it was uploaded:
   //   ok | no_sections | compile_failed | page_mismatch | no_compiler
   //
@@ -193,29 +194,29 @@ model Profile {
   // silently is not a guard. Checked once at upload, not per-application.
   resumeTexStatus String? @map("resume_tex_status")
   resumeTexDetail String? @map("resume_tex_detail")
-  skills     String  @default("[]") // JSON array of skills (agent-extracted)
-  education  String?
+  skills          String  @default("[]") // JSON array of skills (agent-extracted)
+  education       String?
   experienceLevel String? @map("experience_level") // student | fresher | 1-2yr
-  phone      String? // for form fill (LinkedIn phone field)
-  gpa        Float?  @default(8.0)  // GPA for form fill
+  phone           String? // for form fill (LinkedIn phone field)
+  gpa             Float?  @default(8.0) // GPA for form fill
 
   // proff (preference/profile) answers + firewall constraints
-  preferredDomains   String @default("[]") @map("preferred_domains")   // JSON array
-  preferredLocations String @default("[]") @map("preferred_locations") // JSON array
-  workMode           String @default("any") @map("work_mode")          // remote | onsite | any
-  stipendMin         Int    @default(0)     @map("stipend_min")
-  maxPerDay          Int    @default(10)    @map("max_per_day")
-  minMatchScore      Int    @default(65)    @map("min_match_score")     // 0-100 firewall threshold
-  excludedCompanies  String @default("[]")  @map("excluded_companies")  // JSON array
+  preferredDomains   String  @default("[]") @map("preferred_domains") // JSON array
+  preferredLocations String  @default("[]") @map("preferred_locations") // JSON array
+  workMode           String  @default("any") @map("work_mode") // remote | onsite | any
+  stipendMin         Int     @default(0) @map("stipend_min")
+  maxPerDay          Int     @default(10) @map("max_per_day")
+  minMatchScore      Int     @default(65) @map("min_match_score") // 0-100 firewall threshold
+  excludedCompanies  String  @default("[]") @map("excluded_companies") // JSON array
   autoApply          Boolean @default(true) @map("auto_apply")
 
-  resumeScore       Int?     @map("resume_score")       // 0-100 quality score
-  resumeSuggestions String?  @map("resume_suggestions")  // JSON analysis from resume_ai
+  resumeScore       Int?    @map("resume_score") // 0-100 quality score
+  resumeSuggestions String? @map("resume_suggestions") // JSON analysis from resume_ai
   // SHA-256 of the resume text the stored analysis was computed from. The worker
   // re-analyzes ONLY when this changes. It used to run resume_ai.analyze() on every
   // single sweep — an LLM call, every day, to re-score a resume that hadn't changed
   // since yesterday.
-  resumeHash        String?  @map("resume_hash")
+  resumeHash        String? @map("resume_hash")
 
   // ATS-optimized variant generation (the "3 better resumes" feature). Runs only
   // on an explicit button click, never on every sweep — it's several LLM calls +
@@ -228,12 +229,31 @@ model Profile {
   resumeVariantDetail String? @map("resume_variant_detail")
 
   // beta: one-tap "are these matches good?" survey (1-5). null = not yet asked
-  matchQualityRating Int?     @map("match_quality_rating")
+  matchQualityRating Int?    @map("match_quality_rating")
   // beta: surfaced to user when resume parsing produced no skills (manual fallback)
-  resumeParseFailed  Boolean  @default(false) @map("resume_parse_failed")
+  resumeParseFailed  Boolean @default(false) @map("resume_parse_failed")
 
   // explicit consent timestamp for auto-apply (audit trail; null = never consented)
   autoApplyConsentAt DateTime? @map("auto_apply_consent_at")
+  // Which consent text they agreed to. Bumping lib/readiness.CONSENT_VERSION
+  // un-readies every account that agreed to older wording — consent to v1 is
+  // not consent to v2, so the worker holds their sends until they re-agree.
+  consentVersion     String?   @map("consent_version")
+
+  // ---- eligibility facts (autopilot readiness; null = not yet provided) ----
+  // Screening forms ask these on nearly every application. They are FACTS the
+  // agent may state on the user's behalf, so they come from setup, never from a
+  // model's guess — questions.py refuses to invent exactly this class of answer.
+  gradYear          Int?    @map("grad_year") // expected graduation year, e.g. 2027
+  gradMonth         Int?    @map("grad_month") // 1-12, optional refinement of gradYear
+  // When they can start, as the user phrases it ("immediately", "June 2027").
+  availability      String?
+  // Free-text authorization status for the market they apply in ("Indian
+  // citizen", "OPT", ...). Stated verbatim, never inferred.
+  workAuthorization String? @map("work_authorization")
+  // IANA zone driving the daily cap window and report timing. India-first
+  // default matches the current user base; changeable in setup.
+  timezone          String  @default("Asia/Kolkata")
 
   // Where the daily report is delivered: "email" (default) | "slack". Picked in
   // onboarding, changeable any time from dashboard settings. Before this column
@@ -242,8 +262,8 @@ model Profile {
   // nothing, and had no way to change their mind.
   reportChannel String @default("email") @map("report_channel")
 
-  planJson   String?  @map("plan_json")   // agent-generated plan
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  planJson  String?  @map("plan_json") // agent-generated plan
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("profiles")
 }
@@ -255,26 +275,26 @@ model Profile {
 // gate rejects any variant that introduces a skill/tool/org/degree absent from
 // the source resume before it is ever compiled or stored.
 model ResumeVariant {
-  id       String @id @default(cuid())
-  userId   String @map("user_id")
-  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // resume_hash of the master text these were generated from. When the user
   // uploads a new master (new hash), stale variants are cleared — they describe
   // a resume that no longer exists.
-  baseHash      String @map("base_hash")
-  rank          Int                                    // 1..N display order, best score first
-  label         String                                 // short strategy name, e.g. "Keyword-optimized"
-  score         Int                                    // MEASURED ATS score of the compiled variant
+  baseHash      String   @map("base_hash")
+  rank          Int // 1..N display order, best score first
+  label         String // short strategy name, e.g. "Keyword-optimized"
+  score         Int // MEASURED ATS score of the compiled variant
   grade         String
-  baselineScore Int    @map("baseline_score")          // master's score, for the "+N" delta shown to the user
+  baselineScore Int      @map("baseline_score") // master's score, for the "+N" delta shown to the user
   // JSON array of plain-English strings: what this variant changed vs the master.
   // Keeps the (invisible) LaTeX trustworthy — the user sees why the score moved.
-  changes  String
+  changes       String
   // Compiled PDF on disk: data/resume_variants/<uid>/<id>.pdf. Served only to the
   // owning user via GET /api/resume/variants/[id]; never a public path.
-  pdfPath  String   @map("pdf_path")
-  createdAt DateTime @default(now()) @map("created_at")
+  pdfPath       String   @map("pdf_path")
+  createdAt     DateTime @default(now()) @map("created_at")
 
   @@index([userId])
   @@map("resume_variants")
@@ -316,38 +336,38 @@ model CompanyReputation {
 }
 
 model Application {
-  id         String   @id @default(cuid())
-  userId     String   @map("user_id")
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  jobId      String?  @map("job_id")
-  job        Job?     @relation(fields: [jobId], references: [id])
+  id     String  @id @default(cuid())
+  userId String  @map("user_id")
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId  String? @map("job_id")
+  job    Job?    @relation(fields: [jobId], references: [id])
 
-  jobTitle   String   @map("job_title")
-  company    String
-  url        String?
-  matchScore Int      @default(0) @map("match_score")
+  jobTitle        String         @map("job_title")
+  company         String
+  url             String?
+  matchScore      Int            @default(0) @map("match_score")
   // lifecycle: matched | approved | submitting | applied | skipped | failed | needs_review
-  status     ApplyStatus @default(matched)
-  reason     String?  // why matched / why skipped / failure detail
+  status          ApplyStatus    @default(matched)
+  reason          String? // why matched / why skipped / failure detail
   // enumerated machine reason on failure — see FailureReason
-  failureReason  FailureReason? @map("failure_reason")
-  screenshotPath String? @map("screenshot_path")  // proof image of the submit attempt
+  failureReason   FailureReason? @map("failure_reason")
+  screenshotPath  String?        @map("screenshot_path") // proof image of the submit attempt
   // The platform's screening questions and the answers submitted under the user's
   // name: JSON [{q, a, source}], where source is "profile" (a stored fact, e.g. their
   // real CGPA), "ai" (a model phrasing something their resume supports), or
   // "fallback". Recorded because an application the user cannot read back is one they
   // cannot walk into an interview and defend. See agent/questions.py.
-  answersJson    String? @map("answers_json")
+  answersJson     String?        @map("answers_json")
   // JSON array: what this role asked for that the candidate does not show. The
   // actionable half of a match score — "you scored 72" tells someone nothing they
   // can act on; "this role wants Docker and you don't show it" tells them what to
   // learn, and what they will be asked about if they get the call.
-  missingSkills  String? @map("missing_skills")
+  missingSkills   String?        @map("missing_skills")
   // Apply Kit: the per-job cover letter, drafted before the user ever opens the
   // form (worker.py backfills this for every due match — see due_matches_missing_kit
   // / set_application_kit in agent/db.py). Null until generated or if generation
   // failed — the dashboard falls back to a plain note, never a blank lie.
-  coverLetterText String? @map("cover_letter")
+  coverLetterText String?        @map("cover_letter")
   // immutable snapshot of the exact resume sent for this application
   resumeVersionId String?        @map("resume_version_id")
   resumeVersion   ResumeVersion? @relation(fields: [resumeVersionId], references: [id])
@@ -363,9 +383,9 @@ model Application {
   //   applyChannel  google_form | email | ats | platform
   //   applyTier     A (no account at stake) | B (hosted, consented) | C (never server-side)
   //   applyTarget   the resolved form URL / mailbox / ATS page
-  applyChannel String? @map("apply_channel")
-  applyTier    String? @map("apply_tier")
-  applyTarget  String? @map("apply_target")
+  applyChannel    String?        @map("apply_channel")
+  applyTier       String?        @map("apply_tier")
+  applyTarget     String?        @map("apply_target")
   // When the user approved this application — i.e. when it started reserving a
   // slice of that day's cap.
   //
@@ -375,7 +395,7 @@ model Application {
   // the user could never approve anything again — greeted forever by "your daily
   // limit is reached, try again tomorrow", on a tomorrow that never arrived.
   // Dating the reservation lets it expire with the day it belongs to.
-  approvedAt DateTime? @map("approved_at")
+  approvedAt      DateTime?      @map("approved_at")
   // When this match is due to be surfaced to the user for a one-tap send.
   //
   // A single discovery sweep finds ~a month of work (plan cap x 30). Dumping all
@@ -386,15 +406,15 @@ model Application {
   // src/app/api/applications/route.ts, which is the enforcement point.
   //
   // null = due immediately (legacy rows, and anything the user approved by hand).
-  scheduledFor DateTime? @map("scheduled_for")
+  scheduledFor    DateTime?      @map("scheduled_for")
   // Set only after Grindly successfully delivers the final application link.
-  notifiedAt  DateTime? @map("notified_at")
-  appliedAt  DateTime? @map("applied_at")
+  notifiedAt      DateTime?      @map("notified_at")
+  appliedAt       DateTime?      @map("applied_at")
   // user-reported outcome — the single most important beta signal (interview rate)
   // null (unset) until the user reports one
-  outcome    Outcome?  @map("outcome")
-  outcomeAt  DateTime? @map("outcome_at")
-  createdAt  DateTime @default(now()) @map("created_at")
+  outcome         Outcome?       @map("outcome")
+  outcomeAt       DateTime?      @map("outcome_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
 
   @@index([userId])
   @@index([userId, status])
@@ -413,13 +433,13 @@ model ResumeVersion {
   id            String   @id @default(cuid())
   userId        String   @map("user_id")
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  label         String   // human label e.g. "Frontend Dev @ Razorpay"
+  label         String // human label e.g. "Frontend Dev @ Razorpay"
   jobTitle      String?  @map("job_title")
   company       String?
-  text          String   // exact tailored resume text sent
-  filePath      String?  @map("file_path")      // path to the exact PDF sent
+  text          String // exact tailored resume text sent
+  filePath      String?  @map("file_path") // path to the exact PDF sent
   skillsClaimed String   @default("[]") @map("skills_claimed") // JSON: skills surfaced for this role
-  baseSkills    String   @default("[]") @map("base_skills")    // JSON: master skills at time (truthfulness ref)
+  baseSkills    String   @default("[]") @map("base_skills") // JSON: master skills at time (truthfulness ref)
   // false = the master resume went out untouched. The agent only rewrites when
   // the master genuinely under-sells the candidate for this role (fitScore below
   // GRINDLY_TAILOR_THRESHOLD); a resume that already fits is left alone, because
@@ -430,7 +450,7 @@ model ResumeVersion {
   fitScore      Int?     @map("fit_score")
   createdAt     DateTime @default(now()) @map("created_at")
 
-  applications  Application[]
+  applications Application[]
 
   @@index([userId])
   @@map("resume_versions")
@@ -441,9 +461,9 @@ model AuditLog {
   id        String   @id @default(cuid())
   userId    String?  @map("user_id")
   user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  action    String   // login | otp_issued | otp_throttled | apply | apply_failed | firewall_block | session_expired | consent
-  target    String?  // job url / platform / phone-mask / etc
-  detail    String?  // freeform or JSON
+  action    String // login | otp_issued | otp_throttled | apply | apply_failed | firewall_block | session_expired | consent
+  target    String? // job url / platform / phone-mask / etc
+  detail    String? // freeform or JSON
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([userId])
@@ -462,11 +482,11 @@ model SupportTicket {
   id           String   @id @default(cuid())
   userId       String   @map("user_id")
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status       String   @default("open")   // open | resolved
-  subject      String?                      // AI one-line title for the queue
-  category     String?                      // bug | account | billing | how_to | feedback | other
-  severity     String   @default("normal")  // low | normal | high
-  summary      String?                      // AI summary shown to the admin
+  status       String   @default("open") // open | resolved
+  subject      String? // AI one-line title for the queue
+  category     String? // bug | account | billing | how_to | feedback | other
+  severity     String   @default("normal") // low | normal | high
+  summary      String? // AI summary shown to the admin
   messagesJson String   @default("[]") @map("messages_json") // [{role,content,at}]
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
@@ -500,7 +520,7 @@ model AgentRun {
   lockedBy    String?   @map("locked_by") // worker id holding the row
   lockedAt    DateTime? @map("locked_at")
   error       String?
-  result      String?   // JSON {applied,matched,failed}
+  result      String? // JSON {applied,matched,failed}
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
@@ -517,7 +537,7 @@ model PlatformCredential {
   userId     String   @map("user_id")
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   platform   String
-  ciphertext String   // base64(nonce).base64(ciphertext+tag)
+  ciphertext String // base64(nonce).base64(ciphertext+tag)
   updatedAt  DateTime @updatedAt @map("updated_at")
 
   @@unique([userId, platform])
@@ -526,18 +546,18 @@ model PlatformCredential {
 
 // Tiered notification log with delivery tracking + channel fallback.
 model Notification {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tier      String   @default("digest") // urgent | digest
-  channel   String   // inapp | slack | email | console
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tier      String    @default("digest") // urgent | digest
+  channel   String // inapp | slack | email | console
   title     String
   body      String
-  delivered Boolean  @default(false)
+  delivered Boolean   @default(false)
   // In-app read state. null = unread; drives the dashboard bell's unread badge.
   // Only the "inapp" channel rows are ever surfaced to the user / marked read.
   readAt    DateTime? @map("read_at")
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime  @default(now()) @map("created_at")
 
   @@index([userId])
   @@index([userId, createdAt])
@@ -551,14 +571,14 @@ model Notification {
 // API, and the raw token is shown exactly once (at pairing) and never again.
 // One row per paired browser; the user can revoke any/all from the dashboard.
 model ExtensionToken {
-  id         String   @id @default(cuid())
-  userId     String   @map("user_id")
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   // sha256(rawToken) hex. The raw token lives only in the extension's storage.
-  tokenHash  String   @unique @map("token_hash")
+  tokenHash  String    @unique @map("token_hash")
   // Human label so the user can tell paired browsers apart when revoking.
-  label      String   @default("Browser extension")
-  createdAt  DateTime @default(now()) @map("created_at")
+  label      String    @default("Browser extension")
+  createdAt  DateTime  @default(now()) @map("created_at")
   lastUsedAt DateTime? @map("last_used_at")
   revokedAt  DateTime? @map("revoked_at")
 
@@ -570,7 +590,7 @@ model Report {
   id           String   @id @default(cuid())
   userId       String   @map("user_id")
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  date         String   // YYYY-MM-DD
+  date         String // YYYY-MM-DD
   matchedCount Int      @default(0) @map("matched_count")
   appliedCount Int      @default(0) @map("applied_count")
   failedCount  Int      @default(0) @map("failed_count")
@@ -596,12 +616,12 @@ model OtpToken {
 // DB-backed OTP brute-force counter. Replaces in-process Map in otp.ts.
 // Survives multi-instance / serverless restarts.
 model OtpAttempt {
-  id         String   @id @default(cuid())
-  phone      String   @unique
-  attempts   Int      @default(0)
-  windowEnd  DateTime @map("window_end")
+  id          String    @id @default(cuid())
+  phone       String    @unique
+  attempts    Int       @default(0)
+  windowEnd   DateTime  @map("window_end")
   lockedUntil DateTime? @map("locked_until")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 
   @@index([phone])
   @@map("otp_attempts")
@@ -675,4 +695,30 @@ model PageView {
   @@index([createdAt])
   @@index([visitorId])
   @@map("page_views")
+}
+
+// The answer vault: screening-question answers the agent may submit under the
+// user's name. Facts only, approved explicitly — an application with a mandatory
+// question that has no approved answer here goes to awaiting_human instead of
+// being sent with a guess in it. `answer` is AES-GCM ciphertext (lib/crypto.ts /
+// agent/secret_box.py, same wire format) — it holds exactly the class of
+// personal fact (grades, addresses, authorizations) that must not sit readable
+// in a database dump, a log line, or a support screenshot.
+model UserAnswer {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Normalized question identity ("cgpa", "notice_period"), so one stored fact
+  // answers every phrasing of the same question across sites.
+  questionKey String   @map("question_key")
+  answer      String // encrypted
+  // setup = collected in onboarding · user = typed/edited later ·
+  // generated = drafted by the agent, which is precisely why approval exists.
+  source      String   @default("setup")
+  approved    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, questionKey])
+  @@map("user_answers")
 }
