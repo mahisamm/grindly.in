@@ -331,24 +331,39 @@ def _rewrite_struct(base_struct: dict, instruction: str, master_skills: list[str
     # and the whole feature produced nothing. (Proven: three reworded responses
     # merge to sections=[].)
     #
-    # Take whole, un-merged responses instead and keep the first coherent one.
+    # Take whole, un-merged responses instead and keep the RICHEST coherent one.
     # The cross-model diversity this feature wants comes from the three distinct
     # STRATEGIES, each compiled and re-scored downstream — not from blending three
     # rewrites of one strategy into their (empty) intersection.
-    parsed_dicts = []
+    #
+    # Richest, not merely first-non-empty: a model sometimes returns a section
+    # heading with its items dropped (seen live — a rewrite kept the six skill
+    # bullets but emptied Experience/Projects/Education, so the compiled PDF held
+    # ~196 characters and was rejected). The first-non-empty response passed the
+    # "any items" check on its skills alone, and a fuller sibling response was
+    # thrown away. Score each by how much content survived and keep the best.
+    fallback = None
+    best, best_weight = None, -1
     for raw in llm_mod.chat_ensemble(prompt, system=_REWRITE_SYS, n=3, timeout=120):
         parsed = llm_mod._extract_json(raw)
         if not isinstance(parsed, dict):
             continue
-        parsed_dicts.append(parsed)
+        fallback = fallback or parsed
         raw_struct = parsed.get("resume") if isinstance(parsed.get("resume"), dict) else parsed
-        if isinstance(raw_struct, dict):
-            sanitized = _sanitize_struct(raw_struct)
-            if sanitized and any(sec["items"] for sec in sanitized["sections"]):
-                return parsed  # first response with real content wins
-    # None had usable content: hand back one anyway (if any parsed) so _variant
-    # reports an accurate "empty/malformed" reason rather than "model unavailable".
-    return parsed_dicts[0] if parsed_dicts else None
+        if not isinstance(raw_struct, dict):
+            continue
+        sanitized = _sanitize_struct(raw_struct)
+        if not (sanitized and any(sec["items"] for sec in sanitized["sections"])):
+            continue
+        weight = sum(
+            1 + len(item["bullets"])
+            for sec in sanitized["sections"] for item in sec["items"]
+        )
+        if weight > best_weight:
+            best, best_weight = parsed, weight
+    # If none had usable content, hand back one parsed response anyway so _variant
+    # reports an accurate "empty/malformed" reason, not "model unavailable".
+    return best or fallback
 
 
 # ---------------- truthfulness gate ----------------

@@ -177,3 +177,25 @@ def test_rewrite_keeps_one_response_instead_of_merging_to_empty(monkeypatch):
 def test_rewrite_returns_none_when_no_provider_answers(monkeypatch):
     monkeypatch.setattr(ro.llm_mod, "chat_ensemble", lambda *a, **k: [])
     assert ro._rewrite_struct({"name": "A", "contact_line": "c", "sections": []}, "x", []) is None
+
+
+def test_rewrite_prefers_the_response_that_kept_the_most_content(monkeypatch):
+    """A model sometimes returns section headings with the items dropped. Live, a
+    keyword rewrite kept six skill bullets but emptied Experience/Projects/
+    Education; the compiled PDF held ~196 chars and was rejected, while a fuller
+    sibling response was thrown away. Pick the richest, not the first non-empty."""
+    import json
+    sparse = json.dumps({"resume": {"name": "A", "contact_line": "c", "sections": [
+        {"heading": "SKILLS", "items": [{"head": "", "sub": "", "bullets": ["Python"]}]},
+        {"heading": "EXPERIENCE", "items": []},
+        {"heading": "PROJECTS", "items": []}]}, "changes": ["x"]})
+    rich = json.dumps({"resume": {"name": "A", "contact_line": "c", "sections": [
+        {"heading": "SKILLS", "items": [{"head": "", "sub": "", "bullets": ["Python, SQL"]}]},
+        {"heading": "EXPERIENCE", "items": [{"head": "Eng", "sub": "2025", "bullets": ["Built X", "Shipped Y"]}]},
+        {"heading": "PROJECTS", "items": [{"head": "Grindly", "sub": "", "bullets": ["Did Z"]}]}]}, "changes": ["y"]})
+    # sparse first, so first-non-empty would wrongly win.
+    monkeypatch.setattr(ro.llm_mod, "chat_ensemble", lambda *a, **k: [sparse, rich])
+    out = ro._rewrite_struct({"name": "A", "contact_line": "c", "sections": []}, "keywords", ["python", "sql"])
+    struct = ro._sanitize_struct(out["resume"])
+    kept = [s["heading"] for s in struct["sections"] if s["items"]]
+    assert "EXPERIENCE" in kept and "PROJECTS" in kept, "must pick the fuller rewrite"
