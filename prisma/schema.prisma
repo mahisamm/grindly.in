@@ -342,35 +342,36 @@ model Application {
   jobId  String? @map("job_id")
   job    Job?    @relation(fields: [jobId], references: [id])
 
-  jobTitle        String         @map("job_title")
+  jobTitle        String             @map("job_title")
   company         String
   url             String?
-  matchScore      Int            @default(0) @map("match_score")
+  matchScore      Int                @default(0) @map("match_score")
   // lifecycle: matched | approved | submitting | applied | skipped | failed | needs_review
-  status          ApplyStatus    @default(matched)
+  status          ApplyStatus        @default(matched)
   reason          String? // why matched / why skipped / failure detail
   // enumerated machine reason on failure — see FailureReason
-  failureReason   FailureReason? @map("failure_reason")
-  screenshotPath  String?        @map("screenshot_path") // proof image of the submit attempt
+  failureReason   FailureReason?     @map("failure_reason")
+  screenshotPath  String?            @map("screenshot_path") // proof image of the submit attempt
   // The platform's screening questions and the answers submitted under the user's
   // name: JSON [{q, a, source}], where source is "profile" (a stored fact, e.g. their
   // real CGPA), "ai" (a model phrasing something their resume supports), or
   // "fallback". Recorded because an application the user cannot read back is one they
   // cannot walk into an interview and defend. See agent/questions.py.
-  answersJson     String?        @map("answers_json")
+  answersJson     String?            @map("answers_json")
   // JSON array: what this role asked for that the candidate does not show. The
   // actionable half of a match score — "you scored 72" tells someone nothing they
   // can act on; "this role wants Docker and you don't show it" tells them what to
   // learn, and what they will be asked about if they get the call.
-  missingSkills   String?        @map("missing_skills")
+  missingSkills   String?            @map("missing_skills")
   // Apply Kit: the per-job cover letter, drafted before the user ever opens the
   // form (worker.py backfills this for every due match — see due_matches_missing_kit
   // / set_application_kit in agent/db.py). Null until generated or if generation
   // failed — the dashboard falls back to a plain note, never a blank lie.
-  coverLetterText String?        @map("cover_letter")
+  coverLetterText String?            @map("cover_letter")
   // immutable snapshot of the exact resume sent for this application
-  resumeVersionId String?        @map("resume_version_id")
-  resumeVersion   ResumeVersion? @relation(fields: [resumeVersionId], references: [id])
+  resumeVersionId String?            @map("resume_version_id")
+  resumeVersion   ResumeVersion?     @relation(fields: [resumeVersionId], references: [id])
+  events          ApplicationEvent[]
   // Where this application was actually delivered, and under which risk tier.
   //
   // A listing found on a board is usually a cross-post: the real application
@@ -383,9 +384,9 @@ model Application {
   //   applyChannel  google_form | email | ats | platform
   //   applyTier     A (no account at stake) | B (hosted, consented) | C (never server-side)
   //   applyTarget   the resolved form URL / mailbox / ATS page
-  applyChannel    String?        @map("apply_channel")
-  applyTier       String?        @map("apply_tier")
-  applyTarget     String?        @map("apply_target")
+  applyChannel    String?            @map("apply_channel")
+  applyTier       String?            @map("apply_tier")
+  applyTarget     String?            @map("apply_target")
   // When the user approved this application — i.e. when it started reserving a
   // slice of that day's cap.
   //
@@ -395,7 +396,7 @@ model Application {
   // the user could never approve anything again — greeted forever by "your daily
   // limit is reached, try again tomorrow", on a tomorrow that never arrived.
   // Dating the reservation lets it expire with the day it belongs to.
-  approvedAt      DateTime?      @map("approved_at")
+  approvedAt      DateTime?          @map("approved_at")
   // When this match is due to be surfaced to the user for a one-tap send.
   //
   // A single discovery sweep finds ~a month of work (plan cap x 30). Dumping all
@@ -406,15 +407,15 @@ model Application {
   // src/app/api/applications/route.ts, which is the enforcement point.
   //
   // null = due immediately (legacy rows, and anything the user approved by hand).
-  scheduledFor    DateTime?      @map("scheduled_for")
+  scheduledFor    DateTime?          @map("scheduled_for")
   // Set only after Grindly successfully delivers the final application link.
-  notifiedAt      DateTime?      @map("notified_at")
-  appliedAt       DateTime?      @map("applied_at")
+  notifiedAt      DateTime?          @map("notified_at")
+  appliedAt       DateTime?          @map("applied_at")
   // user-reported outcome — the single most important beta signal (interview rate)
   // null (unset) until the user reports one
-  outcome         Outcome?       @map("outcome")
-  outcomeAt       DateTime?      @map("outcome_at")
-  createdAt       DateTime       @default(now()) @map("created_at")
+  outcome         Outcome?           @map("outcome")
+  outcomeAt       DateTime?          @map("outcome_at")
+  createdAt       DateTime           @default(now()) @map("created_at")
 
   @@index([userId])
   @@index([userId, status])
@@ -721,4 +722,54 @@ model UserAnswer {
 
   @@unique([userId, questionKey])
   @@map("user_answers")
+}
+
+// Append-only timeline of everything that happened to one application. The
+// dashboard renders from this rather than from status alone, because "applied"
+// is a single word that hides whether the agent sent it, the user sent it, or
+// it bounced through three retries first — and a user asking "what did you do
+// on my behalf?" deserves the sequence, not the summary.
+//
+// Never put resume text, answers or contact details in `meta`. This table is
+// read by admin views and shipped into reports; it holds what HAPPENED, while
+// the personal facts stay in the encrypted vault.
+model ApplicationEvent {
+  id            String      @id @default(cuid())
+  applicationId String      @map("application_id")
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  // queued | leased | filling | submitted | awaiting_human | failed | cancelled ...
+  type          String
+  // worker | extension | user — who caused it. "The agent did X" must be
+  // distinguishable from "you did X" forever after.
+  actor         String      @default("worker")
+  meta          String? // small JSON, no PII
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@index([applicationId, createdAt])
+  @@map("application_events")
+}
+
+// One row per user per local day: the daily cap, enforced as a RESERVATION
+// rather than a count.
+//
+// Counting `applications WHERE applied_at >= midnight` cannot bound concurrency:
+// two workers both read 4-of-5, both decide there is room, and both submit — a
+// sixth application under a limit of five, and an application cannot be
+// recalled. Reserving a slot inside a transaction BEFORE the send makes the
+// database the arbiter: the increment either fits under the cap or it does not.
+//
+// `submitted` counts confirmed sends only. `attempted` counts reservations
+// taken, so a reservation released after a definite non-send leaves a trace.
+model DailyUsage {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  // The user's LOCAL calendar date (their timezone), not UTC — "5 a day" has to
+  // mean their day, or the window slides for anyone outside UTC.
+  localDate String   @map("local_date")
+  submitted Int      @default(0)
+  attempted Int      @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, localDate])
+  @@map("daily_usage")
 }

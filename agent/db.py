@@ -1504,3 +1504,143 @@ def add_report(uid: str, *, date: str, matched: int, applied: int, failed: int,
             (cuid(), uid, date, matched, applied, failed, summary,
              bool(delivered), now_db()),
         )
+
+
+# ---------- daily cap: reservation, not a recount ----------
+
+def _ensure_daily_usage_table(c):
+    if PG:
+        return  # Prisma owns the schema on Postgres
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS daily_usage (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            local_date TEXT NOT NULL,
+            submitted INTEGER NOT NULL DEFAULT 0,
+            attempted INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL
+        )
+    """)
+    c.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS daily_usage_user_date "
+        "ON daily_usage(user_id, local_date)"
+    )
+
+
+def local_date_for(uid: str, tz_name: str | None = None) -> str:
+    """The user's LOCAL calendar date as YYYY-MM-DD.
+
+    The cap is "N per day" in the user's day, not UTC's — otherwise the window
+    slides for everyone outside UTC and an IST user's allowance resets at 5:30am.
+    Falls back to the fleet default when the zone is missing or unknown rather
+    than raising: a bad timezone string must not stop a run.
+    """
+    import datetime as _dt
+    name = tz_name or "Asia/Kolkata"
+    try:
+        from zoneinfo import ZoneInfo
+        now = _dt.datetime.now(ZoneInfo(name))
+    except Exception:  # noqa: BLE001 — unknown zone, or no tzdata on the host
+        now = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=5, minutes=30)))
+    return now.strftime("%Y-%m-%d")
+
+
+def reserve_daily_slot(uid: str, cap: int, tz_name: str | None = None) -> bool:
+    """Claim one of today's application slots. True = it is yours to spend.
+
+    This is the concurrency-safe half of the daily cap. Counting rows and then
+    deciding cannot bound anything: two workers both read 4-of-5, both conclude
+    there is room, and both submit — six applications under a limit of five, and
+    a sent application cannot be recalled.
+
+    The UPDATE carries the limit in its own WHERE clause, so the database
+    decides. Whoever loses the race updates zero rows and is told no. Call this
+    IMMEDIATELY before the send, and release_daily_slot() only when it is
+    certain nothing was submitted.
+    """
+    if cap <= 0:
+        return False
+    day = local_date_for(uid, tz_name)
+    with conn() as c:
+        _ensure_daily_usage_table(c)
+        # Make sure the row exists without disturbing an existing count.
+        try:
+            c.execute(
+                "INSERT INTO daily_usage (id, user_id, local_date, submitted, attempted, updated_at) "
+                "VALUES (?,?,?,0,0,?) ON CONFLICT (user_id, local_date) DO NOTHING",
+                (cuid(), uid, day, now_db()),
+            )
+        except Exception:  # noqa: BLE001 — racing insert lost; the row is there either way
+            pass
+        cur = c.execute(
+            "UPDATE daily_usage SET submitted = submitted + 1, attempted = attempted + 1, "
+            "updated_at = ? WHERE user_id = ? AND local_date = ? AND submitted < ?",
+            (now_db(), uid, day, cap),
+        )
+        return cur.rowcount == 1
+
+
+def release_daily_slot(uid: str, tz_name: str | None = None) -> None:
+    """Give back a reserved slot — ONLY when it is certain nothing was sent.
+
+    An ambiguous submit (posted, confirmation unreadable) must NOT come back
+    here: it may well have reached the employer, and refunding it would let the
+    same user exceed the number of applications they agreed to per day. Keeps
+    `attempted` so the reservation still leaves a trace.
+    """
+    day = local_date_for(uid, tz_name)
+    with conn() as c:
+        _ensure_daily_usage_table(c)
+        c.execute(
+            "UPDATE daily_usage SET submitted = submitted - 1, updated_at = ? "
+            "WHERE user_id = ? AND local_date = ? AND submitted > 0",
+            (now_db(), uid, day),
+        )
+
+
+def daily_usage(uid: str, tz_name: str | None = None) -> dict:
+    """Today's {submitted, attempted} for this user, in their local day."""
+    day = local_date_for(uid, tz_name)
+    with conn() as c:
+        _ensure_daily_usage_table(c)
+        row = c.execute(
+            "SELECT submitted, attempted FROM daily_usage WHERE user_id=? AND local_date=?",
+            (uid, day),
+        ).fetchone()
+    return {
+        "submitted": (row["submitted"] if row else 0) or 0,
+        "attempted": (row["attempted"] if row else 0) or 0,
+        "date": day,
+    }
+
+
+def add_application_event(app_id: str, event_type: str, actor: str = "worker",
+                          meta: dict | None = None) -> None:
+    """Append one entry to an application's timeline.
+
+    Best-effort by construction: a timeline write must never be the thing that
+    fails a real submission. `meta` is small JSON and must never carry resume
+    text, answers or contact details — this table is read by admin views and
+    rendered into reports.
+    """
+    try:
+        with conn() as c:
+            if not PG:
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS application_events (
+                        id TEXT PRIMARY KEY,
+                        application_id TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        actor TEXT NOT NULL DEFAULT 'worker',
+                        meta TEXT,
+                        created_at INTEGER NOT NULL
+                    )
+                """)
+            c.execute(
+                "INSERT INTO application_events (id, application_id, type, actor, meta, created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (cuid(), app_id, event_type, actor,
+                 json.dumps(meta)[:1000] if meta else None, now_db()),
+            )
+    except Exception as e:  # noqa: BLE001
+        print(f"[db] application event {event_type} not recorded: {e}")

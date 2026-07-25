@@ -89,6 +89,8 @@ async function resetDb() {
   // Order matters — delete children before parents (FK constraints)
   const results = await prisma.$transaction([
     prisma.auditLog.deleteMany(),
+    prisma.applicationEvent.deleteMany(),
+    prisma.dailyUsage.deleteMany(),
     prisma.userAnswer.deleteMany(),
     prisma.supportTicket.deleteMany(),
     prisma.notification.deleteMany(),
@@ -114,7 +116,8 @@ async function resetDb() {
   ]);
 
   const labels = [
-    "audit_logs", "user_answers", "support_tickets", "notifications", "extension_tokens",
+    "audit_logs", "application_events", "daily_usage", "user_answers",
+    "support_tickets", "notifications", "extension_tokens",
     "reports", "otp_tokens", "otp_attempts", "password_reset_tokens",
     "rate_limit_entries", "agent_runs", "platform_credentials",
     "user_integrations", "applications", "resume_variants",

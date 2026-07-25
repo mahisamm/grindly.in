@@ -706,6 +706,27 @@ def _fetch_source_all_kw(
     return src, jobs
 
 
+def _last_application_id(uid: str, url: str | None) -> str:
+    """Id of the row just written for this listing, for its timeline entry.
+
+    add_application does not hand one back, and changing its signature would
+    touch every call site; this reads the row back instead. Returns "" when it
+    cannot be found — add_application_event tolerates that, because a missing
+    timeline entry must never be the thing that fails a real submission."""
+    if not url:
+        return ""
+    try:
+        with db.conn() as c:
+            row = c.execute(
+                "SELECT id FROM applications WHERE user_id=? AND url=? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (uid, url),
+            ).fetchone()
+        return row["id"] if row else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _tailor_key(title: str, company: str = "") -> str:
     """Cache key for a tailored resume — unique per (title, company).
 
@@ -1883,6 +1904,28 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         stat_src = src if is_platform_channel else f"channel:{dest['channel']}"
 
         # apply
+        #
+        # Reserve the day's slot BEFORE sending, not after. The in-memory
+        # `remaining` above bounds this one run; it cannot bound two runs racing
+        # (a manual "Run now" while the scheduled sweep is mid-flight), and an
+        # application that has been sent cannot be recalled. The reservation
+        # makes the database the arbiter — see db.reserve_daily_slot.
+        slot_held = False
+        if live and (not is_platform_channel or src in source_modules):
+            slot_held = db.reserve_daily_slot(uid, plan_cap, profile.get("timezone"))
+            if not slot_held:
+                log.info("daily cap reached (%d) — banking the rest of the queue", plan_cap)
+                nslot = pipeline + queued
+                queued += 1
+                db.add_application(
+                    uid, job_id=job_id, title=job["title"], company=job["company"],
+                    url=job["url"], score=score, status="matched",
+                    reason=f"{reason} — daily limit reached", applied=False,
+                    scheduled_for=_release_at(nslot, plan_cap),
+                    destination=dest,
+                )
+                remaining = 0
+                continue
         if live and (not is_platform_channel or src in source_modules):
             # JD text enriches the cover letter and the resume tailoring. The
             # top candidates already had theirs fetched (and were scored on it)
@@ -1910,6 +1953,15 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             # an apply. Shortlist it so nothing fake reaches the dashboard.
             status, why, vid, rec = "skipped", f"{src} unavailable this run", None, {}
 
+        # Give the slot back only when nothing reached the employer. "failed" and
+        # "skipped" are definite non-sends; needs_review is NOT — the submit
+        # landed and only the confirmation was unreadable, so refunding it would
+        # let a flaky channel push the user past the number of applications they
+        # agreed to send today.
+        if slot_held and status in ("failed", "skipped", "login_required"):
+            db.release_daily_slot(uid, profile.get("timezone"))
+            slot_held = False
+
         if status == "applied":
             applied += 1
             remaining -= 1
@@ -1925,6 +1977,12 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             )
             db.add_audit("apply", user_id=uid, target=job.get("url"),
                          detail=f"{stat_src}:applied")
+            # Timeline entry: "the agent sent this" has to stay distinguishable
+            # from "you sent this" long after the status column says `applied`.
+            db.add_application_event(
+                _last_application_id(uid, job.get("url")), "submitted", actor="worker",
+                meta={"channel": dest.get("channel"), "tier": dest.get("tier"), "source": stat_src},
+            )
             if _SPREAD_APPLIES and remaining > 0:
                 requeue_after_seconds = random.randint(*_SPREAD_GAP_SEC)
                 log.info(
