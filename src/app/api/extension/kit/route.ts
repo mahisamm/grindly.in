@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { authenticateExtension } from "@/lib/extensionAuth";
 import { isRateLimited } from "@/lib/rateLimit";
 import { kitEligible } from "@/lib/pipeline";
+import { buildKit } from "@/lib/applyKit";
 
 // The kit the extension injects into an application form. Bearer-authed with an
 // extension token (NOT the cookie): the request comes from the extension's
@@ -64,7 +65,15 @@ export async function GET(req: Request) {
   const [user, apps] = await Promise.all([
     prisma.user.findUnique({
       where: { id: auth.userId },
-      select: { name: true, email: true, profile: { select: { phone: true, gpa: true } } },
+      select: {
+        name: true, email: true,
+        profile: {
+          select: {
+            phone: true, gpa: true, education: true, gradYear: true,
+            availability: true, workAuthorization: true,
+          },
+        },
+      },
     }),
     // A due "matched" row OR one already approved ("To submit") — never a
     // future-embargoed one. The approved case matters most in practice: it's
@@ -85,13 +94,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ matched: false }, { headers });
   }
 
-  let answers: { q: string; a: string }[] = [];
-  try {
-    const parsed = JSON.parse(match.answersJson || "[]");
-    if (Array.isArray(parsed)) answers = parsed.filter((x) => x && x.q && x.a).map((x) => ({ q: x.q, a: x.a }));
-  } catch {
-    // malformed → no drafted answers, deterministic profile fills still apply
-  }
+  // Same builder the autopilot claim endpoint uses. Written twice once, and the
+  // two copies disagreed on the shape fillEngine reads — see applyKit.ts.
+  const kit = buildKit(user ?? { name: "", email: "" }, match);
 
   return NextResponse.json(
     {
@@ -99,16 +104,7 @@ export async function GET(req: Request) {
       applicationId: match.id,
       jobTitle: match.jobTitle,
       company: match.company,
-      coverLetter: match.coverLetterText || null,
-      answers,
-      // Facts the extension fills into name/email/phone/CGPA fields it detects
-      // live — so it works even on platforms we couldn't pre-harvest questions from.
-      profile: {
-        name: user?.name || "",
-        email: user?.email || "",
-        phone: user?.profile?.phone || "",
-        gpa: user?.profile?.gpa ?? null,
-      },
+      ...kit,
     },
     { headers },
   );

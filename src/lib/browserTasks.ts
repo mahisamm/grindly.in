@@ -33,37 +33,133 @@ const RECLAIMABLE = ["leased", "filling"] as const;
  * a second application.
  */
 export async function reclaimExpiredTasks(now = new Date()): Promise<number> {
-  const { count } = await prisma.browserTask.updateMany({
+  // Read them first: each one is holding a reserved daily slot that has to go
+  // back with it, or a browser closed mid-fill silently burns someone's cap for
+  // the rest of the day. Safe precisely because these states prove nothing was
+  // submitted — the same reason they are the only ones reclaimed at all.
+  const expired = await prisma.browserTask.findMany({
     where: { state: { in: [...RECLAIMABLE] }, leaseExpiresAt: { lt: now } },
-    data: { state: "queued", leaseTokenHash: null, leaseExpiresAt: null },
+    select: { id: true, userId: true, reservedDate: true },
   });
+  if (!expired.length) return 0;
+
+  const { count } = await prisma.browserTask.updateMany({
+    where: { id: { in: expired.map((t) => t.id) } },
+    data: { state: "queued", leaseTokenHash: null, leaseExpiresAt: null, reservedDate: null },
+  });
+  for (const t of expired) {
+    if (t.reservedDate) await releaseDailySlot(t.userId, t.reservedDate);
+  }
   return count;
+}
+
+/** The user's LOCAL calendar date — "5 a day" has to mean their day. */
+export function localDateFor(timezone?: string | null): string {
+  const opts: Intl.DateTimeFormatOptions = {
+    year: "numeric", month: "2-digit", day: "2-digit",
+  };
+  try {
+    return new Intl.DateTimeFormat("en-CA", { ...opts, timeZone: timezone || "Asia/Kolkata" })
+      .format(new Date());
+  } catch {
+    return new Intl.DateTimeFormat("en-CA", { ...opts, timeZone: "Asia/Kolkata" }).format(new Date());
+  }
+}
+
+/**
+ * Claim one of today's application slots BEFORE handing out the task.
+ *
+ * Counting rows and then deciding cannot bound anything — two browsers both
+ * read 4-of-5, both conclude there is room, and the employer count ends at six
+ * under a limit of five. So the limit rides inside the UPDATE's own WHERE and
+ * the database decides; whoever loses updates zero rows and is told no.
+ *
+ * This mirrors agent/db.py's reserve_daily_slot, which the server-side sender
+ * has always used. The browser path had no cap at all: a submission through the
+ * extension marked the application applied and never touched the ledger, so
+ * "Sent today 0/5" would sit at zero while applications went out. The cap the
+ * product promises has to hold on every path that can reach an employer.
+ */
+export async function reserveDailySlot(
+  userId: string, cap: number, localDate: string,
+): Promise<boolean> {
+  if (cap <= 0) return false;
+  // Make sure the row exists without disturbing an existing count.
+  await prisma.dailyUsage
+    .upsert({
+      where: { userId_localDate: { userId, localDate } },
+      create: { userId, localDate },
+      update: {},
+    })
+    .catch(() => {}); // a racing insert lost; the row is there either way
+  const { count } = await prisma.dailyUsage.updateMany({
+    where: { userId, localDate, submitted: { lt: cap } },
+    data: { submitted: { increment: 1 }, attempted: { increment: 1 } },
+  });
+  return count === 1;
+}
+
+/**
+ * Give a reserved slot back — ONLY when it is certain nothing was submitted.
+ *
+ * `attempted` is deliberately not decremented: the attempt really happened, and
+ * that number exists to show a retry-heavy day honestly. The day is recomputed
+ * from the user's timezone, so a lease that straddles midnight releases nothing
+ * (the guard below stops it going negative) — it under-sends by one rather than
+ * risk handing out a sixth slot.
+ */
+export async function releaseDailySlot(userId: string, localDate: string): Promise<void> {
+  await prisma.dailyUsage
+    .updateMany({
+      where: { userId, localDate, submitted: { gt: 0 } },
+      data: { submitted: { decrement: 1 } },
+    })
+    .catch(() => {});
 }
 
 export type ClaimedTask = {
   id: string;
+  applicationId: string;
   url: string;
   host: string;
   leaseToken: string;
   leaseExpiresAt: Date;
 };
 
+export type ClaimResult =
+  | { task: ClaimedTask; reason?: undefined }
+  | { task: null; reason: "no_work" | "daily_cap" };
+
 /**
- * Hand exactly one queued task to one browser.
+ * Hand exactly one queued task to one browser, against one reserved slot.
  *
- * The update is conditioned on the row still being `queued`, so two browsers
- * signed into the same account cannot both walk away believing they own it —
- * whoever loses updates zero rows and gets nothing to do.
+ * The slot is taken BEFORE the task is handed out, because the browser can
+ * submit the moment it has one — asking permission afterwards is asking after
+ * the application has already reached the employer. Every path that ends
+ * without a task gives the slot straight back.
+ *
+ * The task update is conditioned on the row still being `queued`, so two
+ * browsers signed into the same account cannot both walk away believing they
+ * own it — whoever loses updates zero rows and gets nothing to do.
  */
-export async function claimNextTask(userId: string): Promise<ClaimedTask | null> {
+export async function claimNextTask(
+  userId: string, cap: number, localDate: string,
+): Promise<ClaimResult> {
   await reclaimExpiredTasks();
+
+  if (!(await reserveDailySlot(userId, cap, localDate))) {
+    return { task: null, reason: "daily_cap" };
+  }
 
   const candidate = await prisma.browserTask.findFirst({
     where: { userId, state: "queued", attempts: { lt: MAX_ATTEMPTS } },
     orderBy: { createdAt: "asc" },
-    select: { id: true, url: true, host: true },
+    select: { id: true, applicationId: true, url: true, host: true },
   });
-  if (!candidate) return null;
+  if (!candidate) {
+    await releaseDailySlot(userId, localDate);
+    return { task: null, reason: "no_work" };
+  }
 
   const raw = crypto.randomBytes(32).toString("hex");
   const expires = new Date(Date.now() + LEASE_MS);
@@ -75,11 +171,25 @@ export async function claimNextTask(userId: string): Promise<ClaimedTask | null>
       leaseExpiresAt: expires,
       heartbeatAt: new Date(),
       attempts: { increment: 1 },
+      reservedDate: localDate,
     },
   });
-  if (count !== 1) return null; // lost the race; the next poll will find another
+  if (count !== 1) {
+    // Lost the race; the next poll will find another.
+    await releaseDailySlot(userId, localDate);
+    return { task: null, reason: "no_work" };
+  }
 
-  return { id: candidate.id, url: candidate.url, host: candidate.host, leaseToken: raw, leaseExpiresAt: expires };
+  return {
+    task: {
+      id: candidate.id,
+      applicationId: candidate.applicationId,
+      url: candidate.url,
+      host: candidate.host,
+      leaseToken: raw,
+      leaseExpiresAt: expires,
+    },
+  };
 }
 
 /**

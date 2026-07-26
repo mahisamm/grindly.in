@@ -183,6 +183,21 @@ describe("confirming a submission", () => {
     expect(SRC).not.toMatch(/\^\(submit\|apply\|/);
   });
 
+  it("reads the kit in the shape the fill engine actually parses", () => {
+    // It was handed the claim endpoint's flat profile, which has no `.profile`
+    // key at all, so every run filled nothing and then blamed the form.
+    expect(SRC).toMatch(/task\.kit \|\| \{\}/);
+    expect(SRC).not.toMatch(/task\.profile \|\| \{\}/);
+  });
+
+  it("says so when only half the extension has been reloaded", () => {
+    // An old bundle claims tasks perfectly well and then behaves like the
+    // version that pressed the wrong button — the one failure mode that looks
+    // exactly like a broken website.
+    expect(SRC).toMatch(/!window\.GrindlySubmit \|\| !window\.GrindlyFill/);
+    expect(SRC).toMatch(/needs a reload/i);
+  });
+
   it("names the button it pressed when the site says nothing", () => {
     // Without this the failure is undiagnosable from a screenshot — which is
     // exactly how the wrong-button bug survived a live run.

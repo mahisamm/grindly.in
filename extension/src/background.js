@@ -244,6 +244,7 @@ async function tick() {
       out && out.reason
         ? { no_work: "No applications waiting right now.",
             not_ready: "Finish your Grindly setup before autopilot can run.",
+            daily_cap: "That's your daily limit — Grindly will carry on tomorrow.",
             executor_disabled: "Autopilot is switched off on the Grindly server.",
             not_connected: "Reconnect this browser to your Grindly account." }[out.reason]
           || out.reason
@@ -252,10 +253,10 @@ async function tick() {
     return;
   }
   await setStatus("Opening an application…");
-  // Hand the task's profile to the executor through the same stored record, so
-  // the content script never has to hold the extension token to get it.
+  // Hand the task's kit to the executor through the same stored record, so the
+  // content script never has to hold the extension token to get it.
   await chrome.storage.local.set({
-    [TASK_STATE_KEY]: { ...out.task, profile: out.profile },
+    [TASK_STATE_KEY]: { ...out.task, kit: out.kit },
   });
   chrome.tabs.create({ url: out.task.url, active: false });
 }

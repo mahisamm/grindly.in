@@ -94,6 +94,15 @@
     const gates = window.GrindlyGate;
     if (!gates) return; // humanGate.js not present — do nothing rather than guess
 
+    // A half-loaded extension is the one failure that looks exactly like a
+    // broken website: the old bundle claims tasks fine, then behaves like the
+    // version that pressed the wrong button. Say which it is.
+    if (!window.GrindlySubmit || !window.GrindlyFill) {
+      banner("Grindly needs a reload — open chrome://extensions and reload it.", "gate");
+      await report("failed", { reason: "fill_error" });
+      return;
+    }
+
     banner("Grindly is filling this application…", "work");
     heartbeat = setInterval(() => report("heartbeat"), HEARTBEAT_MS);
     await report("filling");
@@ -110,7 +119,11 @@
     }
 
     // 2. Fill from approved facts only.
-    const kit = task.profile || {};
+    // The kit shape fillEngine reads: { profile:{name,…}, answers, coverLetter }.
+    // It used to be handed the claim endpoint's flat profile, which has no
+    // `.profile` key at all — so every autopilot run filled exactly nothing and
+    // then reported that the form asked something it could not answer.
+    const kit = task.kit || {};
     let filled = 0;
     try {
       const res = window.GrindlyFill.applyFills(document.body, kit, document);

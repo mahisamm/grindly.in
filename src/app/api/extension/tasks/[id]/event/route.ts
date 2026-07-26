@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { authenticateExtension } from "@/lib/extensionAuth";
-import { ownsTask, LEASE_MS } from "@/lib/browserTasks";
+import { ownsTask, LEASE_MS, releaseDailySlot } from "@/lib/browserTasks";
 
 // POST /api/extension/tasks/:id/event — the extension's only way to report.
 //
@@ -23,6 +23,17 @@ const TRANSITIONS: Record<string, string> = {
 
 /** Gate reasons we accept, so page text can never land in the database. */
 const GATES = new Set(["captcha", "otp", "login", "unknown_question", "payment", "changed_form"]);
+
+/**
+ * Gates that PROVE nothing was submitted, so the reserved daily slot goes back.
+ *
+ * `changed_form` is deliberately absent: it means the extension clicked and the
+ * page never confirmed, which is exactly the case where an application may have
+ * landed. Handing that slot back would let the day's sixth application out
+ * under a limit of five — the same reason the server-side sender never refunds
+ * a needs_review.
+ */
+const PROVES_NO_SUBMIT = new Set(["captcha", "otp", "login", "unknown_question", "payment"]);
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const auth = await authenticateExtension(req);
@@ -54,6 +65,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   if (event === "heartbeat" || event === "filling") {
     data.leaseExpiresAt = new Date(Date.now() + LEASE_MS);
+  }
+
+  // Slots reserved at claim time come back only on a definite non-send.
+  const releasable =
+    event === "failed" ||
+    (event === "awaiting_human" && PROVES_NO_SUBMIT.has(String(body.reason ?? "")));
+  if (releasable && task.reservedDate) {
+    await releaseDailySlot(auth.userId, task.reservedDate);
+    data.reservedDate = null;
   }
 
   if (event === "awaiting_human") {

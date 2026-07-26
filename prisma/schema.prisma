@@ -832,6 +832,10 @@ model BrowserTask {
   // Why it stopped for a human: captcha | otp | login | unknown_question | payment.
   // Shown to the user verbatim, so it must stay a short reason, never page text.
   blockedReason String?  @map("blocked_reason")
+  // The user's local date whose daily slot this claim reserved. Stored rather
+  // than recomputed, so a lease that straddles midnight releases the slot it
+  // actually took instead of one from the wrong day.
+  reservedDate  String?  @map("reserved_date")
   // Proof of submission: portal id / confirmation URL. Never page HTML — that
   // would drag personal data into a table read by admin views.
   receipt       String?
