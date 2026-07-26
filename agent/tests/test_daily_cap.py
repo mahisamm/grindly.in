@@ -177,3 +177,41 @@ def test_an_undelivered_report_does_not_count_as_announced(capdb):
 def test_a_broken_reports_table_never_blocks_the_report(capdb):
     """This check must never be the reason a user hears nothing."""
     assert db.report_already_sent("u1", "2026-07-26") is False
+
+
+# ---------- the browser executor needs something to claim --------------------
+
+def test_a_board_application_is_queued_for_the_users_browser(capdb):
+    """The producer the extension consumes.
+
+    The whole executor — claim API, leases, gate detection — shipped complete
+    and switched on, and did nothing at all, because nothing ever created a
+    BrowserTask. The queue was empty by construction, so the extension polled
+    forever and correctly found no work."""
+    tid = db.enqueue_browser_task("u1", "app1", "https://internshala.com/internship/detail/x")
+    assert tid, "a board application must become claimable work"
+    with db.conn() as c:
+        row = c.execute("SELECT * FROM browser_tasks WHERE id=?", (tid,)).fetchone()
+    assert row["state"] == "queued"
+    assert row["host"] == "internshala.com", "scoped to one host, so a leaked lease cannot roam"
+
+
+def test_the_same_application_is_never_queued_twice(capdb):
+    """A sweep runs many times a day; each pass must not pile up duplicates of
+    the same application for the same browser."""
+    first = db.enqueue_browser_task("u1", "app1", "https://internshala.com/x")
+    second = db.enqueue_browser_task("u1", "app1", "https://internshala.com/x")
+    assert first == second
+    with db.conn() as c:
+        assert c.execute("SELECT count(*) n FROM browser_tasks").fetchone()["n"] == 1
+
+
+def test_a_url_with_no_host_is_not_queued(capdb):
+    """Nothing to navigate to, and a task scoped to an empty host would be a
+    task scoped to anywhere."""
+    assert db.enqueue_browser_task("u1", "app1", "not-a-url") is None
+
+
+def test_queueing_never_raises(capdb):
+    """Extra work is never worth failing a run over."""
+    assert db.enqueue_browser_task("u1", "", "https://x.com/1") is None

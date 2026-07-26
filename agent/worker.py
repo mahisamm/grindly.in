@@ -1892,6 +1892,20 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 ),
                 destination=dest,
             )
+            # Held here means OUR servers may not send it — not that nobody can.
+            # A board application is still completable in the user's own browser,
+            # in their own session, with any CAPTCHA going to them. Queue it for
+            # the extension.
+            #
+            # This is the producer the executor consumes. Without it the claim
+            # endpoint has nothing to hand out, which is how the browser executor
+            # shipped complete, switched on, and did nothing at all: the queue was
+            # empty by construction.
+            if flags.browser_executor_enabled() and is_platform_channel and plan["ready"]:
+                app_id = _last_application_id(uid, job.get("url"))
+                if app_id and db.enqueue_browser_task(uid, app_id, job.get("url") or ""):
+                    log.info("queued a browser task for %s @ %s",
+                             job.get("title"), job.get("company"))
             continue
 
         if remaining <= 0:

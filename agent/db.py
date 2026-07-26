@@ -1759,3 +1759,70 @@ def release_submission(key: str) -> None:
             c.execute("DELETE FROM submission_receipts WHERE key=?", (key,))
     except Exception as e:  # noqa: BLE001
         print(f"[db] receipt release failed for {key[:12]}: {e}")
+
+
+# ---------- browser tasks: work only the user's own browser can do ----------
+
+def _ensure_browser_tasks_table(c):
+    if PG:
+        return  # Prisma owns the schema on Postgres
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS browser_tasks (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            application_id TEXT NOT NULL,
+            url TEXT NOT NULL,
+            host TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'queued',
+            lease_token_hash TEXT,
+            lease_expires_at INTEGER,
+            heartbeat_at INTEGER,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            blocked_reason TEXT,
+            receipt TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+    """)
+
+
+def enqueue_browser_task(uid: str, application_id: str, url: str) -> str | None:
+    """Hand one application to the user's own browser.
+
+    This is the producer the extension consumes. A board application cannot be
+    submitted from our servers — that is the user's account, on a site that
+    forbids automation — but it CAN be completed in their own browser, in their
+    own session, with any CAPTCHA going to them. Without a row here the whole
+    executor has nothing to claim, which is exactly how the feature shipped
+    complete and did nothing.
+
+    Idempotent per application: a sweep runs many times a day and must not
+    enqueue the same application again on each pass.
+    """
+    if not (application_id and url):
+        return None
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(url).hostname or "").lower()
+        if not host:
+            return None
+        with conn() as c:
+            _ensure_browser_tasks_table(c)
+            existing = c.execute(
+                "SELECT id FROM browser_tasks WHERE application_id=? "
+                "AND state NOT IN ('failed','cancelled') LIMIT 1",
+                (application_id,),
+            ).fetchone()
+            if existing:
+                return existing["id"]
+            tid = cuid()
+            now = now_db()
+            c.execute(
+                "INSERT INTO browser_tasks (id, user_id, application_id, url, host, "
+                "state, attempts, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (tid, uid, application_id, url, host, "queued", 0, now, now),
+            )
+        return tid
+    except Exception as e:  # noqa: BLE001 — never fail a run over queueing extra work
+        print(f"[db] browser task not queued for {application_id}: {e}")
+        return None
