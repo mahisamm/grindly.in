@@ -135,7 +135,14 @@ describe("autopilot actually starts when you switch it on", () => {
     // turning Autopilot on did nothing for five minutes — indistinguishable
     // from broken, and read that way by a live test twice in a row.
     expect(BG).toMatch(/delayInMinutes: 0\.1/);
-    expect(BG).toMatch(/chrome\.alarms\.create\(ALARM[\s\S]{0,120}?\n\s*tick\(\);/);
+    // Assert the behaviour, not the byte layout: setAutopilot must kick a tick
+    // itself. Pinning the exact gap between two lines breaks on a comment edit
+    // and says nothing about whether autopilot actually starts.
+    const body = BG.slice(
+      BG.indexOf("async function setAutopilot"),
+      BG.indexOf("async function tick"),
+    );
+    expect(body).toMatch(/\btick\(\);/);
   });
 
   it("re-arms after a browser restart", () => {
