@@ -6,6 +6,8 @@ about two things: that it never returns a board link dressed up as an employer
 page, and that every failure degrades to "found nothing" instead of taking the
 run down.
 """
+import json
+
 import pytest
 
 import websearch
@@ -336,3 +338,50 @@ def test_a_stale_entry_expires(monkeypatch):
     key = next(iter(websearch._CACHE))
     websearch._CACHE[key] = (0.0, websearch._CACHE[key][1])   # long expired
     assert websearch._cache_get(key) is None
+
+
+# ---- the role name must survive the title ----------------------------------
+
+@pytest.mark.parametrize("raw,role", [
+    ("Drivetrain - Software Engineer Intern", "Software Engineer Intern"),
+    ("SDE Intern | Acme", "SDE Intern"),
+    ("Endpoint Clinical | Data Science Intern", "Data Science Intern"),
+    ("AI Intern @ CertifyOS", "AI Intern"),
+    ("Job Application for Machine Learning Intern at CloudSEK", "Machine Learning Intern"),
+])
+def test_the_role_is_pulled_out_whichever_side_it_sits_on(raw, role):
+    """Titles come in both orders, so taking the first segment threw the role
+    away half the time — real postings became "Drivetrain", "Endpoint Clinical"
+    and "Stable Money" on the dashboard. Worse, the title is a scoring signal,
+    so the listing lost the one word that made it a match."""
+    assert websource._clean_title(raw) == role
+
+
+def test_ashby_is_read_through_its_board_api(monkeypatch):
+    """Ashby renders client-side: its HTML is the string "You need to enable
+    JavaScript to run this app" (51 chars), so live candidates reached the
+    scorer with ~160 characters and could not possibly match."""
+    board = {"jobs": [
+        {"id": "4bcdec99-9f2e-416c-8e26-4aaa", "descriptionPlain": "We need Python and React. " * 40},
+        {"id": "other", "descriptionPlain": "unrelated"},
+    ]}
+
+    class _Resp:
+        def read(self, _n=None): return json.dumps(board).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(websource.urllib.request, "urlopen", lambda *a, **k: _Resp())
+    jd = websource._jd_from_ashby("https://jobs.ashbyhq.com/acme/4bcdec99-9f2e-416c-8e26-4aaa")
+    assert "Python and React" in jd
+    assert "unrelated" not in jd, "it must pick the requested job, not the first one"
+
+
+def test_an_unknown_ashby_job_returns_nothing(monkeypatch):
+    class _Resp:
+        def read(self, _n=None): return json.dumps({"jobs": []}).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(websource.urllib.request, "urlopen", lambda *a, **k: _Resp())
+    assert websource._jd_from_ashby("https://jobs.ashbyhq.com/acme/4bcdec99-9f2e-416c-8e26-4aaa") == ""

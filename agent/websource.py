@@ -139,13 +139,28 @@ def _company_from(title: str, url: str) -> str:
 
 
 def _clean_title(title: str) -> str:
-    # Strip the "| Company | Careers" tails that search results carry, and the
-    # "Job Application for ..." prefix Greenhouse puts on every page title —
-    # left in, it becomes the role name shown on the user's dashboard.
-    t = re.split(r"\s+[|\-–—]\s+", title.strip())[0]
-    t = re.sub(r"^job application for\s+", "", t, flags=re.I)
-    t = re.sub(r"\s+at\s+[A-Z][\w&.\- ]{2,40}$", "", t)
-    return (t or title).strip()[:120]
+    """Pull the ROLE out of a page title.
+
+    Titles come in both orders — "SDE Intern | Acme" and "Acme - SDE Intern" —
+    so taking the first segment threw the role away half the time. Live, that
+    turned real postings into "Drivetrain", "Endpoint Clinical" and "Stable
+    Money": unreadable on the dashboard, and worse, the title is a scoring
+    signal, so the listing lost the one word that made it a match.
+
+    Prefer whichever segment actually names a role.
+    """
+    raw = title.strip()
+    parts = [p.strip() for p in re.split(r"\s+[|\-–—]\s+", raw) if p.strip()]
+    chosen = next(
+        (p for p in parts if any(w in p.lower() for w in _INTERN_WORDS)),
+        parts[0] if parts else raw,
+    )
+    # Greenhouse titles every page "Job Application for ..."; left in, that
+    # becomes the role name the user reads.
+    chosen = re.sub(r"^job application for\s+", "", chosen, flags=re.I)
+    chosen = re.sub(r"\s*[@(]\s*[\w&.\- ]+\)?$", "", chosen)
+    chosen = re.sub(r"\s+at\s+[A-Z][\w&.\- ]{2,40}$", "", chosen)
+    return (chosen or raw).strip()[:120]
 
 
 def _infer_skills(text: str) -> list[str]:
@@ -178,8 +193,44 @@ _API_PATTERNS = [
 ]
 
 
+_ASHBY = re.compile(r"ashbyhq\.com/([^/?#]+)/([0-9a-f-]{8,})", re.I)
+
+
+def _jd_from_ashby(url: str) -> str:
+    """Ashby publishes a whole board, not one posting, so fetch the board and
+    pick the job out of it.
+
+    Worth the extra bytes: Ashby renders client-side, so its HTML is the string
+    "You need to enable JavaScript to run this app" — 51 characters. Live
+    candidates from Ashby were reaching the scorer with ~160 characters of
+    description and could not possibly match.
+    """
+    m = _ASHBY.search(url)
+    if not m:
+        return ""
+    org, job_id = m.group(1), m.group(2).lower()
+    try:
+        req = urllib.request.Request(
+            f"https://api.ashbyhq.com/posting-api/job-board/{org}",
+            headers={"User-Agent": "Grindly/1.0", "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            board = json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception as e:  # noqa: BLE001
+        print(f"[websource] ashby board miss ({type(e).__name__}) for {org}")
+        return ""
+    for job in board.get("jobs") or []:
+        if str(job.get("id", "")).lower() == job_id:
+            text = job.get("descriptionPlain") or _MARKUP.sub(" ", job.get("descriptionHtml") or "")
+            return re.sub(r"\s+", " ", html.unescape(text)).strip()[:6000]
+    return ""
+
+
 def _jd_from_api(url: str) -> str:
     """Read a posting through its ATS's own JSON API, when it has one."""
+    ashby = _jd_from_ashby(url)
+    if ashby:
+        return ashby
     for pattern, build in _API_PATTERNS:
         m = pattern.search(url)
         if not m:
