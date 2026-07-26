@@ -665,6 +665,7 @@ export default function Dashboard() {
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approvingAll, setApprovingAll] = useState(false);
   const [confirmingSubmittedId, setConfirmingSubmittedId] = useState<string | null>(null);
+  const [retryingTaskId, setRetryingTaskId] = useState<string | null>(null);
   // Row whose submit URL was just copied — flips the button to "Copied ✓" briefly.
   const [copiedId, setCopiedId] = useState<string | null>(null);
   // Is the browser extension installed in THIS browser? Its content script stamps
@@ -725,6 +726,16 @@ export default function Dashboard() {
   // "Not logged in." to a user who very much is.
   const [loadError, setLoadError] = useState(false);
 
+  // Autopilot numbers come from their own endpoint (the reservation ledger +
+  // application rows). Failure here must never blank the dashboard, so a bad
+  // response leaves the panel on its last-good values rather than zeroing it.
+  const loadAutopilot = useCallback(async () => {
+    const a = await fetch("/api/autopilot")
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    if (a && !a.error) setAutopilot(a as Autopilot);
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/me");
@@ -739,13 +750,7 @@ export default function Dashboard() {
         return;
       }
       const data = await res.json() as Me;
-      // Autopilot numbers come from their own endpoint (the reservation ledger
-      // + application rows). Failure here must never blank the dashboard, so it
-      // simply leaves the panel on its last-good values.
-      fetch("/api/autopilot")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((a) => { if (a && !a.error) setAutopilot(a as Autopilot); })
-        .catch(() => {});
+      loadAutopilot();
       // Gated beta: an unapproved account never reaches the app UI. Use the
       // server's owner-aware verdict (honors OWNER_EMAIL); fall back to the old
       // derivation only if an older payload lacks the field.
@@ -778,7 +783,7 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [router]);
+  }, [router, loadAutopilot]);
 
   useEffect(() => {
     // Paused entirely while the remote-login viewer is open — including the
@@ -1425,6 +1430,36 @@ export default function Dashboard() {
     }
     setNotice({ kind: "ok", text: "Submission recorded. Tell us the outcome here later — it's how we know the agent works." });
     load();
+  }
+
+  // Put a stopped task back in the queue. Nothing requeues `awaiting_human`
+  // automatically — on purpose, since a task that might have submitted must
+  // never be re-run on its own — so without this a queue of stopped tasks is
+  // simply dead, and the user has cleared the CAPTCHA for nothing.
+  async function retryTask(id: string) {
+    setRetryingTaskId(id);
+    const res = await fetch(`/api/autopilot/tasks/${id}/retry`, { method: "POST" })
+      .catch(() => null);
+    setRetryingTaskId(null);
+    if (res && res.status === 409) {
+      // Refused because a second attempt could duplicate a real application.
+      // Say which, rather than a generic failure the user would just re-click.
+      const why = await res.json().catch(() => ({}));
+      setNotice({
+        kind: "ok",
+        text: why?.error === "already_applied"
+          ? "That one already reached the employer — Grindly won't send it twice."
+          : "That task is already running or finished.",
+      });
+      loadAutopilot();
+      return;
+    }
+    if (!res || !res.ok) {
+      setNotice({ kind: "err", text: "Couldn't queue that again — please try once more." });
+      return;
+    }
+    setNotice({ kind: "ok", text: "Queued again. Your browser will pick it up on the next check." });
+    loadAutopilot();
   }
 
   // "Not yet" — hide the bar but KEEP the pending record, so the prompt comes
@@ -2131,14 +2166,27 @@ export default function Dashboard() {
                       <span className="min-w-0 text-muted">
                         <span className="text-foreground">{t.host}</span> — {t.says}
                       </span>
-                      <a
-                        href={t.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="shrink-0 rounded-md border border-amber-500/40 px-2.5 py-1 text-xs text-amber-700 hover:bg-amber-500/10 transition"
-                      >
-                        Open →
-                      </a>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {/* Nothing requeues a stopped task on its own — a task
+                            that might have submitted must never re-run by
+                            itself. So once the person has done their part, they
+                            need a way to say so, or the queue is simply dead. */}
+                        <button
+                          onClick={() => retryTask(t.id)}
+                          disabled={retryingTaskId === t.id}
+                          className="rounded-md border border-amber-500/40 px-2.5 py-1 text-xs text-amber-700 hover:bg-amber-500/10 transition disabled:opacity-50"
+                        >
+                          {retryingTaskId === t.id ? "Queuing…" : "Try again"}
+                        </button>
+                        <a
+                          href={t.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded-md border border-amber-500/40 px-2.5 py-1 text-xs text-amber-700 hover:bg-amber-500/10 transition"
+                        >
+                          Open →
+                        </a>
+                      </span>
                     </li>
                   ))}
                 </ul>
