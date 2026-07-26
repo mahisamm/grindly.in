@@ -93,3 +93,38 @@ describe("the background worker's boundaries", () => {
     expect(BG).toMatch(/Leave any in-flight task alone/);
   });
 });
+
+describe("the popup exposes the engine it drives", () => {
+  const HTML = fs.readFileSync(
+    path.resolve(__dirname, "..", "popup", "popup.html"), "utf8",
+  );
+  const JS = fs.readFileSync(
+    path.resolve(__dirname, "..", "popup", "popup.js"), "utf8",
+  );
+
+  it("has an Autopilot switch", () => {
+    // The background worker, the task APIs and the executor all shipped while
+    // the popup had no way to turn any of it on. A live test found the entire
+    // feature unreachable: an engine with no ignition.
+    expect(HTML).toMatch(/id="autoSw"/);
+    expect(HTML).toMatch(/Autopilot/);
+    expect(JS).toMatch(/grindly:autopilot/);
+  });
+
+  it("hides the switch until an account is connected", () => {
+    // A toggle that can claim no tasks is worse than no toggle.
+    expect(JS).toMatch(/autoBox"\)\.style\.display = connected/);
+  });
+
+  it("stops promising 'you always click Submit yourself' once autopilot is on", () => {
+    // That sentence is simply false with autopilot running, and a promise the
+    // product breaks is worse than one it never made.
+    expect(JS).toMatch(/always click Submit yourself/);
+    expect(JS).toMatch(/main\.textContent = on/);
+  });
+
+  it("says what autopilot will NOT do, next to the switch", () => {
+    // Consequences described on another page are consequences nobody reads.
+    expect(JS).toMatch(/stops and asks you at any CAPTCHA/i);
+  });
+});

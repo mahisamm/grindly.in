@@ -10,6 +10,37 @@ function render(connected) {
   connect.style.display = connected ? "none" : "block";
   disconnect.style.display = connected ? "block" : "none";
   pasteBox.style.display = connected ? "none" : "block";
+  // Autopilot cannot claim a task without an account, so the control only
+  // appears once there is one — an inert switch is worse than no switch.
+  document.getElementById("autoBox").style.display = connected ? "block" : "none";
+  if (connected) refreshAutopilot();
+}
+
+function renderAutopilot(on) {
+  var sw = document.getElementById("autoSw");
+  var hint = document.getElementById("autoHint");
+  sw.className = "sw" + (on ? " on" : "");
+  sw.setAttribute("aria-checked", on ? "true" : "false");
+  // Say exactly what it does and what it still will not do. The dashboard
+  // promises an agent that works on its own; this is where a user finds out
+  // that a CAPTCHA or a question it cannot answer honestly still comes to them.
+  hint.textContent = on
+    ? "On — Grindly opens and fills one application at a time in this browser. It stops and asks you at any CAPTCHA, login, or question it can't answer honestly."
+    : "Off — Grindly only fills forms you open yourself.";
+
+  // The main hint used to say "You always click Submit yourself" unconditionally.
+  // With autopilot on that is simply false, and a promise the product breaks is
+  // worse than one it never made.
+  var main = document.getElementById("hint");
+  main.textContent = on
+    ? "Autopilot is on: Grindly opens matched applications here and submits the ones it can complete honestly. You can also open any job yourself and click “Fill with Grindly”."
+    : "Open a job on Internshala, LinkedIn, Naukri, Unstop or Indeed and click “Fill with Grindly”. You always click Submit yourself.";
+}
+
+function refreshAutopilot() {
+  chrome.runtime.sendMessage({ type: "grindly:autopilot" }, function (resp) {
+    renderAutopilot(!!(resp && resp.on));
+  });
 }
 
 chrome.runtime.sendMessage({ type: "grindly:status" }, function (resp) {
@@ -43,4 +74,12 @@ document.getElementById("pasteBtn").addEventListener("click", function () {
       msg.className = "msg err";
     }
   });
+});
+
+document.getElementById("autoSw").addEventListener("click", function () {
+  var turningOn = this.className.indexOf("on") === -1;
+  chrome.runtime.sendMessage(
+    { type: "grindly:autopilot", on: turningOn },
+    function (resp) { renderAutopilot(!!(resp && resp.on)); },
+  );
 });

@@ -2031,7 +2031,13 @@ export default function Dashboard() {
         {me.user.status === "active" && !isRunning && (
           <p className="mt-3 flex items-start gap-2 text-xs text-muted">
             <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent pulse-dot" />
-            <span>Your agent is on duty — it searches and prepares matches automatically every day, on its own. You never have to press anything; <span className="text-foreground">Run now</span> just starts one extra search this minute.</span>
+            {/* Precise about WHICH part is automatic. "You never have to press
+                anything" read as a promise that every application sends itself,
+                which is only true where the agent can deliver on its own — an
+                employer's own form, or a board with the browser extension on.
+                Board applications without it still wait for a tap, and a claim
+                the product does not keep is worse than one it never made. */}
+            <span>Your agent is on duty — it searches, scores and prepares matches every day on its own, and sends the ones it can deliver by itself. Applications on sites that hold your account wait for your tap unless you turn on the browser extension. <span className="text-foreground">Run now</span> just starts one extra search this minute.</span>
           </p>
         )}
 

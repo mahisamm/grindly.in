@@ -25,6 +25,15 @@
       .msg { font-size: 12px; margin-top: 6px; }
       .msg.ok { color: #16803c; }
       .msg.err { color: #e3402a; }
+      .auto { margin-top: 14px; padding-top: 12px; border-top: 1px solid #e5e5e5; }
+      .auto .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .auto .ttl { font-size: 13px; font-weight: 700; }
+      .sw { position: relative; width: 44px; height: 24px; border-radius: 999px;
+        background: #d4d4d4; border: none; cursor: pointer; flex: none; padding: 0; margin: 0; }
+      .sw.on { background: #22c55e; }
+      .sw i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+        border-radius: 50%; background: #fff; transition: left .15s; }
+      .sw.on i { left: 23px; }
     </style>
   </head>
   <body>
@@ -34,6 +43,20 @@
       <a class="btn primary" id="connect" href="https://grindly.in/extension/connect" target="_blank">Connect to Grindly</a>
       <button class="ghost" id="disconnect" style="display:none">Disconnect</button>
       <div class="hint" id="hint">Open a job on Internshala, LinkedIn, Naukri, Unstop or Indeed and click “Fill with Grindly”. You always click Submit yourself.</div>
+
+      <!-- Autopilot. Hidden until connected, because it can do nothing without
+           an account to claim tasks for. The copy states what it will and will
+           NOT do, in the same place the switch is: a toggle whose consequences
+           are described on a different page is a toggle people flip blind. -->
+      <div class="auto" id="autoBox" style="display:none">
+        <div class="row">
+          <span class="ttl">Autopilot</span>
+          <button class="sw" id="autoSw" role="switch" aria-checked="false" aria-label="Autopilot"><i></i></button>
+        </div>
+        <div class="hint" id="autoHint">
+          Off — Grindly only fills forms you open yourself.
+        </div>
+      </div>
       <div class="paste" id="pasteBox">
         <label for="pasteInput">Connect automatically didn't work? Paste your pairing code from the Grindly connect page:</label>
         <div class="row">
