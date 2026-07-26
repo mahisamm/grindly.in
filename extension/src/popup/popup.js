@@ -13,6 +13,7 @@ function render(connected) {
   // Autopilot cannot claim a task without an account, so the control only
   // appears once there is one — an inert switch is worse than no switch.
   document.getElementById("autoBox").style.display = connected ? "block" : "none";
+  document.getElementById("runNow").style.display = connected ? "block" : "none";
   if (connected) refreshAutopilot();
 }
 
@@ -40,6 +41,17 @@ function renderAutopilot(on) {
 function refreshAutopilot() {
   chrome.runtime.sendMessage({ type: "grindly:autopilot" }, function (resp) {
     renderAutopilot(!!(resp && resp.on));
+  });
+  refreshStatus();
+}
+
+function refreshStatus() {
+  chrome.runtime.sendMessage({ type: "grindly:autopilotStatus" }, function (st) {
+    var el = document.getElementById("autoStatus");
+    if (!st || !st.text || st.text === "off") { el.style.display = "none"; return; }
+    var mins = Math.round((Date.now() - (st.at || Date.now())) / 60000);
+    el.style.display = "block";
+    el.textContent = st.text + (mins > 0 ? " (" + mins + "m ago)" : "");
   });
 }
 
@@ -82,4 +94,17 @@ document.getElementById("autoSw").addEventListener("click", function () {
     { type: "grindly:autopilot", on: turningOn },
     function (resp) { renderAutopilot(!!(resp && resp.on)); },
   );
+});
+
+// Manual kick. Waiting on a five-minute timer to discover whether autopilot
+// works at all is not a debugging experience anyone should have.
+document.getElementById("runNow").addEventListener("click", function () {
+  var btn = this;
+  btn.disabled = true;
+  btn.textContent = "Checking…";
+  chrome.runtime.sendMessage({ type: "grindly:runNow" }, function () {
+    btn.disabled = false;
+    btn.textContent = "Check for work now";
+    refreshStatus();
+  });
 });

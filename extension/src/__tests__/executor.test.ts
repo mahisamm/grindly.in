@@ -128,3 +128,31 @@ describe("the popup exposes the engine it drives", () => {
     expect(JS).toMatch(/stops and asks you at any CAPTCHA/i);
   });
 });
+
+describe("autopilot actually starts when you switch it on", () => {
+  it("acts on the click instead of waiting for the first timer", () => {
+    // periodInMinutes alone does not fire until a whole period has passed, so
+    // turning Autopilot on did nothing for five minutes — indistinguishable
+    // from broken, and read that way by a live test twice in a row.
+    expect(BG).toMatch(/delayInMinutes: 0\.1/);
+    expect(BG).toMatch(/chrome\.alarms\.create\(ALARM[\s\S]{0,120}?\n\s*tick\(\);/);
+  });
+
+  it("re-arms after a browser restart", () => {
+    // A service worker is evicted when idle. Without this, autopilot silently
+    // stops after the first suspension and never tells anyone.
+    expect(BG).toMatch(/onStartup/);
+    expect(BG).toMatch(/onInstalled/);
+  });
+
+  it("records WHY it did nothing", () => {
+    // "On" alone cannot distinguish idle from broken — the exact reason this
+    // feature could not be diagnosed from outside the browser.
+    expect(BG).toMatch(/setStatus/);
+    expect(BG).toMatch(/no_work|not_ready|executor_disabled/);
+  });
+
+  it("offers a manual check so nobody waits on a timer to learn it works", () => {
+    expect(BG).toMatch(/grindly:runNow/);
+  });
+});

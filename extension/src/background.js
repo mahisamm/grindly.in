@@ -166,6 +166,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (typeof msg.on === "boolean") await setAutopilot(msg.on);
         sendResponse({ on: await autopilotOn() });
         break;
+      case "grindly:autopilotStatus":
+        sendResponse((await chrome.storage.local.get(STATUS_KEY))[STATUS_KEY] || null);
+        break;
+      case "grindly:runNow":
+        // Manual kick, so a user never has to wait on a timer to find out
+        // whether this works.
+        if (sender.tab) { sendResponse({ error: "forbidden" }); break; }
+        await tick();
+        sendResponse((await chrome.storage.local.get(STATUS_KEY))[STATUS_KEY] || null);
+        break;
       case "grindly:activeTask":
         sendResponse((await chrome.storage.local.get(TASK_STATE_KEY))[TASK_STATE_KEY] || null);
         break;
@@ -186,6 +196,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 const AUTOPILOT_KEY = "grindly_autopilot";
 const ALARM = "grindly-autopilot-tick";
+const STATUS_KEY = "grindly_autopilot_status";
+
+/** Last thing autopilot did or decided, for the popup to show. */
+async function setStatus(text) {
+  await chrome.storage.local.set({
+    [STATUS_KEY]: { text: String(text), at: Date.now() },
+  });
+}
 
 async function autopilotOn() {
   return !!(await chrome.storage.local.get(AUTOPILOT_KEY))[AUTOPILOT_KEY];
@@ -194,7 +212,13 @@ async function autopilotOn() {
 async function setAutopilot(on) {
   await chrome.storage.local.set({ [AUTOPILOT_KEY]: !!on });
   if (on) {
-    chrome.alarms.create(ALARM, { periodInMinutes: 5 });
+    // delayInMinutes matters: with periodInMinutes alone the FIRST alarm does
+    // not fire until a full period has passed. Turning Autopilot on and having
+    // nothing happen for five minutes is indistinguishable from it being
+    // broken — which is exactly how a live test read it, twice.
+    chrome.alarms.create(ALARM, { delayInMinutes: 0.1, periodInMinutes: 5 });
+    // And do not even wait for that: act on the click that asked for it.
+    tick();
   } else {
     await chrome.alarms.clear(ALARM);
     // Leave any in-flight task alone: its lease expires on its own, and the
@@ -203,13 +227,31 @@ async function setAutopilot(on) {
 }
 
 async function tick() {
-  if (!(await autopilotOn())) return;
+  if (!(await autopilotOn())) {
+    await setStatus("off");
+    return;
+  }
   // Never stack tasks: if one is still leased, that tab is mid-application.
   const active = (await chrome.storage.local.get(TASK_STATE_KEY))[TASK_STATE_KEY];
   if (active) return;
 
   const out = await claimTask();
-  if (!out || !out.task) return;
+  if (!out || !out.task) {
+    // Say WHY there is nothing to do. Without this the popup can only show
+    // "on", and "on but idle" looks identical to "on but broken" — the single
+    // thing that made this feature impossible to diagnose from the outside.
+    await setStatus(
+      out && out.reason
+        ? { no_work: "No applications waiting right now.",
+            not_ready: "Finish your Grindly setup before autopilot can run.",
+            executor_disabled: "Autopilot is switched off on the Grindly server.",
+            not_connected: "Reconnect this browser to your Grindly account." }[out.reason]
+          || out.reason
+        : "Could not reach Grindly.",
+    );
+    return;
+  }
+  await setStatus("Opening an application…");
   // Hand the task's profile to the executor through the same stored record, so
   // the content script never has to hold the extension token to get it.
   await chrome.storage.local.set({
@@ -220,4 +262,18 @@ async function tick() {
 
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === ALARM) tick();
+});
+
+// A service worker is evicted when idle and a browser gets restarted. Without
+// re-arming, autopilot silently stops after the first suspension and the user
+// is never told — it just quietly never applies again.
+chrome.runtime.onStartup.addListener(async () => {
+  if (await autopilotOn()) {
+    chrome.alarms.create(ALARM, { delayInMinutes: 0.1, periodInMinutes: 5 });
+  }
+});
+chrome.runtime.onInstalled.addListener(async () => {
+  if (await autopilotOn()) {
+    chrome.alarms.create(ALARM, { delayInMinutes: 0.1, periodInMinutes: 5 });
+  }
 });

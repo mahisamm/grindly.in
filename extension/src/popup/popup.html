@@ -56,6 +56,11 @@
         <div class="hint" id="autoHint">
           Off — Grindly only fills forms you open yourself.
         </div>
+        <!-- What it last actually DID. "On" alone cannot tell an idle autopilot
+             from a broken one, which is precisely what made this impossible to
+             diagnose from the outside. -->
+        <div class="hint" id="autoStatus" style="display:none"></div>
+        <button class="ghost" id="runNow" style="display:none">Check for work now</button>
       </div>
       <div class="paste" id="pasteBox">
         <label for="pasteInput">Connect automatically didn't work? Paste your pairing code from the Grindly connect page:</label>
