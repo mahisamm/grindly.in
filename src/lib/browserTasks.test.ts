@@ -169,11 +169,15 @@ describe("claiming", () => {
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("gives the slot back when there turns out to be no work", async () => {
-    // Otherwise every idle poll quietly eats one of the day's five.
+  it("reserves nothing at all when there is no work", async () => {
+    // An idle browser polls ~288 times a day. Reserving on each of those and
+    // releasing again makes the cap depend on 288 successful releases, and a
+    // release is a write that can fail — one swallowed failure quietly eats a
+    // slot, and someone who applied to nothing all day ends up capped.
     mockFindFirst.mockResolvedValue(null);
     await claim();
-    expect(mockUsageUpdateMany.mock.calls.at(-1)![0].data).toEqual({ submitted: { decrement: 1 } });
+    expect(mockUsageUpdateMany).not.toHaveBeenCalled();
+    expect(mockUsageUpsert).not.toHaveBeenCalled();
   });
 
   it("gives the slot back to the loser of a race", async () => {

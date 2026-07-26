@@ -16,6 +16,9 @@ import { getUid } from "@/lib/session";
 // second attempt cannot duplicate a real application.
 export const dynamic = "force-dynamic";
 
+/** States a person may put back in the queue — none of them can have submitted. */
+const RETRYABLE = new Set(["awaiting_human", "failed"]);
+
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const uid = await getUid();
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
@@ -27,10 +30,14 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   });
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  // Only from awaiting_human. `submitted` is terminal, and `leased`/`filling`
-  // mean a tab is working on it right now — requeueing either would be asking
-  // for the second application.
-  if (task.state !== "awaiting_human") {
+  // `submitted` is terminal, and `leased`/`filling` mean a tab is working on it
+  // right now — requeueing either would be asking for the second application.
+  //
+  // `failed` is included because the executor only reports it BEFORE any click:
+  // a fill error, or a half-reloaded extension. Leaving it out meant a task
+  // killed by a stale extension bundle could never be run again, which is the
+  // most likely failure of all right after an update.
+  if (!RETRYABLE.has(task.state)) {
     return NextResponse.json(
       { error: "not_retryable", state: task.state },
       { status: 409 },
@@ -53,7 +60,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   // Conditioned on the state so two clicks cannot queue it twice.
   const { count } = await prisma.browserTask.updateMany({
-    where: { id: task.id, userId: uid, state: "awaiting_human" },
+    where: { id: task.id, userId: uid, state: task.state },
     data: {
       state: "queued",
       // A person asked for this, so the automatic attempt budget starts over.

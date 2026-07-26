@@ -135,8 +135,14 @@ export type ClaimResult =
  *
  * The slot is taken BEFORE the task is handed out, because the browser can
  * submit the moment it has one — asking permission afterwards is asking after
- * the application has already reached the employer. Every path that ends
- * without a task gives the slot straight back.
+ * the application has already reached the employer.
+ *
+ * But it is taken only once there is something to hand out. An idle browser
+ * polls every five minutes; reserving on each of those ~288 daily polls and
+ * releasing again means the cap depends on ~288 successful releases, and a
+ * release is a database write that can fail. One swallowed failure silently
+ * eats a slot, and a user who applied to nothing all day finds themselves
+ * capped. Peeking first costs one read and removes that entire class of drift.
  *
  * The task update is conditioned on the row still being `queued`, so two
  * browsers signed into the same account cannot both walk away believing they
@@ -147,18 +153,16 @@ export async function claimNextTask(
 ): Promise<ClaimResult> {
   await reclaimExpiredTasks();
 
-  if (!(await reserveDailySlot(userId, cap, localDate))) {
-    return { task: null, reason: "daily_cap" };
-  }
-
   const candidate = await prisma.browserTask.findFirst({
     where: { userId, state: "queued", attempts: { lt: MAX_ATTEMPTS } },
     orderBy: { createdAt: "asc" },
     select: { id: true, applicationId: true, url: true, host: true },
   });
-  if (!candidate) {
-    await releaseDailySlot(userId, localDate);
-    return { task: null, reason: "no_work" };
+  if (!candidate) return { task: null, reason: "no_work" };
+
+  // Only now, with real work in hand, and still before the browser gets it.
+  if (!(await reserveDailySlot(userId, cap, localDate))) {
+    return { task: null, reason: "daily_cap" };
   }
 
   const raw = crypto.randomBytes(32).toString("hex");

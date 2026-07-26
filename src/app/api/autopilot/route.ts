@@ -76,12 +76,18 @@ export async function GET() {
     // Tasks stopped at a human gate. These are the ONLY thing on this panel the
     // user must act on, so they are fetched separately rather than mixed into
     // the timeline, where they would read as history instead of a request.
+    // `failed` is here too: it is equally stuck and equally retryable, and
+    // leaving it out made a task killed by a stale extension bundle invisible
+    // as well as unreachable.
     prisma.browserTask
       .findMany({
-        where: { userId: uid, state: "awaiting_human" },
+        where: { userId: uid, state: { in: ["awaiting_human", "failed"] } },
         orderBy: { updatedAt: "desc" },
         take: 10,
-        select: { id: true, url: true, host: true, blockedReason: true, updatedAt: true },
+        select: {
+          id: true, url: true, host: true, state: true,
+          blockedReason: true, updatedAt: true,
+        },
       })
       .catch(() => []),
     // Is a browser actually connected to do that work? An action-needed list
@@ -127,14 +133,17 @@ export async function GET() {
       url: t.url,
       host: t.host,
       reason: t.blockedReason,
-      says: {
-        captcha: "This site asked for a CAPTCHA — open it and clear the check.",
-        otp: "This site sent a one-time code. Enter it and Grindly will carry on.",
-        login: "You need to sign in on this site first.",
-        payment: "This site is asking for a payment. Grindly will never pay to apply.",
-        unknown_question: "There's a question only you can answer honestly.",
-        changed_form: "Grindly sent this but the site never confirmed — please check it.",
-      }[t.blockedReason ?? ""] ?? "This one needs a look from you.",
+      says:
+        t.state === "failed"
+          ? "Grindly couldn't finish this one. Nothing was sent — try it again."
+          : {
+              captcha: "This site asked for a CAPTCHA — open it and clear the check.",
+              otp: "This site sent a one-time code. Enter it and Grindly will carry on.",
+              login: "You need to sign in on this site first.",
+              payment: "This site is asking for a payment. Grindly will never pay to apply.",
+              unknown_question: "There's a question only you can answer honestly.",
+              changed_form: "Grindly sent this but the site never confirmed — please check it.",
+            }[t.blockedReason ?? ""] ?? "This one needs a look from you.",
       at: t.updatedAt,
     })),
     browser: browser

@@ -75,6 +75,16 @@ describe("retrying a stopped task", () => {
     },
   );
 
+  it("also retries a task that failed", async () => {
+    // The executor reports `failed` only BEFORE any click — a fill error or a
+    // half-reloaded extension. Excluding it meant a task killed by a stale
+    // bundle could never run again, which is the likeliest failure right after
+    // an update.
+    mockTaskFind.mockResolvedValue({ id: "t1", state: "failed", applicationId: "a1" });
+    expect((await POST(req, ctx)).status).toBe(200);
+    expect(mockTaskUpdateMany.mock.calls[0][0].where.state).toBe("failed");
+  });
+
   it.each(["leased", "filling", "submitted", "queued"])(
     "refuses to touch a task in %s",
     async (state) => {
