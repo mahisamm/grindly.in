@@ -21,7 +21,12 @@
   // Narrow on purpose: only the dedicated cover-letter box. Screening questions
   // like "Why should we hire you?" are answered from the drafted answers, not by
   // dropping the whole cover letter into them.
-  var RE_COVER = /cover.?letter|covering letter|message to (the )?(recruiter|employer|team|company)|note to (the )?(recruiter|employer)/i;
+  // "Why should you be hired for this role?" is THE Internshala question — it
+  // appears on nearly every listing that asks anything at all — and it was not
+  // matched, so the one field a cover letter exists for was left blank and the
+  // application stalled waiting for a human. These are all the same ask phrased
+  // differently: tell us, in prose, why you.
+  var RE_COVER = /cover.?letter|covering letter|message to (the )?(recruiter|employer|team|company)|note to (the )?(recruiter|employer)|why should (you|we) (be hired|hire you)|why are you (a good fit|interested)|tell us about yourself|why do you want (this|to)/i;
   var RE_PHONE = /\b(phone|mobile|contact number|whatsapp)\b/i;
   var RE_EMAIL = /\be-?mail\b/i;
   var RE_CGPA = /\b(cgpa|gpa|grade point|percentage|marks|aggregate)\b/i;
@@ -89,10 +94,16 @@
       else if (RE_EMAIL.test(label) || type === "email") { val = profile.email; source = "profile"; }
       else if (RE_CGPA.test(label)) { val = profile.gpa != null ? String(profile.gpa) : null; source = "profile"; }
       else if (RE_NAME.test(label)) { val = profile.name; source = "profile"; }
-      else if (RE_COVER.test(label) && (tag === "textarea" || f.contentEditable)) { val = kit.coverLetter; source = "cover"; }
       else {
+        // An answer the user approved FOR THIS QUESTION always beats the
+        // generic cover letter. Checking the letter first meant widening the
+        // cover-letter pattern silently overrode specific approved answers —
+        // the drafted reply the user actually reviewed would lose to boilerplate.
         var a = matchAnswer(label, answers);
         if (a) { val = a; source = "answer"; }
+        else if (RE_COVER.test(label) && (tag === "textarea" || f.contentEditable)) {
+          val = kit.coverLetter; source = "cover";
+        }
       }
 
       if (val != null && String(val).trim() !== "") {
