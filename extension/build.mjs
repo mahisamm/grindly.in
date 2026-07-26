@@ -17,12 +17,18 @@ const version = manifest.version;
 
 // --- validate ---------------------------------------------------------------
 const problems = [];
-for (const f of ["src/background.js", "src/fillEngine.js", "src/content/filler.js",
-  "src/content/bridge.js", "src/popup/popup.html", "src/popup/popup.js",
-  // The autopilot executor and its gate detection. Without these the packaged
-  // extension still loads and still fills forms, but silently never runs a
-  // task and never stops at a CAPTCHA — a build that looks fine and is not.
-  "src/humanGate.js", "src/content/executor.js"]) {
+// Check every file the manifest actually references, rather than a list kept by
+// hand here. The hand-kept version drifted the moment a new content script was
+// added: the packaged extension would still load and still fill forms while
+// silently never running a task or never stopping at a CAPTCHA — a build that
+// looks fine and is not.
+const referenced = [
+  manifest.background?.service_worker,
+  manifest.action?.default_popup,
+  ...(manifest.content_scripts ?? []).flatMap((cs) => [...(cs.js ?? []), ...(cs.css ?? [])]),
+  ...Object.values(manifest.icons ?? {}),
+].filter(Boolean);
+for (const f of [...new Set(referenced), "src/popup/popup.js"]) {
   if (!fs.existsSync(path.join(root, f))) problems.push(`missing ${f}`);
 }
 if (!manifest.icons) {

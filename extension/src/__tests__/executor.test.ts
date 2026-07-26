@@ -175,6 +175,21 @@ describe("confirming a submission", () => {
     expect(SRC).toMatch(/buttonGone/);
   });
 
+  it("picks the send button by score, not by whichever comes first", () => {
+    // A first-match scan pressed the listing page's "Apply now" sitting behind
+    // the apply modal, which just re-opened the modal. See submitTarget.js.
+    expect(SRC).toMatch(/window\.GrindlySubmit/);
+    expect(SRC).toMatch(/picker\.pick\(document\)/);
+    expect(SRC).not.toMatch(/\^\(submit\|apply\|/);
+  });
+
+  it("names the button it pressed when the site says nothing", () => {
+    // Without this the failure is undiagnosable from a screenshot — which is
+    // exactly how the wrong-button bug survived a live run.
+    expect(SRC).toMatch(/const pressed =/);
+    expect(SRC).toMatch(/Grindly pressed/);
+  });
+
   it("waits long enough for a real site to respond", () => {
     expect(SRC).toMatch(/waited < 12000/);
   });

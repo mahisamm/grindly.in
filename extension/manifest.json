@@ -57,6 +57,7 @@
       "js": [
         "src/fillEngine.js",
         "src/humanGate.js",
+        "src/submitTarget.js",
         "src/content/filler.js",
         "src/content/executor.js"
       ],

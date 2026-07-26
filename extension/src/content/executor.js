@@ -76,16 +76,14 @@
     }
   }
 
+  // Choosing the send button is its own problem — see submitTarget.js. The first
+  // visible label match is NOT good enough: the listing page behind an apply
+  // modal has its own "Apply now", earlier in the DOM, and pressing it just
+  // re-opens the modal.
   function findSubmit() {
-    const candidates = document.querySelectorAll(
-      "button[type='submit'], input[type='submit'], button",
-    );
-    for (const el of candidates) {
-      if (el.offsetParent === null || el.disabled) continue;
-      const label = (el.innerText || el.value || "").trim().toLowerCase();
-      if (/^(submit|apply|send application|submit application)\b/.test(label)) return el;
-    }
-    return null;
+    const picker = window.GrindlySubmit;
+    if (!picker) return null;
+    return picker.pick(document);
   }
 
   async function run() {
@@ -157,6 +155,7 @@
     // Internshala the modal closing IS the confirmation, and there is often no
     // "thank you" text anywhere on the page.
     const formEl = submit.closest("form") || submit.parentElement;
+    const pressed = (submit.innerText || submit.value || "").trim().slice(0, 30);
     submit.click();
 
     // 5. Only call it submitted once the page says so. Clicking is not proof,
@@ -184,7 +183,13 @@
     } else {
       // Posted, but nothing confirmed it. Treated as needing a human look
       // rather than counted — see safety.classify_submit on the server.
-      banner("Grindly sent this, but the site did not confirm. Please check it.", "gate");
+      // Name the button it pressed. When this banner appeared on a form that had
+      // not moved, the one question nobody could answer from the screenshot was
+      // "which button did it actually click?" — and that was the whole bug.
+      banner(
+        `Grindly pressed “${pressed}” but the site did not confirm. Please check it.`,
+        "gate",
+      );
       await report("awaiting_human", { reason: "changed_form" });
     }
   }

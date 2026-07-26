@@ -28,8 +28,10 @@ beforeAll(() => {
   GF = (globalThis as any).GrindlyFill;
 });
 
+type Field = { tag: string; type?: string; name: string; label: string; filled?: boolean };
+
 /** A screening form of the kind LinkedIn/Naukri/Unstop actually serve. */
-function screeningForm() {
+function screeningForm(): Field[] {
   return [
     { tag: "input", type: "text", name: "full_name", label: "Full name" },
     { tag: "input", type: "email", name: "email", label: "Email address" },
@@ -104,7 +106,7 @@ describe("it does not invent facts it was never given", () => {
 
   it("never overwrites something the page or the user already set", () => {
     const fields = screeningForm();
-    fields[3] = { ...fields[3], filled: true } as typeof fields[3];
+    fields[3] = { ...fields[3], filled: true };
     const plan = GF.planFills(fields, {
       ...KIT_WITHOUT_FACTS,
       profile: { ...KIT_WITHOUT_FACTS.profile, gpa: 9.9 },
