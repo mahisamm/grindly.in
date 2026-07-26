@@ -20,7 +20,7 @@ export default function PrivacyPage() {
           <li>Resume content (uploaded or pasted by you)</li>
           <li>Job preferences: domains, locations, work mode, stipend range</li>
           <li>Platform credentials (encrypted with AES-256-GCM; we never store plaintext passwords)</li>
-          <li>Application history: matches we prepared for you and that you submitted yourself, outcomes, and timestamps</li>
+          <li>Application history: matches we prepared, applications you submitted, and applications Grindly sent where you explicitly authorised it, plus outcomes and timestamps</li>
         </ul>
       </section>
 
@@ -28,7 +28,7 @@ export default function PrivacyPage() {
         <h2 className="mb-3 text-base font-semibold text-ink">2. How we use your data</h2>
         <ul className="list-disc space-y-1 pl-5 text-sm">
           <li>To match your resume to relevant internship listings</li>
-          <li>To prepare applications for you to review and submit yourself in your own browser — Grindly never submits on your behalf</li>
+          <li>To prepare applications for you to review and submit yourself, and — only after you enable auto-apply and give explicit consent — to send eligible applications to employer-owned forms, hiring inboxes, or the staged Internshala beta flow</li>
           <li>To generate tailored cover letters using AI language models</li>
           <li>To send you progress reports via Slack or notification channels you configure</li>
         </ul>

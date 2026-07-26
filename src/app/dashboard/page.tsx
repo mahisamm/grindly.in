@@ -3552,7 +3552,7 @@ export default function Dashboard() {
                 The agent finds, scores, and preps every match either way. The only choice is who fills the form:
               </p>
               <ul className="text-xs text-muted mb-3 space-y-1.5">
-                <li>• <span className="text-foreground font-medium">Less manual (browser extension)</span> <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">coming soon</span> — it&apos;ll auto-fill the whole form in your own browser from your Apply Kit. You review and click <span className="font-medium">Submit</span>; the extension never submits for you.</li>
+                <li>• <span className="text-foreground font-medium">Less manual (browser extension)</span> <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted">coming soon</span> — it&apos;ll auto-fill the whole form in your own browser from your Apply Kit. Normal mode leaves final submit to you; any Autopilot beta requires separate opt-in and stops when it needs your input.</li>
                 <li>• <span className="text-foreground font-medium">Do it yourself</span> — open the listing and fill it in by hand using the cover letter and answers Grindly already prepared. Nothing to install.</li>
               </ul>
               {extInstalled ? (

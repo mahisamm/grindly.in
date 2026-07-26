@@ -41,7 +41,7 @@ export default function ExtensionPrivacyPage() {
 
           <h2 className="pt-4 text-lg font-semibold">What it does not do</h2>
           <ul className="list-disc space-y-2 pl-5">
-            <li>It never submits an application. You always click Submit yourself.</li>
+            <li>Normal “Fill with Grindly” leaves final submission to you. If the optional Autopilot beta is enabled by Grindly and you turn it on, it may submit a leased task only in your own signed-in browser; it stops for CAPTCHA, OTP, unsupported flows, and questions it cannot answer.</li>
             <li>It never reads pages outside the supported job sites and grindly.in.</li>
             <li>It never sees your job-platform passwords, and never stores form contents.</li>
             <li>It does not sell, share, or transfer your data to any third party.</li>

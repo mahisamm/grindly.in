@@ -6,11 +6,11 @@ export const metadata = { title: "Help & Support – Grindly" };
 const FAQ: { q: string; a: string }[] = [
   {
     q: "Does Grindly apply to jobs automatically?",
-    a: "For some, yes — and it depends entirely on where the application actually goes. Plenty of listings on the job boards are cross-posts: the real application lives on the company's own Google Form or an HR mailbox, where you don't have an account at all. Those the agent can fill in and send on its own, because there's no account of yours at risk. Listings that only exist on LinkedIn, Internshala, Naukri, Unstop or Indeed are different — those sit behind your account, so the agent prepares everything and you press submit. Your dashboard labels each one, so you always know which happened.",
+    a: "For some, yes — and it depends entirely on where the application goes. The agent can send eligible applications to an employer's own form or hiring inbox after you enable auto-apply and give consent. The staged Internshala beta can also send applications for an explicitly consented, connected account. LinkedIn, Naukri, Unstop and Indeed applications stay prepared for you to review and submit. Your dashboard labels each outcome.",
   },
   {
-    q: "Why won't the agent submit on LinkedIn or Internshala for me?",
-    a: "Because it's your account on the line, not ours. (1) LinkedIn, Internshala, Naukri, Unstop and Indeed all forbid automated submission in their terms — an account caught doing it gets restricted or banned, and losing it in the middle of your job search is a far worse outcome than a few extra taps. (2) Grindly never stores your platform password, so by design it has no session to submit with; that's what stops a breach here from becoming a breach of your job accounts. (3) You keep the last look at what goes out with your name on it. What you get instead: the role found and scored, the cover letter and screening answers drafted, and a ready-to-submit link. A company's own form has none of these problems — nobody holds an account there, and the form exists precisely to receive applications from people it's never met.",
+    q: "Why won't the agent submit on LinkedIn, Naukri, Unstop or Indeed for me?",
+    a: "Those applications stay in your control: Grindly prepares the role, cover letter and screening answers, then gives you a ready-to-submit link. For company-owned forms and hiring inboxes, the agent can send only after you enable auto-apply and consent. Internshala submission is separately gated to the staged beta, an explicitly consented user, and a connected account; it stops for CAPTCHA, OTP, unsupported flows, or questions it cannot answer honestly.",
   },
   {
     q: "What does the agent do if it can't answer one of the questions?",

@@ -1,9 +1,10 @@
 # Grindly Apply Assistant (browser extension)
 
 Fills your matched job applications from your Grindly account, **in your own
-browser**, on Internshala / LinkedIn / Naukri / Unstop / Indeed. You always click
-Submit yourself — the extension never submits, and never touches the Submit
-button (enforced by `src/__tests__/safety.test.ts`).
+browser**, on Internshala / LinkedIn / Naukri / Unstop / Indeed. Normal **Fill with
+Grindly** leaves final submission to you. In the separately gated Autopilot beta,
+the user can opt in to submit an eligible leased task from their own signed-in
+browser; it stops for CAPTCHA, OTP, unsupported flows, and questions it cannot answer.
 
 ## Why an extension (and not server-side auto-apply)
 
@@ -24,7 +25,7 @@ job page (linkedin.com/…)                            │  /api/extension/kit?u
      │                                               ▼
 filler.js  ◀──message──  background.js  ◀──── the kit (cover letter, answers, profile facts)
      │
-     ▼  GrindlyFill.applyFills(document, kit)   ← fills fields; NEVER submits
+     ▼  GrindlyFill.applyFills(document, kit)   ← fills fields; normal fill never submits
 ```
 
 - **`src/fillEngine.js`** — the fill logic. Pure `planFills(fields, kit)` core

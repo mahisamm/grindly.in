@@ -17,7 +17,7 @@ const FEATURES = [
   ["Resume-aware matching", "Skills extracted from your resume score every role 0–100. Only real fits get an application.", Target],
   ["You set the firewall", "Min match score, max/day, excluded companies, stipend floor — hard constraints the agent can't cross.", Bolt],
   ["Application-ready matches", "Opens supported listings and drafts each application — tailored resume, cover letter, screening answers — ready for you to submit, not just a list of links.", Doc],
-  ["Your accounts stay safe", "The agent sends applications to a company's own form or inbox, where you hold no account. On LinkedIn, Internshala and Naukri it never clicks submit — that's your account to lose, not ours.", Clock],
+  ["Your accounts stay safe", "With your consent, the agent sends eligible applications to a company's own form or inbox. LinkedIn, Naukri, Unstop and Indeed stay ready for your final submit; Internshala submission is a separately gated beta flow.", Clock],
   ["Daily reports your way", "Get progress reports via Slack DM or email — whichever you prefer. Connect Gmail to auto-detect interview calls.", Slack],
   ["Private by design", "Resume analysis uses only the AI providers configured for this service and degrades safely if they're unavailable. Your data is never sold.", Sparkle],
 ] as const;
