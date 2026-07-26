@@ -83,8 +83,11 @@ describe("the background worker's boundaries", () => {
 
   it("claims one task at a time", () => {
     // A browser opening five application tabs at once is alarming to watch and
-    // trivially mistaken for a bot.
-    expect(BG).toMatch(/if \(active\) return/);
+    // trivially mistaken for a bot. A live task stops the next claim — only an
+    // expired lease lets the loop move on, and by then the server has already
+    // returned that task to its queue.
+    const tick = BG.slice(BG.indexOf("async function tick"), BG.indexOf("chrome.alarms.onAlarm"));
+    expect(tick).toMatch(/if \(!expired\) \{[\s\S]*?return;/);
   });
 
   it("leaves an in-flight task alone when autopilot is switched off", () => {
@@ -143,6 +146,26 @@ describe("autopilot actually starts when you switch it on", () => {
       BG.indexOf("async function tick"),
     );
     expect(body).toMatch(/\btick\(\);/);
+  });
+
+  it("takes the next task as soon as one finishes", () => {
+    // Idling until the next alarm meant five minutes between applications, so
+    // autopilot appeared to work only when the user pressed the button.
+    expect(BG).toMatch(/scheduleNextTick\(\)/);
+    const report = BG.slice(BG.indexOf("async function reportTask"), BG.indexOf("const CHAIN_DELAY_MS"));
+    expect(report).toMatch(/scheduleNextTick\(\)/);
+  });
+
+  it("does not chain instantly, so a queue of failures cannot spin", () => {
+    expect(BG).toMatch(/CHAIN_DELAY_MS = \d{4}/);
+  });
+
+  it("clears a task whose lease died with the tab", () => {
+    // A tab closed mid-application never reports, and that record would sit in
+    // storage forever, silently blocking every future tick.
+    expect(BG).toMatch(/leaseExpiresAt.*<.*new Date\(\)/);
+    const tick = BG.slice(BG.indexOf("async function tick"), BG.indexOf("chrome.alarms.onAlarm"));
+    expect(tick).toMatch(/storage\.local\.remove\(TASK_STATE_KEY\)/);
   });
 
   it("re-arms after a browser restart", () => {

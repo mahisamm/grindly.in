@@ -102,8 +102,23 @@ async function reportTask(taskId, leaseToken, event, extra) {
   });
   if (event === "submitted" || event === "failed" || event === "awaiting_human") {
     await chrome.storage.local.remove(TASK_STATE_KEY);
+    // This task is done, so take the next one now rather than idling until the
+    // alarm comes round. Waiting five minutes between applications made
+    // autopilot look like it only worked when the user pressed the button —
+    // which, from the outside, is exactly what it looked like.
+    scheduleNextTick();
   }
   return out;
+}
+
+// A short pause before the next task: enough that a queue of instant failures
+// cannot become a hot loop, short enough that the browser keeps working.
+const CHAIN_DELAY_MS = 5000;
+let chainTimer = null;
+
+function scheduleNextTick() {
+  if (chainTimer) clearTimeout(chainTimer);
+  chainTimer = setTimeout(() => { chainTimer = null; tick(); }, CHAIN_DELAY_MS);
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -233,7 +248,19 @@ async function tick() {
   }
   // Never stack tasks: if one is still leased, that tab is mid-application.
   const active = (await chrome.storage.local.get(TASK_STATE_KEY))[TASK_STATE_KEY];
-  if (active) return;
+  if (active) {
+    // ...unless its lease has run out. A tab closed mid-application never
+    // reports anything, and this record would otherwise sit here forever,
+    // silently blocking every future tick. The server has already returned the
+    // task to its queue by now, and only from states that prove nothing was
+    // submitted.
+    const expired = active.leaseExpiresAt && new Date(active.leaseExpiresAt) < new Date();
+    if (!expired) {
+      await setStatus("Working on an application…");
+      return;
+    }
+    await chrome.storage.local.remove(TASK_STATE_KEY);
+  }
 
   const out = await claimTask();
   if (!out || !out.task) {
