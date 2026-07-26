@@ -5,12 +5,8 @@ export const metadata = { title: "Help & Support – Grindly" };
 
 const FAQ: { q: string; a: string }[] = [
   {
-    q: "Does Grindly apply to jobs automatically?",
-    a: "For some, yes — and it depends entirely on where the application goes. The agent can send eligible applications to an employer's own form or hiring inbox after you enable auto-apply and give consent. The staged Internshala beta can also send applications for an explicitly consented, connected account. LinkedIn, Naukri, Unstop and Indeed applications stay prepared for you to review and submit. Your dashboard labels each outcome.",
-  },
-  {
-    q: "Why won't the agent submit on LinkedIn, Naukri, Unstop or Indeed for me?",
-    a: "Those applications stay in your control: Grindly prepares the role, cover letter and screening answers, then gives you a ready-to-submit link. For company-owned forms and hiring inboxes, the agent can send only after you enable auto-apply and consent. Internshala submission is separately gated to the staged beta, an explicitly consented user, and a connected account; it stops for CAPTCHA, OTP, unsupported flows, or questions it cannot answer honestly.",
+    q: "Where can Grindly submit applications automatically?",
+    a: "After you enable auto-apply and give consent, Grindly can send eligible applications to company-owned forms and hiring inboxes. The staged Internshala beta is separately gated to an explicitly consented, connected account. LinkedIn, Naukri, Unstop, and Indeed stay prepared for your final review and submit.",
   },
   {
     q: "What does the agent do if it can't answer one of the questions?",
@@ -54,7 +50,7 @@ export default function HelpPage() {
     <main className="mx-auto max-w-3xl px-6 py-12 text-ink">
       <nav className="mb-10 flex items-center justify-between" aria-label="Help page navigation">
         <Link href="/" aria-label="Grindly home"><Logo size={30} /></Link>
-        <Link href="/dashboard" className="text-sm font-semibold text-brand hover:underline">Go to dashboard</Link>
+        <Link href="/login" className="text-sm font-semibold text-brand hover:underline">Sign in</Link>
       </nav>
 
       <h1 className="mb-2 font-display text-3xl font-semibold">Help &amp; Support</h1>

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
-import { Target, Bolt, Slack, Shield } from "@/components/Doodles";
 
 // Beta: Google is the only sign-in method. Email/password + phone-OTP backend
 // routes still exist but are intentionally not exposed here (no SMS provider
@@ -64,23 +63,16 @@ export default function LoginPage() {
 
         <div className="relative z-[2]">
           <h2 className="display text-[clamp(2.2rem,3.6vw,3.4rem)] leading-[1.06] text-[var(--paper)]">
-            Your agent kept
-            <br />
-            applying while
-            <br />
-            <span className="accent-italic">you were away.</span>
+            A simpler way to find your next internship.
           </h2>
           <ul className="mt-8 space-y-3.5">
-            {([
-              [Target, "Resume-aware matches, scored 0–100"],
-              [Bolt, "Hard limits you set — the agent can't cross them"],
-              [Shield, "Pay-to-apply “internships” filtered out — a real employer never charges you"],
-              [Slack, "Daily progress reports, right in Slack"],
-            ] as [React.ComponentType<{ size?: number }>, string][]).map(([Icon, t], i) => (
-              <li key={i} className="flex items-center gap-3 text-[rgba(242,236,225,0.88)]">
-                <span className="inline-flex size-9 flex-none items-center justify-center rounded-xl border border-[rgba(242,236,225,0.28)] bg-[rgba(242,236,225,0.06)]">
-                  <Icon size={18} />
-                </span>
+            {[
+              "Find roles that match your resume",
+              "Choose your limits and preferences",
+              "Review anything that needs your final submit",
+            ].map((t) => (
+              <li key={t} className="flex items-center gap-3 text-[rgba(242,236,225,0.88)]">
+                <span className="size-2 rounded-full bg-brand" />
                 <span className="text-sm">{t}</span>
               </li>
             ))}
@@ -89,7 +81,7 @@ export default function LoginPage() {
 
         <div className="relative z-[2] flex items-center gap-3 text-sm text-[rgba(242,236,225,0.7)]">
           <span className="tracking-[0.18em] text-brand">✦✦✦✦✦</span>
-          Built for the intern grind across five leading job platforms
+          Built for the intern grind
         </div>
       </aside>
 
@@ -124,7 +116,7 @@ export default function LoginPage() {
               {err && <p className="mt-4 text-sm text-danger">{err}</p>}
 
               <p className="mt-6 text-xs text-muted">
-                By continuing you agree to let Grindly prepare supported job applications within the limits you set and submit only after your approval.
+                By continuing, you agree to let Grindly prepare applications within the limits you set. Auto-apply is optional and requires separate consent during setup.
                 This sign-in only verifies your identity (name and email). Connecting Gmail for
                 application tracking is a separate, optional step with its own permission request later on.
                 See our{" "}

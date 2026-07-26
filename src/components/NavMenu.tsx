@@ -10,9 +10,6 @@ export function NavMenu() {
       <Link href="/#how" className="hidden sm:block text-muted hover:text-brand transition">
         How it works
       </Link>
-      <Link href="/#pricing" className="hidden sm:block text-muted hover:text-brand transition">
-        Pricing
-      </Link>
       <Link
         href="/login"
         className="press inline-flex items-baseline gap-2 rounded-full border border-[var(--line-2)] px-4 py-2 normal-case tracking-normal transition hover:bg-ink hover:text-[var(--paper)] hover:border-ink"
