@@ -127,6 +127,15 @@ services:
       # pool_timeout gives a request a few seconds to get a connection under a
       # burst instead of erroring. Well under Postgres max_connections (100).
       DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly?connection_limit=15&pool_timeout=15
+      # Autopilot flags. The web container is where the extension's claim
+      # endpoint runs, so these must be here too — passing them only to the
+      # worker meant the browser executor read "disabled on the server" while
+      # the worker read it as on. Same trap as before: a container sees only
+      # the variables its own service names.
+      GRINDLY_AUTOPILOT_ENABLED: ${GRINDLY_AUTOPILOT_ENABLED:-1}
+      GRINDLY_BROWSER_EXECUTOR_ENABLED: ${GRINDLY_BROWSER_EXECUTOR_ENABLED:-0}
+      GRINDLY_DIRECT_SUBMIT_ENABLED: ${GRINDLY_DIRECT_SUBMIT_ENABLED:-1}
+      GRINDLY_SEARCH_DISCOVERY_ENABLED: ${GRINDLY_SEARCH_DISCOVERY_ENABLED:-0}
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
       REDIS_URL: redis://redis:6379
       NODE_ENV: production

@@ -758,6 +758,27 @@ def _last_application_id(uid: str, url: str | None) -> str:
         return ""
 
 
+def _user_facing_failure(e: Exception, src: str) -> str:
+    """Turn a crash into something a job-seeker can actually read.
+
+    The raw text used to go straight onto the application row, so a user's
+    activity log showed things like "exception: It looks like you are using
+    Playwright Sync API inside the asyncio loop". That tells them nothing they
+    can act on, looks like the product is broken in their hands, and leaks our
+    internals into their history. The real error still goes to the log, where
+    the person who can fix it will actually see it.
+    """
+    log.exception("apply failed on %s", src)
+    text = str(e).lower()
+    if "timeout" in text or "timed out" in text:
+        return f"{src} took too long to respond — the agent will try again."
+    if "net::" in text or "connection" in text or "dns" in text:
+        return f"Couldn't reach {src} just now — the agent will try again."
+    if "closed" in text or "detached" in text:
+        return f"The {src} page closed before the agent finished — it will retry."
+    return f"Something went wrong on {src} — the agent stopped and will retry."
+
+
 def _tailor_key(title: str, company: str = "") -> str:
     """Cache key for a tailored resume — unique per (title, company).
 
@@ -1595,7 +1616,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                     source_modules=source_modules,
                 )
             except Exception as e:  # noqa: BLE001
-                status, why = "failed", f"exception: {str(e)[:100]}"
+                status, why = "failed", _user_facing_failure(e, src)
             fr = _classify_failure(why) if status == "failed" else None
             if fr == safety.FAILURE_REASON.CAPTCHA and not employer_channel:
                 _flag_challenge(src)
@@ -2013,7 +2034,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                     source_modules=source_modules,
                 )
             except Exception as e:  # noqa: BLE001
-                status, why = "failed", f"exception: {str(e)[:100]}"
+                status, why = "failed", _user_facing_failure(e, src)
         else:
             # No live module loaded for this listing's platform — never fabricate
             # an apply. Shortlist it so nothing fake reaches the dashboard.
