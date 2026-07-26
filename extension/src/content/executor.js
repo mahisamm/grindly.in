@@ -153,14 +153,30 @@
       return;
     }
 
+    // Remember the form so its disappearance can be read as success: on
+    // Internshala the modal closing IS the confirmation, and there is often no
+    // "thank you" text anywhere on the page.
+    const formEl = submit.closest("form") || submit.parentElement;
     submit.click();
 
     // 5. Only call it submitted once the page says so. Clicking is not proof,
     //    and a count the user cannot trust is worse than no count.
-    await new Promise((r) => setTimeout(r, 2500));
-    const confirmed = /thank you|application (received|submitted)|we(?:'| ha)ve received/i.test(
-      document.body.innerText || "",
-    );
+    //
+    // Poll rather than sleeping once: 2.5s was shorter than Internshala takes
+    // to respond, so a submission that very likely succeeded was reported as
+    // unconfirmed — which is safe, but leaves the user to check by hand every
+    // time and makes a working feature look broken.
+    const CONFIRM_RE = /thank you|application (has been )?(received|submitted|sent)|successfully applied|we(?:'| ha)ve received|applied successfully/i;
+    let confirmed = false;
+    for (let waited = 0; waited < 12000; waited += 750) {
+      await new Promise((r) => setTimeout(r, 750));
+      if (CONFIRM_RE.test(document.body.innerText || "")) { confirmed = true; break; }
+      // The form vanishing (or the button going away) is the site telling us it
+      // took the application, in the only language it speaks.
+      const gone = formEl && !document.body.contains(formEl);
+      const buttonGone = !document.body.contains(submit) || submit.offsetParent === null;
+      if (gone || buttonGone) { confirmed = true; break; }
+    }
     stopHeartbeat();
     if (confirmed) {
       banner("Grindly submitted this application.", "done");

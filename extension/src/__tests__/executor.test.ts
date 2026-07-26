@@ -163,3 +163,25 @@ describe("autopilot actually starts when you switch it on", () => {
     expect(BG).toMatch(/grindly:runNow/);
   });
 });
+
+describe("confirming a submission", () => {
+  it("treats the form disappearing as the site's confirmation", () => {
+    // On Internshala the modal closing IS the success signal — there is often
+    // no "thank you" text anywhere. A live run clicked Submit, found no such
+    // text within 2.5s, and reported "sent but not confirmed" for what had very
+    // likely succeeded: safe, but it leaves the user checking by hand every
+    // time and makes a working feature look broken.
+    expect(SRC).toMatch(/document\.body\.contains\(formEl\)/);
+    expect(SRC).toMatch(/buttonGone/);
+  });
+
+  it("waits long enough for a real site to respond", () => {
+    expect(SRC).toMatch(/waited < 12000/);
+  });
+
+  it("still refuses to claim success it cannot see", () => {
+    // The whole point survives: no confirmation, no "submitted".
+    expect(SRC).toMatch(/let confirmed = false/);
+    expect(SRC).toMatch(/did not confirm/i);
+  });
+});
