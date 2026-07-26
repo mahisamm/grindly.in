@@ -98,8 +98,8 @@ document.getElementById("autoSw").addEventListener("click", function () {
 
 // Manual kick. Waiting on a five-minute timer to discover whether autopilot
 // works at all is not a debugging experience anyone should have.
-document.getElementById("runNow").addEventListener("click", function () {
-  var btn = this;
+document.getElementById("runNow").addEventListener("click", function (event) {
+  var btn = event.currentTarget;
   btn.disabled = true;
   btn.textContent = "Checking…";
   chrome.runtime.sendMessage({ type: "grindly:runNow" }, function () {
