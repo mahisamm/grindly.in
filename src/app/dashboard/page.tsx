@@ -3487,7 +3487,7 @@ export default function Dashboard() {
             {/* Updates channel. Email + the in-app 🔔 bell are the defaults everyone
                 gets with zero setup, so Slack is a tucked-away opt-in rather than an
                 always-open form — most students never want it. */}
-            <div className={`mt-5 rounded-xl border border-border bg-surface p-4 ${extTokens.length === 0 ? "hidden" : ""}`}>
+            <div className="mt-5 rounded-xl border border-border bg-surface p-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <span className="text-base" aria-hidden>🔔</span>

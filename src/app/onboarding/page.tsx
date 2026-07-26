@@ -739,12 +739,12 @@ export default function OnboardingPage() {
           {/* STEP 3 — Activate */}
           {step === 3 && (
             <div>
-              <h2 className="font-display text-2xl font-semibold">Activate your beta</h2>
+              <h2 className="font-display text-2xl font-semibold">{upgradeMode ? "Plans are coming soon" : "Start free"}</h2>
               <p className="mt-1 text-sm text-muted">
-                Your beta account includes up to 5 applications a day. You can change your daily limit later.
+                You&apos;re on the free plan — up to 5 applications a day, every day. Plus and Pro are coming soon.
               </p>
 
-              <div className="hidden mt-5 grid gap-3 sm:grid-cols-2" aria-hidden="true">
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 {(Object.entries(PLANS) as [Plan, (typeof PLANS)[Plan]][]).map(([key, p]) => (
                   <button
                     key={key}
