@@ -202,6 +202,19 @@ def is_fetchable(url: str) -> bool:
     return True
 
 
+# Vendors that own their whole apex domain, matched by suffix rather than by
+# listing every hostname they have ever used. Greenhouse alone serves postings
+# from boards.greenhouse.io, job-boards.greenhouse.io and — for EU-hosted
+# customers — job-boards.eu.greenhouse.io, which the exact-host map missed. Live,
+# that graded four real Groww internships TIER_C ("never submitted from our
+# servers") when they sit on the employer's own ATS with no account required.
+_ATS_SUFFIXES: dict[str, str] = {
+    "greenhouse.io": "greenhouse",
+    "lever.co": "lever",
+    "ashbyhq.com": "ashby",
+}
+
+
 def ats_vendor(url: str) -> str | None:
     """Vendor slug if `url` is a known ATS application page, else None."""
     h = _host(url)
@@ -209,6 +222,9 @@ def ats_vendor(url: str) -> str | None:
         return None
     for host, vendor in _ATS_HOSTS.items():
         if h == host or h.endswith("." + host):
+            return vendor
+    for suffix, vendor in _ATS_SUFFIXES.items():
+        if h == suffix or h.endswith("." + suffix):
             return vendor
     return None
 

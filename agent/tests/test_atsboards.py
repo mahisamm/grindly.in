@@ -308,3 +308,32 @@ def test_a_board_that_changed_shape_costs_that_board_only(monkeypatch):
         lambda url: {"jobs": "not a list"} if "broken" in url else GREENHOUSE,
     )
     assert len(atsboards.fetch([], limit=10)) == 1
+
+
+def test_a_posting_the_company_publishes_on_its_own_site_still_resolves(monkeypatch):
+    """Greenhouse's `absolute_url` is wherever the company chose to publish. For
+    Stripe that is stripe.com/jobs/listing/... — employer-owned, but nothing
+    downstream can tell it holds a form without fetching it, so live it resolved
+    to the platform channel and TIER_C: never sent. The board's own URL is the
+    same posting somewhere the tier is provable."""
+    payload = {"jobs": [{
+        "id": 42, "title": "Engineering Intern",
+        "location": {"name": "Bengaluru, India"},
+        "absolute_url": "https://stripe.com/jobs/listing/engineering-intern/42",
+        "content": "Work on payments.",
+    }]}
+    _only("greenhouse", "stripe", payload, monkeypatch)
+    assert atsboards.fetch([], limit=5)[0]["url"] == \
+        "https://boards.greenhouse.io/stripe/jobs/42"
+
+
+def test_a_company_already_on_greenhouse_keeps_the_url_it_advertises(monkeypatch):
+    payload = {"jobs": [{
+        "id": 7, "title": "Engineering Intern",
+        "location": {"name": "Pune, India"},
+        "absolute_url": "https://job-boards.eu.greenhouse.io/acme/jobs/7",
+        "content": "x",
+    }]}
+    _only("greenhouse", "acme", payload, monkeypatch)
+    assert atsboards.fetch([], limit=5)[0]["url"] == \
+        "https://job-boards.eu.greenhouse.io/acme/jobs/7"

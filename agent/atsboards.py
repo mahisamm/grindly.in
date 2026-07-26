@@ -177,7 +177,22 @@ def _place(value) -> str:
     return str(value or "")
 
 
-def _postings(vendor: str, payload) -> list[dict]:
+def _greenhouse_url(slug: str, job: dict) -> str:
+    """The posting's canonical address on the ATS itself.
+
+    Kept only when the company publishes elsewhere: if `absolute_url` is already
+    a greenhouse host, that is the address the employer advertises and it stays.
+    """
+    job_id = str(job.get("id") or "").strip()
+    absolute = job.get("absolute_url") or ""
+    if not job_id or not slug:
+        return ""
+    if "greenhouse.io" in absolute:
+        return absolute
+    return f"https://boards.greenhouse.io/{slug}/jobs/{job_id}"
+
+
+def _postings(vendor: str, payload, slug: str = "") -> list[dict]:
     """Normalise a vendor's payload to {title, location, url, jd}."""
     out: list[dict] = []
     if vendor == "greenhouse":
@@ -185,7 +200,13 @@ def _postings(vendor: str, payload) -> list[dict]:
             out.append({
                 "title": j.get("title") or "",
                 "location": _place(j.get("location")),
-                "url": j.get("absolute_url") or "",
+                # `absolute_url` is wherever the company chose to publish — for
+                # Stripe that is stripe.com/jobs/listing/..., their own careers
+                # page. Employer-owned, but nothing downstream can tell it holds
+                # an application form without fetching it, so it resolved to the
+                # platform channel and TIER_C: never sent. The board's canonical
+                # URL is the same posting on the ATS, where the tier is provable.
+                "url": _greenhouse_url(slug, j) or (j.get("absolute_url") or ""),
                 "jd": _text(j.get("content") or ""),
             })
     elif vendor == "lever":
@@ -263,7 +284,7 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                 print(f"[atsboards] {slug} failed: {type(e).__name__}")
                 continue
             try:
-                postings = _postings(vendor, payload)
+                postings = _postings(vendor, payload, slug)
             except Exception as e:  # noqa: BLE001 — a board that changed shape
                 print(f"[atsboards] unreadable payload from {slug}: {type(e).__name__}")
                 continue

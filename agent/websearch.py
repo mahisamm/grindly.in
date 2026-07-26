@@ -42,6 +42,13 @@ _EXCLUDED_BRANDS = {
     # Aggregators and scraped mirrors: they reprint a listing and own no form.
     "myinternships", "internshipdunia", "letsintern", "twenty19", "jobsuche",
     "careerjet", "trovit", "adzuna", "talent", "jora", "whatjobs", "expertini",
+    # Indian mirrors. Every one of these arrived in the first live run of the
+    # careers-page query reprinting the SAME Microsoft and Google internships —
+    # a page about an application is not an application, and following one
+    # spends the resolver's budget to arrive back at the employer's own site.
+    "careeralerts", "yohire", "prosple", "jobinsider", "talentd", "freshersworld",
+    "fresherscamp", "jobsvacancy", "sarkariresult", "internshipwala", "placement",
+    "offcampusjobs4u", "freshersvoice", "jobslibrary", "hirist", "naukridaddy",
     # Social, docs and reference — never an application page.
     "facebook", "twitter", "instagram", "reddit", "youtube", "quora",
     "pinterest", "medium", "wikipedia", "wikimedia", "whatsapp", "telegram",

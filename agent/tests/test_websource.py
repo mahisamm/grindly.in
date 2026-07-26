@@ -423,3 +423,18 @@ def test_internal_is_not_intern(title):
     """"intern" is a substring of "internal". All three of these are real titles
     that a substring test filed as student internships."""
     assert websource._looks_like_an_internship(title, "apply now") is False
+
+
+@pytest.mark.parametrize("url", [
+    "https://careeralerts.co.in/jobs/microsoft-software-engineering-internship-2026",
+    "https://yohire.in/job/microsoft-software-engineering-intern-india",
+    "https://in.prosple.com/software-engineering-internships-india",
+    "https://www.jobinsider.in/jobs/microsoft-software-engineer-internship",
+    "https://www.talentd.in/articles/google-software-engineering-internship",
+])
+def test_indian_mirrors_are_filtered_too(url):
+    """Every one of these arrived in the first live run of the careers-page
+    query, all reprinting the same Microsoft and Google internships. A page
+    ABOUT an application is not an application, and following one spends the
+    resolver's budget to arrive back at the employer's own site."""
+    assert websearch._is_useful(url) is False

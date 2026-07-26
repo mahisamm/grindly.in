@@ -4,6 +4,8 @@ The point of these tests is the risk boundary, not the regexes: a listing must
 only be classed Tier A when the destination genuinely has no user account behind
 it, and anything ambiguous must fall back to the board.
 """
+import pytest
+
 import resolver
 
 
@@ -213,3 +215,26 @@ def test_fetch_budget_is_respected():
     jd = " ".join(f"https://site{i}.com/careers" for i in range(10))
     resolver.resolve(job, jd, fetch=fetch, max_follow=2)
     assert len(seen) == 2
+
+
+@pytest.mark.parametrize("url,vendor", [
+    ("https://boards.greenhouse.io/acme/jobs/1", "greenhouse"),
+    ("https://job-boards.greenhouse.io/acme/jobs/1", "greenhouse"),
+    ("https://job-boards.eu.greenhouse.io/acme/jobs/1", "greenhouse"),
+    ("https://jobs.eu.lever.co/acme/abc12345", "lever"),
+    ("https://jobs.ashbyhq.com/acme/abcd1234", "ashby"),
+])
+def test_every_host_a_vendor_serves_postings_from_is_recognised(url, vendor):
+    """Greenhouse alone serves postings from three hostnames, and EU-hosted
+    customers get a fourth. The exact-host map missed job-boards.eu.greenhouse.io,
+    which graded four real Groww internships TIER_C — "never submitted from our
+    servers" — when they sit on the employer's own ATS needing no account at
+    all."""
+    assert resolver.ats_vendor(url) == vendor
+
+
+def test_a_lookalike_domain_is_not_an_ats():
+    """Suffix matching must be on a domain boundary: greenhouse.io.evil.com is
+    not Greenhouse."""
+    assert resolver.ats_vendor("https://greenhouse.io.evil.com/acme/jobs/1") is None
+    assert resolver.ats_vendor("https://notgreenhouse.io/acme/jobs/1") is None
