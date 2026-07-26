@@ -599,7 +599,7 @@ type Autopilot = {
   readiness: { ready: boolean; missing: string[] };
   today: {
     submitted: number; limit: number; remaining: number;
-    attempted: number; date: string; timezone: string;
+    reserved?: number; attempted: number; date: string; timezone: string;
   };
   queued: number;
   lifetimeSubmitted: number;
@@ -2132,9 +2132,9 @@ export default function Dashboard() {
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
                 { label: "Sent today", value: `${autopilot.today.submitted}/${autopilot.today.limit}`,
-                  hint: "applications the agent submitted for you" },
+                  hint: "confirmed submissions only — an attempt the site never confirmed is not counted here" },
                 { label: "Left today", value: autopilot.today.remaining,
-                  hint: "your remaining daily allowance" },
+                  hint: "allowance still free — an unconfirmed attempt keeps its slot, because it may have gone through" },
                 { label: "In queue", value: autopilot.queued,
                   hint: "matched and waiting their turn" },
                 { label: "Sent all-time", value: autopilot.lifetimeSubmitted,
@@ -2146,6 +2146,19 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
+
+            {/* "Sent 0 of 5" next to "0 left" reads as a contradiction unless
+                the gap is named. It is not a rounding artefact: those slots are
+                held by attempts nobody could confirm, and they are held on
+                purpose, because an application that may have reached an
+                employer must not be sent twice. */}
+            {(autopilot.today.reserved ?? 0) > autopilot.today.submitted && (
+              <p className="mt-3 text-xs text-muted">
+                {(autopilot.today.reserved ?? 0) - autopilot.today.submitted} of today&apos;s
+                slots are held by attempts the site never confirmed. They stay held
+                until you check them — sending one twice is worse than sending none.
+              </p>
+            )}
 
             {/* Action needed — the only part of this panel that asks the user
                 for something, so it sits above the history and says plainly

@@ -28,6 +28,26 @@ function localDate(timezone: string): string {
   }
 }
 
+/**
+ * Midnight in the user's own zone, as an instant.
+ *
+ * UTC midnight is 5.5 hours into an Indian user's day, so counting "today"
+ * from it silently drops everything sent before 05:30 — the exact hours an
+ * overnight agent run uses.
+ */
+export function startOfLocalDay(timezone: string, now = new Date()): Date {
+  const tz = timezone || "Asia/Kolkata";
+  try {
+    const offset =
+      new Date(now.toLocaleString("en-US", { timeZone: tz })).getTime() -
+      new Date(now.toLocaleString("en-US", { timeZone: "UTC" })).getTime();
+    return new Date(Date.parse(`${localDate(tz)}T00:00:00Z`) - offset);
+  } catch {
+    // An unknown zone must not take the whole panel down.
+    return new Date(Date.parse(`${localDate(tz)}T00:00:00Z`));
+  }
+}
+
 export async function GET() {
   const uid = await getUid();
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
@@ -51,12 +71,22 @@ export async function GET() {
   const cap = user.profile?.maxPerDay ?? 0;
   const readiness = computeReadiness(user);
 
-  const [usage, queued, lifetime, recent, blocked, browser] = await Promise.all([
-    // The reservation ledger the worker writes — the same source that enforces
-    // the cap, so the number shown can never disagree with the number applied.
+  const [usage, sentToday, queued, lifetime, recent, blocked, browser] = await Promise.all([
+    // The reservation ledger. This bounds the day — but a reservation is
+    // permission to try, NOT proof of a send, so it must never be the number
+    // labelled "Sent". Five browser tasks that clicked and were never confirmed
+    // hold five reservations and sent nothing; reading this as "Sent today 5/5"
+    // told the user five applications had gone out when none had.
     prisma.dailyUsage
       .findUnique({ where: { userId_localDate: { userId: uid, localDate: localDate(tz) } } })
       .catch(() => null),
+    // What actually reached an employer today: applications the pipeline marked
+    // applied, which happens only on a confirmed submission.
+    prisma.application
+      .count({
+        where: { userId: uid, status: "applied", appliedAt: { gte: startOfLocalDay(tz) } },
+      })
+      .catch(() => 0),
     prisma.application.count({ where: { userId: uid, status: "matched" } }).catch(() => 0),
     prisma.application
       .count({ where: { userId: uid, status: { in: ["applied", "needs_review"] } } })
@@ -101,7 +131,10 @@ export async function GET() {
       .catch(() => null),
   ]);
 
-  const submittedToday = usage?.submitted ?? 0;
+  // Two different numbers that were being conflated: what went out, and what
+  // the day's allowance has been spent on. They are equal on a good day and
+  // must not be forced to agree on a bad one.
+  const reservedToday = usage?.submitted ?? 0;
 
   return NextResponse.json({
     // paused | setup_incomplete | active — one word the UI can render directly
@@ -113,9 +146,16 @@ export async function GET() {
         : "setup_incomplete",
     readiness,
     today: {
-      submitted: submittedToday,
+      // Confirmed sends only. Never the reservation count: a browser task that
+      // clicked and was never confirmed holds its slot but sent nothing, and
+      // showing it here claims an application the employer may never have seen.
+      submitted: sentToday,
       limit: cap,
-      remaining: Math.max(0, cap - submittedToday),
+      remaining: Math.max(0, cap - reservedToday),
+      // Allowance spent — reservations still held, whether or not they turned
+      // into a send. This is what `remaining` is computed from, so the two can
+      // be checked against each other.
+      reserved: reservedToday,
       // Reservations taken, including ones released after a definite non-send.
       // Kept separate from `submitted` so a retry-heavy day never reads as more
       // applications than the employer actually received.

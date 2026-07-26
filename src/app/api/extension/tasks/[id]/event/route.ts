@@ -123,7 +123,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         applicationId: task.applicationId,
         type: event,
         actor: "extension",
-        meta: JSON.stringify({ host: task.host, reason: data.blockedReason ?? null }),
+        meta: JSON.stringify({
+          host: task.host,
+          reason: data.blockedReason ?? null,
+          // A button label, and only a button label: stripped to plain
+          // characters and cut to 40, so no amount of page text can ride in
+          // here. It exists because "which button did it press?" could not be
+          // answered from outside the browser, and that was the whole bug.
+          detail: String(body.detail ?? "").replace(/[^\w .,'&-]/g, "").slice(0, 40) || null,
+        }),
       },
     })
     .catch(() => {});

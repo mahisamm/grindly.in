@@ -203,7 +203,10 @@
         `Grindly pressed “${pressed}” but the site did not confirm. Please check it.`,
         "gate",
       );
-      await report("awaiting_human", { reason: "changed_form" });
+      // Send the label too. Which button was pressed is the single fact that
+      // separates "the site was slow" from "we clicked the wrong thing", and it
+      // was unanswerable from outside the browser for two whole rounds.
+      await report("awaiting_human", { reason: "changed_form", detail: pressed });
     }
   }
 
