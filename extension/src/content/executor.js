@@ -86,6 +86,22 @@
     return picker.pick(document);
   }
 
+  /**
+   * Wait for a real send button to appear after opening the form.
+   *
+   * The modal is rendered asynchronously, so the button does not exist the
+   * instant the opener is clicked. Returns whatever the page ends up offering —
+   * including nothing, which the caller must treat as "no submission happened".
+   */
+  async function waitForSender(timeoutMs = 8000) {
+    for (let waited = 0; waited < timeoutMs; waited += 300) {
+      await new Promise((r) => setTimeout(r, 300));
+      const found = findSubmit();
+      if (found && window.GrindlySubmit.isSender(found)) return found;
+    }
+    return findSubmit();
+  }
+
   async function run() {
     task = await send({ type: "grindly:activeTask" });
     if (!task || !task.url) return;
@@ -125,9 +141,9 @@
     // then reported that the form asked something it could not answer.
     const kit = task.kit || {};
     let filled = 0;
+    const fillNow = () => window.GrindlyFill.applyFills(document.body, kit, document).filled;
     try {
-      const res = window.GrindlyFill.applyFills(document.body, kit, document);
-      filled = res.filled;
+      filled = fillNow();
     } catch {
       stopHeartbeat();
       await report("failed", { reason: "fill_error" });
@@ -135,7 +151,44 @@
       return;
     }
 
-    // 3. Any required question we hold no approved answer for stops the run.
+    // 3. Open the form, if the page is only offering to open one.
+    //
+    // An Internshala listing has NO application form until "Apply now" is
+    // pressed — the form lives in a modal that does not exist yet. Treating that
+    // button as the send button meant pressing it, watching the modal open, and
+    // then waiting twelve seconds for a confirmation that could never arrive.
+    // Every task did this, and every one of them reported "sent but not
+    // confirmed" about an application that had not been started.
+    let submit = findSubmit();
+    if (submit && !window.GrindlySubmit.isSender(submit)) {
+      banner("Grindly is opening the application form…", "work");
+      // Named apart from the send click on purpose: opening a form and sending
+      // one are different acts, and only the second is a submission.
+      const opener = submit;
+      opener.click();
+      submit = await waitForSender();
+      if (submit) {
+        // The form that just appeared is a new form: re-check for a gate, and
+        // fill the fields it brought with it.
+        gate = gates.detectHumanGate(document);
+        if (gate) {
+          stopHeartbeat();
+          banner(`Grindly stopped: this page needs you (${gate}).`, "gate");
+          await report("awaiting_human", { reason: gate });
+          return;
+        }
+        try {
+          filled += fillNow();
+        } catch {
+          stopHeartbeat();
+          await report("failed", { reason: "fill_error" });
+          banner("Grindly could not fill this form. Left it untouched for you.", "gate");
+          return;
+        }
+      }
+    }
+
+    // 4. Any required question we hold no approved answer for stops the run.
     //    Naming it is the difference between "needs your input" and something
     //    the user can actually act on.
     const unanswered = gates.unansweredRequiredFields(document);
@@ -146,7 +199,7 @@
       return;
     }
 
-    // 4. Re-check immediately before submitting — a challenge can appear between
+    // 5. Re-check immediately before submitting — a challenge can appear between
     //    the first check and now, and submitting into one is worse than stopping.
     gate = gates.detectHumanGate(document);
     if (gate) {
@@ -156,10 +209,11 @@
       return;
     }
 
-    const submit = findSubmit();
-    if (!submit) {
+    // Never press an opener as though it were a send button. If the form never
+    // appeared, the honest report is that nobody submitted anything.
+    if (!submit || !window.GrindlySubmit.isSender(submit)) {
       stopHeartbeat();
-      banner("Grindly filled the form but could not find Submit — please send it.", "gate");
+      banner("Grindly filled what it could but could not find Submit — please send it.", "gate");
       await report("awaiting_human", { reason: "unknown_question" });
       return;
     }
@@ -168,7 +222,8 @@
     // Internshala the modal closing IS the confirmation, and there is often no
     // "thank you" text anywhere on the page.
     const formEl = submit.closest("form") || submit.parentElement;
-    const pressed = (submit.innerText || submit.value || "").trim().slice(0, 30);
+    const pressed = window.GrindlySubmit.labelOf(submit).slice(0, 30);
+    banner("Grindly is submitting this application…", "work");
     submit.click();
 
     // 5. Only call it submitted once the page says so. Clicking is not proof,

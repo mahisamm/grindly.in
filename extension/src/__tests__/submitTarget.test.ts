@@ -92,11 +92,25 @@ describe("picking the button that actually sends the application", () => {
     expect((GS.pick(doc) as any).innerText).toBe("Apply now");
   });
 
-  it("returns nothing when every candidate is unreachable", () => {
-    // Handing the page back to the user beats clicking a button they cannot see
-    // being pressed.
-    const doc = docOf([{ innerText: "Submit", rect: R(400), covered: true }]);
-    expect(GS.pick(doc)).toBeNull();
+  it("prefers a Submit it cannot reach over an Apply it can", () => {
+    // Reachability began as a filter, which meant a real Submit failing the hit
+    // test for any reason lost to a merely-visible "Apply now". Clicking a
+    // covered button does nothing; clicking the wrong one opens a modal and
+    // looks like a submission that vanished. Score has to dominate.
+    const doc = docOf([
+      { innerText: "Apply now", rect: R(400) },
+      { innerText: "Submit", rect: R(900), covered: true },
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((GS.pick(doc) as any).innerText).toBe("Submit");
+  });
+
+  it("uses reachability to choose between two equal buttons", () => {
+    const doc = docOf([
+      { innerText: "Submit", rect: R(400), covered: true },
+      { innerText: "Submit", rect: R(900) },
+    ]);
+    expect(GS.clickable(GS.pick(doc), doc)).toBe(true);
   });
 
   it("skips a disabled Submit", () => {
@@ -113,6 +127,31 @@ describe("picking the button that actually sends the application", () => {
       { innerText: "Submit", rect: { left: 0, top: 0, width: 0, height: 0 } },
     ]);
     expect(GS.pick(doc)).toBeNull();
+  });
+});
+
+describe("opening a form is not sending it", () => {
+  it.each(["Submit", "Submit application", "Send application"])(
+    "%s sends the application",
+    (label) => {
+      expect(GS.isSender({ innerText: label })).toBe(true);
+    },
+  );
+
+  it.each(["Apply now", "Apply", "Continue", "Next"])(
+    "%s only opens the form",
+    (label) => {
+      // On Internshala the listing page has NO form until "Apply now" is
+      // pressed. Treating that as the send button meant pressing it, watching
+      // the modal open, and reporting "sent but not confirmed" about an
+      // application that had not even been started. Every task did this.
+      expect(GS.isSender({ innerText: label })).toBe(false);
+    },
+  );
+
+  it("does not call an unlabelled element a sender", () => {
+    expect(GS.isSender({})).toBe(false);
+    expect(GS.isSender(null)).toBe(false);
   });
 });
 

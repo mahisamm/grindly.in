@@ -205,6 +205,36 @@ describe("confirming a submission", () => {
     expect(SRC).toMatch(/Grindly pressed/);
   });
 
+  it("opens the form before looking for the button that sends it", () => {
+    // An Internshala listing has no form until "Apply now" is pressed. The
+    // executor pressed that as if it were Submit, the modal opened, and it then
+    // waited for a confirmation that could never come — on every single task.
+    expect(SRC).toMatch(/waitForSender/);
+    expect(SRC).toMatch(/isSender\(submit\)/);
+    const openIdx = SRC.indexOf("opening the application form");
+    const clickIdx = SRC.indexOf("submit.click()");
+    expect(openIdx).toBeGreaterThan(-1);
+    expect(openIdx).toBeLessThan(clickIdx);
+  });
+
+  it("fills again after the form appears", () => {
+    // The fields arrive with the modal. Filling only before it opened meant
+    // filling a page that had no form on it.
+    const body = SRC.slice(SRC.indexOf("waitForSender()"), SRC.indexOf("unansweredRequiredFields"));
+    expect(body).toMatch(/filled \+= fillNow\(\)/);
+  });
+
+  it("never presses an opener as though it were a send button", () => {
+    // If the form never appeared, the honest report is that nothing was sent.
+    expect(SRC).toMatch(/if \(!submit \|\| !window\.GrindlySubmit\.isSender\(submit\)\)/);
+  });
+
+  it("re-checks for a human gate on the form that just appeared", () => {
+    // A CAPTCHA inside the modal did not exist when the first check ran.
+    const body = SRC.slice(SRC.indexOf("waitForSender()"), SRC.indexOf("unansweredRequiredFields"));
+    expect(body).toMatch(/detectHumanGate\(document\)/);
+  });
+
   it("waits long enough for a real site to respond", () => {
     expect(SRC).toMatch(/waited < 12000/);
   });
