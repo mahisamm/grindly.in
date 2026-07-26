@@ -608,6 +608,11 @@ type Autopilot = {
     status: string; appliedAt: string | null; applyChannel: string | null;
     applyTier: string | null; reason: string | null;
   }[];
+  actionNeeded: {
+    id: string; url: string; host: string;
+    reason: string | null; says: string; at: string;
+  }[];
+  browser: { connected: boolean; label?: string | null; lastSeen?: string | null };
 };
 
 export default function Dashboard() {
@@ -2100,6 +2105,55 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
+
+            {/* Action needed — the only part of this panel that asks the user
+                for something, so it sits above the history and says plainly
+                what happened. The agent stopped here on purpose: a CAPTCHA, a
+                login or a question it could not answer honestly. */}
+            {autopilot.actionNeeded?.length > 0 && (
+              <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+                <div className="text-sm font-semibold text-foreground">
+                  Needs you ({autopilot.actionNeeded.length})
+                </div>
+                <p className="mt-0.5 text-xs text-muted">
+                  Grindly stopped rather than guess. Open each one, do the bit only
+                  you can, and it carries on from there.
+                </p>
+                <ul className="mt-3 space-y-2">
+                  {autopilot.actionNeeded.map((t) => (
+                    <li key={t.id} className="flex items-start justify-between gap-3 text-sm">
+                      <span className="min-w-0 text-muted">
+                        <span className="text-foreground">{t.host}</span> — {t.says}
+                      </span>
+                      <a
+                        href={t.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="shrink-0 rounded-md border border-amber-500/40 px-2.5 py-1 text-xs text-amber-700 hover:bg-amber-500/10 transition"
+                      >
+                        Open →
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Browser health. An action-needed list with no paired browser is a
+                dead end, so say so instead of leaving the user to wonder. */}
+            {autopilot.browser && (
+              <p className="mt-3 flex items-center gap-2 text-xs text-muted">
+                <span
+                  className={`size-1.5 rounded-full ${
+                    autopilot.browser.connected ? "bg-accent" : "bg-border"
+                  }`}
+                  aria-hidden
+                />
+                {autopilot.browser.connected
+                  ? `Browser connected${autopilot.browser.lastSeen ? ` · last seen ${new Date(autopilot.browser.lastSeen).toLocaleString()}` : ""}`
+                  : "No browser connected — board applications wait for you until one is."}
+              </p>
+            )}
 
             {autopilot.timeline.length > 0 && (
               <div className="mt-5">

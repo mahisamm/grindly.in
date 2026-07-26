@@ -10,6 +10,9 @@
 // approved answer for. Guessing there would put an invented fact in front of an
 // employer under the user's name, so it stops too.
 
+(function (root) {
+  "use strict";
+
 const CAPTCHA_MARKERS = [
   "iframe[src*='recaptcha']",
   "iframe[src*='hcaptcha']",
@@ -40,7 +43,7 @@ function hasLoginForm(doc) {
  * appear between those two moments, and submitting into one either fails or —
  * worse — succeeds in a way the user never agreed to.
  */
-export function detectHumanGate(doc = document) {
+function detectHumanGate(doc = document) {
   for (const sel of CAPTCHA_MARKERS) {
     const el = doc.querySelector(sel);
     if (el) return "captcha";
@@ -63,7 +66,7 @@ export function detectHumanGate(doc = document) {
  * application, rather than a vague "needs your input". An empty list means
  * every mandatory field was filled from something the user actually approved.
  */
-export function unansweredRequiredFields(doc = document) {
+function unansweredRequiredFields(doc = document) {
   const out = [];
   const fields = doc.querySelectorAll(
     "input[required], select[required], textarea[required], [aria-required='true']",
@@ -85,3 +88,9 @@ export function unansweredRequiredFields(doc = document) {
   }
   return out;
 }
+
+  root.GrindlyGate = {
+    detectHumanGate: detectHumanGate,
+    unansweredRequiredFields: unansweredRequiredFields,
+  };
+})(typeof globalThis !== "undefined" ? globalThis : this);

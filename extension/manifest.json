@@ -1,9 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "Grindly — Apply Assistant",
-  "version": "0.1.0",
-  "description": "Auto-fills your job applications from your Grindly account, in your own browser. You always click Submit yourself.",
-  "permissions": ["storage", "activeTab"],
+  "name": "Grindly \u2014 Apply Assistant",
+  "version": "0.2.0",
+  "description": "Runs your Grindly applications in your own browser. It fills from facts you approved and always stops for a CAPTCHA, a login, or a question it cannot answer honestly.",
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "storage",
+    "tabs"
+  ],
   "host_permissions": [
     "https://grindly.in/*",
     "https://*.internshala.com/*",
@@ -13,17 +18,31 @@
     "https://*.unstop.com/*",
     "https://*.indeed.com/*"
   ],
-  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
-  "background": { "service_worker": "src/background.js" },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
   "action": {
     "default_title": "Grindly Apply Assistant",
     "default_popup": "src/popup/popup.html",
-    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "content_scripts": [
     {
-      "matches": ["https://grindly.in/*"],
-      "js": ["src/content/bridge.js"],
+      "matches": [
+        "https://grindly.in/*"
+      ],
+      "js": [
+        "src/content/bridge.js"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -35,7 +54,12 @@
         "https://*.unstop.com/*",
         "https://*.indeed.com/*"
       ],
-      "js": ["src/fillEngine.js", "src/content/filler.js"],
+      "js": [
+        "src/fillEngine.js",
+        "src/humanGate.js",
+        "src/content/filler.js",
+        "src/content/executor.js"
+      ],
       "run_at": "document_idle"
     }
   ]

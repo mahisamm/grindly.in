@@ -80,3 +80,44 @@ export function verifyWebhookSignature(rawBody: string, signature: string): bool
   const b = Buffer.from(signature);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
+
+/**
+ * Read back an order from Razorpay — the authoritative record of what was paid
+ * for, and for whom.
+ *
+ * The confirm route must not take the plan from its request body. The signature
+ * only covers orderId|paymentId, so a genuine ₹99 Plus payment could be
+ * confirmed with `plan: "pro"` in the JSON and the account would be upgraded to
+ * a plan nobody paid for. The order's own notes carry the userId and plan we
+ * set at creation, so that is what gets trusted.
+ *
+ * Returns null when the order cannot be read; the caller must then refuse
+ * rather than fall back to the client's claim.
+ */
+export async function fetchOrder(
+  orderId: string,
+): Promise<{ userId?: string; plan?: Plan; status?: string; amount?: number } | null> {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret || !orderId) return null;
+  try {
+    const res = await fetch(`https://api.razorpay.com/v1/orders/${encodeURIComponent(orderId)}`, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
+      },
+    });
+    if (!res.ok) return null;
+    const order = (await res.json()) as {
+      status?: string; amount?: number; notes?: { userId?: string; plan?: string };
+    };
+    const plan = order.notes?.plan;
+    return {
+      userId: order.notes?.userId,
+      plan: plan === "pro" || plan === "plus" ? plan : undefined,
+      status: order.status,
+      amount: order.amount,
+    };
+  } catch {
+    return null;
+  }
+}

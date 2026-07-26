@@ -1,5 +1,21 @@
-import { describe, it, expect } from "vitest";
-import { detectHumanGate, unansweredRequiredFields } from "../humanGate";
+import { describe, it, expect, beforeAll } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+
+// Load the EXACT shipped content-script file, the same way fillEngine.test.ts
+// does. humanGate.js cannot be an ES module: MV3 content_scripts do not load
+// modules, and this file has to run on the job page itself.
+let detectHumanGate: (doc: Document) => string | null;
+let unansweredRequiredFields: (doc: Document) => string[];
+
+beforeAll(() => {
+  const code = fs.readFileSync(path.resolve(__dirname, "..", "humanGate.js"), "utf8");
+  new Function(code)();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = (globalThis as any).GrindlyGate;
+  detectHumanGate = g.detectHumanGate;
+  unansweredRequiredFields = g.unansweredRequiredFields;
+});
 
 // The line between an assistant and a bot. Some controls on an application page
 // exist SPECIFICALLY to confirm a person is present; Grindly's answer to every

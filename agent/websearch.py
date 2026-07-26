@@ -183,8 +183,55 @@ _CACHE: dict[str, tuple[float, list[dict]]] = {}
 CACHE_TTL = int(os.environ.get("GRINDLY_SEARCH_CACHE_TTL", "3600"))
 _CACHE_MAX = 400
 
+# Backed by a file on the shared data volume, because an in-memory cache dies
+# with the process — and the worker is exactly the kind of thing that gets
+# restarted on deploy, then immediately starts a run into a throttled backend
+# with nothing to fall back on. A plain JSON file costs nothing and outlives
+# both the process and the container.
+_CACHE_FILE = os.path.join(
+    os.environ.get("GRINDLY_DATA_DIR")
+    or os.path.join(os.path.dirname(__file__), "..", "data"),
+    "search_cache.json",
+)
+_loaded = False
+
+
+def _load_cache() -> None:
+    global _loaded
+    if _loaded:
+        return
+    _loaded = True   # set first: a broken file must not retry on every query
+    try:
+        with open(_CACHE_FILE, encoding="utf-8") as f:
+            raw = json.load(f)
+        now = time.time()
+        for key, entry in (raw or {}).items():
+            ts, results = entry
+            if now - ts <= CACHE_TTL and results:
+                _CACHE[key] = (ts, results)
+        if _CACHE:
+            print(f"[websearch] restored {len(_CACHE)} cached quer(ies) from disk")
+    except FileNotFoundError:
+        pass
+    except Exception as e:  # noqa: BLE001 — a corrupt cache is not worth a failed run
+        print(f"[websearch] cache load skipped: {type(e).__name__}")
+
+
+def _save_cache() -> None:
+    try:
+        os.makedirs(os.path.dirname(_CACHE_FILE), exist_ok=True)
+        tmp = _CACHE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({k: [ts, r] for k, (ts, r) in _CACHE.items()}, f)
+        # Atomic: a half-written cache read by the next process would be a
+        # corrupt file that costs a run's discovery.
+        os.replace(tmp, _CACHE_FILE)
+    except Exception as e:  # noqa: BLE001
+        print(f"[websearch] cache save skipped: {type(e).__name__}")
+
 
 def _cache_get(key: str) -> list[dict] | None:
+    _load_cache()
     hit = _CACHE.get(key)
     if not hit:
         return None
@@ -201,10 +248,12 @@ def _cache_put(key: str, results: list[dict]) -> None:
     # to prevent.
     if not results:
         return
+    _load_cache()
     if len(_CACHE) >= _CACHE_MAX:
         oldest = min(_CACHE, key=lambda k: _CACHE[k][0])
         _CACHE.pop(oldest, None)
     _CACHE[key] = (time.time(), results)
+    _save_cache()
 
 
 def search(query: str, limit: int = 10) -> list[dict]:

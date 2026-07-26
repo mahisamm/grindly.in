@@ -1201,6 +1201,22 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
 
         log.info("total fetched: %d listings across all sources", len(all_jobs))
 
+        # Per-source yield. The total-zero alarm below only fires when EVERY
+        # source is dead; one adapter quietly returning nothing (markup drift,
+        # a block, an expired selector) hides inside a healthy total and starves
+        # that source's supply for weeks. Record each so /admin can see which
+        # one stopped, and say so in the log even when the run looks fine.
+        per_source: dict[str, int] = {}
+        for j in all_jobs:
+            src_name = j.get("source") or "?"
+            per_source[src_name] = per_source.get(src_name, 0) + 1
+        for src_name in active_sources:
+            got = per_source.get(src_name, 0)
+            if got == 0:
+                log.warning("source %s yielded 0 listings this run", src_name)
+                db.add_audit("source_zero_yield", user_id=uid, target=src_name)
+        log.info("per-source yield: %s", per_source or "{}")
+
         # Core-value alarm: discovery yielding >0 is the whole product. If every
         # rotated board fetched nothing, the scrapers are almost certainly broken
         # (anti-bot / markup drift) — the exact "ran done but banked 0 matches"

@@ -6,6 +6,7 @@ const {
   mockUserUpdate,
   mockSendMessage,
   mockVerifyPaymentSignature,
+  mockFetchOrder,
   mockAuditLogCreate,
 } = vi.hoisted(() => ({
   mockGetUid: vi.fn(),
@@ -13,6 +14,7 @@ const {
   mockUserUpdate: vi.fn(),
   mockSendMessage: vi.fn(),
   mockVerifyPaymentSignature: vi.fn(),
+  mockFetchOrder: vi.fn(),
   mockAuditLogCreate: vi.fn(),
 }));
 
@@ -35,6 +37,10 @@ vi.mock("@/lib/adapters/payment", () => ({
     pro:     { name: "Pro",     price: 999, perDay: 15, blurb: "" },
   },
   verifyPaymentSignature: mockVerifyPaymentSignature,
+  // The confirm route now reads the plan back from the PAID order rather than
+  // trusting the request body — the signature only covers orderId|paymentId,
+  // so a Plus payment could otherwise be confirmed as Pro.
+  fetchOrder: mockFetchOrder,
 }));
 vi.mock("@/lib/audit", () => ({ audit: mockAuditLogCreate }));
 vi.mock("next/headers", () => ({
@@ -134,6 +140,9 @@ describe("POST /api/pay/confirm", () => {
     it("grants plan on valid signature", async () => {
       mockGetUid.mockResolvedValue("u1");
       mockVerifyPaymentSignature.mockReturnValue(true);
+      // The order is now the authority on WHICH plan was bought; the body's
+      // claim is no longer enough on its own.
+      mockFetchOrder.mockResolvedValue({ userId: "u1", plan: "pro", status: "paid" });
       mockUserFindUnique.mockResolvedValue({ id: "u1", profile: null });
 
       const res = await POST(makeReq({

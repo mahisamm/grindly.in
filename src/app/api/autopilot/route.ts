@@ -51,7 +51,7 @@ export async function GET() {
   const cap = user.profile?.maxPerDay ?? 0;
   const readiness = computeReadiness(user);
 
-  const [usage, queued, lifetime, recent] = await Promise.all([
+  const [usage, queued, lifetime, recent, blocked, browser] = await Promise.all([
     // The reservation ledger the worker writes — the same source that enforces
     // the cap, so the number shown can never disagree with the number applied.
     prisma.dailyUsage
@@ -73,6 +73,26 @@ export async function GET() {
         },
       })
       .catch(() => []),
+    // Tasks stopped at a human gate. These are the ONLY thing on this panel the
+    // user must act on, so they are fetched separately rather than mixed into
+    // the timeline, where they would read as history instead of a request.
+    prisma.browserTask
+      .findMany({
+        where: { userId: uid, state: "awaiting_human" },
+        orderBy: { updatedAt: "desc" },
+        take: 10,
+        select: { id: true, url: true, host: true, blockedReason: true, updatedAt: true },
+      })
+      .catch(() => []),
+    // Is a browser actually connected to do that work? An action-needed list
+    // with no paired browser is a dead end, so the UI needs to know.
+    prisma.extensionToken
+      .findFirst({
+        where: { userId: uid, revokedAt: null },
+        orderBy: { lastUsedAt: "desc" },
+        select: { label: true, lastUsedAt: true },
+      })
+      .catch(() => null),
   ]);
 
   const submittedToday = usage?.submitted ?? 0;
@@ -100,5 +120,25 @@ export async function GET() {
     queued,
     lifetimeSubmitted: lifetime,
     timeline: recent,
+    // Plain-English reasons: the user is being asked to do something, so the
+    // ask has to be legible without knowing our vocabulary.
+    actionNeeded: blocked.map((t) => ({
+      id: t.id,
+      url: t.url,
+      host: t.host,
+      reason: t.blockedReason,
+      says: {
+        captcha: "This site asked for a CAPTCHA — open it and clear the check.",
+        otp: "This site sent a one-time code. Enter it and Grindly will carry on.",
+        login: "You need to sign in on this site first.",
+        payment: "This site is asking for a payment. Grindly will never pay to apply.",
+        unknown_question: "There's a question only you can answer honestly.",
+        changed_form: "Grindly sent this but the site never confirmed — please check it.",
+      }[t.blockedReason ?? ""] ?? "This one needs a look from you.",
+      at: t.updatedAt,
+    })),
+    browser: browser
+      ? { connected: true, label: browser.label, lastSeen: browser.lastUsedAt }
+      : { connected: false },
   });
 }

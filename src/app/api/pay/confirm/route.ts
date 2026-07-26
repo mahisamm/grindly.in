@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
-import { PLANS, type Plan, verifyPaymentSignature } from "@/lib/adapters/payment";
+import { PLANS, type Plan, fetchOrder, verifyPaymentSignature } from "@/lib/adapters/payment";
 import { sendMessage, onboardingDM } from "@/lib/adapters/slack";
 import { audit } from "@/lib/audit";
 
@@ -29,7 +29,9 @@ export async function POST(req: Request) {
     plan?: Plan;
   };
 
-  const plan: Plan = body.plan === "pro" ? "pro" : "plus";
+  // Provisional only. The plan that is actually granted comes from the paid
+  // ORDER below, never from this body — see the note in the Razorpay branch.
+  let plan: Plan = body.plan === "pro" ? "pro" : "plus";
 
   // Single explicit switch — see NEXT_PUBLIC_PAYMENTS_ENABLED in .env.example
   // and the matching check in /api/pay. Not an inference from NODE_ENV/keys.
@@ -53,6 +55,27 @@ export async function POST(req: Request) {
     if (!valid) {
       return NextResponse.json({ error: "invalid signature" }, { status: 400 });
     }
+
+    // The signature covers orderId|paymentId and NOTHING ELSE. Taking the plan
+    // from the request body therefore let a genuine Plus payment be confirmed
+    // with `plan: "pro"` and upgrade the account to something nobody paid for.
+    // Read the plan and the owner from the order Razorpay actually holds.
+    const order = await fetchOrder(body.razorpay_order_id);
+    if (!order || !order.plan) {
+      return NextResponse.json({ error: "could not verify this order" }, { status: 400 });
+    }
+    // An order belongs to the account that created it. Without this check a
+    // valid payment made by one user could be replayed to upgrade another.
+    if (order.userId && order.userId !== sessionUid) {
+      await audit("payment_rejected", {
+        userId: sessionUid, target: body.razorpay_order_id, detail: "order belongs to another account",
+      });
+      return NextResponse.json({ error: "this order belongs to another account" }, { status: 403 });
+    }
+    if (order.status && order.status !== "paid") {
+      return NextResponse.json({ error: "this order is not paid" }, { status: 400 });
+    }
+    plan = order.plan;
     await audit("payment", { userId: sessionUid, target: body.razorpay_payment_id, detail: plan });
   }
 
