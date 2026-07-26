@@ -385,3 +385,41 @@ def test_an_unknown_ashby_job_returns_nothing(monkeypatch):
 
     monkeypatch.setattr(websource.urllib.request, "urlopen", lambda *a, **k: _Resp())
     assert websource._jd_from_ashby("https://jobs.ashbyhq.com/acme/4bcdec99-9f2e-416c-8e26-4aaa") == ""
+
+
+# ---- every query the source claims to make must actually be made -----------
+
+def test_every_template_is_executed(monkeypatch):
+    """fetch() used to slice `_TEMPLATES[:min(3, len(_TEMPLATES))]` — a "budget"
+    that ignored `domains` entirely and simply cut the list at three. The Google
+    Forms and careers-page templates sat below that line and were never once
+    executed, so employer-owned discovery outside the big three ATSs was
+    unreachable by construction. Nothing said so either: the source reported the
+    results it did find and looked perfectly healthy."""
+    asked: list[str] = []
+    monkeypatch.setattr(websearch, "search", lambda q, limit=10: (asked.append(q), [])[1])
+    websource.fetch(["data science"], limit=25)
+    assert len(asked) == len(websource._TEMPLATES)
+    assert any("docs.google.com/forms" in q for q in asked), "Google Forms never queried"
+    assert any("careers" in q for q in asked), "careers pages never queried"
+
+
+def test_the_query_budget_is_bounded_by_domains(monkeypatch):
+    """This runs per user per sweep against a self-hosted metasearch instance;
+    an unbounded fan-out gets the server's IP blocked, which ends discovery for
+    every user at once."""
+    asked: list[str] = []
+    monkeypatch.setattr(websearch, "search", lambda q, limit=10: (asked.append(q), [])[1])
+    websource.fetch(["a", "b", "c", "d", "e"], limit=25)
+    assert len(asked) == 3 * len(websource._TEMPLATES)
+
+
+@pytest.mark.parametrize("title", [
+    "Senior Internal Auditor",
+    "Head of SOX and Internal Controls",
+    "Lead Engineer, Internal Engineering",
+])
+def test_internal_is_not_intern(title):
+    """"intern" is a substring of "internal". All three of these are real titles
+    that a substring test filed as student internships."""
+    assert websource._looks_like_an_internship(title, "apply now") is False

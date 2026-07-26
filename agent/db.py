@@ -292,6 +292,29 @@ def applied_external_ids(uid: str) -> set[str]:
         return {r["url"] for r in rows}
 
 
+def known_ats_urls(limit: int = 500) -> list[str]:
+    """Every ATS posting URL the system has ever recorded, for any user.
+
+    `atsboards` reads company slugs back out of these. Discovery that only ever
+    looks at a hardcoded list of boards cannot learn, and the boards worth
+    asking are exactly the ones something already found — so a company web
+    search surfaced once on a good day gets queried directly from then on.
+
+    Fleet-wide on purpose and safe to be: a board's public postings are the same
+    for everyone, and nothing here reads a user's own rows — only which
+    employers exist.
+    """
+    with conn() as c:
+        rows = c.execute(
+            "SELECT DISTINCT url FROM applications "
+            "WHERE url IS NOT NULL AND ("
+            "url LIKE '%greenhouse.io%' OR url LIKE '%lever.co%' "
+            "OR url LIKE '%ashbyhq.com%') LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+        return [r["url"] for r in rows if r["url"]]
+
+
 def committed_role_keys(uid: str) -> set[tuple[str, str]]:
     """(company, title-prefix) pairs this user is already committed to.
 

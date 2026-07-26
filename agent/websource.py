@@ -52,6 +52,21 @@ _TEMPLATES = [
 _INTERN_WORDS = ("intern", "internship", "trainee", "apprentice")
 _STALE_WORDS = ("2019", "2020", "2021", "2022", "2023")
 
+# The same words, matched as WORDS. A substring test files "Head of SOX and
+# Internal Controls", "Senior Internal Auditor" and "Lead Engineer, Internal
+# Engineering" as internships — all three are real titles this returned, and a
+# student applying to a Head-of-SOX role under their own name is the kind of
+# mistake that is remembered by that employer.
+_INTERN_RE = re.compile(
+    r"\b(internships?|interns?|trainees?|apprenticeships?|apprentices?)\b", re.I,
+)
+
+
+def says_internship(title: str) -> bool:
+    """Does this title name an internship? Shared with atsboards.py so the two
+    discovery sources cannot drift into different opinions about the question."""
+    return bool(_INTERN_RE.search(title or ""))
+
 
 def enabled() -> bool:
     """Both switches must agree: the feature flag AND a usable provider. A flag
@@ -110,7 +125,7 @@ def _looks_like_an_internship(title: str, snippet: str) -> bool:
     # a "Director, Commercial Operations" internship. A real posting names the
     # role in its title; that is the one reliable signal here, and a few missed
     # listings cost far less than applying to the wrong job in someone's name.
-    if not any(w in title.lower() for w in _INTERN_WORDS):
+    if not says_internship(title):
         return False
     blob = f"{title} {snippet}".lower()
     # A posting whose text advertises a long-past year is almost always an
@@ -305,11 +320,17 @@ def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     seen: set[str] = set()
     # Budget queries: this runs per user per sweep, and a self-hosted metasearch
     # instance that hammers its upstream engines gets the server's IP blocked —
-    # which would end discovery for every user at once.
-    per_domain = max(1, min(3, len(_TEMPLATES)))
-
+    # which would end discovery for every user at once. Three domains by five
+    # templates is fifteen queries a run, the figure this instance was sized for.
+    #
+    # It used to slice `_TEMPLATES[:min(3, len(_TEMPLATES))]` — a budget that
+    # ignored `domains` entirely and simply cut the list at three, so the Google
+    # Forms and careers-page templates were never once executed. Employer-owned
+    # discovery outside the big three ATSs was unreachable by construction, and
+    # nothing said so: the source reported the results it did find and looked
+    # perfectly healthy.
     for domain in (domains or [])[:3]:
-        for template in _TEMPLATES[:per_domain]:
+        for template in _TEMPLATES:
             if len(jobs) >= limit:
                 break
             for r in websearch.search(template.format(domain=domain), limit=8):

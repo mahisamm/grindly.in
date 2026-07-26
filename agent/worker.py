@@ -422,13 +422,20 @@ SOURCE_PRIORITY = ["linkedin", "internshala", "naukri", "unstop", "indeed"]
 # (_platforms_for_today always includes index 0).
 DISCOVERY_PLATFORMS = ["internshala", "naukri", "linkedin", "unstop", "indeed"]
 
-# Sources that are not job boards. `websource` searches the open web for
-# internships on employers' OWN pages — the only listings the agent can submit
-# unattended, because the candidate holds no account there (resolver.TIER_A).
-# It is always queried when enabled rather than entering the daily board
-# rotation: the rotation exists to look human to sites that watch for bots, and
-# a search backend is not one of those sites.
-ALWAYS_ON_SOURCES = ["websource"]
+# Sources that are not job boards. Both find internships on employers' OWN
+# pages — the only listings the agent can submit unattended, because the
+# candidate holds no account there (resolver.TIER_A). Neither enters the daily
+# board rotation: the rotation exists to look human to sites that watch for
+# bots, and an API is not one of those sites.
+#
+#   websource  searches the open web. Reaches careers pages and Google Forms
+#              that no ATS API lists, but only while a search engine answers —
+#              and every general engine blocks this server's datacenter IP.
+#   atsboards  asks Greenhouse/Lever/Ashby directly. Sees only the boards it is
+#              pointed at, and needs no engine, key or quota to see them.
+#
+# Both, because their blind spots are opposite ones.
+ALWAYS_ON_SOURCES = ["websource", "atsboards"]
 
 # Platforms whose ToS prohibits automated submission (all 5 we currently
 # integrate — none of them are ATS-hosted company pages that welcome bots).
