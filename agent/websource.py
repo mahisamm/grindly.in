@@ -14,6 +14,7 @@ so worker.py treats it as one more source. It opens no browser: search results
 plus the resolver's existing link-following are enough to reach a real form.
 """
 from __future__ import annotations
+from datetime import datetime, timezone
 import hashlib
 import html
 import json
@@ -50,7 +51,7 @@ _TEMPLATES = [
 # quoted template while the unquoted equivalents returned twenty.
 
 _INTERN_WORDS = ("intern", "internship", "trainee", "apprentice")
-_STALE_WORDS = ("2019", "2020", "2021", "2022", "2023")
+_YEAR_RE = re.compile(r"\b(20\d{2})\b")
 
 # The same words, matched as WORDS. A substring test files "Head of SOX and
 # Internal Controls", "Senior Internal Auditor" and "Lead Engineer, Internal
@@ -128,9 +129,11 @@ def _looks_like_an_internship(title: str, snippet: str) -> bool:
     if not says_internship(title):
         return False
     blob = f"{title} {snippet}".lower()
-    # A posting whose text advertises a long-past year is almost always an
-    # archived page; applying there is noise to the employer and to the user.
-    if any(y in blob for y in _STALE_WORDS) and "2026" not in blob:
+    # A posting whose text advertises only past recruitment years is almost
+    # always archived. Keep this relative to the current year: a fixed list
+    # silently let 2025 listings through as soon as the calendar changed.
+    years = [int(year) for year in _YEAR_RE.findall(blob)]
+    if years and max(years) < datetime.now(timezone.utc).year:
         return False
     return True
 

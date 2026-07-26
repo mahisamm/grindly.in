@@ -65,6 +65,11 @@ engines:
     disabled: false
   - name: mojeek
     disabled: false
+  # Verified from the production VPS: Yandex returns current employer ATS
+  # postings for the site's job-specific queries when the other general
+  # engines are empty. It remains behind the existing employer-only filters.
+  - name: yandex
+    disabled: false
   - name: startpage
     disabled: false
   # Everything below is noise for a job search and only spends upstream quota.

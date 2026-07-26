@@ -86,6 +86,13 @@ def test_an_archived_posting_is_dropped():
         "Summer Intern 2021", "Applications for our 2021 batch") is False
 
 
+def test_a_listing_from_last_year_is_dropped_too():
+    """The stale check must advance with the calendar, not stop at a fixed year."""
+    assert websource._looks_like_an_internship(
+        "Software Engineering Intern, Summer 2025", "Join our 2025 internship cohort"
+    ) is False
+
+
 def test_a_current_internship_survives():
     assert websource._looks_like_an_internship(
         "Software Development Internship", "Hiring interns for 2026") is True
