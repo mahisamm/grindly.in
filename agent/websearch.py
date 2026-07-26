@@ -20,6 +20,7 @@ Failure is always an empty list, never an exception: discovery must degrade to
 from __future__ import annotations
 import json
 import os
+import time
 import urllib.parse
 import urllib.request
 
@@ -163,7 +164,47 @@ def _from_tavily(query: str, limit: int) -> list[dict]:
     return out[:limit]
 
 
-_PROVIDERS = {"searxng": _from_searxng, "serper": _from_serper, "tavily": _from_tavily}
+# Resolved by NAME at call time, not by reference at import. Binding the
+# functions here would freeze the dispatch table at module load, so swapping a
+# provider (or substituting one in a test) would silently keep calling the
+# original — the table would say one thing and the code do another.
+_PROVIDERS = {"searxng": "_from_searxng", "serper": "_from_serper", "tavily": "_from_tavily"}
+
+
+# Query -> (unix_ts, results). Upstream engines throttle a datacenter IP after a
+# burst, and a throttled minute used to erase a whole run's discovery: the same
+# query that returned twenty results returned zero, and the user saw "no
+# matches" for a reason that had nothing to do with their job search.
+#
+# Results are reused for CACHE_TTL. Job postings do not churn minute to minute,
+# so a slightly stale list is strictly better than an empty one — and it also
+# stops repeat runs from spending fresh quota on a query just answered.
+_CACHE: dict[str, tuple[float, list[dict]]] = {}
+CACHE_TTL = int(os.environ.get("GRINDLY_SEARCH_CACHE_TTL", "3600"))
+_CACHE_MAX = 400
+
+
+def _cache_get(key: str) -> list[dict] | None:
+    hit = _CACHE.get(key)
+    if not hit:
+        return None
+    ts, results = hit
+    if time.time() - ts > CACHE_TTL:
+        _CACHE.pop(key, None)
+        return None
+    return results
+
+
+def _cache_put(key: str, results: list[dict]) -> None:
+    # Only cache a real answer. Caching an empty result would turn one throttled
+    # moment into an hour of guaranteed silence — the exact failure this exists
+    # to prevent.
+    if not results:
+        return
+    if len(_CACHE) >= _CACHE_MAX:
+        oldest = min(_CACHE, key=lambda k: _CACHE[k][0])
+        _CACHE.pop(oldest, None)
+    _CACHE[key] = (time.time(), results)
 
 
 def search(query: str, limit: int = 10) -> list[dict]:
@@ -177,12 +218,23 @@ def search(query: str, limit: int = 10) -> list[dict]:
     query = (query or "").strip()
     if not query or not configured():
         return []
-    fn = _PROVIDERS.get(provider())
+    fn = globals().get(_PROVIDERS.get(provider(), ""))
     if fn is None:
         print(f"[websearch] unknown provider {provider()!r} — no results")
         return []
+    key = f"{provider()}::{query}::{limit}"
     try:
-        return fn(query, max(1, limit))
+        results = fn(query, max(1, limit))
     except Exception as e:  # noqa: BLE001
         print(f"[websearch] provider {provider()} failed: {str(e)[:120]}")
-        return []
+        results = []
+    if results:
+        _cache_put(key, results)
+        return results
+    # Empty almost always means throttled, not "nothing exists". Serve the last
+    # good answer for this query rather than reporting no work.
+    cached = _cache_get(key)
+    if cached:
+        print(f"[websearch] upstream returned nothing — reusing {len(cached)} cached result(s)")
+        return cached
+    return []

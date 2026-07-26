@@ -292,3 +292,47 @@ def test_an_index_page_is_not_saved_by_a_snippet_that_mentions_interns():
 
 def test_a_posting_that_names_the_role_survives():
     assert websource._looks_like_an_internship("Software Engineer Intern @ Simular", "join us") is True
+
+
+# ---- a throttled minute must not erase a run --------------------------------
+
+def test_a_throttled_query_reuses_the_last_good_answer(monkeypatch):
+    """Upstream engines throttle a datacenter IP after a burst. The same query
+    that returned twenty results returns zero minutes later, and the user saw
+    "no matches" for a reason that had nothing to do with their job search.
+    Postings do not churn minute to minute, so a slightly stale list beats an
+    empty one."""
+    websearch._CACHE.clear()
+    calls = {"n": 0}
+
+    def flaky(q, n):
+        calls["n"] += 1
+        return [{"title": "SWE Intern", "url": "https://jobs.lever.co/a/4bcdec99-9f2e-416c", "snippet": "x"}] \
+            if calls["n"] == 1 else []
+
+    monkeypatch.setattr(websearch, "_from_searxng", flaky)
+    first = websearch.search("intern india", limit=5)
+    assert len(first) == 1
+    second = websearch.search("intern india", limit=5)   # upstream now throttled
+    assert second == first, "a throttled answer must fall back to the cached one"
+
+
+def test_an_empty_answer_is_never_cached(monkeypatch):
+    """Caching a throttled empty would turn one bad moment into an hour of
+    guaranteed silence — the exact failure the cache exists to prevent."""
+    websearch._CACHE.clear()
+    monkeypatch.setattr(websearch, "_from_searxng", lambda q, n: [])
+    assert websearch.search("nothing", limit=5) == []
+    assert websearch._CACHE == {}
+
+
+def test_a_stale_entry_expires(monkeypatch):
+    websearch._CACHE.clear()
+    monkeypatch.setattr(
+        websearch, "_from_searxng",
+        lambda q, n: [{"title": "t", "url": "https://jobs.lever.co/a/4bcdec99-9f2e-416c", "snippet": "s"}],
+    )
+    websearch.search("q", limit=5)
+    key = next(iter(websearch._CACHE))
+    websearch._CACHE[key] = (0.0, websearch._CACHE[key][1])   # long expired
+    assert websearch._cache_get(key) is None
