@@ -18,7 +18,11 @@ const version = manifest.version;
 // --- validate ---------------------------------------------------------------
 const problems = [];
 for (const f of ["src/background.js", "src/fillEngine.js", "src/content/filler.js",
-  "src/content/bridge.js", "src/popup/popup.html", "src/popup/popup.js"]) {
+  "src/content/bridge.js", "src/popup/popup.html", "src/popup/popup.js",
+  // The autopilot executor and its gate detection. Without these the packaged
+  // extension still loads and still fills forms, but silently never runs a
+  // task and never stops at a CAPTCHA — a build that looks fine and is not.
+  "src/humanGate.js", "src/content/executor.js"]) {
   if (!fs.existsSync(path.join(root, f))) problems.push(`missing ${f}`);
 }
 if (!manifest.icons) {
