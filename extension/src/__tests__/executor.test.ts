@@ -76,6 +76,33 @@ describe("the background worker's boundaries", () => {
     expect(manifest.content_scripts[1].matches).toContain("https://*/*");
   });
 
+  it("does not ship a package that disagrees with the source manifest", () => {
+    // The test above proves the SOURCE manifest is right. It says nothing about
+    // the artifact a user actually installs, and those drifted: widening
+    // host_permissions to https://*/* never triggered a rebuild, so the built
+    // package kept a five-board allowlist — and kept the SAME version string,
+    // making a stale install indistinguishable from a current one. Tasks on an
+    // employer-hosted page were claimed, the tab opened, and the executor was
+    // never injected, so the lease just expired.
+    //
+    // dist/ is a build output and is not in git; when it is absent there is
+    // nothing to contradict and nothing to check.
+    const pkgManifest = path.resolve(__dirname, "..", "..", "dist", "pkg", "manifest.json");
+    if (!fs.existsSync(pkgManifest)) return;
+    const src = JSON.parse(fs.readFileSync(
+      path.resolve(__dirname, "..", "..", "manifest.json"), "utf8",
+    ));
+    const built = JSON.parse(fs.readFileSync(pkgManifest, "utf8"));
+    expect(built.version, "packaged build is stale — run `node extension/build.mjs`")
+      .toBe(src.version);
+    expect(built.host_permissions, "packaged host_permissions drifted from source")
+      .toEqual(src.host_permissions);
+    expect(
+      built.content_scripts?.map((c: { matches: string[] }) => c.matches),
+      "packaged content_script matches drifted from source",
+    ).toEqual(src.content_scripts?.map((c: { matches: string[] }) => c.matches));
+  });
+
   it("keeps the extension token out of content scripts", () => {
     // A hostile page that compromised a content script still must not be able
     // to claim tasks or report submissions.
