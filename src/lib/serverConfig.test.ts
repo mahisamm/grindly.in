@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { databaseUrlConfigured, smsProvider, missingProdConfig, paymentMode } from "./serverConfig";
+import {
+  databaseUrlConfigured, smsProvider, missingProdConfig, missingBetaAutomationConfig, paymentMode,
+} from "./serverConfig";
 
 const TOUCHED = [
   "FAST2SMS_API_KEY", "MSG91_AUTH_KEY", "MSG91_TEMPLATE_ID", "MSG91_SENDER_ID",
@@ -7,6 +9,8 @@ const TOUCHED = [
   "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_OAUTH_BRAND_VERIFIED", "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET",
   "DATABASE_URL", "APP_ENCRYPTION_KEY", "NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_BASE_URL",
   "EMAIL_SMTP_HOST", "EMAIL_SMTP_USER",
+  "GRINDLY_AUTO_APPLY_MODE", "GRINDLY_AUTOPILOT_ENABLED", "GRINDLY_DIRECT_SUBMIT_ENABLED",
+  "GRINDLY_BROWSER_EXECUTOR_ENABLED", "GRINDLY_SEARCH_DISCOVERY_ENABLED", "GRINDLY_ATS_APPLY",
 ];
 let SNAP: NodeJS.ProcessEnv;
 beforeEach(() => {
@@ -98,5 +102,29 @@ describe("paymentMode", () => {
     process.env.RAZORPAY_KEY_ID = "rzp_test_x";
     process.env.RAZORPAY_KEY_SECRET = "secret";
     expect(paymentMode()).toBe("razorpay");
+  });
+});
+
+describe("missingBetaAutomationConfig", () => {
+  it("names every disabled beta automation dependency", () => {
+    const missing = missingBetaAutomationConfig().join(" | ");
+    expect(missing).toMatch(/AUTO_APPLY_MODE/);
+    expect(missing).toMatch(/BROWSER_EXECUTOR/);
+    expect(missing).toMatch(/SEARCH_DISCOVERY/);
+    expect(missing).toMatch(/ATS_APPLY/);
+    expect(missing).toMatch(/EMAIL_SMTP/);
+  });
+
+  it("is ready only when the full autonomous beta contract is configured", () => {
+    process.env.GRINDLY_AUTO_APPLY_MODE = "live";
+    process.env.GRINDLY_AUTOPILOT_ENABLED = "1";
+    process.env.GRINDLY_DIRECT_SUBMIT_ENABLED = "1";
+    process.env.GRINDLY_BROWSER_EXECUTOR_ENABLED = "1";
+    process.env.GRINDLY_SEARCH_DISCOVERY_ENABLED = "1";
+    process.env.GRINDLY_ATS_APPLY = "1";
+    process.env.EMAIL_SMTP_HOST = "smtp.example.com";
+    process.env.EMAIL_SMTP_USER = "beta";
+    process.env.NEXT_PUBLIC_APP_URL = "https://beta.example.com";
+    expect(missingBetaAutomationConfig()).toEqual([]);
   });
 });

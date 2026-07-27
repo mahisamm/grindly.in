@@ -64,6 +64,18 @@ describe("the executor's safety rules", () => {
 });
 
 describe("the background worker's boundaries", () => {
+  it("is permitted to execute a leased job on an employer HTTPS domain", () => {
+    // Web search intentionally finds employer-owned career pages, not only the
+    // five original job boards. The per-task host lock in executor.js is the
+    // security boundary; a static board-only manifest would strand every such
+    // task before the executor could enforce that lock.
+    const manifest = JSON.parse(fs.readFileSync(
+      path.resolve(__dirname, "..", "..", "manifest.json"), "utf8",
+    ));
+    expect(manifest.host_permissions).toContain("https://*/*");
+    expect(manifest.content_scripts[1].matches).toContain("https://*/*");
+  });
+
   it("keeps the extension token out of content scripts", () => {
     // A hostile page that compromised a content script still must not be able
     // to claim tasks or report submissions.

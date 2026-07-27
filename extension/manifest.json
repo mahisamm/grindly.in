@@ -11,12 +11,7 @@
   ],
   "host_permissions": [
     "https://grindly.in/*",
-    "https://*.internshala.com/*",
-    "https://internshala.com/*",
-    "https://*.linkedin.com/*",
-    "https://*.naukri.com/*",
-    "https://*.unstop.com/*",
-    "https://*.indeed.com/*"
+    "https://*/*"
   ],
   "icons": {
     "16": "icons/icon16.png",
@@ -47,12 +42,7 @@
     },
     {
       "matches": [
-        "https://*.internshala.com/*",
-        "https://internshala.com/*",
-        "https://*.linkedin.com/*",
-        "https://*.naukri.com/*",
-        "https://*.unstop.com/*",
-        "https://*.indeed.com/*"
+        "https://*/*"
       ],
       "js": [
         "src/fillEngine.js",

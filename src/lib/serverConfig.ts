@@ -124,3 +124,39 @@ export function missingProdConfig(): string[] {
   // deploy. Found and fixed as a bug during the master/hosted-branch merge.
   return miss;
 }
+
+/**
+ * Configuration required for the beta promise: Grindly finds internships on
+ * the web, submits where it can, and emails a daily outcome. Kept separate
+ * from `missingProdConfig()` because a healthy web login is not proof that the
+ * autonomous product is switched on.
+ */
+export function missingBetaAutomationConfig(): string[] {
+  const miss: string[] = [];
+  if (process.env.GRINDLY_AUTO_APPLY_MODE !== "live") {
+    miss.push("GRINDLY_AUTO_APPLY_MODE=live");
+  }
+  if (process.env.GRINDLY_AUTOPILOT_ENABLED === "0") {
+    miss.push("GRINDLY_AUTOPILOT_ENABLED=1");
+  }
+  if (process.env.GRINDLY_DIRECT_SUBMIT_ENABLED === "0") {
+    miss.push("GRINDLY_DIRECT_SUBMIT_ENABLED=1");
+  }
+  if (process.env.GRINDLY_BROWSER_EXECUTOR_ENABLED !== "1") {
+    miss.push("GRINDLY_BROWSER_EXECUTOR_ENABLED=1");
+  }
+  if (process.env.GRINDLY_SEARCH_DISCOVERY_ENABLED !== "1") {
+    miss.push("GRINDLY_SEARCH_DISCOVERY_ENABLED=1");
+  }
+  if (process.env.GRINDLY_ATS_APPLY !== "1") {
+    miss.push("GRINDLY_ATS_APPLY=1");
+  }
+  if (!emailConfigured()) {
+    miss.push("EMAIL_SMTP_HOST and EMAIL_SMTP_USER (daily beta email)");
+  }
+  const base = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_BASE_URL || "";
+  if (!/^https:\/\//i.test(base)) {
+    miss.push("NEXT_PUBLIC_APP_URL=https://<production-domain> (extension pairing)");
+  }
+  return miss;
+}

@@ -1921,17 +1921,35 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 destination=dest,
             )
             # Held here means OUR servers may not send it — not that nobody can.
-            # A board application is still completable in the user's own browser,
-            # in their own session, with any CAPTCHA going to them. Queue it for
-            # the extension.
+            # A page application is still completable in the user's own browser,
+            # in their own session, with any CAPTCHA going to them. This includes
+            # employer ATS/forms discovered through the open web: a disabled or
+            # unsupported server sender must not turn a real apply URL into a
+            # dead-end. Email is deliberately excluded because a browser page
+            # cannot safely send an email on the user's behalf.
             #
             # This is the producer the executor consumes. Without it the claim
             # endpoint has nothing to hand out, which is how the browser executor
             # shipped complete, switched on, and did nothing at all: the queue was
             # empty by construction.
-            if flags.browser_executor_enabled() and is_platform_channel and plan["ready"]:
+            browser_url = (
+                dest.get("target")
+                if dest.get("channel") in (resolver.CHANNEL_ATS, resolver.CHANNEL_GOOGLE_FORM)
+                else job.get("url")
+            )
+            browserable = (
+                is_platform_channel
+                or dest.get("channel") in (resolver.CHANNEL_ATS, resolver.CHANNEL_GOOGLE_FORM)
+            )
+            if (
+                flags.browser_executor_enabled()
+                and browserable
+                and plan["ready"]
+                and isinstance(browser_url, str)
+                and browser_url.startswith("https://")
+            ):
                 app_id = _last_application_id(uid, job.get("url"))
-                if app_id and db.enqueue_browser_task(uid, app_id, job.get("url") or ""):
+                if app_id and db.enqueue_browser_task(uid, app_id, browser_url):
                     log.info("queued a browser task for %s @ %s",
                              job.get("title"), job.get("company"))
             continue

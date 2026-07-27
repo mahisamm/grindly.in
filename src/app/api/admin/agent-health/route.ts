@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { execSync } from "child_process";
 import { existsSync } from "fs";
 import path from "path";
+import { missingBetaAutomationConfig } from "@/lib/serverConfig";
 
 export const dynamic = "force-dynamic";
 
@@ -126,6 +127,7 @@ export async function GET() {
     checkLastRun(),
   ]);
 
+  const betaMissing = missingBetaAutomationConfig();
   const checks = [
     { id: "db", label: "Database connection", ...db },
     { id: "python", label: "Python runtime", ...python },
@@ -134,6 +136,14 @@ export async function GET() {
     { id: "profiles", label: "User profiles with resume", ...profiles },
     { id: "sessions", label: "Platform sessions", ...sessions },
     { id: "last_run", label: "Last agent run", ...lastRun },
+    {
+      id: "beta_automation",
+      label: "Beta automation configuration",
+      ok: betaMissing.length === 0,
+      detail: betaMissing.length
+        ? `Missing: ${betaMissing.join("; ")}`
+        : "Web discovery, direct submit, browser executor, ATS and daily email are enabled",
+    },
   ];
 
   const allOk = checks.every((c) => c.ok);

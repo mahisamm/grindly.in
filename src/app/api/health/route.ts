@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { serviceStatus, missingProdConfig, encryptionKeyValid } from "@/lib/serverConfig";
+import {
+  serviceStatus, missingProdConfig, missingBetaAutomationConfig, encryptionKeyValid,
+} from "@/lib/serverConfig";
 import { getAdminOrNull } from "@/lib/admin";
 import { databaseSchemaReady } from "@/lib/databaseHealth";
 
@@ -33,8 +35,17 @@ export async function GET() {
   if (!admin) return NextResponse.json({ ok, checks }, { status });
 
   const missing = missingProdConfig();
+  const betaMissing = missingBetaAutomationConfig();
   return NextResponse.json(
-    { ok, checks, services: serviceStatus(), prodReady: ok && missing.length === 0, missing },
+    {
+      ok,
+      checks,
+      services: serviceStatus(),
+      prodReady: ok && missing.length === 0,
+      betaAutomationReady: ok && missing.length === 0 && betaMissing.length === 0,
+      missing,
+      betaMissing,
+    },
     { status },
   );
 }
