@@ -360,12 +360,31 @@ def _dispatch_apply(
                 job, letter, uid, profile=profile, resume_path=resume_path,
                 record=record, target=dest.get("target") or "", skills=skills,
             )
-        except Exception:
+        except Exception as e:
+            # Playwright's synchronous API refuses to start in the worker's
+            # asyncio-owning thread. ATS submission is still synchronous by
+            # design, so execute it on one fresh thread rather than turning a
+            # valid employer application into a guaranteed failure. This is
+            # safe before the browser starts; after any submit ambiguity the
+            # existing exception path below retains the idempotency claim.
+            if "Sync API inside the asyncio loop" in str(e):
+                try:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        status, why = executor.submit(
+                            mod.apply,
+                            job, letter, uid,
+                            profile=profile, resume_path=resume_path,
+                            record=record, target=dest.get("target") or "", skills=skills,
+                        ).result()
+                except Exception:
+                    db.record_submission(key, "exception", "sender raised after isolated retry")
+                    raise
+            else:
             # An exception proves nothing about whether the POST landed, so the
             # claim STAYS. Re-raising with the claim held is the safe direction:
             # a missed application is recoverable, a duplicate one is not.
-            db.record_submission(key, "exception", "sender raised")
-            raise
+                db.record_submission(key, "exception", "sender raised")
+                raise
         # Release only on a definite non-send, so a real retry stays possible.
         # "needs_review" keeps its claim on purpose: that submit landed and only
         # its confirmation was unreadable (safety.classify_submit).
