@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
 import { TagInput } from "@/components/TagInput";
-import { PROFF_FIELDS, DEFAULTS } from "@/lib/proffQuestions";
+import { PROFF_FIELDS, CONTACT_FIELDS, DEFAULTS } from "@/lib/proffQuestions";
 import { PLANS, type Plan } from "@/lib/adapters/payment";
 
 type Form = Record<string, unknown>;
@@ -151,6 +151,10 @@ export default function OnboardingPage() {
           gradYear: p.gradYear || 0,
           availability: p.availability || "",
           workAuthorization: p.workAuthorization || "",
+          // Prefer whatever the agent already pulled off the resume — only
+          // fall back to blank/0 if it hasn't run yet or found nothing.
+          phone: p.phone || "",
+          gpa: p.gpa || 0,
         });
         if (p.resumeName) setResumeName(p.resumeName);
         if (d.user?.slackConnected) setSlackDone(true);
@@ -540,6 +544,35 @@ export default function OnboardingPage() {
                 These are the hard limits the agent plans and applies inside — it can never cross them.
               </p>
 
+              <div className="mt-6">
+                <div className="text-xs uppercase tracking-wide text-muted mb-3">Contact</div>
+                <p className="text-xs text-muted mb-3">
+                  The agent grabs these from your resume when it can — check they&apos;re
+                  right, or fill them in yourself.
+                </p>
+                <div className="space-y-5">
+                  {CONTACT_FIELDS.map((f) => (
+                    <div key={f.key}>
+                      <label className="text-sm font-medium">{f.label}</label>
+                      <p className="text-xs text-muted mb-1.5">{f.help}</p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type={f.type}
+                          aria-label={f.label}
+                          value={String(form[f.key] ?? "")}
+                          placeholder={"placeholder" in f ? f.placeholder : undefined}
+                          onChange={(e) =>
+                            set(f.key, f.type === "number" ? Number(e.target.value) : e.target.value)
+                          }
+                          className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand transition"
+                        />
+                        {"suffix" in f && f.suffix && <span className="text-sm text-muted">{f.suffix}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {(["About you", "Targeting", "Limits & rules"] as const).map((group) => (
                 <div key={group} className="mt-6">
                   <div className="text-xs uppercase tracking-wide text-muted mb-3">{group}</div>
@@ -804,6 +837,14 @@ export default function OnboardingPage() {
                     </li>
                   ))}
                 </ul>
+              )}
+              {missing.length > 0 && (
+                <button
+                  onClick={() => setStep(1)}
+                  className="mt-2 text-sm text-brand-2 underline"
+                >
+                  Fix these in the profile questions →
+                </button>
               )}
 
               <div className="mt-6 flex flex-wrap justify-between gap-3">

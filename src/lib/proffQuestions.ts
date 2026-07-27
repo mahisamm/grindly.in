@@ -146,4 +146,10 @@ export const DEFAULTS: Record<string, unknown> = {
   minMatchScore: 65,
   excludedCompanies: [],
   autoApply: true,
+  // Same "start empty" rule as the eligibility facts above — the agent
+  // prefills these off the resume (agent/resume_ai.py extract_contact); a
+  // guessed default here is exactly the kind of invented fact it exists to
+  // avoid stating on a real form.
+  phone: "",
+  gpa: 0,
 };

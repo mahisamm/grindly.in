@@ -31,13 +31,10 @@ const ARRAY_FIELDS = new Set([
   "skills",
 ]);
 const NUM_FIELDS = new Set([
-  "stipendMin", "minMatchScore", "maxPerDay", "gpa", "matchQualityRating",
+  "stipendMin", "minMatchScore", "maxPerDay", "matchQualityRating",
   // Eligibility facts the agent will state on screening forms (see lib/readiness).
   "gradYear", "gradMonth",
 ]);
-// NOTE: `phone` is deliberately NOT here. Phone changes must go through the OTP
-// verify flow (which sets phoneVerified) — letting profile overwrite it would
-// keep a "verified" flag on an unverified number and reroute login OTPs.
 const STR_FIELDS = new Set([
   "workMode",
   "experienceLevel",
@@ -48,6 +45,13 @@ const STR_FIELDS = new Set([
   "availability",
   "workAuthorization",
   "timezone",
+  // lib/otp.ts + adapters/sms.ts (phone-verify OTP) exist but are wired to no
+  // route, so there is no way to ever set phoneVerified — gating writes on
+  // that flow just made the field permanently unfillable (readiness.ts blocks
+  // auto-apply on it, and the resume auto-fill path writes straight to the DB
+  // from the Python worker, bypassing this route entirely either way). Accept
+  // it as plain text like the other stated-verbatim facts above.
+  "phone",
 ]);
 const BOOL_FIELDS = new Set(["autoApply"]);
 
@@ -67,6 +71,10 @@ export async function POST(req: Request) {
 
   for (const [k, v] of Object.entries(body)) {
     if (ARRAY_FIELDS.has(k)) data[k] = JSON.stringify(Array.isArray(v) ? v : []);
+    // GPA needs decimal precision (8.4/10, not 8) — every other NUM_FIELD is a
+    // genuine integer (day counts, a year, a match-score), so it alone gets
+    // rounded to 2dp instead of whole.
+    else if (k === "gpa") data[k] = Math.max(0, Math.round((Number(v) || 0) * 100) / 100);
     else if (NUM_FIELDS.has(k)) data[k] = Math.max(0, Math.round(Number(v) || 0));
     else if (BOOL_FIELDS.has(k)) data[k] = Boolean(v);
     else if (ENUM_FIELDS[k]) { if (ENUM_FIELDS[k].has(String(v))) data[k] = String(v); }
