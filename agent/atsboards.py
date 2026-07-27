@@ -241,12 +241,9 @@ def _wanted(p: dict) -> bool:
     match, because a substring test files "Head of SOX and Internal Controls"
     as an internship.
     """
-    if not websource.says_internship(p["title"]):
-        return False
     if not _INDIA.search(p["location"] or ""):
         return False
-    blob = f"{p['title']} {p['jd'][:600]}".lower()
-    return not (any(y in blob for y in websource._STALE_WORDS) and "2026" not in blob)
+    return websource._looks_like_an_internship(p["title"], p["jd"][:600])
 
 
 def _relevance(p: dict, keywords: list[str]) -> int:
