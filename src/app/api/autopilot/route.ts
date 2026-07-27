@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 import { computeReadiness } from "@/lib/readiness";
+import { localDate, startOfLocalDay } from "@/lib/localDay";
 
 // GET /api/autopilot — one honest answer to "what is my agent doing?".
 //
@@ -12,41 +13,6 @@ import { computeReadiness } from "@/lib/readiness";
 // because a dashboard that inflates "applied" is lying to someone about their
 // own job search.
 export const dynamic = "force-dynamic";
-
-/** The user's local calendar date — the cap is "N per their day", not per UTC day. */
-function localDate(timezone: string, now = new Date()): string {
-  try {
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone || "Asia/Kolkata",
-      year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(now);
-  } catch {
-    // An unknown zone must not break the panel.
-    return new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(now);
-  }
-}
-
-/**
- * Midnight in the user's own zone, as an instant.
- *
- * UTC midnight is 5.5 hours into an Indian user's day, so counting "today"
- * from it silently drops everything sent before 05:30 — the exact hours an
- * overnight agent run uses.
- */
-export function startOfLocalDay(timezone: string, now = new Date()): Date {
-  const tz = timezone || "Asia/Kolkata";
-  try {
-    const offset =
-      new Date(now.toLocaleString("en-US", { timeZone: tz })).getTime() -
-      new Date(now.toLocaleString("en-US", { timeZone: "UTC" })).getTime();
-    return new Date(Date.parse(`${localDate(tz, now)}T00:00:00Z`) - offset);
-  } catch {
-    // An unknown zone must not take the whole panel down.
-    return new Date(Date.parse(`${localDate(tz)}T00:00:00Z`));
-  }
-}
 
 export async function GET() {
   const uid = await getUid();

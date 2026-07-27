@@ -30,7 +30,8 @@ vi.mock("@/lib/readiness", () => ({
   computeReadiness: () => ({ ready: true, missing: [], checks: { consent: true } }),
 }));
 
-import { GET, startOfLocalDay } from "./route";
+import { GET } from "./route";
+import { startOfLocalDay } from "@/lib/localDay";
 
 beforeEach(() => {
   vi.resetAllMocks();

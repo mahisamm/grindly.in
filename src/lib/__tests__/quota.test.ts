@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockCount, mockRateFindUnique, mockRateUpsert, mockRateUpdate } = vi.hoisted(() => ({
+const { mockCount, mockProfileFind, mockRateFindUnique, mockRateUpsert, mockRateUpdate } = vi.hoisted(() => ({
   mockCount: vi.fn(),
+  mockProfileFind: vi.fn(),
   mockRateFindUnique: vi.fn(),
   mockRateUpsert: vi.fn(),
   mockRateUpdate: vi.fn(),
@@ -9,6 +10,7 @@ const { mockCount, mockRateFindUnique, mockRateUpsert, mockRateUpdate } = vi.hoi
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     application: { count: mockCount },
+    profile: { findUnique: mockProfileFind },
     rateLimitEntry: { findUnique: mockRateFindUnique, upsert: mockRateUpsert, update: mockRateUpdate },
   },
 }));
@@ -16,7 +18,11 @@ vi.mock("@/lib/prisma", () => ({
 import { getQuota, pendingApprovedCount, remainingForApproval, tryConsumeApplyQuota } from "@/lib/quota";
 import { PLAN_CAPS, PLANS } from "@/lib/plans";
 
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  // Day boundaries come from the user's profile timezone now.
+  mockProfileFind.mockResolvedValue({ timezone: "Asia/Kolkata" });
+});
 
 describe("application quotas", () => {
   it("defines the requested paid plan limits", () => {

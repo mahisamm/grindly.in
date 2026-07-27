@@ -94,6 +94,13 @@ export function serviceStatus() {
     browserExecutor:
       process.env.GRINDLY_AUTOPILOT_ENABLED !== "0" &&
       process.env.GRINDLY_BROWSER_EXECUTOR_ENABLED === "1",
+    // Tier B hosted submit (Internshala with the user's connected session).
+    // Mirrors agent/safety.tier_b_enabled — off means connected users only
+    // ever get banked matches, which reads as "auto-apply is broken".
+    tierBSubmit:
+      process.env.GRINDLY_AUTOPILOT_ENABLED !== "0" &&
+      process.env.GRINDLY_AUTO_APPLY_MODE === "live" &&
+      process.env.GRINDLY_TIER_B_APPLY === "1",
     searchDiscovery: process.env.GRINDLY_SEARCH_DISCOVERY_ENABLED === "1",
     payment: paymentMode(),             // "razorpay" | "unconfigured"
     encryptionKey: encryptionKeyValid(),

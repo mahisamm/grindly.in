@@ -3,16 +3,23 @@
 
 import { prisma } from "./prisma";
 import { isRateLimited } from "./rateLimit";
+import { localDate, startOfLocalDay } from "./localDay";
 
 // Re-exported so existing `import { planCap } from "@/lib/quota"` call sites keep
 // working; the definition itself lives in lib/plans.ts alongside the prices.
 export { planCap } from "./plans";
 import { normalizePlan, planCap } from "./plans";
 
-function startOfTodayMs(): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
+/** Midnight of the user's OWN day. This used to be the Node process's local
+ * midnight — UTC in the containers — which is 5.5 hours into an Indian user's
+ * day, so /api/me's "N of M left today" and the autopilot panel's "sent today"
+ * could disagree about the same applications. One boundary now: the user's
+ * profile timezone, same as /api/autopilot. */
+async function startOfUsersDay(userId: string): Promise<Date> {
+  const prof = await prisma.profile
+    .findUnique({ where: { userId }, select: { timezone: true } })
+    .catch(() => null);
+  return startOfLocalDay(prof?.timezone || "Asia/Kolkata");
 }
 
 export async function appliedToday(userId: string): Promise<number> {
@@ -20,7 +27,7 @@ export async function appliedToday(userId: string): Promise<number> {
     where: {
       userId,
       status: "applied",
-      appliedAt: { gte: new Date(startOfTodayMs()) },
+      appliedAt: { gte: await startOfUsersDay(userId) },
     },
   });
 }
@@ -73,7 +80,7 @@ export async function pendingApprovedCount(userId: string): Promise<number> {
     where: {
       userId,
       status: "approved",
-      approvedAt: { gte: new Date(startOfTodayMs()) },
+      approvedAt: { gte: await startOfUsersDay(userId) },
     },
   });
 }
@@ -96,11 +103,16 @@ export async function remainingForApproval(userId: string, plan?: string | null)
  */
 export async function tryConsumeApplyQuota(userId: string, cap: number): Promise<boolean> {
   if (cap <= 0) return false;
+  // Key and window both follow the user's day, matching every other "today"
+  // count — a UTC-keyed window reset the allowance at 05:30 IST.
+  const prof = await prisma.profile
+    .findUnique({ where: { userId }, select: { timezone: true } })
+    .catch(() => null);
+  const tz = prof?.timezone || "Asia/Kolkata";
   const now = new Date();
-  const midnight = new Date(now);
-  midnight.setHours(24, 0, 0, 0);
-  const windowMs = midnight.getTime() - now.getTime();
-  const key = `apply_quota:${userId}:${now.toISOString().slice(0, 10)}`;
+  const dayStart = startOfLocalDay(tz, now);
+  const windowMs = dayStart.getTime() + 24 * 60 * 60 * 1000 - now.getTime();
+  const key = `apply_quota:${userId}:${localDate(tz, now)}`;
   const blocked = await isRateLimited(key, cap, windowMs);
   return !blocked;
 }
