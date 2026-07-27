@@ -57,10 +57,28 @@ def enabled() -> bool:
 
 
 def _headless() -> bool:
-    """Headless by default — unlike a board adapter there is never an OTP or a
-    login for a human to complete, so a visible window serves no purpose on a
-    server. Overridable for local debugging."""
-    return os.environ.get("GRINDLY_ATS_HEADLESS", "1") != "0"
+    """Headed by default, like every other adapter in this fleet.
+
+    The old default was headless, on the reasoning that no human ever needs to
+    watch an ATS page — true, and beside the point. "Nobody is looking" is not
+    the same question as "does the page believe this is a browser". Headless
+    Chromium is trivially fingerprinted (navigator.webdriver, absent GPU
+    renderer, missing permissions/plugins surfaces), and this is the sender
+    MOST exposed to that check: an ATS portal is a public page reached with no
+    session, no cookies and no history, from a datacenter IP.
+
+    Dockerfile.worker already runs Chromium inside Xvfb precisely so the board
+    adapters can be headed without a physical display (see INTERNPILOT_HEADLESS=0
+    in docker-compose.yml). This sender was the one process in that container
+    still opting out — paying for Xvfb and then handing every ATS page the one
+    signal Xvfb exists to remove. A live run confirmed the cost: a Greenhouse
+    application page answered with a human-check, which safety.detect_challenge
+    correctly refused rather than tried to defeat.
+
+    Set GRINDLY_ATS_HEADLESS=1 to force headless (local debugging, or a host
+    with no display at all).
+    """
+    return os.environ.get("GRINDLY_ATS_HEADLESS", "0") != "0"
 
 
 # Nav timeout is generous: ATS pages are client-rendered and the slow ones

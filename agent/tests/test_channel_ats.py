@@ -36,10 +36,15 @@ def test_only_the_exact_string_enables_it(monkeypatch):
     assert channel_ats.enabled() is True
 
 
-def test_headless_by_default_because_nothing_needs_a_human(monkeypatch):
-    assert channel_ats._headless() is True
-    monkeypatch.setenv("GRINDLY_ATS_HEADLESS", "0")
+def test_headed_by_default_so_the_page_sees_a_real_browser(monkeypatch):
+    """This sender faces the strictest bot check of any adapter — a public ATS
+    page, no session, datacenter IP — and headless Chromium is trivially
+    fingerprinted. The worker container runs Xvfb so headed costs nothing; a
+    live Greenhouse page answering with a human-check is what this default
+    exists to stop handing them."""
     assert channel_ats._headless() is False
+    monkeypatch.setenv("GRINDLY_ATS_HEADLESS", "1")
+    assert channel_ats._headless() is True
 
 
 # ── The guards that run before a browser is ever started ────────────────────
