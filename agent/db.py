@@ -270,6 +270,22 @@ def active_users() -> list[dict]:
         return [r["id"] for r in rows]
 
 
+# A needs_review row whose failure_reason is set is one the sender stopped at a
+# KNOWN obstacle before its point of no return — a human-check on the page, an
+# unanswerable required question, a form it could not read. Nothing reached the
+# employer, and we know exactly what stopped it.
+#
+# A needs_review with NO failure_reason is the opposite and far more dangerous
+# case: the submit landed and only its confirmation was unreadable
+# (safety.classify_submit). That one stays locked forever.
+#
+# The worker writes the discriminator — see the needs_review branch in
+# run_for_user, which passes failure_reason only when record["submit_attempted"]
+# is unset. Same signal that decides whether the daily slot and the idempotency
+# claim are refunded, so all three answers agree by construction.
+_PROVABLY_NOT_SENT = "(status = 'needs_review' AND failure_reason IS NOT NULL)"
+
+
 def applied_external_ids(uid: str) -> set[str]:
     """Job urls this user is committed to, and which must never be re-scored.
 
@@ -280,13 +296,22 @@ def applied_external_ids(uid: str) -> set[str]:
     reported "matched 0, applied 0", so no scoring fix could ever reach a job the
     agent had already dismissed once.
 
-    Everything else stays locked — applied / approved / matched / needs_review /
-    failed have all either reached the platform or are awaiting a human decision.
+    Also excludes a needs_review that provably never sent anything. Those were
+    locked for the same wrong reason skips once were: an ATS page showing a
+    human-check on a Tuesday from one IP is a fact about that moment, not about
+    the listing — but it burned the URL permanently, so the fix that would have
+    got through (running the browser headed, a retry from the user's own
+    browser) could never reach it. Over time that is most employer listings.
+
+    Everything else stays locked — applied / approved / matched / failed, and an
+    AMBIGUOUS needs_review, have all either reached the employer or are awaiting
+    a human decision.
     """
     with conn() as c:
         rows = c.execute(
             "SELECT url FROM applications "
-            "WHERE user_id=? AND url IS NOT NULL AND status <> 'skipped'",
+            "WHERE user_id=? AND url IS NOT NULL AND status <> 'skipped' "
+            f"AND NOT {_PROVABLY_NOT_SENT}",
             (uid,),
         ).fetchall()
         return {r["url"] for r in rows}
@@ -347,9 +372,17 @@ def committed_role_keys(uid: str) -> set[tuple[str, str]]:
 
 
 def clear_skipped(uid: str, urls: list[str]) -> int:
-    """Drop stale 'skipped' rows for listings we are about to re-score, so a
-    re-run replaces the old verdict rather than filing a duplicate row beside it.
-    Returns the number of rows removed."""
+    """Drop stale rows for listings we are about to re-score, so a re-run
+    replaces the old verdict rather than filing a duplicate row beside it.
+
+    Covers exactly the two verdicts applied_external_ids lets back through:
+    'skipped' (a scoring judgement that may have been wrong) and a needs_review
+    that provably never sent anything (a known obstacle at a moment in time).
+    Deleting the old row is what keeps the retry a REPLACEMENT — without it the
+    user would collect a second row for the same listing every sweep.
+
+    Returns the number of rows removed.
+    """
     urls = [u for u in urls if u]
     if not urls:
         return 0
@@ -360,7 +393,8 @@ def clear_skipped(uid: str, urls: list[str]) -> int:
             chunk = urls[i:i + 200]
             marks = ",".join("?" for _ in chunk)
             cur = c.execute(
-                f"DELETE FROM applications WHERE user_id=? AND status='skipped' "
+                f"DELETE FROM applications WHERE user_id=? "
+                f"AND (status='skipped' OR {_PROVABLY_NOT_SENT}) "
                 f"AND url IN ({marks})",
                 (uid, *chunk),
             )
@@ -371,22 +405,27 @@ def clear_skipped(uid: str, urls: list[str]) -> int:
 def todays_applied_count(uid: str) -> int:
     """How much of today's cap this user has actually spent.
 
-    Counts 'needs_review' as well as 'applied', because it also cost a real
-    submission: the submit landed and only the CONFIRMATION was unreadable (see
-    safety.classify_submit). Counting 'applied' alone made the cap refundable —
-    the worker decrements its in-memory `remaining` for an ambiguous submit, but
-    a spread-mode run yields and requeues, and the next segment recomputes
-    remaining as `cap - todays_applied_count`, restoring every ambiguous one. A
-    channel returning needs_review repeatedly could then submit well past the
-    number of applications the user agreed to send per day.
+    Counts an AMBIGUOUS 'needs_review' as well as 'applied', because it also
+    cost a real submission: the submit landed and only the CONFIRMATION was
+    unreadable (see safety.classify_submit). Counting 'applied' alone made the
+    cap refundable — the worker decrements its in-memory `remaining` for an
+    ambiguous submit, but a spread-mode run yields and requeues, and the next
+    segment recomputes remaining as `cap - todays_applied_count`, restoring
+    every ambiguous one. A channel returning needs_review repeatedly could then
+    submit well past the number of applications the user agreed to send today.
 
-    'failed' is deliberately NOT counted: those did not reach the employer.
+    A needs_review that provably never sent (failure_reason set — a human-check
+    on the page, an unanswerable required question) is NOT counted, for the same
+    reason 'failed' is not: it did not reach the employer. Charging the user's
+    daily allowance for an application no employer received is the same lie the
+    reservation ledger was fixed to stop telling, one layer up.
     """
     start = _start_of_day_db()
     with conn() as c:
         r = c.execute(
             "SELECT COUNT(*) n FROM applications "
-            "WHERE user_id=? AND status IN ('applied','needs_review') AND created_at>=?",
+            "WHERE user_id=? AND status IN ('applied','needs_review') "
+            f"AND NOT {_PROVABLY_NOT_SENT} AND created_at>=?",
             (uid, start),
         ).fetchone()
         return r["n"]

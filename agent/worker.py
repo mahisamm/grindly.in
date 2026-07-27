@@ -1712,11 +1712,14 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 status, why = "failed", _user_facing_failure(e, src)
             # Same refund rule as the discovery loop: definite non-sends give
             # the slot back; an ambiguous submit after a real click stays spent.
-            if status in ("failed", "skipped", "login_required") or (
-                status == "needs_review" and not rec.get("submit_attempted")
-            ):
+            provably_not_sent = status == "needs_review" and not rec.get("submit_attempted")
+            if status in ("failed", "skipped", "login_required") or provably_not_sent:
                 db.release_daily_slot(uid, profile.get("timezone"), day=slot_day)
-            fr = _classify_failure(why) if status == "failed" else None
+            # failure_reason is also the discriminator that marks a needs_review
+            # re-scorable (db._PROVABLY_NOT_SENT) — set it on the same terms as
+            # the discovery loop, or an approved row refused at the door would be
+            # locked out of every future run.
+            fr = _classify_failure(why) if status == "failed" or provably_not_sent else None
             if fr == safety.FAILURE_REASON.CAPTCHA and not employer_channel:
                 _flag_challenge(src)
             if status == "login_required":
@@ -1767,11 +1770,13 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                         requeue_after_seconds,
                     )
                     break
-            elif status == "needs_review" and (
+            elif status == "needs_review" and not provably_not_sent and (
                 _SPREAD_APPLIES
                 and remaining > 0
                 and approved_index + 1 < len(approved_apps)
             ):
+                # Only a real submit costs budget and needs pacing. A sender
+                # refused at the door sent nothing to space out.
                 remaining -= 1
                 requeue_after_seconds = random.randint(*_SPREAD_GAP_SEC)
                 log.info(
@@ -2227,24 +2232,44 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 destination=dest,
             )
         elif status == "needs_review":
-            # Submit click registered but we couldn't confirm the outcome — do NOT
-            # count this as a success (would misreport accuracy) or a failure
-            # (would skew the per-platform fail-rate warning). Spend the daily
-            # budget slot and dedup it like a real attempt so we never re-click
-            # an already-submitted form, but surface it for the user to verify.
-            remaining -= 1
-            per_src_applied[stat_src] = per_src_applied.get(stat_src, 0) + 1
-            applied_keys.add(dedup_key)
+            # Two very different events share this status, and only the sender
+            # knows which one happened — record["submit_attempted"] is how it
+            # says so, the same signal that already decides whether the daily
+            # slot and the idempotency claim are refunded.
+            #
+            #  * AMBIGUOUS (flag set): the submit click registered and we could
+            #    not confirm the outcome. Do NOT count it a success (misreports
+            #    accuracy) or a failure (skews the drift monitor). Spend the
+            #    budget slot and dedup it like a real attempt so we never
+            #    re-click an already-submitted form — surface it to verify.
+            #  * PROVABLY NOT SENT (flag unset): the sender stopped at a known
+            #    obstacle before its point of no return — a human-check on the
+            #    page, an unanswerable required question. Nothing reached the
+            #    employer, so it costs no budget and does not dedup: writing a
+            #    failure_reason marks the row re-scorable (db._PROVABLY_NOT_SENT)
+            #    so a later run, from a fixed sender or the user's own browser,
+            #    can still get through. It stays needs_review because the user
+            #    genuinely may want to open it themselves.
+            ambiguous = bool(rec.get("submit_attempted"))
+            if ambiguous:
+                remaining -= 1
+                per_src_applied[stat_src] = per_src_applied.get(stat_src, 0) + 1
+                applied_keys.add(dedup_key)
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="needs_review", reason=why,
                 applied=False, resume_version_id=vid,
+                failure_reason=None if ambiguous else _classify_failure(why),
                 screenshot_path=rec.get("screenshot_path"),
                 answers_json=rec.get("answers"),
                 destination=dest,
             )
             db.add_audit("apply_needs_review", user_id=uid, target=job.get("url"), detail=why[:120])
-            if _SPREAD_APPLIES and remaining > 0:
+            # Pace only after something actually went out. A sender that was
+            # refused at the door sent nothing to space out, and yielding the
+            # worker for ten minutes over it burns the run's whole budget on
+            # pages that never became applications.
+            if ambiguous and _SPREAD_APPLIES and remaining > 0:
                 requeue_after_seconds = random.randint(*_SPREAD_GAP_SEC)
                 log.info(
                     "spread mode: yielding worker for %ds after ambiguous submit",

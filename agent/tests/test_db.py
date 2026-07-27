@@ -204,6 +204,69 @@ def test_applied_external_ids_excludes_skipped(testdb):
     assert ids == {"https://x/1", "https://x/3"}  # committed / awaiting a human
 
 
+def test_a_needs_review_that_never_sent_stays_re_scorable(testdb):
+    """An ATS page showing a human-check is a fact about that moment and that
+    IP, not about the listing — but it used to burn the URL permanently, so the
+    very fix that would get through (headed browser, or a retry from the user's
+    own browser) could never reach it. Over time that is most employer listings.
+
+    The discriminator is failure_reason: the worker sets it only when the sender
+    stopped before its point of no return."""
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="Refused", company="C", url="https://x/1",
+                       score=80, status="needs_review", reason="page shows a human-check",
+                       applied=False, failure_reason="captcha")
+
+    assert "https://x/1" not in db.applied_external_ids("u1")
+
+
+def test_an_ambiguous_needs_review_stays_locked_forever(testdb):
+    """The other half of the same status, and the dangerous one: the submit
+    landed and only its confirmation was unreadable. Re-scoring that is how a
+    recruiter gets the same application twice."""
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="Ambiguous", company="C", url="https://x/2",
+                       score=80, status="needs_review", reason="submitted, no confirmation",
+                       applied=False)
+
+    assert "https://x/2" in db.applied_external_ids("u1")
+
+
+def test_a_refused_application_does_not_spend_the_daily_cap(testdb):
+    """Nothing reached the employer, so charging the user's allowance for it is
+    the same lie the reservation ledger was fixed to stop telling."""
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="Refused", company="C", url="https://x/1",
+                       score=80, status="needs_review", reason="human-check",
+                       applied=False, failure_reason="captcha")
+    db.add_application("u1", job_id=None, title="Ambiguous", company="C", url="https://x/2",
+                       score=80, status="needs_review", reason="no confirmation", applied=False)
+
+    # Only the ambiguous one cost a real submission.
+    assert db.todays_applied_count("u1") == 1
+
+
+def test_clear_skipped_replaces_a_refused_row_instead_of_duplicating_it(testdb):
+    """applied_external_ids lets these back through for re-scoring, so the old
+    row has to go with them — otherwise the user collects a second row for the
+    same listing every single sweep."""
+    _insert_user(testdb, "u1")
+    db.add_application("u1", job_id=None, title="Refused", company="C", url="https://x/1",
+                       score=80, status="needs_review", reason="human-check",
+                       applied=False, failure_reason="captcha")
+    db.add_application("u1", job_id=None, title="Ambiguous", company="C", url="https://x/2",
+                       score=80, status="needs_review", reason="no confirmation", applied=False)
+
+    removed = db.clear_skipped("u1", ["https://x/1", "https://x/2"])
+
+    assert removed == 1, "the ambiguous row must survive — it may have been sent"
+    c = sqlite3.connect(testdb)
+    c.row_factory = sqlite3.Row
+    rows = c.execute("SELECT url FROM applications WHERE user_id='u1'").fetchall()
+    c.close()
+    assert [r["url"] for r in rows] == ["https://x/2"]
+
+
 def test_committed_role_keys_dedupes_the_same_role_across_boards(testdb):
     """URL dedup only catches the SAME posting twice. One role cross-posted to two
     boards has two URLs, so the worker also keys on (company, title) — and that
