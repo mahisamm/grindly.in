@@ -67,6 +67,16 @@ export async function POST(req: Request) {
   if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+
+  // `name` lives on User, not Profile — readiness.ts requires it (forms ask
+  // for a full name on nearly every submission) but nothing ever let a user
+  // set it themselves; it only ever came from Google OAuth, and stayed null
+  // forever for an account Google didn't return one for. Handled separately
+  // from the Profile upsert below since it's a different table.
+  if (typeof body.name === "string" && body.name.trim()) {
+    await prisma.user.update({ where: { id: uid }, data: { name: body.name.trim().slice(0, 200) } });
+  }
+
   const data: Record<string, unknown> = {};
 
   for (const [k, v] of Object.entries(body)) {

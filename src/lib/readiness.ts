@@ -83,7 +83,17 @@ export function computeReadiness(user: ReadinessUser): Readiness {
 
   const missing: string[] = [];
   if (!checks.resume) missing.push("Upload your resume.");
-  if (!checks.contact) missing.push("Add your phone number so forms can be completed.");
+  // checks.contact bundles three facts into one boolean (kept as-is — other
+  // code reads .checks.contact as a single gate), but the message must name
+  // whichever of them is actually absent. Collapsing all three into "add your
+  // phone number" meant a user with no `name` (Google didn't return one, and
+  // nothing in the app could ever set it) saw that same message forever, even
+  // after adding a phone — there was nothing left telling them what was
+  // actually still missing.
+  if (!checks.contact) {
+    if (!user.name) missing.push("Add your name.");
+    if (!p?.phone) missing.push("Add your phone number so forms can be completed.");
+  }
   if (!checks.education) missing.push("Add your education and expected graduation year.");
   if (!checks.preferences) missing.push("Pick at least one target domain.");
   if (!checks.dailyLimit) missing.push("Set a daily application limit and timezone.");

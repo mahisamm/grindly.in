@@ -18,6 +18,9 @@ export type ProffField = {
 };
 
 export const CONTACT_FIELDS = [
+  // Only ever came from Google OAuth before; an account whose Google profile
+  // had no name set was permanently stuck with none and no way to add it.
+  { key: "name", label: "Full name", help: "Used to fill name fields in application forms.", type: "text" as const, placeholder: "e.g. Priya Sharma" },
   { key: "phone", label: "Phone number", help: "Used to fill phone fields in application forms.", type: "text" as const, placeholder: "e.g. 9876543210" },
   { key: "gpa", label: "GPA / CGPA", help: "Used to fill GPA fields in application forms (0–10).", type: "number" as const, suffix: "/10" },
 ] as const;
@@ -150,6 +153,7 @@ export const DEFAULTS: Record<string, unknown> = {
   // prefills these off the resume (agent/resume_ai.py extract_contact); a
   // guessed default here is exactly the kind of invented fact it exists to
   // avoid stating on a real form.
+  name: "",
   phone: "",
   gpa: 0,
 };

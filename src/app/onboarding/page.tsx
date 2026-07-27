@@ -155,6 +155,10 @@ export default function OnboardingPage() {
           // fall back to blank/0 if it hasn't run yet or found nothing.
           phone: p.phone || "",
           gpa: p.gpa || 0,
+          // Only source is Google OAuth (see api/auth/google/callback) — blank
+          // when Google didn't return one, with no other way to fill it in
+          // until this field existed.
+          name: d.user?.name || "",
         });
         if (p.resumeName) setResumeName(p.resumeName);
         if (d.user?.slackConnected) setSlackDone(true);

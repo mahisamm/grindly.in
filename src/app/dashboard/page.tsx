@@ -212,6 +212,7 @@ type ProfileForm = {
   minMatchScore: number;
   excludedCompanies: string[];
   autoApply: boolean;
+  name: string;
   phone: string;
   gpa: string;
   reportChannel: string;
@@ -480,6 +481,10 @@ function profileToForm(p: RawProfile): ProfileForm {
     minMatchScore: p.minMatchScore ?? 55,
     excludedCompanies: parseJ<string[]>(p.excludedCompanies, []),
     autoApply: p.autoApply ?? true,
+    // `name` lives on User, not Profile — profileToForm only sees the
+    // profile row, so this is filled in by the caller (load(), from
+    // data.user.name) and defaults blank here for the rare direct caller.
+    name: "",
     phone: p.phone || "",
     gpa: p.gpa != null ? String(p.gpa) : "8.0",
     reportChannel: p.reportChannel || "email",
@@ -763,7 +768,7 @@ export default function Dashboard() {
       setLoadError(false);
       setProfileForm((prev) => {
         if (!data.profile) return prev;
-        const fresh = profileToForm(data.profile);
+        const fresh = { ...profileToForm(data.profile), name: data.user.name || "" };
         if (!prev) return fresh;
         // The worker auto-fills phone/GPA off the resume AFTER this form was first
         // loaded (analysis runs in the background). Without this, those values land
@@ -773,6 +778,7 @@ export default function Dashboard() {
         // db.update_contact's "fill blanks only" rule (8.0 GPA = unset placeholder).
         return {
           ...prev,
+          name: prev.name.trim() ? prev.name : fresh.name,
           phone: prev.phone.trim() ? prev.phone : fresh.phone,
           gpa: prev.gpa && prev.gpa !== "8.0" ? prev.gpa : fresh.gpa,
         };
