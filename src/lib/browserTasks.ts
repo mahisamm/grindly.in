@@ -148,17 +148,40 @@ export type ClaimResult =
  * browsers signed into the same account cannot both walk away believing they
  * own it — whoever loses updates zero rows and gets nothing to do.
  */
+/** Application states that mean "something may already have reached the
+ * employer, or the listing is dead" — a browser must never run a task for one.
+ * The task queue and the server-side senders (hosted Tier B, ATS, email) share
+ * applications but no lock, so this check at hand-out time is what stops a
+ * hosted submit and a browser fill sending the same application twice. */
+const APP_NOT_BROWSERABLE = new Set(["applied", "needs_review", "submitting", "skipped"]);
+
 export async function claimNextTask(
   userId: string, cap: number, localDate: string,
 ): Promise<ClaimResult> {
   await reclaimExpiredTasks();
 
-  const candidate = await prisma.browserTask.findFirst({
-    where: { userId, state: "queued", attempts: { lt: MAX_ATTEMPTS } },
-    orderBy: { createdAt: "asc" },
-    select: { id: true, applicationId: true, url: true, host: true },
-  });
-  if (!candidate) return { task: null, reason: "no_work" };
+  let candidate: { id: string; applicationId: string; url: string; host: string } | null = null;
+  const seen: string[] = [];
+  // Walk the queue oldest-first, cancelling tasks whose application already
+  // went out another way, until one is genuinely still open. Bounded: each
+  // pass either returns or cancels a row, so it visits each queued task once.
+  for (;;) {
+    candidate = await prisma.browserTask.findFirst({
+      where: { userId, state: "queued", attempts: { lt: MAX_ATTEMPTS }, id: { notIn: seen } },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, applicationId: true, url: true, host: true },
+    });
+    if (!candidate) return { task: null, reason: "no_work" };
+    const app = await prisma.application
+      .findUnique({ where: { id: candidate.applicationId }, select: { status: true } })
+      .catch(() => null);
+    if (app && !APP_NOT_BROWSERABLE.has(app.status)) break;
+    // Already sent elsewhere (or its application row is gone) — cancel, never run.
+    await prisma.browserTask
+      .updateMany({ where: { id: candidate.id, state: "queued" }, data: { state: "cancelled" } })
+      .catch(() => {});
+    seen.push(candidate.id);
+  }
 
   // Only now, with real work in hand, and still before the browser gets it.
   if (!(await reserveDailySlot(userId, cap, localDate))) {

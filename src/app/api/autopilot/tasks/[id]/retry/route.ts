@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
+import { releaseDailySlot } from "@/lib/browserTasks";
 
 // POST /api/autopilot/tasks/:id/retry — put a stopped task back in the queue.
 //
@@ -26,7 +27,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const { id } = await ctx.params;
   const task = await prisma.browserTask.findFirst({
     where: { id, userId: uid },
-    select: { id: true, state: true, applicationId: true },
+    select: { id: true, state: true, applicationId: true, reservedDate: true },
   });
   if (!task) return NextResponse.json({ error: "not found" }, { status: 404 });
 
@@ -68,9 +69,17 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       blockedReason: null,
       leaseTokenHash: null,
       leaseExpiresAt: null,
+      reservedDate: null,
     },
   });
   if (count !== 1) return NextResponse.json({ error: "not_retryable" }, { status: 409 });
+
+  // The stopped attempt was still holding its reserved slot (awaiting_human
+  // holds no lease, so the reclaimer never touches it). The re-queue above just
+  // cleared reservedDate; give the slot back too, or every user-asked retry
+  // permanently eats one of the day's applications — re-claiming reserves a
+  // fresh slot for the new attempt.
+  if (task.reservedDate) await releaseDailySlot(uid, task.reservedDate);
 
   await prisma.applicationEvent
     .create({

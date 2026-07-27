@@ -67,20 +67,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     data.leaseExpiresAt = new Date(Date.now() + LEASE_MS);
   }
 
+  // Unrecognised reasons collapse to a safe label rather than storing whatever
+  // string a page produced. Normalised ONCE, here, and every decision below
+  // uses the normalised value — the release check used to test the raw string,
+  // so a reason not in GATES displayed as "unknown_question" (a releasable
+  // gate) while the slot stayed spent.
+  const gate = GATES.has(String(body.reason ?? "")) ? String(body.reason) : "unknown_question";
+
   // Slots reserved at claim time come back only on a definite non-send.
   const releasable =
-    event === "failed" ||
-    (event === "awaiting_human" && PROVES_NO_SUBMIT.has(String(body.reason ?? "")));
+    event === "failed" || (event === "awaiting_human" && PROVES_NO_SUBMIT.has(gate));
   if (releasable && task.reservedDate) {
     await releaseDailySlot(auth.userId, task.reservedDate);
     data.reservedDate = null;
   }
 
   if (event === "awaiting_human") {
-    const reason = String(body.reason ?? "");
-    // Unrecognised reasons collapse to a safe label rather than storing whatever
-    // string a page produced.
-    data.blockedReason = GATES.has(reason) ? reason : "unknown_question";
+    data.blockedReason = gate;
     // The lease is released: the person now owns this page, and holding a lease
     // would let it expire into a retry while they are mid-CAPTCHA.
     data.leaseTokenHash = null;

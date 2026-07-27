@@ -1,17 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockFindFirst, mockUpdateMany, mockFindMany, mockUsageUpsert, mockUsageUpdateMany } =
+const { mockFindFirst, mockUpdateMany, mockFindMany, mockUsageUpsert, mockUsageUpdateMany, mockAppFindUnique } =
   vi.hoisted(() => ({
     mockFindFirst: vi.fn(),
     mockUpdateMany: vi.fn(),
     mockFindMany: vi.fn(),
     mockUsageUpsert: vi.fn(),
     mockUsageUpdateMany: vi.fn(),
+    mockAppFindUnique: vi.fn(),
   }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     browserTask: { findFirst: mockFindFirst, updateMany: mockUpdateMany, findMany: mockFindMany },
     dailyUsage: { upsert: mockUsageUpsert, updateMany: mockUsageUpdateMany },
+    application: { findUnique: mockAppFindUnique },
   },
 }));
 
@@ -30,6 +32,8 @@ beforeEach(() => {
   mockFindMany.mockResolvedValue([]);
   mockUsageUpsert.mockResolvedValue({});
   mockUsageUpdateMany.mockResolvedValue({ count: 1 }); // slot available
+  // The task's application is still open unless a test says otherwise.
+  mockAppFindUnique.mockResolvedValue({ status: "matched" });
 });
 
 describe("lease reclaim", () => {
@@ -120,6 +124,32 @@ describe("claiming", () => {
   it("returns nothing when there is no queued work", async () => {
     mockFindFirst.mockResolvedValue(null);
     expect(await claim()).toMatchObject({ task: null, reason: "no_work" });
+  });
+
+  it("cancels — never hands out — a task whose application already went out another way", async () => {
+    // The hosted Tier B sender and the browser queue share applications but no
+    // lock. If the worker submitted this application while its task sat queued,
+    // running the task now sends the employer a duplicate.
+    mockFindFirst.mockResolvedValueOnce(TASK).mockResolvedValueOnce(null);
+    mockAppFindUnique.mockResolvedValue({ status: "applied" });
+    expect(await claim()).toMatchObject({ task: null, reason: "no_work" });
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "t1", state: "queued" },
+      data: { state: "cancelled" },
+    });
+    // And no daily slot was spent on it.
+    expect(mockUsageUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("skips past a dead task to the next live one", async () => {
+    mockFindFirst
+      .mockResolvedValueOnce({ ...TASK, id: "dead", applicationId: "aDead" })
+      .mockResolvedValueOnce({ ...TASK, id: "t2", applicationId: "a2" });
+    mockAppFindUnique
+      .mockResolvedValueOnce({ status: "applied" })
+      .mockResolvedValueOnce({ status: "matched" });
+    const { task } = await claim();
+    expect(task?.id).toBe("t2");
   });
 
   it("hands back a raw token but stores only its hash", async () => {
