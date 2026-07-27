@@ -14,17 +14,17 @@ import { computeReadiness } from "@/lib/readiness";
 export const dynamic = "force-dynamic";
 
 /** The user's local calendar date — the cap is "N per their day", not per UTC day. */
-function localDate(timezone: string): string {
+function localDate(timezone: string, now = new Date()): string {
   try {
     return new Intl.DateTimeFormat("en-CA", {
       timeZone: timezone || "Asia/Kolkata",
       year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date());
+    }).format(now);
   } catch {
     // An unknown zone must not break the panel.
     return new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
-    }).format(new Date());
+    }).format(now);
   }
 }
 
@@ -41,7 +41,7 @@ export function startOfLocalDay(timezone: string, now = new Date()): Date {
     const offset =
       new Date(now.toLocaleString("en-US", { timeZone: tz })).getTime() -
       new Date(now.toLocaleString("en-US", { timeZone: "UTC" })).getTime();
-    return new Date(Date.parse(`${localDate(tz)}T00:00:00Z`) - offset);
+    return new Date(Date.parse(`${localDate(tz, now)}T00:00:00Z`) - offset);
   } catch {
     // An unknown zone must not take the whole panel down.
     return new Date(Date.parse(`${localDate(tz)}T00:00:00Z`));
