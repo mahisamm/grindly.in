@@ -376,19 +376,31 @@ def _dispatch_apply(
                             profile=profile, resume_path=resume_path,
                             record=record, target=dest.get("target") or "", skills=skills,
                         ).result()
-                except Exception:
-                    db.record_submission(key, "exception", "sender raised after isolated retry")
+                except Exception as retry_e:
+                    db.record_submission(
+                        key, "exception",
+                        f"sender raised after isolated retry: {str(retry_e)[:160]}",
+                    )
                     raise
             else:
-            # An exception proves nothing about whether the POST landed, so the
-            # claim STAYS. Re-raising with the claim held is the safe direction:
-            # a missed application is recoverable, a duplicate one is not.
-                db.record_submission(key, "exception", "sender raised")
+                # An exception proves nothing about whether the POST landed, so
+                # the claim STAYS. Re-raising with the claim held is the safe
+                # direction: a missed application is recoverable, a duplicate
+                # one is not. The receipt carries the real error — six rows of
+                # bare "sender raised" once cost a day of diagnosis.
+                db.record_submission(key, "exception", f"sender raised: {str(e)[:160]}")
                 raise
         # Release only on a definite non-send, so a real retry stays possible.
-        # "needs_review" keeps its claim on purpose: that submit landed and only
-        # its confirmation was unreadable (safety.classify_submit).
-        if status in ("failed", "skipped", "login_required"):
+        # A needs_review AFTER the irreversible action keeps its claim: that
+        # submit landed and only its confirmation was unreadable
+        # (safety.classify_submit). A needs_review BEFORE it — sender switched
+        # off, no resume file, form unreadable — provably sent nothing, and
+        # keeping the claim froze that listing on this channel forever. The
+        # sender tells us which it was via record["submit_attempted"], set
+        # immediately before its point of no return.
+        if status in ("failed", "skipped", "login_required") or (
+            status == "needs_review" and not record.get("submit_attempted")
+        ):
             db.release_submission(key)
         else:
             db.record_submission(key, status, why)
@@ -404,19 +416,39 @@ def _dispatch_apply(
     if platform_mod is None:
         return "skipped", f"{src} unavailable this run"
 
-    status, why = platform_mod.apply(
-        job, letter, uid, profile=profile, resume_path=resume_path, record=record,
-    )
-    # Retry ONLY on clearly pre-submit failures (missing selector / element). A
-    # "timeout" can fire AFTER the submit click went through, so retrying it
-    # would file a SECOND real application.
-    if status == "failed" and any(
-        k in why.lower() for k in ("selector", "not found", "element")
-    ) and "timeout" not in why.lower():
-        time.sleep(random.randint(15, 40))
+    # The board channel gets the SAME idempotency ledger as the employer
+    # channels. A hosted Tier B submit is exactly as unrecallable as an ATS
+    # POST, and it had no claim at all — so a redelivered queue message, or a
+    # browser task racing the hosted sender for the same application, could
+    # file a duplicate under the user's own account name.
+    key = db.submission_key(uid, job.get("url") or "", resolver.CHANNEL_PLATFORM, src)
+    if not db.claim_submission(key, uid):
+        return "skipped", "already submitted through this channel — not sending it twice"
+    try:
         status, why = platform_mod.apply(
             job, letter, uid, profile=profile, resume_path=resume_path, record=record,
         )
+        # Retry ONLY on clearly pre-submit failures (missing selector / element). A
+        # "timeout" can fire AFTER the submit click went through, so retrying it
+        # would file a SECOND real application.
+        if status == "failed" and any(
+            k in why.lower() for k in ("selector", "not found", "element")
+        ) and "timeout" not in why.lower():
+            time.sleep(random.randint(15, 40))
+            status, why = platform_mod.apply(
+                job, letter, uid, profile=profile, resume_path=resume_path, record=record,
+            )
+    except Exception:
+        # Same rule as the employer channels: an exception proves nothing about
+        # whether the click landed, so the claim STAYS.
+        db.record_submission(key, "exception", "board sender raised")
+        raise
+    if status in ("failed", "skipped", "login_required") or (
+        status == "needs_review" and not record.get("submit_attempted")
+    ):
+        db.release_submission(key)
+    else:
+        db.record_submission(key, status, why)
     return status, why
 
 
@@ -716,16 +748,25 @@ def _load_module(source: str):
         return None
 
 
-def _fetch_live(source: str, mod, domains: list[str], limit: int, uid: str) -> list[dict]:
+def _fetch_live(
+    source: str, mod, domains: list[str], limit: int, uid: str,
+    errors: dict[str, str] | None = None,
+) -> list[dict]:
     try:
         return mod.fetch(domains, limit=limit, uid=uid)
     except Exception as e:  # noqa: BLE001
         log.error("%s fetch error: %s", source, e)
+        # Carried into the source_zero_yield audit row: the log line at this
+        # timestamp was the ONLY place the reason existed, and container logs
+        # do not survive a redeploy.
+        if errors is not None:
+            errors[source] = str(e)[:180]
         return []
 
 
 def _fetch_source_all_kw(
-    src: str, mod, kw_sets: list[list[str]], per_kw: int, uid: str
+    src: str, mod, kw_sets: list[list[str]], per_kw: int, uid: str,
+    errors: dict[str, str] | None = None,
 ) -> tuple[str, list[dict]]:
     """Fetch one platform across all keyword sets; dedup by external_id. Thread-safe — each platform has isolated browser context.
 
@@ -739,7 +780,7 @@ def _fetch_source_all_kw(
         for i, kw_list in enumerate(kw_sets):
             if i > 0:
                 time.sleep(random.uniform(*_BASE_PACE_SEC))
-            for j in _fetch_live(src, mod, kw_list, per_kw + 5, uid):
+            for j in _fetch_live(src, mod, kw_list, per_kw + 5, uid, errors=errors):
                 eid = j.get("external_id") or j.get("url", "")
                 if eid and eid not in seen_eids:
                     jobs.append(j)
@@ -1226,15 +1267,20 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
 
         # Load modules serially (importlib side-effects must stay single-threaded)
         loaded: dict[str, object] = {}
+        # Why a source produced nothing, keyed by source — lands in the
+        # source_zero_yield audit row so the answer survives a redeploy.
+        fetch_errors: dict[str, str] = {}
         for src in active_sources:
             mod = _load_module(src)
             if mod is not None:
                 loaded[src] = mod
+            else:
+                fetch_errors[src] = "adapter import failed — see worker log"
 
         # Fetch all platforms in parallel — each has isolated browser context per uid
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(loaded))) as ex:
             futs = {
-                ex.submit(_fetch_source_all_kw, src, mod, kw_sets, per_kw, uid): src
+                ex.submit(_fetch_source_all_kw, src, mod, kw_sets, per_kw, uid, fetch_errors): src
                 for src, mod in loaded.items()
             }
             for fut in concurrent.futures.as_completed(futs):
@@ -1245,6 +1291,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                     source_modules[src_done] = loaded[src_done]
                 except Exception as e:  # noqa: BLE001
                     log.error("%s parallel fetch error: %s", src_done, e)
+                    fetch_errors[src_done] = str(e)[:180]
 
         log.info("total fetched: %d listings across all sources", len(all_jobs))
 
@@ -1260,8 +1307,16 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         for src_name in active_sources:
             got = per_source.get(src_name, 0)
             if got == 0:
-                log.warning("source %s yielded 0 listings this run", src_name)
-                db.add_audit("source_zero_yield", user_id=uid, target=src_name)
+                why_zero = fetch_errors.get(src_name)
+                if why_zero is None:
+                    mod_zero = loaded.get(src_name)
+                    is_on = getattr(mod_zero, "enabled", None) if mod_zero else None
+                    if callable(is_on) and not is_on():
+                        why_zero = "source disabled (flag or provider not configured)"
+                    else:
+                        why_zero = "fetched OK — nothing matched the filters"
+                log.warning("source %s yielded 0 listings this run: %s", src_name, why_zero)
+                db.add_audit("source_zero_yield", user_id=uid, target=src_name, detail=why_zero)
         log.info("per-source yield: %s", per_source or "{}")
 
         # Core-value alarm: discovery yielding >0 is the whole product. If every
@@ -1634,6 +1689,18 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 letter_cache[letter_key] = cover_letter(name, job["title"], job["company"], skills, job, jd_text=jd_text)
             letter = letter_cache[letter_key]
             resume_path, vid = _get_resume(job["title"], job["company"], job["skills"], jd_text=jd_text)
+            # An approved send spends a daily slot exactly like a discovery
+            # send. This path used to skip the ledger entirely, so a user's
+            # approvals sent past the cap the reservation exists to enforce —
+            # and "Sent today" climbed while "Left today" never moved.
+            slot_day = db.local_date_for(uid, profile.get("timezone"))
+            if not db.reserve_daily_slot(uid, plan_cap, profile.get("timezone"), day=slot_day):
+                db.update_application_status(
+                    app_row["id"], "approved",
+                    "approved — today's application limit is reached, it goes out tomorrow",
+                )
+                log.info("approved row %s waiting: daily cap reached", app_row["id"])
+                continue
             rec: dict = {}
             try:
                 status, why = _dispatch_apply(
@@ -1643,6 +1710,12 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 )
             except Exception as e:  # noqa: BLE001
                 status, why = "failed", _user_facing_failure(e, src)
+            # Same refund rule as the discovery loop: definite non-sends give
+            # the slot back; an ambiguous submit after a real click stays spent.
+            if status in ("failed", "skipped", "login_required") or (
+                status == "needs_review" and not rec.get("submit_attempted")
+            ):
+                db.release_daily_slot(uid, profile.get("timezone"), day=slot_day)
             fr = _classify_failure(why) if status == "failed" else None
             if fr == safety.FAILURE_REASON.CAPTCHA and not employer_channel:
                 _flag_challenge(src)
@@ -2042,8 +2115,27 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         # application that has been sent cannot be recalled. The reservation
         # makes the database the arbiter — see db.reserve_daily_slot.
         slot_held = False
+        slot_day = ""
         if live and (not is_platform_channel or src in source_modules):
-            slot_held = db.reserve_daily_slot(uid, plan_cap, profile.get("timezone"))
+            # Prepare EVERYTHING fallible before the reservation. The JD scrape,
+            # the LLM cover letter and the LaTeX resume compile all used to run
+            # between reserve and dispatch, outside any try — a raise there (or
+            # a container kill) escaped the loop with the slot held and NO
+            # application row written: submitted+1 in daily_usage with nothing
+            # anywhere to show for it.
+            if not jd_text and is_platform_channel:
+                jd_text = _scrape_jd_if_available(src, source_modules[src], job["url"], uid)
+            letter_key = (job["title"], job["company"])
+            if letter_key not in letter_cache:
+                letter_cache[letter_key] = cover_letter(
+                    name, job["title"], job["company"], skills, job, jd_text=jd_text
+                )
+            letter = letter_cache[letter_key]
+            resume_path, vid = _get_resume(job["title"], job["company"], job.get("skills", []), jd_text=jd_text)
+            # Pin the reservation's date so the release after an over-midnight
+            # dispatch decrements the SAME row it incremented.
+            slot_day = db.local_date_for(uid, profile.get("timezone"))
+            slot_held = db.reserve_daily_slot(uid, plan_cap, profile.get("timezone"), day=slot_day)
             if not slot_held:
                 log.info("daily cap reached (%d) — banking the rest of the queue", plan_cap)
                 nslot = pipeline + queued
@@ -2057,19 +2149,6 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 )
                 remaining = 0
                 continue
-        if live and (not is_platform_channel or src in source_modules):
-            # JD text enriches the cover letter and the resume tailoring. The
-            # top candidates already had theirs fetched (and were scored on it)
-            # in 4b — reuse that rather than loading the page a second time.
-            if not jd_text and is_platform_channel:
-                jd_text = _scrape_jd_if_available(src, source_modules[src], job["url"], uid)
-            letter_key = (job["title"], job["company"])
-            if letter_key not in letter_cache:
-                letter_cache[letter_key] = cover_letter(
-                    name, job["title"], job["company"], skills, job, jd_text=jd_text
-                )
-            letter = letter_cache[letter_key]
-            resume_path, vid = _get_resume(job["title"], job["company"], job.get("skills", []), jd_text=jd_text)
             rec = {}
             try:
                 status, why = _dispatch_apply(
@@ -2085,12 +2164,16 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             status, why, vid, rec = "skipped", f"{src} unavailable this run", None, {}
 
         # Give the slot back only when nothing reached the employer. "failed" and
-        # "skipped" are definite non-sends; needs_review is NOT — the submit
-        # landed and only the confirmation was unreadable, so refunding it would
-        # let a flaky channel push the user past the number of applications they
-        # agreed to send today.
-        if slot_held and status in ("failed", "skipped", "login_required"):
-            db.release_daily_slot(uid, profile.get("timezone"))
+        # "skipped" are definite non-sends. A needs_review is refunded ONLY when
+        # the sender proves it never reached its point of no return
+        # (record["submit_attempted"] unset — sender off, no resume, unreadable
+        # form); after a real click it stays spent, or a flaky channel could
+        # push the user past the number of applications they agreed to today.
+        if slot_held and (
+            status in ("failed", "skipped", "login_required")
+            or (status == "needs_review" and not rec.get("submit_attempted"))
+        ):
+            db.release_daily_slot(uid, profile.get("timezone"), day=slot_day)
             slot_held = False
 
         if status == "applied":

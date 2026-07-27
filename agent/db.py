@@ -1589,7 +1589,7 @@ def local_date_for(uid: str, tz_name: str | None = None) -> str:
     return now.strftime("%Y-%m-%d")
 
 
-def reserve_daily_slot(uid: str, cap: int, tz_name: str | None = None) -> bool:
+def reserve_daily_slot(uid: str, cap: int, tz_name: str | None = None, day: str | None = None) -> bool:
     """Claim one of today's application slots. True = it is yours to spend.
 
     This is the concurrency-safe half of the daily cap. Counting rows and then
@@ -1604,7 +1604,7 @@ def reserve_daily_slot(uid: str, cap: int, tz_name: str | None = None) -> bool:
     """
     if cap <= 0:
         return False
-    day = local_date_for(uid, tz_name)
+    day = day or local_date_for(uid, tz_name)
     with conn() as c:
         _ensure_daily_usage_table(c)
         # Make sure the row exists without disturbing an existing count.
@@ -1624,15 +1624,21 @@ def reserve_daily_slot(uid: str, cap: int, tz_name: str | None = None) -> bool:
         return cur.rowcount == 1
 
 
-def release_daily_slot(uid: str, tz_name: str | None = None) -> None:
+def release_daily_slot(uid: str, tz_name: str | None = None, day: str | None = None) -> None:
     """Give back a reserved slot — ONLY when it is certain nothing was sent.
 
     An ambiguous submit (posted, confirmation unreadable) must NOT come back
     here: it may well have reached the employer, and refunding it would let the
     same user exceed the number of applications they agreed to per day. Keeps
     `attempted` so the reservation still leaves a trace.
+
+    `day` should be the SAME date string the reservation was taken under — a
+    release that recomputes "today" at 00:01 decrements the wrong day's row
+    (and the submitted>0 guard silently drops it), leaving yesterday's slot
+    spent forever. The TS mirror (browserTasks.releaseDailySlot) already takes
+    the stored reservedDate for exactly this reason.
     """
-    day = local_date_for(uid, tz_name)
+    day = day or local_date_for(uid, tz_name)
     with conn() as c:
         _ensure_daily_usage_table(c)
         c.execute(

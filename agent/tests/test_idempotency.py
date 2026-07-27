@@ -127,12 +127,17 @@ def test_an_unreachable_ledger_refuses_the_send(monkeypatch):
 # ---- dispatch honours the ledger -------------------------------------------
 
 class _CountingChannel:
-    def __init__(self, result=("applied", "sent")):
+    def __init__(self, result=("applied", "sent"), submit_attempted=True):
         self.result, self.sends = result, 0
+        # Real senders set record["submit_attempted"] at their point of no
+        # return; the worker refunds a needs_review that arrives without it.
+        self.submit_attempted = submit_attempted
 
     def apply(self, job, letter, uid, profile=None, resume_path=None,
               record=None, target="", skills=None):
         self.sends += 1
+        if self.submit_attempted and record is not None:
+            record["submit_attempted"] = True
         return self.result
 
 
@@ -172,9 +177,10 @@ def test_a_definite_failure_frees_the_key_for_a_real_retry(ledger, monkeypatch):
 
 
 def test_an_ambiguous_submit_keeps_its_claim(ledger, monkeypatch):
-    """needs_review means the submit LANDED and only its confirmation was
-    unreadable. Retrying that is how a recruiter gets the same application
-    twice, so the claim is deliberately not released."""
+    """A needs_review AFTER the point of no return (submit_attempted set) means
+    the submit LANDED and only its confirmation was unreadable. Retrying that
+    is how a recruiter gets the same application twice, so the claim is
+    deliberately not released."""
     ch = _CountingChannel(result=("needs_review", "submitted, no confirmation"))
     monkeypatch.setitem(worker._CHANNEL_MODULES, resolver.CHANNEL_GOOGLE_FORM, ch)
     args = dict(profile={}, resume_path=None, record={}, skills=[], source_modules={})
@@ -183,6 +189,27 @@ def test_an_ambiguous_submit_keeps_its_claim(ledger, monkeypatch):
     status, _ = worker._dispatch_apply(_dest(), _job(), "letter", "u1", **args)
     assert status == "skipped"
     assert ch.sends == 1
+
+
+def test_a_pre_send_needs_review_frees_the_key(ledger, monkeypatch):
+    """A needs_review BEFORE the point of no return — sender switched off, no
+    resume file, unreadable form — provably sent nothing. Keeping the claim
+    froze that listing on this channel forever: once the gap was fixed, the
+    ledger still said 'already submitted' and the application never went out."""
+    ch = _CountingChannel(
+        result=("needs_review", "no resume file available"), submit_attempted=False,
+    )
+    monkeypatch.setitem(worker._CHANNEL_MODULES, resolver.CHANNEL_GOOGLE_FORM, ch)
+
+    worker._dispatch_apply(_dest(), _job(), "letter", "u1",
+                           profile={}, resume_path=None, record={}, skills=[],
+                           source_modules={})
+    ch.result, ch.submit_attempted = ("applied", "sent"), True
+    status, _ = worker._dispatch_apply(_dest(), _job(), "letter", "u1",
+                                       profile={}, resume_path=None, record={},
+                                       skills=[], source_modules={})
+    assert status == "applied", "fixing the gap must let the application send"
+    assert ch.sends == 2
 
 
 def test_a_sender_that_raises_keeps_its_claim(ledger, monkeypatch):

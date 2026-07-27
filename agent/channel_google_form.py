@@ -366,6 +366,11 @@ def apply(
 
     # final_url, not url: a forms.gle short link redirects, and the POST endpoint
     # only exists under the docs.google.com URL it landed on.
+    #
+    # Point of no return. The worker refunds the daily slot and idempotency
+    # claim for a needs_review WITHOUT this flag; with it, both stay spent —
+    # the POST may have landed even when the response is unreadable.
+    record["submit_attempted"] = True
     code, body = _post(response_url(final_url or url), payload)
     record["answers"] = questions.to_record(answers)
     record["destination"] = url
@@ -380,6 +385,9 @@ def apply(
             "form accepted the POST but showed no confirmation — verify manually"
         )
     if code in (401, 403):
+        # A rejection at the door: Google refused the POST outright, so nothing
+        # was recorded — this needs_review provably sent nothing.
+        record["submit_attempted"] = False
         return "needs_review", "form is restricted (sign-in or organisation only)"
     if code == 404 or code == 410:
         return "skipped", "form no longer exists — listing is closed"

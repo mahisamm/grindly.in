@@ -491,6 +491,11 @@ def apply(
             safety.screenshot(page, uid, f"no_submit_btn_{job.get('external_id','')}")
             return "skipped", "complex Internshala application requires manual completion"
 
+        # Point of no return. The worker refunds the daily slot and the
+        # idempotency claim for a needs_review WITHOUT this flag (provably
+        # nothing sent); with it, both stay spent — the click may have landed.
+        if record is not None:
+            record["submit_attempted"] = True
         _human_click(page, submit)
         submitted = True
         page.wait_for_timeout(random.randint(2000, 3500))

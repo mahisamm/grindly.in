@@ -382,6 +382,10 @@ def apply(
 
         record["destination"] = url
 
+        # Point of no return. The worker refunds the daily slot and the
+        # idempotency claim for a needs_review WITHOUT this flag (nothing was
+        # sent); WITH it, both stay spent — the click may have landed.
+        record["submit_attempted"] = True
         try:
             stealth.human_click(page, submit)
         except Exception as e:  # noqa: BLE001

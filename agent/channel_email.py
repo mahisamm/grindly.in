@@ -268,6 +268,10 @@ def apply(
     )
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
 
+    # Point of no return: past here the message may exist in the user's Sent
+    # mail even when the API response is unreadable. The worker refunds the
+    # daily slot and idempotency claim for a needs_review WITHOUT this flag.
+    record["submit_attempted"] = True
     ok, detail = _send_raw(access, raw)
     record["destination"] = to
 
