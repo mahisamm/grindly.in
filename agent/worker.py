@@ -2680,8 +2680,8 @@ def optimize_variants(uid: str) -> dict:
         # Only ties reach here: a variant that scored BELOW the master is discarded
         # in resume_optimize, not shown. Offering a worse resume behind the same
         # "Use as my resume" button is how a 35/F rebuild ended up beside a real 76.
-        detail = (f"These match your current {baseline} rather than beating it — "
-                  f"same facts on a cleaner, parser-friendly layout.")
+        detail = (f"These land level with your current {baseline} (best {best}) rather than "
+                  f"beating it — same facts on a cleaner, parser-friendly layout.")
     db.set_variant_status(uid, "ready", detail)
     log.info("optimize: %s stored %d variant(s), %d beat baseline %d, best=%d",
              uid, len(variants), winners, baseline, best)

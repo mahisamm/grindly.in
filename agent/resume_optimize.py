@@ -58,6 +58,11 @@ _MAX_PAGES = 2  # a variant that spills past this isn't an ATS win, it's a mess
 # not "a thin variant" — it is a model being handed an empty document and asked to
 # improve it, which it does by inventing a career. See _extract_struct.
 _MIN_BASE_ITEMS = 3
+# The scorer is an LLM and it wanders: the SAME master resume re-scored 76 one run
+# and 88 the next. So "88 vs 87" says nothing about which document is better, and
+# discarding a variant on that gap throws away good work over a coin flip. Only a
+# gap bigger than this is treated as a real loss. (A 35 against a 76 still goes.)
+_SCORE_NOISE = 2
 
 # Each strategy is (label, instruction). Order is display order before re-scoring
 # re-sorts by measured score. Three genuinely different levers, none of which
@@ -118,14 +123,15 @@ def generate_variants(
     `variants` is best-score-first, each:
         {label, score, grade, baseline_score, beats_baseline, changes: [str], pdf_bytes: bytes}
 
-    A variant that scores BELOW the master is discarded, not shown. Showing it was
-    a deliberate earlier choice ("the user asked to see the rewrites") and it was
-    wrong in practice: the card offered a 35/F rebuild beside the user's own 76,
-    behind a button that would have made the worse document their master resume.
-    A losing rewrite is noise wearing the same chrome as a win. It survives only
-    in `reasons`, which is where "we tried it and it scored worse" belongs.
+    A variant that scores materially BELOW the master is discarded, not shown.
+    Showing it was a deliberate earlier choice ("the user asked to see the
+    rewrites") and it was wrong in practice: the card offered a 35/F rebuild
+    beside the user's own 76, behind a button that would have made the worse
+    document their master resume. A losing rewrite is noise wearing the same
+    chrome as a win. It survives only in `reasons`.
 
-    A TIE is kept and flagged beats_baseline=False — same score on a clean,
+    "Materially" is doing real work there — see _SCORE_NOISE. A variant level with
+    the master is kept and flagged beats_baseline=False: same score on a clean,
     single-column template is a real (if modest) win for a parser, and the UI
     labels it as such.
 
@@ -298,10 +304,10 @@ def _one_variant(
         with open(pdf_path, "rb") as f:
             pdf_bytes = f.read()
 
-    if score < baseline_score:
-        # Never offered. A lower-scoring rebuild next to the user's own resume is
-        # not information — it's a worse document wearing the same "Use as my
-        # resume" button. The audit trail keeps it; the card doesn't.
+    if score < baseline_score - _SCORE_NOISE:
+        # Never offered. A materially lower-scoring rebuild next to the user's own
+        # resume is not information — it's a worse document wearing the same "Use
+        # as my resume" button. The audit trail keeps it; the card doesn't.
         print(f"[optimize] {label}: discarded ({score} < baseline {baseline_score})")
         return None, f"{label}: scored {score} vs your {baseline_score} — discarded, it came out worse"
 
@@ -309,8 +315,9 @@ def _one_variant(
         print(f"[optimize] {label}: kept ({score} > {baseline_score})")
         reason = f"{label}: {score} vs your {baseline_score} — kept"
     else:
-        print(f"[optimize] {label}: kept as a tie ({score} == baseline {baseline_score})")
-        reason = f"{label}: {score}, the same as your current resume — kept for its cleaner layout"
+        print(f"[optimize] {label}: kept as a tie ({score} vs baseline {baseline_score})")
+        reason = (f"{label}: {score} against your {baseline_score} — level within the scorer's "
+                  f"margin, kept for its cleaner layout")
     return {
         "label": label,
         "score": score,
@@ -644,10 +651,45 @@ def _stamp_identity(struct: dict, identity: tuple[str, str]) -> None:
 
 # ---------------- grounding + provenance ----------------
 
+_NUM_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])\d[\w,.+/%-]*")
+
+
+def _number_aliases(raw: str) -> set[str]:
+    """Every form the same quantity legitimately takes on a resume.
+
+    "50k+" and "50,000+" are one fact written two ways, and a rewrite is allowed
+    to reformat it. Without this, three real entries were deleted as invented in a
+    live run: "50k+ tokens" was read as a bare "50", "3D/VR" as a bare "3", and
+    "1st place" as a bare "1" — none of which appear in the resume as standalone
+    numbers, so all three "failed" grounding.
+    """
+    t = (raw or "").lower().strip(".,+/-%")
+    if not t:
+        return set()
+    aliases = {t}
+    digits = re.sub(r"[^\d.]", "", t).strip(".")
+    if digits:
+        aliases.add(digits)
+    m = re.match(r"^(\d+(?:\.\d+)?)\s*([km])", t)
+    if m:
+        try:
+            aliases.add(str(int(float(m.group(1)) * (1000 if m.group(2) == "k" else 1_000_000))))
+        except ValueError:
+            pass
+    return aliases
+
+
+def _number_grounded(raw: str, stems: set[str]) -> bool:
+    return bool(_number_aliases(raw) & stems)
+
+
 def _source_stems(source_text: str) -> set[str]:
     """Every token of the master resume, plus 5-char stems so ordinary
-    morphology ("Engineered" -> "engineer") doesn't read as invented."""
+    morphology ("Engineered" -> "engineer") doesn't read as invented, plus every
+    alias of every number it states."""
     stems: set[str] = set()
+    for raw in _NUM_TOKEN_RE.findall((source_text or "").lower()):
+        stems |= _number_aliases(raw)
     for tok in re.findall(r"[a-z0-9][a-z0-9+#./-]*", (source_text or "").lower()):
         tok = tok.strip("./-")
         if not tok:
@@ -694,20 +736,23 @@ def _ungrounded_tokens(item: dict, stems: set[str], check_title: bool = True) ->
     bad: list[str] = []
     if check_title:
         for field in ("head", "sub"):
-            for raw in re.findall(r"[A-Za-z0-9][A-Za-z0-9+#./-]*", str(item.get(field) or "")):
+            value = str(item.get(field) or "")
+            for raw in re.findall(r"[A-Za-z0-9][A-Za-z0-9+#./-]*", value):
                 # "AI/ML" is two tokens. _source_stems splits on the separators, so
                 # a checker that doesn't would flag a word the resume plainly has.
                 for tok in re.split(r"[/]", raw):
-                    if tok and not _is_grounded(tok, stems) and tok.lower() not in {b.lower() for b in bad}:
+                    if not tok:
+                        continue
+                    ok = _number_grounded(tok, stems) if tok[0].isdigit() else _is_grounded(tok, stems)
+                    if not ok and tok.lower() not in {b.lower() for b in bad}:
                         bad.append(tok)
     for b in item.get("bullets") or []:
-        # Standalone numbers only. A digit glued to a word is part of a tool name —
-        # "YOLOv8" is not a claim that the candidate did something eight times, but
-        # it was read as a bare "8" and rejected as an invented metric.
-        for tok in re.findall(r"(?<![A-Za-z0-9])\d[\d,.]*", str(b)):
-            digits = tok.replace(",", "").rstrip(".")
-            if digits and not _is_grounded(digits, stems) and digits not in bad:
-                bad.append(digits)
+        # Numbers that START a token only. A digit glued behind a word is part of a
+        # tool name — "YOLOv8" is not a claim that something happened eight times,
+        # but it was read as a bare "8" and rejected as an invented metric.
+        for raw in _NUM_TOKEN_RE.findall(str(b)):
+            if not _number_grounded(raw, stems) and raw not in bad:
+                bad.append(raw)
     return bad
 
 

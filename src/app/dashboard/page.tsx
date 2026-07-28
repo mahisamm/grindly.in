@@ -2860,7 +2860,10 @@ export default function Dashboard() {
                                 written when losers were displayed too. */}
                             {delta <= 0 && (
                               <div className="mt-1 text-[0.65rem] text-muted">
-                                Same score as your current {v.baselineScore} — cleaner, parser-friendly layout
+                                {delta === 0
+                                  ? `Same score as your current ${v.baselineScore}`
+                                  : `Level with your current ${v.baselineScore}, within our scorer's margin`}
+                                {" — cleaner, parser-friendly layout"}
                               </div>
                             )}
                             {v.changes.length > 0 && (

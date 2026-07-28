@@ -453,6 +453,42 @@ def test_a_version_number_inside_a_tool_name_is_not_a_metric():
         {"head": "SmartRX", "sub": "", "bullets": ["Deployed a YOLOv8 pipeline on S3"]}, stems) == []
 
 
+@pytest.mark.parametrize("source,written", [
+    ("managed 50k+ tokens", "managed 50,000+ tokens"),   # same fact, reformatted
+    ("managed 50k+ tokens", "managed 50k tokens"),
+    ("an immersive 3D/VR platform", "a 3D platform"),     # "3" is not a claim
+    ("1st place at the expo", "1st place"),
+    ("CGPA: 7.45", "CGPA 7.45"),
+])
+def test_a_real_number_survives_being_rewritten(source, written):
+    """Three real entries were deleted as invented in a live run over exactly this:
+    "50k+" read as a bare "50", "3D/VR" as a bare "3", "1st" as a bare "1"."""
+    assert ro._ungrounded_tokens(
+        {"head": "", "sub": "", "bullets": [written]}, ro._source_stems(source)) == []
+
+
+def test_an_inflated_number_is_still_caught():
+    """The gate must not become decorative — 50k in, 500k out is a fabrication."""
+    bad = ro._ungrounded_tokens(
+        {"head": "", "sub": "", "bullets": ["managed 500k tokens"]},
+        ro._source_stems("managed 50k+ tokens"))
+    assert bad, "an invented quantity must not pass"
+
+
+def test_a_one_point_loss_is_not_treated_as_a_worse_resume(monkeypatch):
+    """The same master re-scored 76 one run and 88 the next. Discarding an 87
+    against an 88 throws away good work over a coin flip."""
+    variant, reason = _run_variant(monkeypatch, 87, baseline=88)
+    assert variant is not None
+    assert variant["beats_baseline"] is False
+    assert "level" in reason.lower()
+
+
+def test_a_real_loss_is_still_discarded(monkeypatch):
+    variant, _ = _run_variant(monkeypatch, 78, baseline=88)
+    assert variant is None
+
+
 def test_selection_prefers_the_faithful_rewrite_over_the_richer_invented_one(monkeypatch):
     """The core defect. Candidates were weighed by raw content, so a model that
     ignored the input and emitted a longer generic resume beat a faithful sibling
@@ -563,7 +599,7 @@ def test_a_tie_is_still_offered(monkeypatch):
     variant, reason = _run_variant(monkeypatch, 76)
     assert variant is not None
     assert variant["beats_baseline"] is False
-    assert "same" in reason.lower()
+    assert "level" in reason.lower()
 
 
 def test_a_winner_is_offered(monkeypatch):
