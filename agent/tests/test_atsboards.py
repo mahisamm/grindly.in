@@ -389,3 +389,29 @@ def test_an_unwritable_learned_file_does_not_fail_discovery(monkeypatch):
     monkeypatch.setattr(atsboards, "_LEARNED_FILE", "/nonexistent\x00/bad.json")
     atsboards.remember_slugs(["https://boards.greenhouse.io/freshco/jobs/9"])
     assert ("greenhouse", "freshco") in atsboards._LEARNED
+
+
+def test_a_mis_parsed_slug_is_never_learned():
+    """Live, this produced "Ouro%20Careers%20Page" and "oops" — each costing one
+    404 per board poll for as long as it stayed on the list."""
+    atsboards.remember_slugs([
+        "https://jobs.ashbyhq.com/Ouro%20Careers%20Page/abc12345",
+        "https://boards.greenhouse.io/a b c/jobs/1",
+    ])
+    assert not atsboards._LEARNED
+
+
+def test_a_learned_board_that_answers_nothing_is_forgotten(monkeypatch):
+    atsboards.remember_slugs(["https://boards.greenhouse.io/goneco/jobs/1"])
+    assert ("greenhouse", "goneco") in atsboards._LEARNED
+    monkeypatch.setattr(atsboards, "_get_json", lambda url: None)
+    atsboards._board("greenhouse", "goneco")
+    assert ("greenhouse", "goneco") not in atsboards._LEARNED
+
+
+def test_a_seeded_board_is_never_forgotten(monkeypatch):
+    """Those were verified by hand; a miss is transient."""
+    monkeypatch.setattr(atsboards, "_get_json", lambda url: None)
+    before = dict(atsboards.BOARDS)
+    atsboards._board("greenhouse", "cloudsek")
+    assert atsboards.BOARDS == before

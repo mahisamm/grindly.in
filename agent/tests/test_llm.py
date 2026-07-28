@@ -45,21 +45,38 @@ def test_selection_skips_unconfigured_providers_and_prefers_distinct_backends(mo
 
 
 def test_ensemble_calls_providers_in_parallel(monkeypatch):
-    providers = [
-        _provider("one", "one", "KEY_ONE", "one", delay=0.15),
-        _provider("two", "two", "KEY_TWO", "two", delay=0.15),
-        _provider("three", "three", "KEY_THREE", "three", delay=0.15),
-    ]
-    monkeypatch.setattr(llm, "PROVIDERS", providers)
+    """All three providers must be in flight at once.
+
+    Asserted by counting overlap rather than by wall clock. The original bound
+    was `elapsed < 0.35` for three 0.15s sleeps — a 2.3x margin that a serial
+    implementation would fail, but so does a correct one on a loaded machine,
+    and a test that goes red because the box is busy teaches everyone to ignore
+    it. Concurrency is what the test is actually about, and counting it is
+    immune to how fast the host happens to be.
+    """
+    import threading
+
+    # Each provider waits for the other two to arrive. Three threads running at
+    # once release it immediately; a serial implementation deadlocks until the
+    # timeout and every call comes back empty. The timeout is generous on
+    # purpose — it bounds how long a WRONG implementation takes to fail, and has
+    # nothing to do with how fast a right one runs.
+    gate = threading.Barrier(3, timeout=20)
+
+    def _gated(name):
+        def call(_messages, _timeout, _temperature=0.3):
+            gate.wait()
+            return name
+        return llm.Provider(name, call, f"KEY_{name.upper()}", name)
+
+    monkeypatch.setattr(llm, "PROVIDERS", [_gated(n) for n in ("one", "two", "three")])
     for key in ("KEY_ONE", "KEY_TWO", "KEY_THREE"):
         monkeypatch.setenv(key, "configured")
 
-    started = time.perf_counter()
     results = llm.chat_ensemble("prompt", n=3)
-    elapsed = time.perf_counter() - started
 
-    assert set(results) == {"one", "two", "three"}
-    assert elapsed < 0.35
+    assert set(results) == {"one", "two", "three"}, (
+        "providers did not run concurrently — ensemble is serial")
 
 
 def test_ensemble_threads_temperature_to_providers(monkeypatch):

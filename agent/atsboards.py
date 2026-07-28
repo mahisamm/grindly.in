@@ -188,7 +188,25 @@ def _board(vendor: str, slug: str):
     payload = _get_json(_API[vendor].format(slug=slug))
     if payload:
         _CACHE[key] = (time.time(), payload)
+    elif (vendor, slug) in _LEARNED:
+        # A learned board that answers nothing was a guess that did not pay off
+        # — a company that closed its board, or a slug read out of a URL that
+        # did not contain one. Keeping it costs a request on every future sweep,
+        # forever, for a board that has never returned anything. Seeded boards
+        # are left alone: those were verified by hand and a miss is transient.
+        _forget_slug(vendor, slug)
     return payload
+
+
+def _forget_slug(vendor: str, slug: str) -> None:
+    _LEARNED.discard((vendor, slug))
+    try:
+        tmp = _LEARNED_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(sorted(_LEARNED), f)
+        os.replace(tmp, _LEARNED_FILE)
+    except Exception:  # noqa: BLE001 — forgetting is housekeeping, never critical
+        pass
 
 
 # ---- one shape out of three ------------------------------------------------
@@ -589,11 +607,19 @@ def _load_learned() -> None:
         print(f"[atsboards] learned-slug load skipped: {type(e).__name__}")
 
 
+# A company slug is one path segment of a URL. Anything with an escape sequence
+# or punctuation beyond -_. came out of a mis-parse — live, that produced
+# "Ouro%20Careers%20Page" and "oops", each costing one 404 per board poll for as
+# long as it stayed on the list.
+_PLAUSIBLE_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,60}$")
+
+
 def remember_slugs(urls) -> int:
     """Learn the companies behind these URLs. Returns how many were new."""
     _load_learned()
     fresh = {pair for pair in slugs_from_urls(urls)
-             if pair[0] in _API and pair not in _LEARNED}
+             if pair[0] in _API and pair not in _LEARNED
+             and _PLAUSIBLE_SLUG.match(pair[1])}
     if not fresh:
         return 0
     _LEARNED.update(fresh)

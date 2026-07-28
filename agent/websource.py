@@ -845,9 +845,24 @@ def fetch(roles: list[str], limit: int = 25, uid: str = "") -> list[dict]:
         j["duration"] = parse_duration(body)
 
     kept: list[dict] = []
-    dropped = {"index": 0, "not_india": 0, "duplicate": 0, "unreadable": 0}
+    dropped = {"index": 0, "not_india": 0, "duplicate": 0, "unreadable": 0, "stale": 0}
     canonical_seen: set[str] = set()
+    role_seen: set[tuple] = set()
     for j in jobs:
+        # atsboards has always dropped postings past MAX_AGE_DAYS; this source
+        # never checked, because until now it had no date to check. A graded run
+        # surfaced a Ubisoft internship 1,887 days old — five years — alongside
+        # ones from this week, and ranked it above them. An application to a
+        # long-filled role spends a daily slot to receive no reply.
+        try:
+            import atsboards as _ats
+
+            max_age = _ats.MAX_AGE_DAYS
+        except Exception:  # noqa: BLE001
+            max_age = 120
+        if isinstance(j.get("posted_days"), int) and j["posted_days"] > max_age:
+            dropped["stale"] += 1
+            continue
         # An unvouched host has to prove itself by being readable. One live run
         # returned eight link-farm URLs — jiphi.lc/go, violebez.de/onizvo,
         # kir.sj/bi — which passed every check we had: unknown host (kept by
@@ -867,16 +882,28 @@ def fetch(roles: list[str], limit: int = 25, uid: str = "") -> list[dict]:
         if not in_india(j["title"], j["location"], j["jd_text"]):
             dropped["not_india"] += 1
             continue
-        if j["canonical"] in canonical_seen:
+        # Two keys, because a posting has two ways of being the same job. The
+        # canonical key catches one URL reached by two addresses; this one
+        # catches a company republishing the same role under a new id, which a
+        # graded run showed twice in its top twenty (TechVedika, Brainwonders)
+        # — indistinguishable to the person reading the list.
+        role_key = (
+            (j["company"] or "").strip().lower(),
+            re.sub(r"\W+", " ", (j["title"] or "").lower()).strip(),
+            (j["location"] or "").strip().lower(),
+        )
+        if j["canonical"] in canonical_seen or role_key in role_seen:
             dropped["duplicate"] += 1
             continue
         canonical_seen.add(j["canonical"])
+        role_seen.add(role_key)
         kept.append(j)
 
     print(f"[websource] {len(kept)} employer-hosted candidate(s) from "
           f"{websearch.provider()} over {len(queries)} quer(ies) "
           f"({enriched} with a full description); dropped "
           f"{dropped['index']} index page(s), {dropped['not_india']} outside India, "
+          f"{dropped['stale']} stale, "
           f"{dropped['unreadable']} unreadable on an unvouched host, "
           f"{dropped['duplicate']} duplicate(s)")
     return kept
