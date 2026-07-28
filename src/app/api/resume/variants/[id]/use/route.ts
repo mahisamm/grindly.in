@@ -30,7 +30,9 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   if (!variant) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   // Re-validate the stored path stays under data/resume_variants before reading.
-  const variantsDir = path.join(process.cwd(), "data", "resume_variants");
+  // The trailing separator matters: a bare prefix test also accepts a SIBLING
+  // directory that merely starts with the same characters (data/resume_variants_x).
+  const variantsDir = path.join(process.cwd(), "data", "resume_variants") + path.sep;
   const srcAbs = path.resolve(/*turbopackIgnore: true*/ process.cwd(), variant.pdfPath);
   if (!srcAbs.startsWith(variantsDir) || !fs.existsSync(srcAbs)) {
     return NextResponse.json({ error: "This optimized file is no longer available. Please regenerate." }, { status: 410 });
@@ -63,10 +65,21 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
         resumeParseFailed: false,
         resumeVariantStatus: null,
         resumeVariantDetail: null,
+        // The LaTeX master describes the resume being REPLACED. The upload path
+        // clears these (src/app/api/resume/route.ts) and this path forgot to —
+        // so after "Use as my resume" the tailoring pipeline kept editing a
+        // .tex of the old document and mailing employers the old resume.
+        resumeTexName: null,
+        resumeTexStatus: null,
+        resumeTexDetail: null,
       },
     });
     // The stored variants were generated from the PREVIOUS master; drop them.
     await prisma.resumeVariant.deleteMany({ where: { userId: uid } });
+    // And the stale .tex file itself, same as a fresh master upload does.
+    await fsp
+      .rm(path.join(process.cwd(), "data", "resume_tex", `${uid}.tex`), { force: true })
+      .catch(() => {});
     await enqueueAgentRun(uid, "analyze");
   } catch (e) {
     console.error("[resume/use] db write failed:", e);

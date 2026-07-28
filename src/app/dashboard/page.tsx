@@ -124,7 +124,8 @@ type RawProfile = {
   matchQualityRating: number | null;
   resumeParseFailed: boolean;
   reportChannel: string;
-  // ATS-optimized variant generation status: null | generating | ready | no_gain | failed
+  // ATS-optimized variant generation status:
+  // null | generating | ready | no_gain | failed | error
   resumeVariantStatus: string | null;
   resumeVariantDetail: string | null;
 };

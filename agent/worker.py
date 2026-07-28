@@ -2629,7 +2629,14 @@ def optimize_variants(uid: str) -> dict:
         # shown even when every variant died on an unreadable compile — a beta
         # user read that, believed the feature had run, and filed a bug.
         why = " · ".join(reasons[:3]) if reasons else "no versions survived scoring"
-        ours = any("our side" in r or "didn't compile" in r for r in reasons)
+        # "model unavailable" is in this list because it was missing: with no LLM
+        # provider reachable, every rewrite returned nothing, and the message
+        # shown was "none of the rewrites beat your current resume" — a claim
+        # about the user's resume when the truth was our model being down.
+        ours = any(
+            "our side" in r or "didn't compile" in r or "model unavailable" in r
+            for r in reasons
+        )
         db.set_variant_status(
             uid,
             "error" if ours else "no_gain",

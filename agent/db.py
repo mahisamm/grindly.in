@@ -1480,7 +1480,9 @@ def _ensure_variants_table(c):
 
 def set_variant_status(uid: str, status: str, detail: str = ""):
     """Drive the dashboard 'ATS-optimized versions' card:
-    generating | ready | failed | no_gain (see Profile.resumeVariantStatus)."""
+    generating | ready | failed | no_gain | error
+    (see Profile.resumeVariantStatus). "error" = our side broke — compiler or
+    model down — and must never be worded as a verdict on the user's resume."""
     with conn() as c:
         _ensure_profile_columns(c)
         _ensure_profile_row(c, uid)

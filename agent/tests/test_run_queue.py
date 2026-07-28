@@ -325,12 +325,31 @@ def _maintenance_on(monkeypatch):
 
 
 def test_maintenance_mode_blocks_claiming(_maintenance_on):
-    run_queue.enqueue("u1", "analyze")
+    run_queue.enqueue("u1", "live")
     assert run_queue.claim_next("w1") is None
 
 
+def test_maintenance_still_serves_resume_only_work(_maintenance_on):
+    """Maintenance exists to stop the fleet mutating the outside world — applies,
+    scrapes, submissions. A resume analysis or variant build touches only the
+    user's own rows, and the web route explicitly promises both run during
+    maintenance. Before the mode filter, that promise broke silently: the click
+    succeeded, the row queued, nothing claimed it, and the card said
+    "Building…" until the user gave up."""
+    run_queue.enqueue("u1", "live")
+    run_queue.enqueue("u2", "optimize")
+    run_queue.enqueue("u3", "analyze")
+
+    first = run_queue.claim_next("w1")
+    second = run_queue.claim_next("w1")
+
+    got = {j["mode"] for j in (first, second) if j}
+    assert got == {"optimize", "analyze"}, "resume-only modes must still run"
+    assert run_queue.claim_next("w1") is None, "the live job must stay held"
+
+
 def test_maintenance_mode_warns_while_work_is_queued(_maintenance_on, caplog):
-    run_queue.enqueue("u1", "analyze")
+    run_queue.enqueue("u1", "live")
     with caplog.at_level("WARNING"):
         run_queue.claim_next("w1")
     assert any("MAINTENANCE MODE" in r.getMessage() for r in caplog.records)
@@ -346,7 +365,7 @@ def test_maintenance_mode_is_quiet_with_an_empty_queue(_maintenance_on, caplog):
 
 def test_maintenance_warning_is_throttled(_maintenance_on, caplog):
     """It repeats so a later reader still sees it, but not on every 10s poll."""
-    run_queue.enqueue("u1", "analyze")
+    run_queue.enqueue("u1", "live")
     with caplog.at_level("WARNING"):
         for _ in range(5):
             run_queue.claim_next("w1")

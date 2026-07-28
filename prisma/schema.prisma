@@ -221,10 +221,12 @@ model Profile {
   // ATS-optimized variant generation (the "3 better resumes" feature). Runs only
   // on an explicit button click, never on every sweep — it's several LLM calls +
   // Tectonic compiles. Status drives the dashboard card:
-  //   null/none | generating | ready | failed | no_gain
-  // "no_gain" means we produced variants but none scored higher than the master,
-  // so we show nothing rather than a worse resume dressed up as an upgrade. The
-  // actual variants live in the resume_variants table (ResumeVariant).
+  //   null/none | generating | ready | failed | no_gain | error
+  // "no_gain" means the rewrites ran and none scored higher than the master, so
+  // we show nothing rather than a worse resume dressed up as an upgrade.
+  // "error" means OUR side broke (compiler, model unavailable) — worded that way
+  // on the card so the user never reads an infrastructure failure as a verdict
+  // on their resume. The actual variants live in resume_variants (ResumeVariant).
   resumeVariantStatus String? @map("resume_variant_status")
   resumeVariantDetail String? @map("resume_variant_detail")
 
@@ -291,7 +293,8 @@ model ResumeVariant {
   // JSON array of plain-English strings: what this variant changed vs the master.
   // Keeps the (invisible) LaTeX trustworthy — the user sees why the score moved.
   changes       String
-  // Compiled PDF on disk: data/resume_variants/<uid>/<id>.pdf. Served only to the
+  // Compiled PDF on disk: data/resume_variants/<uid>/<rank>.pdf (the worker
+  // writes by rank, not row id — worker.optimize_variants). Served only to the
   // owning user via GET /api/resume/variants/[id]; never a public path.
   pdfPath       String   @map("pdf_path")
   createdAt     DateTime @default(now()) @map("created_at")

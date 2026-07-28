@@ -255,16 +255,35 @@ def _warn_if_maintenance_is_holding_work() -> None:
     )
 
 
+# Modes that never touch a job board or send anything anywhere: resume-only
+# work. Maintenance mode exists to stop the fleet MUTATING the outside world
+# (applies, submissions, scrapes under a user's session) — a resume analysis or
+# an optimized-variant build mutates nothing but the user's own rows. The web
+# route already promises exactly this ("allowed during maintenance", see
+# src/app/api/agent/run/route.ts); before this list the queue silently broke
+# that promise: the click succeeded, the row queued, nothing ever claimed it,
+# and the card showed "Building…" until the user gave up.
+MAINTENANCE_SAFE_MODES = ("analyze", "optimize")
+
+
 def claim_next(worker_id: str) -> dict | None:
     """Atomically claim the oldest eligible queued job whose user has nothing
     running. Postgres uses row-level locking (FOR UPDATE SKIP LOCKED) plus a
     per-user advisory lock (see _claim_guarded); SQLite uses an immediate
     transaction. Either way two workers never grab the same row, and a user
     with a running job is never double-claimed — so replicas > 1 is safe.
-    Jobs still inside their post-failure backoff window are skipped too."""
-    if admin_settings.maintenance_mode():
+    Jobs still inside their post-failure backoff window are skipped too.
+
+    During maintenance only MAINTENANCE_SAFE_MODES are served; everything that
+    can reach a job board stays queued until the switch flips back."""
+    maintenance = admin_settings.maintenance_mode()
+    if maintenance:
         _warn_if_maintenance_is_holding_work()
-        return None
+    mode_filter = (
+        "AND mode IN ({}) ".format(",".join("?" for _ in MAINTENANCE_SAFE_MODES))
+        if maintenance else ""
+    )
+    mode_params = MAINTENANCE_SAFE_MODES if maintenance else ()
     with db.conn() as c:
         _ensure_table(c)
         if db.PG:
@@ -272,8 +291,10 @@ def claim_next(worker_id: str) -> dict | None:
                 "SELECT * FROM agent_runs WHERE status='queued' "
                 "AND (available_at IS NULL OR available_at <= CURRENT_TIMESTAMP) "
                 "AND attempts < max_attempts "
+                f"{mode_filter}"
                 "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
-                "ORDER BY created_at ASC LIMIT 20 FOR UPDATE SKIP LOCKED"
+                "ORDER BY created_at ASC LIMIT 20 FOR UPDATE SKIP LOCKED",
+                mode_params,
             ).fetchall()
         else:
             c.execute("BEGIN IMMEDIATE")
@@ -281,9 +302,10 @@ def claim_next(worker_id: str) -> dict | None:
                 "SELECT * FROM agent_runs WHERE status='queued' "
                 "AND (available_at IS NULL OR available_at <= ?) "
                 "AND attempts < max_attempts "
+                f"{mode_filter}"
                 "AND user_id NOT IN (SELECT user_id FROM agent_runs WHERE status='running') "
                 "ORDER BY created_at ASC LIMIT 20",
-                (db.now_db(),),
+                (db.now_db(), *mode_params),
             ).fetchall()
         row = next(
             (r for r in candidates if _backoff_ok(r) and _claim_guarded(c, r)),

@@ -14,7 +14,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   const variant = await prisma.resumeVariant.findFirst({ where: { id, userId: uid } });
   if (!variant) return new Response("not found", { status: 404 });
 
-  const variantsDir = path.join(process.cwd(), "data", "resume_variants");
+  // Trailing separator on purpose: a bare prefix test also accepts a sibling
+  // directory that merely starts with the same characters.
+  const variantsDir = path.join(process.cwd(), "data", "resume_variants") + path.sep;
   const abs = path.resolve(/*turbopackIgnore: true*/ process.cwd(), variant.pdfPath);
   if (!abs.startsWith(variantsDir) || !fs.existsSync(abs)) {
     return new Response("file missing", { status: 404 });
