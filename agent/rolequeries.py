@@ -178,9 +178,19 @@ _CACHE: dict[str, tuple[float, list[str]]] = {}
 _loaded = False
 
 
+# Bump when the shape of the answer changes, not when the wording does.
+#
+# The cluster-coverage guarantee shipped and changed nothing in production for
+# thirty days, because every user's roles were already cached from before it
+# existed — the fix was live, correct, and completely invisible. A cache keyed
+# only on the INPUT cannot notice that the function computing the output moved.
+LOGIC_VERSION = "2"
+
+
 def _key(skills: list[str], domains: list[str]) -> str:
     blob = "|".join(sorted(str(s).lower().strip() for s in skills))
     blob += "//" + "|".join(sorted(str(d).lower().strip() for d in domains))
+    blob += "//v" + LOGIC_VERSION
     return hashlib.sha1(blob.encode()).hexdigest()[:20]
 
 

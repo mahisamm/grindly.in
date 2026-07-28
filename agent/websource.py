@@ -81,8 +81,13 @@ _HARVEST_HOSTS = [
 ]
 _HARVEST_TERMS = [
     "intern india", "internship bengaluru", "internship hyderabad",
-    "intern pune", "internship remote india",
+    "intern pune", "internship remote india", "internship chennai",
+    "internship mumbai", "intern gurgaon", "intern noida",
 ]
+
+# How much text an UNVOUCHED host must serve before its listing is kept. A real
+# posting runs to thousands of characters; a link farm serves a redirect.
+_MIN_UNVOUCHED_JD = int(os.environ.get("GRINDLY_MIN_UNVOUCHED_JD", "800"))
 
 # Deliberately UNQUOTED. An exact-phrase query ("web development intern")
 # matches almost nothing on a real posting, whose title is "Software Developer
@@ -515,7 +520,20 @@ def _jd_from_ashby(url: str) -> str:
 _POSTING_META: dict[str, dict] = {}
 
 
+def _has_words(value) -> bool:
+    """Is there anything here but punctuation?
+
+    `", ".join(city, country)` on a posting that gave neither produces ", " —
+    which is truthy, so it overrode a location correctly parsed from the text
+    and then failed every India check downstream. Five real listings were
+    dropped that way in one run.
+    """
+    return bool(re.search(r"[A-Za-z]", str(value or "")))
+
+
 def _remember_meta(url: str, *, posted=None, location=None, company=None) -> None:
+    location = location if _has_words(location) else None
+    company = company if _has_words(company) else None
     meta = _POSTING_META.setdefault(url, {})
     if posted not in (None, ""):
         try:
@@ -808,9 +826,20 @@ def fetch(roles: list[str], limit: int = 25, uid: str = "") -> list[dict]:
         j["duration"] = parse_duration(body)
 
     kept: list[dict] = []
-    dropped = {"index": 0, "not_india": 0, "duplicate": 0}
+    dropped = {"index": 0, "not_india": 0, "duplicate": 0, "unreadable": 0}
     canonical_seen: set[str] = set()
     for j in jobs:
+        # An unvouched host has to prove itself by being readable. One live run
+        # returned eight link-farm URLs — jiphi.lc/go, violebez.de/onizvo,
+        # kir.sj/bi — which passed every check we had: unknown host (kept by
+        # design, since a small employer's own domain looks the same), no index
+        # markers in a two-character path, and an intern-ish title straight out
+        # of the poisoned search result. What they could not do is serve a job
+        # description. On an ATS or a company's own careers page the posting is
+        # provably real, so a short read there is a fetch failure, not a fraud.
+        if j["host_class"] == "unknown" and len(j["jd_text"]) < _MIN_UNVOUCHED_JD:
+            dropped["unreadable"] += 1
+            continue
         if looks_like_an_index(j["jd_text"]):
             dropped["index"] += 1
             continue
@@ -829,6 +858,7 @@ def fetch(roles: list[str], limit: int = 25, uid: str = "") -> list[dict]:
           f"{websearch.provider()} over {len(queries)} quer(ies) "
           f"({enriched} with a full description); dropped "
           f"{dropped['index']} index page(s), {dropped['not_india']} outside India, "
+          f"{dropped['unreadable']} unreadable on an unvouched host, "
           f"{dropped['duplicate']} duplicate(s)")
     return kept
 

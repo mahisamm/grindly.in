@@ -255,3 +255,53 @@ def test_a_pay_note_is_never_put_where_a_number_belongs():
     text = "You'll be rewarded a competitive salary."
     assert websource.parse_stipend(text) == ""
     assert websource.parse_pay_note(text)
+
+
+# ---- unvouched hosts have to prove themselves ------------------------------
+
+def test_a_link_farm_url_is_not_a_job_posting(monkeypatch):
+    """One live run returned eight of these — jiphi.lc/go, violebez.de/onizvo,
+    kir.sj/bi. Unknown host (kept by design, since a small employer's own domain
+    looks identical), no index markers in a two-character path, and an
+    intern-ish title straight out of a poisoned search result. What they cannot
+    do is serve a job description."""
+    import websearch
+
+    monkeypatch.setattr(websearch, "configured", lambda: True)
+    monkeypatch.setattr(websource, "enabled", lambda: True)
+    monkeypatch.setattr(websearch, "search", lambda q, limit=10: [{
+        "title": "Software Development Intern at Acme",
+        "url": "http://jiphi.lc/go",
+        "snippet": "Internship in Bengaluru, India. Apply now.",
+    }])
+    monkeypatch.setattr(websource, "scrape_jd", lambda url, uid="": "")
+    assert websource.fetch(["software engineer"], limit=5) == []
+
+
+def test_a_readable_unvouched_host_is_still_kept(monkeypatch):
+    """A small employer on a domain nobody has seen is exactly the listing the
+    boards miss — the rule is readability, not reputation."""
+    import websearch
+
+    monkeypatch.setattr(websearch, "configured", lambda: True)
+    monkeypatch.setattr(websource, "enabled", lambda: True)
+    monkeypatch.setattr(websearch, "search", lambda q, limit=10: [{
+        "title": "Software Development Intern at Somestartup",
+        "url": "https://somestartup.xyz/2026-summer-programme",
+        "snippet": "Internship in Bengaluru, India.",
+    }])
+    monkeypatch.setattr(
+        websource, "scrape_jd",
+        lambda url, uid="": "We are hiring an intern in Bengaluru, India. " * 40)
+    assert len(websource.fetch(["software engineer"], limit=5)) == 1
+
+
+def test_a_punctuation_only_location_never_overrides_a_real_one(monkeypatch):
+    """`", ".join(city, country)` on a posting that gave neither produces ", ",
+    which is truthy — it overrode a correctly parsed location and then failed
+    every India check downstream."""
+    monkeypatch.setattr(websource, "_POSTING_META", {})
+    websource._remember_meta("https://x/1", location=", ", company="  ")
+    assert websource.posting_meta("https://x/1").get("location") is None
+    websource._remember_meta("https://x/1", location="Bengaluru, India")
+    assert websource.posting_meta("https://x/1")["location"] == "Bengaluru, India"
