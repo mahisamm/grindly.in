@@ -126,11 +126,17 @@
     await new Promise((r) => setTimeout(r, SETTLE_MS));
 
     // 1. Gate check before touching anything.
-    let gate = gates.detectHumanGate(document);
+    //
+    // `detail` carries the page text that triggered the gate. Without it a wrong
+    // gate is unfalsifiable from the server side: production stopped real
+    // applications with reason "payment" on a board that charges nothing to
+    // apply, and nothing recorded which words said otherwise.
+    let g = gates.explainHumanGate(document);
+    let gate = g.reason;
     if (gate) {
       stopHeartbeat();
       banner(`Grindly stopped: this page needs you (${gate}). Finish it and Grindly will carry on.`, "gate");
-      await report("awaiting_human", { reason: gate });
+      await report("awaiting_human", { reason: gate, detail: g.evidence });
       return;
     }
 
@@ -170,11 +176,12 @@
       if (submit) {
         // The form that just appeared is a new form: re-check for a gate, and
         // fill the fields it brought with it.
-        gate = gates.detectHumanGate(document);
+        g = gates.explainHumanGate(document);
+        gate = g.reason;
         if (gate) {
           stopHeartbeat();
           banner(`Grindly stopped: this page needs you (${gate}).`, "gate");
-          await report("awaiting_human", { reason: gate });
+          await report("awaiting_human", { reason: gate, detail: g.evidence });
           return;
         }
         try {
@@ -201,11 +208,12 @@
 
     // 5. Re-check immediately before submitting — a challenge can appear between
     //    the first check and now, and submitting into one is worse than stopping.
-    gate = gates.detectHumanGate(document);
+    g = gates.explainHumanGate(document);
+    gate = g.reason;
     if (gate) {
       stopHeartbeat();
       banner(`Grindly stopped before submitting: ${gate}.`, "gate");
-      await report("awaiting_human", { reason: gate });
+      await report("awaiting_human", { reason: gate, detail: g.evidence });
       return;
     }
 

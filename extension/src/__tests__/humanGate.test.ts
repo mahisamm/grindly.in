@@ -64,12 +64,18 @@ describe("other human gates", () => {
     expect(detectHumanGate(makeDoc({ text: "Enter the OTP sent to your phone" }))).toBe("otp");
   });
 
-  it("stops at a payment demand rather than paying", () => {
+  it.each([
+    ["a registration fee asserted as required", "A registration fee is required to apply"],
+    ["payment stated as mandatory", "Payment of ₹499 is required"],
+    ["paying as the condition of applying", "Pay now to apply for this role"],
+    ["card details demanded", "Card details are required to continue"],
+    ["a paywall dressed as a subscription", "Subscribe to apply for unlimited internships"],
+    // The negation guard must not swallow a real demand in a later sentence.
+    ["a demand after an unrelated negation", "No experience required. Application fee required to apply."],
+  ])("stops at %s rather than paying", (_label, text) => {
     // A fee to apply is also the classic internship scam, so proceeding would be
     // wrong even if paying were technically possible.
-    expect(
-      detectHumanGate(makeDoc({ text: "A registration fee is required to apply" })),
-    ).toBe("payment");
+    expect(detectHumanGate(makeDoc({ text }))).toBe("payment");
   });
 
   it("stops at a legal declaration the user must make personally", () => {
@@ -80,6 +86,45 @@ describe("other human gates", () => {
 
   it("stops at a login wall stated in words", () => {
     expect(detectHumanGate(makeDoc({ text: "Please sign in to continue" }))).toBe("login");
+  });
+});
+
+describe("a page that mentions money but is not asking the applicant for any", () => {
+  // Production evidence: real Internshala applications were abandoned with
+  // reason "payment" on a board that charges nothing to apply. The old pattern
+  // was `(payment|pay|fee|subscribe|card details)` within 40 characters of
+  // `(required|to apply|continue)` across the WHOLE page, which ordinary board
+  // furniture satisfies constantly. A false gate is not a safe failure: it
+  // strands the application it exists to protect and tells the user the site
+  // demanded money when it did not.
+  it.each([
+    ["a stipend beside a Continue button", "Stipend: ₹10,000 /month. Continue"],
+    ["pay described as what the employer offers", "Pay: competitive. Continue to apply"],
+    ["an unrelated course upsell", "Internshala Trainings — 40% off the certification fee. Subscribe"],
+    ["a newsletter prompt", "Subscribe to our newsletter to continue reading"],
+    ["a salary field label", "Expected pay required for this role"],
+    ["reassurance that there is no fee", "There is no application fee to apply for this internship."],
+  ])("does not call %s a payment gate", (_label, text) => {
+    expect(detectHumanGate(makeDoc({ text }))).toBeNull();
+  });
+});
+
+describe("gate evidence", () => {
+  it("reports the text that triggered the gate, so a wrong gate can be found", () => {
+    // A bare reason code was unfalsifiable from the server: "payment" arrived
+    // with nothing saying which words on the page produced it.
+    const g = (globalThis as { GrindlyGate?: { explainHumanGate: (d: Document) => { reason: string | null; evidence: string } } })
+      .GrindlyGate!.explainHumanGate(
+        makeDoc({ text: "A registration fee is required to apply" }),
+      );
+    expect(g.reason).toBe("payment");
+    expect(g.evidence).toMatch(/registration fee/i);
+  });
+
+  it("carries no evidence when there is no gate", () => {
+    const g = (globalThis as { GrindlyGate?: { explainHumanGate: (d: Document) => { reason: string | null; evidence: string } } })
+      .GrindlyGate!.explainHumanGate(makeDoc({ text: "Tell us about yourself." }));
+    expect(g).toEqual({ reason: null, evidence: "" });
   });
 });
 

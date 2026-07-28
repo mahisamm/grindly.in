@@ -16,7 +16,10 @@ describe("the executor's safety rules", () => {
   it("checks for a human gate twice — before filling and before submitting", () => {
     // A challenge can appear between those two moments. Submitting into one
     // either fails or, worse, succeeds in a way the user never agreed to.
-    const checks = SRC.match(/detectHumanGate\(/g) ?? [];
+    // Either entry point counts — explainHumanGate is detectHumanGate plus the
+    // evidence for its answer, and matching both keeps this asserting the safety
+    // property rather than one function's current name.
+    const checks = SRC.match(/(?:detect|explain)HumanGate\(/g) ?? [];
     expect(checks.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -294,7 +297,7 @@ describe("confirming a submission", () => {
   it("re-checks for a human gate on the form that just appeared", () => {
     // A CAPTCHA inside the modal did not exist when the first check ran.
     const body = SRC.slice(SRC.indexOf("waitForSender()"), SRC.indexOf("unansweredRequiredFields"));
-    expect(body).toMatch(/detectHumanGate\(document\)/);
+    expect(body).toMatch(/(?:detect|explain)HumanGate\(document\)/);
   });
 
   it("waits long enough for a real site to respond", () => {
