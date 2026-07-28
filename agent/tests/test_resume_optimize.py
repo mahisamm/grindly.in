@@ -703,23 +703,22 @@ def test_a_prose_skills_section_stays_bulleted_rather_than_becoming_a_paragraph(
     assert "\\begin{itemize}" in tex
 
 
-def test_a_long_title_and_meta_stack_instead_of_colliding():
-    """\\hfill reads well for "AI Intern .... Piersoft | 2023" and turns into a
-    run-together mess once the pair wraps."""
+@pytest.mark.parametrize("head,sub", [
+    ("AI Intern", "Piersoft | 2023"),
+    ("AI Tech Lead (Summer of AI 2025)",
+     "Viswam.AI - IIIT Hyderabad | Jun 2025 - Aug 2025 | Hyderabad, India"),
+])
+def test_a_title_and_its_meta_are_one_left_to_right_run(head, sub):
+    """Right-aligning the meta with \\hfill looks tidy to a human and breaks the
+    order a parser reads: the two runs sit at different x-positions, and the text
+    layer can emit them out of sequence. Seen on a rebuilt resume — the degree line
+    was extracted BEFORE the EDUCATION heading it belongs under. Machine-readable
+    beats pretty here; that is the whole point of the document."""
     tex = ro._render_latex({"name": "A B", "contact_line": "c", "sections": [
         {"heading": "Experience", "items": [
-            {"head": "AI Tech Lead (Summer of AI 2025)",
-             "sub": "Viswam.AI - IIIT Hyderabad | Jun 2025 - Aug 2025 | Hyderabad, India",
-             "bullets": ["Curated a Telugu LLM dataset"]}]}]})
+            {"head": head, "sub": sub, "bullets": ["Did the work"]}]}]})
     assert "\\hfill" not in tex
-    assert "\\textbf{AI Tech Lead (Summer of AI 2025)}\\par" in tex
-
-
-def test_a_short_title_and_meta_still_share_a_line():
-    tex = ro._render_latex({"name": "A B", "contact_line": "c", "sections": [
-        {"heading": "Experience", "items": [
-            {"head": "AI Intern", "sub": "Piersoft | 2023", "bullets": ["Built a thing"]}]}]})
-    assert "\\textbf{AI Intern} \\hfill Piersoft | 2023\\par" in tex
+    assert "\\textbf{" + head + "} \\textemdash{} " + sub + "\\par" in tex
 
 
 def test_experience_bullets_still_render_as_bullets():

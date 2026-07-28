@@ -1035,16 +1035,15 @@ def _render_latex(struct: dict) -> str:
                 continue
             if head or sub:
                 if head and sub:
-                    # \hfill pushes the meta to the right margin, which reads well
-                    # for "AI Intern ......... Piersoft Technologies | 2023" and
-                    # badly once the pair is long enough to wrap: the two run
-                    # together mid-line and the entry becomes unreadable. Past that
-                    # width, stack them.
-                    if len(head) + len(sub) > 85:
-                        lines.append("\\noindent\\textbf{" + head + "}\\par")
-                        lines.append("\\noindent " + sub + "\\par")
-                    else:
-                        lines.append("\\noindent\\textbf{" + head + "} \\hfill " + sub + "\\par")
+                    # One left-to-right run, NOT \hfill. Right-aligning the meta
+                    # looks tidy to a human and breaks the reading order a parser
+                    # sees: the two runs sit at different x-positions, so the text
+                    # layer can emit them out of order. Observed on a rebuilt
+                    # resume — "B.Sc in Computer Science, 2026 (CGPA 8.1)" was
+                    # extracted BEFORE the "EDUCATION" heading it belongs under.
+                    # Being read correctly by a machine is the entire point of this
+                    # document, so the dates lose their right margin.
+                    lines.append("\\noindent\\textbf{" + head + "} \\textemdash{} " + sub + "\\par")
                 elif head:
                     lines.append("\\noindent\\textbf{" + head + "}\\par")
                 else:
