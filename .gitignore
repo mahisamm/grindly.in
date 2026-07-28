@@ -60,3 +60,6 @@ android-keystore.jks
 *.pyc
 .gstack/
 devserver.log
+
+# Local fleet overrides — never committed; they change apply behaviour per host.
+docker-compose.override.yml
