@@ -1502,6 +1502,22 @@ def clear_resume_variants(uid: str):
         c.execute("DELETE FROM resume_variants WHERE user_id=?", (uid,))
 
 
+def count_resume_variants(uid: str) -> int:
+    """How many stored variants this user already has.
+
+    Used to decide whether a run that produced nothing may clear them. It may
+    not: the scores this feature compares against wander by several points on the
+    same document, so a regeneration can come back empty purely by chance — and
+    wiping a good batch on that would delete work the user could already see.
+    """
+    with conn() as c:
+        _ensure_variants_table(c)
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM resume_variants WHERE user_id=?", (uid,)
+        ).fetchone()
+        return int(row["n"] if row else 0)
+
+
 def save_resume_variants(uid: str, base_hash: str, variants: list[dict]):
     """Replace this user's variants with a freshly generated, ranked batch.
 

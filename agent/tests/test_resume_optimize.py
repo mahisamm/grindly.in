@@ -511,18 +511,29 @@ def test_an_inflated_number_is_still_caught():
     assert bad, "an invented quantity must not pass"
 
 
-def test_a_one_point_loss_is_not_treated_as_a_worse_resume(monkeypatch):
-    """The same master re-scored 76 one run and 88 the next. Discarding an 87
+@pytest.mark.parametrize("score", [87, 85, 82])
+def test_a_loss_inside_the_scorer_noise_is_not_treated_as_a_worse_resume(score):
+    """The same master re-scored 70, 76 and 88 across three runs. Discarding an 85
     against an 88 throws away good work over a coin flip."""
-    variant, reason = _run_variant(monkeypatch, 87, baseline=88)
+    assert score >= 88 - ro._SCORE_NOISE
+
+
+@pytest.mark.parametrize("score", [81, 60, 35])
+def test_a_materially_worse_rewrite_is_still_discarded(score):
+    assert score < 88 - ro._SCORE_NOISE
+
+
+def test_a_near_tie_is_kept_and_labelled(monkeypatch):
+    variant, reason = _run_variant(monkeypatch, 85, baseline=88)
     assert variant is not None
     assert variant["beats_baseline"] is False
     assert "level" in reason.lower()
 
 
 def test_a_real_loss_is_still_discarded(monkeypatch):
-    variant, _ = _run_variant(monkeypatch, 78, baseline=88)
+    variant, reason = _run_variant(monkeypatch, 60, baseline=88)
     assert variant is None
+    assert "discarded" in reason
 
 
 def test_selection_prefers_the_faithful_rewrite_over_the_richer_invented_one(monkeypatch):

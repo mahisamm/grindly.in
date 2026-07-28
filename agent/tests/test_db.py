@@ -665,3 +665,38 @@ def test_an_existing_profile_row_is_never_duplicated(testdb):
     assert rows[0]["id"] == "p1"
     assert rows[0]["resume_name"] == "mine.pdf", "an unrelated column must survive"
     assert rows[0]["resume_variant_status"] == "ready"
+
+
+# ---------- a failed regeneration must not delete a good batch ----------
+
+def test_variants_can_be_counted_before_a_run_decides_to_replace_them(testdb):
+    """The scores this feature compares wander several points on the same
+    document, so a regeneration can come back empty by chance. worker checks this
+    count before clearing anything — without it, one unlucky Regenerate wiped a
+    batch the user could already see and left the card empty."""
+    with db.conn() as c:
+        c.execute("INSERT INTO users (id, email) VALUES (?,?)", ("u_var", "v@b.com"))
+
+    assert db.count_resume_variants("u_var") == 0
+
+    db.save_resume_variants("u_var", "hash1", [
+        {"label": "ATS-clean", "score": 82, "grade": "B", "baseline_score": 76,
+         "changes": ["tightened"], "pdf_path": "data/resume_variants/u_var/1.pdf"},
+        {"label": "Keyword-optimized", "score": 79, "grade": "C", "baseline_score": 76,
+         "changes": [], "pdf_path": "data/resume_variants/u_var/2.pdf"},
+    ])
+    assert db.count_resume_variants("u_var") == 2
+
+    db.clear_resume_variants("u_var")
+    assert db.count_resume_variants("u_var") == 0
+
+
+def test_counting_variants_is_scoped_to_one_user(testdb):
+    with db.conn() as c:
+        c.execute("INSERT INTO users (id, email) VALUES (?,?)", ("u_a", "a@x.com"))
+        c.execute("INSERT INTO users (id, email) VALUES (?,?)", ("u_b", "b@x.com"))
+    db.save_resume_variants("u_a", "h", [
+        {"label": "L", "score": 80, "grade": "B", "baseline_score": 70,
+         "changes": [], "pdf_path": "p"}])
+    assert db.count_resume_variants("u_a") == 1
+    assert db.count_resume_variants("u_b") == 0

@@ -2553,6 +2553,29 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     }
 
 
+def _keep_existing_variants(uid: str, lead: str) -> bool:
+    """A run that produced nothing must not delete the batch already on the card.
+
+    The scores this feature compares wander several points on the same document
+    (the user's master re-scored 70, 76 and 88 across three runs), so an empty
+    result is often just an unlucky draw. Returns True when a previous batch was
+    kept — the caller is done and must not write a failure status over it.
+    """
+    try:
+        kept = db.count_resume_variants(uid)
+    except Exception:  # noqa: BLE001 — never fail a run over a bookkeeping read
+        log.exception("optimize: could not count existing variants for %s", uid)
+        return False
+    if not kept:
+        return False
+    db.set_variant_status(
+        uid, "ready",
+        f"{lead}, so your {kept} existing version(s) are still here. "
+        f"Regenerate any time — the rewrites differ each run.",
+    )
+    return True
+
+
 def optimize_variants(uid: str) -> dict:
     """Generate up to 3 ATS-optimized, compiled, measured-higher-scoring versions
     of the user's master resume. Runs ONLY on an explicit dashboard click (this is
@@ -2621,7 +2644,13 @@ def optimize_variants(uid: str) -> dict:
     aborted = batch.get("aborted")
 
     if aborted:
-        db.clear_resume_variants(uid)
+        # Deliberately NOT clearing the stored batch. A run that fails on our side
+        # says nothing about versions the user already has, and those describe the
+        # same master (a new upload clears them in the web layer). Deleting them
+        # here meant one unlucky Regenerate wiped a good set and left the card
+        # empty.
+        if _keep_existing_variants(uid, "This run couldn't finish"):
+            return {"status": "ready", "detail": aborted}
         detail = {
             "source_too_short": "We couldn't read enough text out of your resume to rebuild it. Upload a text-based PDF or DOCX (not a scan).",
             "no_compiler": "The resume builder is unavailable on our side right now — this is not your resume. Try again shortly.",
@@ -2633,7 +2662,9 @@ def optimize_variants(uid: str) -> dict:
         return {"status": status, "detail": aborted}
 
     if not variants:
-        db.clear_resume_variants(uid)
+        if _keep_existing_variants(uid, "This run didn't beat your current resume"):
+            log.info("optimize: %s produced nothing; kept the existing batch", uid)
+            return {"status": "ready", "reasons": reasons}
         # Say WHY each one dropped. "Your resume already scores well" was being
         # shown even when every variant died on an unreadable compile — a beta
         # user read that, believed the feature had run, and filed a bug.

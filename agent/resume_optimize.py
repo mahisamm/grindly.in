@@ -58,11 +58,21 @@ _MAX_PAGES = 2  # a variant that spills past this isn't an ATS win, it's a mess
 # not "a thin variant" — it is a model being handed an empty document and asked to
 # improve it, which it does by inventing a career. See _extract_struct.
 _MIN_BASE_ITEMS = 3
-# The scorer is an LLM and it wanders: the SAME master resume re-scored 76 one run
-# and 88 the next. So "88 vs 87" says nothing about which document is better, and
-# discarding a variant on that gap throws away good work over a coin flip. Only a
-# gap bigger than this is treated as a real loss. (A 35 against a 76 still goes.)
-_SCORE_NOISE = 2
+# How far below the master a variant may land and still be shown, labelled as
+# level rather than better.
+#
+# Calibrated against measurement, not taste. resume_ai.analyze already pins
+# temperature to 0 and takes a median across providers, yet the SAME master resume
+# re-scored 70, 76 and 88 on three consecutive runs — because which providers
+# answer varies (one of the three errors intermittently), and the models disagree
+# by ~15 points on the same document. So the estimator's own spread is roughly
+# ±9, and any threshold tighter than that discards good rewrites on a coin flip:
+# one run produced 90/87/76 against a 70 baseline, the next 85/78 against an 88.
+#
+# 6 is deliberately inside that spread rather than at its edge: wide enough that a
+# rewrite isn't thrown away over noise, narrow enough that a materially worse
+# document (the 35 against a 76 that started all this) still never appears.
+_SCORE_NOISE = 6
 
 # Each strategy is (label, instruction). Order is display order before re-scoring
 # re-sorts by measured score. Three genuinely different levers, none of which
