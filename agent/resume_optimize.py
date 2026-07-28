@@ -105,7 +105,10 @@ _STRATEGIES: list[tuple[str, str]] = [
 # Sections whose items are regrouped freely by a rewrite ("Languages", "Frontend",
 # "Databases" — groupings that exist on no master resume). Provenance can't apply
 # to them; the skills gate (_fabricated_skills) covers their content instead.
-_SKILLS_SECTION_RE = re.compile(r"skill|tool|technolog|language|framework|competenc", re.I)
+_SKILLS_SECTION_RE = re.compile(
+    r"skill|tool|technolog|language|framework|competenc|expertise|proficien|stack|abilities",
+    re.I,
+)
 
 # Words that carry no fact, so they need no grounding. Deliberately short: every
 # word NOT in here that appears in a company/school/date line must be traceable to
@@ -174,7 +177,13 @@ def generate_variants(
     # handed a resume with no content fills the gap from its own imagination and
     # returns a fluent, well-formatted, entirely fictional career — which then
     # scores well, because the scorer measures parseability, not truth.
-    if _item_count(base_struct) < _MIN_BASE_ITEMS:
+    # Scaled to the document. Three items off a 4,000-character resume means the
+    # extraction failed; three items off a 600-character fresher resume with one
+    # internship and two projects means that IS the resume, and refusing it would
+    # deny the feature to exactly the users who need it most. Inventing content is
+    # still blocked either way — provenance drops any item with no ancestor.
+    min_items = _MIN_BASE_ITEMS if len(text) >= 800 else 1
+    if _item_count(base_struct) < min_items:
         print(f"[optimize] structured extraction kept only {_item_count(base_struct)} item(s) — aborting")
         return {
             "variants": [], "baseline": baseline_score,
@@ -639,8 +648,9 @@ def _identity_from_source(text: str, contact_fallback: str = "") -> tuple[str, s
     contact = ""
     for ln in lines[:6]:
         if _EMAIL_RE.search(ln) or _PHONE_RE.search(ln):
-            contact = _clean_contact_line(ln)
-            break
+            contact = _header_line(ln)
+            if contact:
+                break
     if not contact:
         # No single header line carried it (two-column templates split the header
         # across lines). Rebuild from whatever the top of the document holds.
@@ -654,6 +664,33 @@ def _identity_from_source(text: str, contact_fallback: str = "") -> tuple[str, s
             bits.append(m.group(0).strip())
         contact = " | ".join(bits)
     return name, (contact or _clean_contact_line(contact_fallback))
+
+
+def _header_line(line: str) -> str:
+    """The line as a contact header, or "" if it only happens to contain an email.
+
+    Containing an address was not enough of a test. A resume whose header carries
+    no contact details puts them further down in prose — "Email sneha@x.com at the
+    very bottom" — and taking that line whole printed the sentence across the top
+    of the rebuilt resume. A header is a short, separator-delimited list, so:
+    drop segments that are neither contact details nor short labels (a city, a
+    GitHub handle), and reject a lone prose segment outright so the caller falls
+    back to pulling the address and phone number out on their own.
+    """
+    cleaned = _clean_contact_line(line)
+    if not cleaned:
+        return ""
+    segments = [s.strip() for s in cleaned.split("|") if s.strip()]
+
+    def _is_contact(seg: str) -> bool:
+        return bool(_EMAIL_RE.search(seg) or _PHONE_RE.search(seg)
+                    or re.search(r"(?:https?://|www\.|\w+\.(?:com|io|dev|org|net|in)\b)", seg, re.I))
+
+    if len(segments) == 1:
+        seg = segments[0]
+        return seg if _is_contact(seg) and len(seg.split()) <= 4 else ""
+    kept = [s for s in segments if _is_contact(s) or len(s.split()) <= 3]
+    return " | ".join(kept)
 
 
 def _clean_contact_line(line: str) -> str:

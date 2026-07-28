@@ -384,6 +384,73 @@ def test_the_rewrite_prompt_is_never_given_the_real_contact_details(monkeypatch)
     assert "mahendharsammeta21@gmail.com" not in seen.get("prompt", "")
 
 
+@pytest.mark.parametrize("header,expected_name,expected_in_contact", [
+    # The shapes other people's resumes actually arrive in. Only one of these was
+    # ever tested against a real document — the owner's — so each is a guess until
+    # it is pinned here.
+    ("Priya Sharma\npriya.sharma@gmail.com | +91 98765 43210 | Bengaluru",
+     "Priya Sharma", "priya.sharma@gmail.com"),
+    ("RAHUL KUMAR VERMA\n9876543210 | rahul@x.io", "RAHUL KUMAR VERMA", "rahul@x.io"),
+    ("Neha Gupta\nlinkedin.com/in/nehagupta | github.com/neha | neha@x.com",
+     "Neha Gupta", "github.com/neha"),
+    ("amit@x.com | 9999999999 | Hyderabad, India\nAmit Roy", "Amit Roy", "Hyderabad, India"),
+    ("(cid:12) Vikram S\nAddress: 12/3, MG Road, Pune 411001\nvikram@x.com | 8888888888",
+     "Vikram S", "vikram@x.com"),
+])
+def test_headers_from_other_peoples_resumes(header, expected_name, expected_in_contact):
+    name, contact = ro._identity_from_source(header)
+    assert name == expected_name
+    assert expected_in_contact in contact
+
+
+@pytest.mark.parametrize("resume,wanted", [
+    ("Sneha Rao\nSoftware Engineer\n\nSUMMARY\nEmail sneha@x.com at the very bottom", "sneha@x.com"),
+    ("Ravi N\nReach me any time on 9876543210 for a quick chat about roles", "9876543210"),
+])
+def test_a_prose_line_that_merely_contains_contact_details_is_not_a_header(resume, wanted):
+    """Taking the whole line printed "Email sneha@x.com at the very bottom" across
+    the top of the rebuilt resume. Pull the detail out; leave the sentence."""
+    _, contact = ro._identity_from_source(resume)
+    assert contact == wanted
+
+
+_THIN = {"name": "Ankit Jain", "contact_line": "c", "sections": [
+    {"heading": "Education", "items": [
+        {"head": "B.Sc Computer Science", "sub": "Delhi University | 2026", "bullets": []}]},
+    {"heading": "Projects", "items": [
+        {"head": "Todo App", "sub": "", "bullets": ["Built with React and Firebase"]}]}]}
+
+
+def _stub_scoring(monkeypatch):
+    monkeypatch.setattr(ro.latex_resume, "tectonic_available", lambda: True)
+    monkeypatch.setattr(ro.resume_ai, "analyze", lambda t: {})
+    monkeypatch.setattr(ro.resume_ai, "with_ats", lambda a, t, s: {"score": 60, "grade": "D"})
+    monkeypatch.setattr(ro, "_rewrite_struct", lambda *a, **k: None)
+
+
+def test_a_thin_but_real_resume_is_not_refused(monkeypatch):
+    """Two items off a 4,000-character resume means extraction failed. Two off a
+    600-character fresher resume IS the resume — refusing it would deny the feature
+    to the users who most need a rebuild. Invention stays blocked either way:
+    provenance drops any item with no ancestor."""
+    short = ("Ankit Jain\nankit@x.com | 9000000000\n\nEDUCATION\nB.Sc Computer Science, "
+             "Delhi University, 2026\n\nPROJECTS\nTodo App - built with React and Firebase, "
+             "with Google sign-in and offline sync for a college assignment\n"
+             "SKILLS\nReact, Firebase, JavaScript, HTML, CSS, Git, Python, SQL\n")
+    assert 200 < len(short) < 800
+    _stub_scoring(monkeypatch)
+    monkeypatch.setattr(ro, "_extract_struct", lambda text: _THIN)
+    assert ro.generate_variants(short, ["react"])["aborted"] is None
+
+
+def test_the_same_thin_extraction_off_a_long_resume_still_aborts(monkeypatch):
+    """Same two items, four thousand characters of source: that is a failed
+    extraction, and rewriting from it is how a career gets invented."""
+    _stub_scoring(monkeypatch)
+    monkeypatch.setattr(ro, "_extract_struct", lambda text: _THIN)
+    assert ro.generate_variants("word " * 900, ["react"])["aborted"] == "extraction_failed"
+
+
 def test_a_profile_fallback_is_used_when_the_resume_header_is_unreadable():
     name, contact = ro._identity_from_source("no header here at all", "+91 90000 00000 | a@b.com")
     assert not name
