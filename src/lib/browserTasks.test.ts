@@ -130,8 +130,9 @@ describe("claiming", () => {
     // The hosted Tier B sender and the browser queue share applications but no
     // lock. If the worker submitted this application while its task sat queued,
     // running the task now sends the employer a duplicate.
-    mockFindFirst.mockResolvedValueOnce(TASK).mockResolvedValueOnce(null);
-    mockAppFindUnique.mockResolvedValue({ status: "applied" });
+    // First findFirst is the host-rotation lookup (no active tasks).
+    mockFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(TASK).mockResolvedValue(null);
+    mockAppFindUnique.mockResolvedValue({ status: "applied", failureReason: null });
     expect(await claim()).toMatchObject({ task: null, reason: "no_work" });
     expect(mockUpdateMany).toHaveBeenCalledWith({
       where: { id: "t1", state: "queued" },
@@ -143,13 +144,57 @@ describe("claiming", () => {
 
   it("skips past a dead task to the next live one", async () => {
     mockFindFirst
+      .mockResolvedValueOnce(null) // host-rotation lookup: nothing served yet
       .mockResolvedValueOnce({ ...TASK, id: "dead", applicationId: "aDead" })
       .mockResolvedValueOnce({ ...TASK, id: "t2", applicationId: "a2" });
     mockAppFindUnique
-      .mockResolvedValueOnce({ status: "applied" })
-      .mockResolvedValueOnce({ status: "matched" });
+      .mockResolvedValueOnce({ status: "applied", failureReason: null })
+      .mockResolvedValueOnce({ status: "matched", failureReason: null });
     const { task } = await claim();
     expect(task?.id).toBe("t2");
+  });
+
+  it("hands out a refused-at-the-door needs_review — that task exists for this browser", async () => {
+    // failure_reason set = the server sender was refused before its point of no
+    // return (agent/db.py _PROVABLY_NOT_SENT). The worker queued the task so
+    // the user's own browser could take over; cancelling it here would strand
+    // exactly the applications the fallback exists to rescue.
+    mockAppFindUnique.mockResolvedValue({ status: "needs_review", failureReason: "captcha" });
+    const { task } = await claim();
+    expect(task?.id).toBe("t1");
+  });
+
+  it("still cancels an AMBIGUOUS needs_review — the submit may have landed", async () => {
+    mockFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(TASK).mockResolvedValue(null);
+    mockAppFindUnique.mockResolvedValue({ status: "needs_review", failureReason: null });
+    expect(await claim()).toMatchObject({ task: null, reason: "no_work" });
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: "t1", state: "queued" },
+      data: { state: "cancelled" },
+    });
+  });
+
+  it("prefers a host other than the one just served", async () => {
+    // Twenty tasks for one board queued before the first web-found employer
+    // site, at 5/day, meant strict FIFO spent every slot for days on that one
+    // board. The rotation asks for a different host first.
+    mockFindFirst
+      .mockResolvedValueOnce({ host: "internshala.com" }) // most recent activity
+      .mockResolvedValueOnce({ ...TASK, id: "t9", host: "boards.greenhouse.io" });
+    const { task } = await claim();
+    expect(task?.id).toBe("t9");
+    // The preferred query really did exclude the just-served host.
+    const where = mockFindFirst.mock.calls[1][0].where;
+    expect(where.host).toEqual({ not: "internshala.com" });
+  });
+
+  it("falls back to the just-served host when it is the only one with work", async () => {
+    mockFindFirst
+      .mockResolvedValueOnce({ host: "internshala.com" })
+      .mockResolvedValueOnce(null) // nothing on any other host
+      .mockResolvedValueOnce(TASK); // FIFO fallback, same host
+    const { task } = await claim();
+    expect(task?.id).toBe("t1");
   });
 
   it("hands back a raw token but stores only its hash", async () => {

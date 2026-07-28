@@ -152,30 +152,80 @@ export type ClaimResult =
  * employer, or the listing is dead" — a browser must never run a task for one.
  * The task queue and the server-side senders (hosted Tier B, ATS, email) share
  * applications but no lock, so this check at hand-out time is what stops a
- * hosted submit and a browser fill sending the same application twice. */
-const APP_NOT_BROWSERABLE = new Set(["applied", "needs_review", "submitting", "skipped"]);
+ * hosted submit and a browser fill sending the same application twice.
+ *
+ * needs_review is split by its failure_reason discriminator (same contract as
+ * agent/db.py _PROVABLY_NOT_SENT): with a reason set, the server sender was
+ * refused BEFORE its point of no return — a human-check, an unanswerable
+ * question — and the worker queued this task precisely so the user's own
+ * browser could take over. With no reason, the submit may have landed and only
+ * its confirmation was unreadable; running that is how an employer gets the
+ * same application twice. */
+const APP_NOT_BROWSERABLE = new Set(["applied", "submitting", "skipped"]);
+
+function appBrowserable(app: { status: string; failureReason: string | null } | null): boolean {
+  if (!app) return false;
+  if (APP_NOT_BROWSERABLE.has(app.status)) return false;
+  if (app.status === "needs_review") return app.failureReason != null;
+  return true;
+}
 
 export async function claimNextTask(
   userId: string, cap: number, localDate: string,
 ): Promise<ClaimResult> {
   await reclaimExpiredTasks();
 
+  // Rotate hosts rather than draining the queue oldest-first. A backlog built
+  // while one board's tasks piled up (twenty internshala rows queued before the
+  // first web-found employer site ever entered) plus a 5/day cap meant strict
+  // FIFO would spend every slot for DAYS on that one board — and the product's
+  // whole claim is that it applies across the open web, not one site. Oldest
+  // task on the least-recently-served host goes first; within a host, FIFO
+  // still holds.
+  const lastServed = await prisma.browserTask
+    .findFirst({
+      where: { userId, state: { in: ["leased", "filling", "awaiting_human", "submitted"] } },
+      orderBy: { updatedAt: "desc" },
+      select: { host: true },
+    })
+    .catch(() => null);
+
   let candidate: { id: string; applicationId: string; url: string; host: string } | null = null;
   const seen: string[] = [];
-  // Walk the queue oldest-first, cancelling tasks whose application already
-  // went out another way, until one is genuinely still open. Bounded: each
-  // pass either returns or cancels a row, so it visits each queued task once.
+  // Walk the queue, cancelling tasks whose application already went out another
+  // way, until one is genuinely still open. Bounded: each pass either returns
+  // or cancels a row, so it visits each queued task once.
   for (;;) {
-    candidate = await prisma.browserTask.findFirst({
-      where: { userId, state: "queued", attempts: { lt: MAX_ATTEMPTS }, id: { notIn: seen } },
-      orderBy: { createdAt: "asc" },
-      select: { id: true, applicationId: true, url: true, host: true },
-    });
+    const where = { userId, state: "queued", attempts: { lt: MAX_ATTEMPTS }, id: { notIn: seen } };
+    // Prefer any host other than the one just served; fall back to it when it
+    // is the only host with work left.
+    candidate = lastServed?.host
+      ? await prisma.browserTask.findFirst({
+          where: { ...where, host: { not: lastServed.host } },
+          orderBy: { createdAt: "asc" },
+          select: { id: true, applicationId: true, url: true, host: true },
+        })
+      : null;
+    if (!candidate) {
+      candidate = await prisma.browserTask.findFirst({
+        where,
+        orderBy: { createdAt: "asc" },
+        select: { id: true, applicationId: true, url: true, host: true },
+      });
+    }
     if (!candidate) return { task: null, reason: "no_work" };
+    // The notIn filter above makes this loop visit each row once; this guard
+    // makes that a property of THIS function rather than of the store honouring
+    // the filter — a stub or a misbehaving driver must degrade to "no work",
+    // never to a hot loop.
+    if (seen.includes(candidate.id)) return { task: null, reason: "no_work" };
     const app = await prisma.application
-      .findUnique({ where: { id: candidate.applicationId }, select: { status: true } })
+      .findUnique({
+        where: { id: candidate.applicationId },
+        select: { status: true, failureReason: true },
+      })
       .catch(() => null);
-    if (app && !APP_NOT_BROWSERABLE.has(app.status)) break;
+    if (appBrowserable(app)) break;
     // Already sent elsewhere (or its application row is gone) — cancel, never run.
     await prisma.browserTask
       .updateMany({ where: { id: candidate.id, state: "queued" }, data: { state: "cancelled" } })

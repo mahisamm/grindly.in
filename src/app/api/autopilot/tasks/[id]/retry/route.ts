@@ -48,11 +48,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   // The strongest duplicate guard available: if the application is already
   // recorded as applied, something reached the employer. Never send it twice,
   // whatever the task row says.
+  //
+  // needs_review splits on its failure_reason discriminator (agent/db.py
+  // _PROVABLY_NOT_SENT): with a reason set, the server sender was refused
+  // before anything went out — that row is exactly what a retry in the user's
+  // own browser is FOR. With no reason the submit may have landed, and a retry
+  // is the duplicate this guard exists to prevent.
   const app = await prisma.application.findUnique({
     where: { id: task.applicationId },
-    select: { status: true },
+    select: { status: true, failureReason: true },
   });
-  if (app && ["applied", "needs_review"].includes(app.status)) {
+  if (
+    app &&
+    (app.status === "applied" ||
+      (app.status === "needs_review" && app.failureReason == null))
+  ) {
     return NextResponse.json(
       { error: "already_applied", status: app.status },
       { status: 409 },
