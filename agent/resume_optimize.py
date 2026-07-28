@@ -160,6 +160,11 @@ def generate_variants(
     # Identity comes from the raw resume, never from the model — see module docstring.
     identity = _identity_from_source(text, contact_fallback)
     _stamp_identity(base_struct, identity)
+    # How much of the master survived extraction bounds everything downstream: a
+    # thin base can only produce thin, low-scoring variants, and from the outside
+    # that is indistinguishable from a bad rewrite.
+    print(f"[optimize] extracted {len(base_struct['sections'])} section(s), "
+          f"{sum(len(s['items']) for s in base_struct['sections'])} item(s)")
 
     allowed = _allowed_tokens(text, master_skills)
     stems = _source_stems(text)
@@ -629,19 +634,32 @@ def _is_grounded(tok: str, stems: set[str]) -> bool:
     return t in stems or (len(t) >= 5 and t[:5] in stems)
 
 
-def _ungrounded_tokens(item: dict, stems: set[str]) -> list[str]:
+def _ungrounded_tokens(item: dict, stems: set[str], check_title: bool = True) -> list[str]:
     """Words in an item's title/meta — and NUMBERS anywhere in it — that the master
     resume cannot defend. This is what catches "XYZ Corp", "University of
     Technology | 2020" and "Achieved 30 FPS": the skills gate never looked at
     employers, schools, dates, or metrics, only at tools.
+
+    `check_title=False` for a skills group, whose head is a CATEGORY the rewrite
+    invented for grouping ("Frontend", "Backend", "AI/ML & Vision") and not a claim
+    about the candidate. Checking those cost a live run all three variants: eight
+    grouping labels were deleted as "not in your resume", the documents came out
+    nearly empty, and they scored 20-35 against an 88 master.
     """
     bad: list[str] = []
-    for field in ("head", "sub"):
-        for tok in re.findall(r"[A-Za-z0-9][A-Za-z0-9+#./-]*", str(item.get(field) or "")):
-            if not _is_grounded(tok, stems) and tok.lower() not in [b.lower() for b in bad]:
-                bad.append(tok)
+    if check_title:
+        for field in ("head", "sub"):
+            for raw in re.findall(r"[A-Za-z0-9][A-Za-z0-9+#./-]*", str(item.get(field) or "")):
+                # "AI/ML" is two tokens. _source_stems splits on the separators, so
+                # a checker that doesn't would flag a word the resume plainly has.
+                for tok in re.split(r"[/]", raw):
+                    if tok and not _is_grounded(tok, stems) and tok.lower() not in {b.lower() for b in bad}:
+                        bad.append(tok)
     for b in item.get("bullets") or []:
-        for tok in re.findall(r"\d[\d,.]*", str(b)):
+        # Standalone numbers only. A digit glued to a word is part of a tool name —
+        # "YOLOv8" is not a claim that the candidate did something eight times, but
+        # it was read as a bare "8" and rejected as an invented metric.
+        for tok in re.findall(r"(?<![A-Za-z0-9])\d[\d,.]*", str(b)):
             digits = tok.replace(",", "").rstrip(".")
             if digits and not _is_grounded(digits, stems) and digits not in bad:
                 bad.append(digits)
@@ -704,7 +722,7 @@ def _ground_struct(
         kept: list[dict] = []
         for item in sec.get("items") or []:
             label = str(item.get("head") or item.get("sub") or "item")[:60]
-            bad = _ungrounded_tokens(item, stems)
+            bad = _ungrounded_tokens(item, stems, check_title=not skillsy)
             if bad:
                 dropped.append(f"{heading}/{label}: not in your resume ({', '.join(bad[:3])})")
                 continue

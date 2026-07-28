@@ -376,16 +376,26 @@ def test_a_reworded_real_entry_survives():
     assert out["sections"][0]["items"], "a genuine rewrite must not be gated"
 
 
-def test_skills_groupings_are_exempt_from_provenance():
-    """"Frontend"/"Databases" groupings exist on no master resume — regrouping is
-    the point of the feature. _fabricated_skills covers their content."""
+@pytest.mark.parametrize("group", ["Frontend", "Backend & APIs", "Testing", "AI/ML & Vision"])
+def test_a_skills_group_label_is_not_treated_as_a_claim(group):
+    """A grouping label is the rewrite's own categorisation, not something the
+    candidate asserts. Checking them cost a live run all three variants: eight
+    labels were deleted as "not in your resume", leaving near-empty documents that
+    scored 20-35 against an 88 master."""
     out, dropped = ro._ground_struct(
         {"name": "X", "contact_line": "c", "sections": [{"heading": "Technical Skills", "items": [
-            {"head": "Databases", "sub": "", "bullets": ["PostgreSQL", "MongoDB", "Redis"]}]}]},
+            {"head": group, "sub": "", "bullets": ["PostgreSQL", "MongoDB", "Redis"]}]}]},
         ro._source_stems(_REAL), _base(),
     )
     assert dropped == []
-    assert out["sections"][0]["items"]
+    assert out["sections"][0]["items"], "regrouping skills is the point of the feature"
+
+
+def test_a_version_number_inside_a_tool_name_is_not_a_metric():
+    """"YOLOv8" was read as a bare "8" and rejected as an invented number."""
+    stems = ro._source_stems(_REAL + "\nYOLOv8, Three.js, S3")
+    assert ro._ungrounded_tokens(
+        {"head": "SmartRX", "sub": "", "bullets": ["Deployed a YOLOv8 pipeline on S3"]}, stems) == []
 
 
 def test_selection_prefers_the_faithful_rewrite_over_the_richer_invented_one(monkeypatch):
