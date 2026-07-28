@@ -820,11 +820,23 @@ def test_a_short_resume_gets_the_expand_strategy_not_the_trim_one():
     three rewrites 38-40 — same facts, no ATS warnings, fewer characters than they
     started with. There was no clutter to cut, so "tighten and de-clutter" just
     removed the little substance the document had."""
-    short = ro._strategies_for("x" * 400)
-    labels = [label for label, _ in short]
+    thin = {"sections": [{"items": [
+        {"bullets": ["Built a task manager with React and Firebase", "Deployed on Vercel"]},
+        {"bullets": ["Python and Flask backend with MySQL"]}]}]}
+    labels = [label for label, _ in ro._strategies_for("x" * 400, thin)]
     assert "ATS-clean" not in labels
     assert "Detail-first" in labels
-    assert len(short) == 3
+
+
+def test_a_dense_resume_keeps_the_trim_strategy_even_when_it_is_short():
+    """Judged on bullets, not length. A mid-career resume measured at 959
+    characters scored 92, and trimming it (85) beat expanding it (80) — character
+    count called it thin, its content said otherwise."""
+    dense = {"sections": [{"items": [
+        {"bullets": ["led a migration", "owned a pipeline", "mentored three engineers"]},
+        {"bullets": ["built a billing API", "cut cloud spend"]},
+        {"bullets": ["backend engineer, four years", "payments at scale"]}]}]}
+    assert ro._strategies_for("x" * 959, dense) == ro._STRATEGIES
 
 
 def test_a_full_resume_keeps_the_standard_strategies():

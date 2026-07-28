@@ -107,7 +107,8 @@ _STRATEGIES: list[tuple[str, str]] = [
 # characters than they started with. There was no clutter to cut — compression
 # just removed the little substance the document had. Under this length, the third
 # strategy draws out what is already on the page instead of trimming it.
-_SHORT_SOURCE_CHARS = 1200
+_SHORT_SOURCE_CHARS = 700
+_SPARSE_BULLETS = 6
 _EXPAND_STRATEGY = (
     "Detail-first",
     "This resume is very short, so do NOT shorten it. Draw out what is already "
@@ -120,10 +121,21 @@ _EXPAND_STRATEGY = (
 )
 
 
-def _strategies_for(text: str) -> list[tuple[str, str]]:
-    if len(text or "") >= _SHORT_SOURCE_CHARS:
-        return _STRATEGIES
-    return _STRATEGIES[:2] + [_EXPAND_STRATEGY]
+def _strategies_for(text: str, base_struct: dict | None = None) -> list[tuple[str, str]]:
+    """Swap the trim strategy for the expand one when there is nothing to trim.
+
+    Judged on bullets, not characters. A dense mid-career resume can be under a
+    thousand characters and still have plenty to tighten: one measured at 959
+    chars scored 92, and trimming it (85) beat expanding it (80). What actually
+    marks a resume as thin is how few things it says.
+    """
+    bullets = sum(
+        len(item.get("bullets") or [])
+        for sec in (base_struct or {}).get("sections") or []
+        for item in sec.get("items") or []
+    )
+    sparse = bullets < _SPARSE_BULLETS if base_struct else len(text or "") < _SHORT_SOURCE_CHARS
+    return _STRATEGIES[:2] + [_EXPAND_STRATEGY] if sparse else _STRATEGIES
 
 
 # Sections whose items are regrouped freely by a rewrite ("Languages", "Frontend",
@@ -231,7 +243,7 @@ def generate_variants(
 
     out: list[dict] = []
     reasons: list[str] = []
-    for label, instruction in _strategies_for(text):
+    for label, instruction in _strategies_for(text, base_struct):
         variant, reason = _one_variant(
             label, instruction, base_struct, allowed, master_skills, baseline_score,
             identity, stems, debug_dir,
