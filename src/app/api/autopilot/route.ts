@@ -25,6 +25,7 @@ export async function GET() {
       profile: {
         select: {
           resumeName: true, phone: true, education: true, gradYear: true,
+          degree: true, college: true,
           preferredDomains: true, autoApply: true, autoApplyConsentAt: true,
           consentVersion: true, maxPerDay: true, timezone: true,
         },

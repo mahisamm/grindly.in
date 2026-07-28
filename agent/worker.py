@@ -1020,12 +1020,23 @@ def _analyze_if_changed(uid: str, profile: dict, text: str, skills: list[str],
         analysis["score"], analysis["grade"], len(analysis["issues"]),
         analysis["ats"]["readable"],
     )
-    # Prefill blank form-fill fields (phone, GPA) off the resume — the user confirms
-    # them on the profile page. Only runs here (resume actually (re)analyzed), never
-    # overwrites a value the user set, and never aborts analysis on failure.
+    # Prefill blank form-fill fields off the resume — phone, GPA, degree, college,
+    # graduation year, profile links — so setup asks the user to CONFIRM what
+    # their own resume already says instead of typing it again. Only runs here
+    # (resume actually (re)analyzed), never overwrites a value the user set, and
+    # never aborts analysis on failure.
     try:
-        contact = resume_ai.extract_contact(text)
-        filled = db.update_contact(uid, phone=contact.get("phone"), gpa=contact.get("gpa"))
+        contact = resume_ai.extract_contact(text, this_year=datetime.date.today().year)
+        filled = db.update_contact(
+            uid,
+            phone=contact.get("phone"),
+            gpa=contact.get("gpa"),
+            degree=contact.get("degree"),
+            college=contact.get("college"),
+            grad_year=contact.get("grad_year"),
+            linkedin_url=contact.get("linkedin_url"),
+            github_url=contact.get("github_url"),
+        )
         if filled:
             log.info("prefilled from resume: %s", ", ".join(filled.keys()))
     except Exception as e:  # noqa: BLE001

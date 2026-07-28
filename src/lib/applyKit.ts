@@ -31,9 +31,20 @@ type Userish = {
     phone?: string | null;
     gpa?: number | null;
     education?: string | null;
+    degree?: string | null;
+    college?: string | null;
     gradYear?: number | null;
     availability?: string | null;
     workAuthorization?: string | null;
+    needsSponsorship?: string | null;
+    hoursPerWeek?: number | null;
+    willingToRelocate?: string | null;
+    expectedStipend?: number | null;
+    class10Percent?: number | null;
+    class12Percent?: number | null;
+    linkedinUrl?: string | null;
+    githubUrl?: string | null;
+    portfolioUrl?: string | null;
   } | null;
 };
 
@@ -59,9 +70,31 @@ export function parseAnswers(answersJson: string | null | undefined) {
 const SETUP_QUESTIONS: [string, (p: NonNullable<Userish["profile"]>) => string | null][] = [
   ["Year of graduation", (p) => (p.gradYear ? String(p.gradYear) : null)],
   ["Education", (p) => p.education || null],
+  // Separate entries, because a form asks for them in separate boxes and the
+  // matcher is containment-based — "College name" never matched a combined
+  // "B.Tech CSE, VIT Vellore" usefully.
+  ["College", (p) => p.college || null],
+  ["Degree", (p) => p.degree || null],
   ["Availability", (p) => p.availability || null],
   ["Work authorization", (p) => p.workAuthorization || null],
+  // The rest of what setup now collects. Without these the extension stops on
+  // questions the user has already answered — the whole point of asking once.
+  ["Do you require sponsorship", (p) => p.needsSponsorship || null],
+  ["Hours per week", (p) => (p.hoursPerWeek ? String(p.hoursPerWeek) : null)],
+  ["Willing to relocate", (p) => p.willingToRelocate || null],
+  ["Expected stipend", (p) => (p.expectedStipend ? String(p.expectedStipend) : null)],
+  ["Class 12 percentage", (p) => fmtPercent(p.class12Percent)],
+  ["Class 10 percentage", (p) => fmtPercent(p.class10Percent)],
+  ["LinkedIn", (p) => p.linkedinUrl || null],
+  ["GitHub", (p) => p.githubUrl || null],
+  ["Portfolio", (p) => p.portfolioUrl || null],
 ];
+
+/** 92 rather than 92.0 — a numeric input often rejects the decimal. */
+function fmtPercent(value: number | null | undefined): string | null {
+  if (!value) return null;
+  return Number.isInteger(value) ? String(value) : String(value);
+}
 
 export function buildKit(user: Userish, app?: AppRow): ApplyKit {
   const p = user.profile ?? {};

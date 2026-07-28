@@ -124,16 +124,99 @@ def _clean_phone(raw: str) -> str | None:
     return None
 
 
-def extract_contact(text: str) -> dict:
-    """Best-effort phone + GPA pulled off a resume, to prefill the form-fill profile
-    fields. Conservative by design — returns None for anything it isn't reasonably
-    sure of. Returns {"phone": str|None, "gpa": float|None}."""
+# Profile links, as they appear on a resume: bare handles ("linkedin.com/in/x"),
+# full URLs, or either wrapped in the icon-font debris a PDF text layer leaves.
+_LINKEDIN_URL = re.compile(r"\b((?:https?://)?(?:www\.)?linkedin\.com/(?:in|pub)/[\w\-./%]+)", re.I)
+_GITHUB_URL = re.compile(r"\b((?:https?://)?(?:www\.)?github\.com/[\w\-.]+)", re.I)
+# Graduation year. Anchored on the words a resume actually uses, because a bare
+# four-digit year matches a project date, a certification, or a phone fragment.
+_GRAD_YEAR = re.compile(
+    r"\b(?:expected\s+graduation|graduating|graduation|batch\s+of|class\s+of|"
+    r"passing\s+out)\b[^0-9]{0,20}(20\d{2})",
+    re.I,
+)
+# "2023 - Present" / "2023 – 2027" against a degree line: the second year is the
+# graduation year when it is in the future.
+_DEGREE_RANGE = re.compile(r"\b20\d{2}\s*[-–—]\s*(20\d{2})\b")
+# The lookbehind keeps "B.Com" from matching inside "a@b.com" — an email address
+# was being read as the candidate's degree and would have been typed into a
+# "Qualification" box on a real form.
+_DEGREE_LINE = re.compile(
+    r"(?<![\w@.])((?:b\.?\s?tech|b\.?\s?e\.?|b\.?\s?sc|b\.?\s?com|b\.?\s?a\.?|bca|bba|"
+    r"m\.?\s?tech|m\.?\s?sc|mca|mba|ph\.?\s?d|diploma)[^\n,;|]{0,60})",
+    re.I,
+)
+# The institution name around the keyword, not the whole line: a resume writes
+# "Anna University - B.E. Computer Science, expected graduation 2027, CGPA 8.7"
+# on ONE line, and a line-anchored match returns either everything or nothing.
+# [^\S\n] is "whitespace that isn't a newline". A plain \s+ let the match run
+# backwards across the line break and swallow the candidate's own name off the
+# line above — "Ankit Delhi University".
+_COLLEGE_LINE = re.compile(
+    r"\b((?:[A-Z][\w.&'-]+[^\S\n]+){0,4}(?:University|College|Institute)"
+    r"(?:[^\S\n]+of[^\S\n]+[A-Z][\w.&'-]+(?:[^\S\n]+[A-Z][\w.&'-]+){0,2})?)"
+)
+
+
+def extract_contact(text: str, this_year: int | None = None) -> dict:
+    """Everything a screening form asks that we can read off the resume itself.
+
+    The point is that the user is never typed at twice: whatever the resume
+    already states arrives in setup pre-filled, and they only confirm it. Every
+    field is best-effort and conservative — None rather than a guess, because
+    these become facts stated to employers (see agent/questions.py).
+
+    Returns {phone, gpa, degree, college, grad_year, linkedin_url, github_url}.
+    """
     t = text or ""
     phone = None
     m = _PHONE_ANCHORED.search(t) or _PHONE_LOOSE.search(t)
     if m:
         phone = _clean_phone(m.group(1))
-    return {"phone": phone, "gpa": _extract_gpa(t)}
+
+    degree = None
+    m = _DEGREE_LINE.search(t)
+    if m:
+        # Cut at the first bracket or grade marker: resumes run the degree and the
+        # score together ("B.Tech in AI and ML (CGPA: 7.45)"), and the whole
+        # string then goes into a form's "Qualification" box.
+        degree = re.split(r"[(\[]|\b(?:cgpa|gpa|percentage)\b", m.group(1), maxsplit=1, flags=re.I)[0]
+        degree = re.sub(r"\s+", " ", degree).strip(" .,-—–:")[:120] or None
+
+    college = None
+    m = _COLLEGE_LINE.search(t)
+    if m:
+        college = re.sub(r"\s+", " ", m.group(1)).strip(" .,-—–|")[:120] or None
+
+    grad_year = None
+    m = _GRAD_YEAR.search(t)
+    if m:
+        grad_year = int(m.group(1))
+    else:
+        # Fall back to the end of a degree's date range, but only when it hasn't
+        # already passed — a finished course's end year is not a graduation date
+        # anyone is still applying under, and a wrong year here is stated on a
+        # form as fact.
+        current = this_year or 0
+        for candidate in _DEGREE_RANGE.findall(t):
+            year = int(candidate)
+            if current and year >= current:
+                grad_year = year
+                break
+
+    def _url(pattern):
+        found = pattern.search(t)
+        return found.group(1).rstrip("/.,") if found else None
+
+    return {
+        "phone": phone,
+        "gpa": _extract_gpa(t),
+        "degree": degree,
+        "college": college,
+        "grad_year": grad_year,
+        "linkedin_url": _url(_LINKEDIN_URL),
+        "github_url": _url(_GITHUB_URL),
+    }
 
 
 def ats_report(resume_text: str, skills: list[str]) -> dict:

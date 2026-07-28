@@ -1904,6 +1904,21 @@ export default function Dashboard() {
                       >
                         <span aria-hidden>👤</span> Your profile &amp; settings
                       </button>
+                      {/* Integrations live here rather than as a tab: setup connects
+                          Internshala and nothing else, so this is where a user goes
+                          to add or change one afterwards. */}
+                      <button
+                        role="menuitem"
+                        onClick={() => { setTab("integrations"); setUserMenuOpen(false); }}
+                        className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-foreground transition hover:bg-surface-2"
+                      >
+                        <span aria-hidden>🔌</span> Integrations
+                        {integrations.some((i) => i.status === "connected") && (
+                          <span className="ml-auto text-xs text-accent">
+                            {integrations.filter((i) => i.status === "connected").length} connected
+                          </span>
+                        )}
+                      </button>
                       <button
                         role="menuitem"
                         onClick={() => { void togglePause(); setUserMenuOpen(false); }}

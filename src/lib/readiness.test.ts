@@ -79,3 +79,50 @@ describe("computeReadiness", () => {
     expect(r.missing.length).toBe(4);
   });
 });
+
+describe("education, after setup split it into two boxes", () => {
+  // Setup collects degree and college separately now (forms ask for them
+  // separately) and nothing writes the combined `education` line directly any
+  // more. Checking only the combined field would have refused auto-apply to
+  // every user who filled in the new form.
+  const base = {
+    name: "Ankit Jain",
+    email: "ankit@x.com",
+    profile: {
+      resumeName: "cv.pdf", phone: "9000000011",
+      education: null as string | null, degree: null as string | null, college: null as string | null,
+      gradYear: 2027, preferredDomains: '["Web Development"]',
+      autoApply: true, autoApplyConsentAt: new Date(), consentVersion: CONSENT_VERSION,
+      maxPerDay: 5, timezone: "Asia/Kolkata",
+    },
+  };
+
+  it("accepts the two halves on their own", () => {
+    const r = computeReadiness({
+      ...base,
+      profile: { ...base.profile, degree: "B.Tech in CS", college: "VIT Vellore" },
+    });
+    expect(r.checks.education).toBe(true);
+  });
+
+  it("still accepts the old combined line", () => {
+    const r = computeReadiness({
+      ...base,
+      profile: { ...base.profile, education: "B.Tech CSE, VIT Vellore" },
+    });
+    expect(r.checks.education).toBe(true);
+  });
+
+  it("refuses a half-filled education, which is a fact it would have to state", () => {
+    const r = computeReadiness({ ...base, profile: { ...base.profile, degree: "B.Tech in CS" } });
+    expect(r.checks.education).toBe(false);
+  });
+
+  it("still needs the graduation year whichever shape the rest arrives in", () => {
+    const r = computeReadiness({
+      ...base,
+      profile: { ...base.profile, degree: "B.Tech", college: "VIT", gradYear: null },
+    });
+    expect(r.checks.education).toBe(false);
+  });
+});

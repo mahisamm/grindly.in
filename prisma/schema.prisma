@@ -253,6 +253,35 @@ model Profile {
   // Free-text authorization status for the market they apply in ("Indian
   // citizen", "OPT", ...). Stated verbatim, never inferred.
   workAuthorization String? @map("work_authorization")
+  // The rest of what a screening form asks that a resume never carries. Setup
+  // offers a fixed list for each (see lib/proffQuestions) so the stored value is
+  // one the agent can type into a form without interpreting it — "20" hours, not
+  // "around 20-25 depending on my sem". Every one is optional: a fact we do not
+  // hold makes the agent stop and ask, which is the correct failure.
+  // `education` above stays the one-line "B.Tech CSE, VIT Vellore" string that
+  // readiness and older forms read. These two split it, because forms ask for
+  // them in SEPARATE boxes — answering "College name" with the whole course-and-
+  // college string is wrong in a way a recruiter notices.
+  degree            String? // "B.Tech in Computer Science"
+  college           String? // "VIT Vellore"
+  // Asked on nearly every Indian internship form, and NOT answerable from the
+  // college CGPA — a form wanting "Class 12 percentage (%)" wants a different
+  // number entirely, which is why _CGPA in questions.py excludes school-level.
+  class10Percent    Float?  @map("class10_percent")
+  class12Percent    Float?  @map("class12_percent")
+  // Asked as a plain yes/no by every ATS. Kept separate from workAuthorization
+  // because that one is free-phrasing ("Indian citizen") and cannot be mapped
+  // onto a Yes/No dropdown without putting words in the user's mouth.
+  needsSponsorship  String? @map("needs_sponsorship") // "Yes" | "No"
+  hoursPerWeek      Int?    @map("hours_per_week") // "hours a week you can commit"
+  willingToRelocate String? @map("willing_to_relocate") // Yes | No | Depends on the role
+  expectedStipend   Int?    @map("expected_stipend") // ₹/month STATED on forms — not the
+  // stipendMin filter above, which only decides what the agent bothers to open.
+  // Profile links. Forms ask for these in their own boxes, so parsing them back
+  // out of the resume PDF per application is both slow and lossy.
+  linkedinUrl       String? @map("linkedin_url")
+  githubUrl         String? @map("github_url")
+  portfolioUrl      String? @map("portfolio_url")
   // IANA zone driving the daily cap window and report timing. India-first
   // default matches the current user base; changeable in setup.
   timezone          String  @default("Asia/Kolkata")

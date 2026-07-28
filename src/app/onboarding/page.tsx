@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
 import { TagInput } from "@/components/TagInput";
-import { PROFF_FIELDS, CONTACT_FIELDS, DEFAULTS } from "@/lib/proffQuestions";
+import dynamic from "next/dynamic";
+// @novnc/novnc touches `window` at module scope, so a static import fails
+// the prerender of this page outright ("window is not defined").
+const ConnectViewer = dynamic(() => import("@/components/ConnectViewer"), { ssr: false });
+import { PROFF_FIELDS, CONTACT_FIELDS, DEFAULTS, type ProffField } from "@/lib/proffQuestions";
 import { PLANS, type Plan } from "@/lib/adapters/payment";
 
 type Form = Record<string, unknown>;
@@ -51,7 +55,7 @@ function loadRazorpayCheckout(): Promise<void> {
   });
 }
 
-const STEPS = ["Resume", "Profile questions", "Notifications", "Activate"];
+const STEPS = ["Resume", "Profile questions", "Internshala", "Notifications", "Activate"];
 
 // What the server will actually accept (see src/app/api/resume/route.ts).
 // .doc is deliberately absent: the picker used to offer it and the server then
@@ -73,6 +77,77 @@ const ACCEPT_ATTR = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "text/plain",
 ].join(",");
+
+/** A stored value is "unset" when it's empty or a zero placeholder. */
+function pickedValue(v: unknown): string {
+  return v === 0 || v === null || v === undefined ? "" : String(v);
+}
+
+const OTHER = "__other__";
+
+/**
+ * Pick from a list, or say something the list doesn't cover.
+ *
+ * Free text alone produced answers the agent could not use: "asap" is not one of
+ * a form's dropdown options, and "around 20-25 depending on my sem" cannot go in
+ * a numeric input. A list alone would be worse — it would force a user whose
+ * situation isn't listed to pick something untrue about themselves, and every
+ * one of these is stated to an employer under their name. So: a list, plus a way
+ * out of it.
+ */
+function ChoiceField({
+  field,
+  value,
+  onChange,
+}: {
+  field: ProffField;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const options = field.options ?? [];
+  const isListed = value !== "" && options.includes(value);
+  // A pre-filled value the list doesn't contain (read off the resume, or typed
+  // last time) has to keep the box open, or it silently disappears on render.
+  const [custom, setCustom] = useState(value !== "" && !isListed);
+
+  return (
+    <div className="space-y-2">
+      <select
+        aria-label={field.label}
+        value={custom ? OTHER : value}
+        onChange={(e) => {
+          if (e.target.value === OTHER) {
+            setCustom(true);
+            onChange("");
+            return;
+          }
+          setCustom(false);
+          onChange(e.target.value);
+        }}
+        className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand transition"
+      >
+        <option value="">Select…</option>
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+        <option value={OTHER}>Something else…</option>
+      </select>
+      {custom && (
+        <input
+          type="text"
+          autoFocus
+          aria-label={`${field.label} — your own answer`}
+          value={value}
+          placeholder={field.placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand transition"
+        />
+      )}
+    </div>
+  );
+}
 
 export default function OnboardingPage() {
   const [step, setStep] = useState(0);
@@ -100,6 +175,14 @@ export default function OnboardingPage() {
   // Owner admin flag — surfaces the "Admin" jump button so the admin can leave
   // onboarding for the console at any time (they can complete it later).
   const [isAdmin, setIsAdmin] = useState(false);
+  // Internshala connect, run from setup (STEP 2) rather than only from the
+  // dashboard — it is the one platform the agent can submit on unattended, so
+  // asking here is the difference between an agent that acts and one that waits.
+  const [internshalaConnected, setInternshalaConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [connectMsg, setConnectMsg] = useState("");
+  const [viewer, setViewer] = useState<{ token: string } | null>(null);
+  const connectAbort = useRef(false);
 
   // Auth + gated-beta guard: a logged-out visitor (401) is bounced to /login,
   // same as /dashboard and /applications — previously a 401 resolved to
@@ -146,11 +229,25 @@ export default function OnboardingPage() {
           maxPerDay: p.maxPerDay,
           autoApply: p.autoApply,
           // Eligibility facts. Hydrated so returning here to fix one field does
-          // not blank the others back to defaults on the next save.
+          // not blank the others back to defaults on the next save — and so the
+          // values the agent already read off the resume (degree, college,
+          // graduation year, links) arrive filled in rather than being asked for
+          // a second time.
           education: p.education || "",
+          degree: p.degree || "",
+          college: p.college || "",
           gradYear: p.gradYear || 0,
+          class10Percent: p.class10Percent || 0,
+          class12Percent: p.class12Percent || 0,
           availability: p.availability || "",
+          hoursPerWeek: p.hoursPerWeek || 0,
+          willingToRelocate: p.willingToRelocate || "",
           workAuthorization: p.workAuthorization || "",
+          needsSponsorship: p.needsSponsorship || "",
+          expectedStipend: p.expectedStipend || 0,
+          linkedinUrl: p.linkedinUrl || "",
+          githubUrl: p.githubUrl || "",
+          portfolioUrl: p.portfolioUrl || "",
           // Prefer whatever the agent already pulled off the resume — only
           // fall back to blank/0 if it hasn't run yet or found nothing.
           phone: p.phone || "",
@@ -162,6 +259,7 @@ export default function OnboardingPage() {
         });
         if (p.resumeName) setResumeName(p.resumeName);
         if (d.user?.slackConnected) setSlackDone(true);
+        if (d.user?.internshalaConnected) setInternshalaConnected(true);
       })
       .catch(() => {});
   }, []);
@@ -187,9 +285,92 @@ export default function OnboardingPage() {
       // URL state is external browser state; sync it after hydration.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setUpgradeMode(true);
-      setStep(3);
+      setStep(4);
     }
   }, []);
+
+  /**
+   * Open a remote-browser login for Internshala and wait for it to land.
+   *
+   * Same flow as the dashboard's Integrations tab, deliberately: the user logs
+   * in on the real site inside a server-side Chromium they can see and drive, so
+   * no password ever reaches us. Poll rather than push, because the session only
+   * exists once agent/connect_service.py has a browser to hand out a token for.
+   */
+  async function connectInternshala() {
+    connectAbort.current = false;
+    setConnecting(true);
+    setConnectMsg("Preparing your secure login window…");
+    let res: Response;
+    try {
+      res = await fetch("/api/integrations/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: "internshala" }),
+      });
+    } catch {
+      setConnecting(false);
+      setConnectMsg("Network error — check your connection and try again.");
+      return;
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setConnecting(false);
+      setConnectMsg(data.error || "Couldn't open the login window. You can skip and connect later.");
+      return;
+    }
+    // Sit just past the connect service's own 420s session window, so we never
+    // declare failure while the user is still fetching a verification code.
+    const deadline = Date.now() + 450_000;
+    const poll = async () => {
+      if (connectAbort.current) return;
+      if (Date.now() > deadline) {
+        setConnecting(false);
+        setViewer(null);
+        setConnectMsg("The login window timed out. You can try again, or skip and connect later.");
+        return;
+      }
+      const r = await fetch("/api/integrations").catch(() => null);
+      if (connectAbort.current) return;
+      if (r?.ok) {
+        const d = await r.json().catch(() => ({}));
+        const row = (d.integrations as { platform: string; status: string; connectToken: string | null }[] ?? [])
+          .find((i) => i.platform === "internshala");
+        if (row?.status === "connected") {
+          setConnecting(false);
+          setViewer(null);
+          setInternshalaConnected(true);
+          setConnectMsg("");
+          return;
+        }
+        if (row?.connectToken) {
+          setConnectMsg("");
+          const tok = row.connectToken;
+          // Identity-stable: a fresh object every 2s re-renders the live canvas
+          // underneath the user, which reads as the window flickering.
+          setViewer((prev) => (prev && prev.token === tok ? prev : { token: tok }));
+        } else if (row?.status !== "connecting") {
+          setConnecting(false);
+          setViewer(null);
+          return;
+        }
+      }
+      setTimeout(poll, 2000);
+    };
+    setTimeout(poll, 2000);
+  }
+
+  /** Closing the viewer cancels the attempt — never re-open a window they shut. */
+  function cancelConnect() {
+    connectAbort.current = true;
+    setViewer(null);
+    setConnecting(false);
+    void fetch("/api/integrations/disconnect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "internshala" }),
+    }).catch(() => {});
+  }
 
   function set(key: string, v: unknown) {
     setForm((f) => ({ ...f, [key]: v }));
@@ -325,7 +506,7 @@ export default function OnboardingPage() {
       await saveReportChannel("slack");
       setBusy(false);
       setSlackDone(true);
-      setStep(3);
+      setStep(4);
     } else {
       setBusy(false);
       setMsg("Enter your Slack member ID (e.g. U12345678).");
@@ -433,6 +614,12 @@ export default function OnboardingPage() {
 
   return (
     <main className="min-h-screen grid-bg">
+      {/* Live remote-browser login — mounted only while a connect session is open.
+          Same component the dashboard uses, so the login the user sees in setup is
+          the login they'd see later from Integrations. */}
+      {viewer && (
+        <ConnectViewer platform="internshala" token={viewer.token} onClose={cancelConnect} />
+      )}
       <div className="mx-auto max-w-3xl px-5 py-10">
         <div className="relative mb-8 flex items-center justify-center">
           <Link href="/">
@@ -577,7 +764,7 @@ export default function OnboardingPage() {
                 </div>
               </div>
 
-              {(["About you", "Targeting", "Limits & rules"] as const).map((group) => (
+              {(["Education", "About you", "Targeting", "Limits & rules"] as const).map((group) => (
                 <div key={group} className="mt-6">
                   <div className="text-xs uppercase tracking-wide text-muted mb-3">{group}</div>
                   <div className="space-y-5">
@@ -586,25 +773,65 @@ export default function OnboardingPage() {
                         <label className="text-sm font-medium">{f.label}</label>
                         <p className="text-xs text-muted mb-1.5">{f.help}</p>
                         {f.type === "tags" && (
-                          <TagInput
-                            value={(form[f.key] as string[]) || []}
-                            onChange={(v) => set(f.key, v)}
-                            placeholder={f.placeholder}
-                          />
+                          <>
+                            <TagInput
+                              value={(form[f.key] as string[]) || []}
+                              onChange={(v) => set(f.key, v)}
+                              placeholder={f.placeholder}
+                            />
+                            {/* Tap-to-add. What goes in here decides which listings are
+                                searched at all, so a typo or an invented category
+                                quietly narrows the search to nothing and the user
+                                never sees why. */}
+                            {f.suggestions && (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {f.suggestions
+                                  .filter((s) => !((form[f.key] as string[]) || []).includes(s))
+                                  .slice(0, 12)
+                                  .map((s) => (
+                                    <button
+                                      key={s}
+                                      type="button"
+                                      onClick={() => set(f.key, [...(((form[f.key] as string[]) || [])), s])}
+                                      className="rounded-full border border-border bg-surface px-2.5 py-1 text-xs text-muted transition hover:border-brand/60 hover:text-foreground"
+                                    >
+                                      + {s}
+                                    </button>
+                                  ))}
+                              </div>
+                            )}
+                          </>
                         )}
                         {f.type === "select" && (
-                          <select
-                            aria-label={f.label}
+                          <div className="flex items-center gap-2">
+                            <select
+                              aria-label={f.label}
+                              value={pickedValue(form[f.key])}
+                              onChange={(e) =>
+                                set(f.key, f.numeric ? Number(e.target.value) : e.target.value)
+                              }
+                              className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand transition"
+                            >
+                              {/* Unset stays unset. Without this the first option is
+                                  silently "chosen" for the user and then stated on a
+                                  real application as their answer — "No, I don't need
+                                  sponsorship" is not something we may assume. */}
+                              <option value="">Select…</option>
+                              {f.options!.map((o) => (
+                                <option key={o} value={o}>
+                                  {o}
+                                </option>
+                              ))}
+                            </select>
+                            {f.suffix && <span className="shrink-0 text-sm text-muted">{f.suffix}</span>}
+                          </div>
+                        )}
+                        {f.type === "choice" && (
+                          <ChoiceField
+                            field={f}
                             value={String(form[f.key] ?? "")}
-                            onChange={(e) => set(f.key, e.target.value)}
-                            className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand transition capitalize"
-                          >
-                            {f.options!.map((o) => (
-                              <option key={o} value={o}>
-                                {o}
-                              </option>
-                            ))}
-                          </select>
+                            onChange={(v) => set(f.key, v)}
+                          />
                         )}
                         {f.type === "text" && (
                           <input
@@ -671,8 +898,79 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          {/* STEP 2 — Notifications (Slack or Email) */}
+          {/* STEP 2 — Internshala. The one platform whose listings the agent can
+              actually submit on its own with a connected session; the rest are
+              managed later from Integrations in the account menu, so setup
+              doesn't open with five logins and a decision nobody can make yet. */}
           {step === 2 && (
+            <div>
+              <h2 className="font-display text-2xl font-semibold">Connect Internshala</h2>
+              <p className="mt-1 text-sm text-muted">
+                Optional, and the biggest single difference to how much the agent can do
+                for you. Connected, it applies to Internshala listings on its own. Skipped,
+                it still finds and prepares them — you tap to send.
+              </p>
+
+              <div className={`mt-5 rounded-xl border p-4 ${
+                internshalaConnected ? "border-accent/40 bg-accent/5" : "border-border bg-surface"
+              }`}>
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-md border border-current px-1.5 py-0.5 text-xs font-bold text-[#00aaff]">IS</span>
+                    <span className="font-medium">Internshala</span>
+                  </div>
+                  <span className={`rounded-full px-2 py-0.5 text-xs ${
+                    internshalaConnected ? "bg-accent/20 text-accent"
+                    : connecting ? "bg-brand/20 text-brand-2" : "bg-surface-2 text-muted"
+                  }`}>
+                    {internshalaConnected ? "Connected" : connecting ? "Connecting…" : "Not connected"}
+                  </span>
+                </div>
+
+                {internshalaConnected ? (
+                  <p className="text-xs text-muted">
+                    Done — the agent can apply to Internshala listings for you. Change this any
+                    time from <span className="text-foreground">Integrations</span> in the account menu.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs text-muted">
+                      You log in on the <span className="text-foreground">real Internshala site</span> inside a
+                      secure window here, and handle any OTP or CAPTCHA yourself.{" "}
+                      <span className="text-foreground">Grindly never sees, types, or stores your password</span> —
+                      only the browser session that login produces.
+                    </p>
+                    <button
+                      onClick={connectInternshala}
+                      disabled={connecting}
+                      className="mt-3 w-full press rounded-lg brand-gradient px-3 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                    >
+                      {connecting ? "Opening your secure login window…" : "Connect Internshala"}
+                    </button>
+                  </>
+                )}
+                {connectMsg && <p className="mt-2 text-xs text-muted">{connectMsg}</p>}
+              </div>
+
+              <div className="mt-7 flex justify-between">
+                <button
+                  onClick={() => setStep(1)}
+                  className="rounded-lg border border-border px-5 py-2.5 hover:border-brand/60 transition"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={() => setStep(3)}
+                  className="rounded-lg brand-gradient px-5 py-2.5 font-medium text-white transition hover:opacity-90"
+                >
+                  {internshalaConnected ? "Next" : "Skip for now"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 3 — Notifications (Slack or Email) */}
+          {step === 3 && (
             <div>
               <h2 className="font-display text-2xl font-semibold">Stay updated</h2>
               <p className="mt-1 text-sm text-muted">
@@ -738,7 +1036,7 @@ export default function OnboardingPage() {
 
               <div className="mt-6 flex flex-wrap justify-between gap-3">
                 <button
-                  onClick={() => setStep(1)}
+                  onClick={() => setStep(2)}
                   className="rounded-lg border border-border px-5 py-2.5 hover:border-brand/60 transition"
                 >
                   Back
@@ -747,7 +1045,7 @@ export default function OnboardingPage() {
                   {notifChannel === "slack" ? (
                     <>
                       <button
-                        onClick={async () => { await saveReportChannel("email"); setStep(3); }}
+                        onClick={async () => { await saveReportChannel("email"); setStep(4); }}
                         className="rounded-lg border border-border px-5 py-2.5 text-muted hover:text-foreground transition"
                       >
                         Skip for now
@@ -762,7 +1060,7 @@ export default function OnboardingPage() {
                     </>
                   ) : (
                     <button
-                      onClick={async () => { await saveReportChannel("email"); setStep(3); }}
+                      onClick={async () => { await saveReportChannel("email"); setStep(4); }}
                       className="rounded-lg brand-gradient px-5 py-2.5 font-medium text-white hover:opacity-90 transition"
                     >
                       Continue with Email →
@@ -773,8 +1071,8 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          {/* STEP 3 — Activate */}
-          {step === 3 && (
+          {/* STEP 4 — Activate */}
+          {step === 4 && (
             <div>
               <h2 className="font-display text-2xl font-semibold">{upgradeMode ? "Plans are coming soon" : "Start free"}</h2>
               <p className="mt-1 text-sm text-muted">
@@ -853,7 +1151,7 @@ export default function OnboardingPage() {
 
               <div className="mt-6 flex flex-wrap justify-between gap-3">
                 <button
-                  onClick={() => upgradeMode ? (window.location.href = "/dashboard") : setStep(2)}
+                  onClick={() => upgradeMode ? (window.location.href = "/dashboard") : setStep(3)}
                   className="rounded-lg border border-border px-5 py-2.5 hover:border-brand/60 transition"
                 >
                   Back

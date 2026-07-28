@@ -23,6 +23,8 @@ type ReadinessProfile = {
   resumeName: string | null;
   phone: string | null;
   education: string | null;
+  degree?: string | null;
+  college?: string | null;
   gradYear: number | null;
   preferredDomains: string;
   autoApply: boolean;
@@ -62,7 +64,12 @@ export function computeReadiness(user: ReadinessUser): Readiness {
     // Forms ask for a name + reachable contact on virtually every submission.
     contact: !!user.name && !!user.email && !!p?.phone,
     // Education + graduation timing are the facts intern screening always asks.
-    education: !!p?.education && !!p?.gradYear,
+    // `education` is the combined "course and college" line; setup now collects
+    // the two halves separately (forms ask for them in separate boxes) and the
+    // API composes the line from them. Either shape satisfies this — checking
+    // only the composed field would have locked out every user who filled in the
+    // new form, since nothing writes it directly any more.
+    education: (!!p?.education || (!!p?.degree && !!p?.college)) && !!p?.gradYear,
     // At least one target domain, or discovery has no direction to search in.
     preferences: (() => {
       try {

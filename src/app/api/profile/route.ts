@@ -34,6 +34,10 @@ const NUM_FIELDS = new Set([
   "stipendMin", "minMatchScore", "maxPerDay", "matchQualityRating",
   // Eligibility facts the agent will state on screening forms (see lib/readiness).
   "gradYear", "gradMonth",
+  // The rest of what a screening form asks and a resume never carries. Setup
+  // collects them once so the agent stops stalling on the same questions —
+  // agent/questions.py answers from these verbatim.
+  "hoursPerWeek", "expectedStipend", "class10Percent", "class12Percent",
 ]);
 const STR_FIELDS = new Set([
   "workMode",
@@ -45,6 +49,14 @@ const STR_FIELDS = new Set([
   "availability",
   "workAuthorization",
   "timezone",
+  // Split out of `education` because forms ask for them in separate boxes.
+  "degree",
+  "college",
+  "willingToRelocate",
+  // Its own box on most applications, so it isn't re-parsed out of the PDF.
+  "linkedinUrl",
+  "githubUrl",
+  "portfolioUrl",
   // lib/otp.ts + adapters/sms.ts (phone-verify OTP) exist but are wired to no
   // route, so there is no way to ever set phoneVerified — gating writes on
   // that flow just made the field permanently unfillable (readiness.ts blocks
@@ -54,12 +66,17 @@ const STR_FIELDS = new Set([
   "phone",
 ]);
 const BOOL_FIELDS = new Set(["autoApply"]);
+const DECIMAL_FIELDS = new Set(["gpa", "class10Percent", "class12Percent"]);
 
 // Fields whose value must be one of a fixed set — anything else is dropped, so a
 // typo or a hostile body can't write a channel the worker doesn't know how to
 // deliver on (which would silently mean no reports at all).
 const ENUM_FIELDS: Record<string, Set<string>> = {
   reportChannel: new Set(["email", "slack"]),
+  // A plain yes/no on every applicant tracking system. Constrained here because
+  // the agent hands this straight to a Yes/No dropdown — anything else would be
+  // stored, never match an option, and silently stall the application instead.
+  needsSponsorship: new Set(["Yes", "No"]),
 };
 
 export async function POST(req: Request) {
@@ -81,10 +98,11 @@ export async function POST(req: Request) {
 
   for (const [k, v] of Object.entries(body)) {
     if (ARRAY_FIELDS.has(k)) data[k] = JSON.stringify(Array.isArray(v) ? v : []);
-    // GPA needs decimal precision (8.4/10, not 8) — every other NUM_FIELD is a
-    // genuine integer (day counts, a year, a match-score), so it alone gets
-    // rounded to 2dp instead of whole.
-    else if (k === "gpa") data[k] = Math.max(0, Math.round((Number(v) || 0) * 100) / 100);
+    // These need decimal precision (8.4/10, a 94.5% board result) — the rest of
+    // NUM_FIELDS are genuine integers (day counts, a year, a match score), so
+    // only these get 2dp instead of being rounded whole. A board percentage
+    // rounded to 95 is a different, false, number on an application.
+    else if (DECIMAL_FIELDS.has(k)) data[k] = Math.max(0, Math.round((Number(v) || 0) * 100) / 100);
     else if (NUM_FIELDS.has(k)) data[k] = Math.max(0, Math.round(Number(v) || 0));
     else if (BOOL_FIELDS.has(k)) data[k] = Boolean(v);
     else if (ENUM_FIELDS[k]) { if (ENUM_FIELDS[k].has(String(v))) data[k] = String(v); }
@@ -111,10 +129,25 @@ export async function POST(req: Request) {
     await audit("consent", { userId: uid, detail: "auto_apply revoked" });
   }
 
-  const profile = await prisma.profile.upsert({
+  let profile = await prisma.profile.upsert({
     where: { userId: uid },
     update: data,
     create: { userId: uid, ...data },
   });
+
+  // Keep the combined "course and college" line in step with its two halves.
+  // Setup collects degree and college separately now (forms ask for them in
+  // separate boxes), and nothing writes `education` directly any more — but
+  // readiness, the agent's generic "Education" answer, and older rows all still
+  // read it. Deriving it here means one save can't leave the two disagreeing.
+  if (data.degree !== undefined || data.college !== undefined) {
+    const composed = [profile.degree, profile.college].filter(Boolean).join(", ");
+    if (composed && composed !== profile.education) {
+      profile = await prisma.profile.update({
+        where: { userId: uid },
+        data: { education: composed },
+      });
+    }
+  }
   return NextResponse.json({ ok: true, profile });
 }

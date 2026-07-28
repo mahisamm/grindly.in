@@ -221,6 +221,20 @@ def _ensure_profile_columns(c):
         c.execute("ALTER TABLE profiles ADD COLUMN resume_variant_status TEXT")
     if "resume_variant_detail" not in cols:
         c.execute("ALTER TABLE profiles ADD COLUMN resume_variant_detail TEXT")
+    # Screening-form facts collected in setup (see src/lib/proffQuestions.ts).
+    # questions.py answers from these instead of stopping the application.
+    for column, ddl in (
+        ("grad_year", "INTEGER"), ("grad_month", "INTEGER"),
+        ("availability", "TEXT"), ("work_authorization", "TEXT"),
+        ("degree", "TEXT"), ("college", "TEXT"),
+        ("class10_percent", "REAL"), ("class12_percent", "REAL"),
+        ("needs_sponsorship", "TEXT"),
+        ("hours_per_week", "INTEGER"), ("willing_to_relocate", "TEXT"),
+        ("expected_stipend", "INTEGER"),
+        ("linkedin_url", "TEXT"), ("github_url", "TEXT"), ("portfolio_url", "TEXT"),
+    ):
+        if column not in cols:
+            c.execute(f"ALTER TABLE profiles ADD COLUMN {column} {ddl}")
 
 
 def _ensure_profile_row(c, uid: str):
@@ -457,16 +471,29 @@ def update_skills(uid: str, skills: list[str], plan_json: dict | None = None):
         )
 
 
-def update_contact(uid: str, phone: str | None = None, gpa: float | None = None) -> dict:
+def update_contact(uid: str, phone: str | None = None, gpa: float | None = None,
+                   **extra) -> dict:
     """Prefill BLANK form-fill fields from resume extraction — never overwrites a
     value the user set. Phone fills only when currently empty; GPA fills only when
     it's null or still the 8.0 default (a placeholder nobody chose). Returns the
-    dict of fields actually filled, for logging."""
+    dict of fields actually filled, for logging.
+
+    `extra` carries the rest of what resume_ai.extract_contact reads off the page
+    (degree, college, grad_year, linkedin_url, github_url). Same rule: a column
+    that already holds something the user can see is left alone. The point is
+    that setup arrives pre-filled and the user confirms rather than types — a
+    field the resume states is a field nobody should be asked for twice.
+    """
+    text_columns = ("degree", "college", "linkedin_url", "github_url", "portfolio_url")
+    num_columns = ("grad_year",)
     filled: dict = {}
     with conn() as c:
         _ensure_profile_columns(c)
         _ensure_profile_row(c, uid)
-        row = c.execute("SELECT phone, gpa FROM profiles WHERE user_id=?", (uid,)).fetchone()
+        columns = ["phone", "gpa", *text_columns, *num_columns]
+        row = c.execute(
+            f"SELECT {', '.join(columns)} FROM profiles WHERE user_id=?", (uid,)
+        ).fetchone()
         if not row:
             return filled
         cur_phone = row["phone"]
@@ -481,6 +508,18 @@ def update_contact(uid: str, phone: str | None = None, gpa: float | None = None)
             sets.append("gpa=?")
             vals.append(float(gpa))
             filled["gpa"] = gpa
+        for column in text_columns:
+            value = str(extra.get(column) or "").strip()
+            if value and not str(row[column] or "").strip():
+                sets.append(f"{column}=?")
+                vals.append(value[:200])
+                filled[column] = value
+        for column in num_columns:
+            value = extra.get(column)
+            if value and not row[column]:
+                sets.append(f"{column}=?")
+                vals.append(int(value))
+                filled[column] = value
         if sets:
             vals.append(now_db())
             vals.append(uid)

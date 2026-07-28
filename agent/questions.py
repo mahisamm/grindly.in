@@ -174,6 +174,62 @@ _FACTUAL_CLAIM = re.compile(
 )
 _PHONE = re.compile(r"\b(phone|mobile|contact number|whatsapp)\b", re.I)
 _EMAIL = re.compile(r"\b(e-?mail)\b", re.I)
+
+# The rest of what a screening form asks and a resume does not carry. Every one
+# of these was already REFUSED by _FACTUAL_CLAIM / _WANTS_A_DATUM below — which
+# was right while the answers existed nowhere, and became the reason applications
+# stalled once setup started collecting them. The facts were being stored and
+# never read. Answering from the profile is not a relaxation of the no-invention
+# rule: it is the rule working as designed, with the user as the source.
+_GRAD_YEAR_Q = re.compile(
+    r"\b(graduation\s+year|year\s+of\s+(graduation|passing)|passing\s*(-|\s)?out\s+year|"
+    r"passing\s+year|batch\s+year|when\s+do\s+you\s+graduate|expected\s+graduation)\b",
+    re.I,
+)
+_HOURS_Q = re.compile(
+    r"\bhours?\s+(per|a|each)\s+(week|day)\b|\bweekly\s+hours\b|"
+    r"\bhours?\s+.{0,20}\b(commit|devote|dedicate|spare)\b",
+    re.I,
+)
+_START_Q = re.compile(
+    r"\b(when\s+can\s+you\s+(start|join)|start(ing)?\s+date|joining\s+date|"
+    r"available\s+(from|to\s+start)|earliest\s+(start|joining)|notice\s+period)\b",
+    re.I,
+)
+_RELOCATE_Q = re.compile(r"\brelocat\w*\b", re.I)
+# Asks for a date or a period, never for a yes/no.
+_WHEN_Q = re.compile(
+    r"^\s*(when|what\s+(date|day)|which\s+date|how\s+soon)\b|"
+    r"\b(notice\s+period|start(ing)?\s+date|joining\s+date|available\s+from)\b",
+    re.I,
+)
+_WORK_AUTH_Q = re.compile(
+    r"\b(work\s+authori[sz]ation|authori[sz]ed\s+to\s+work|"
+    r"(require|need)\w*\s+(visa|sponsorship)|sponsorship|work\s+permit|citizenship|nationality)\b",
+    re.I,
+)
+_STIPEND_Q = re.compile(
+    r"\bexpected\s+(stipend|salary|ctc|compensation|pay)\b|"
+    r"\b(stipend|salary)\s+expectation\b",
+    re.I,
+)
+_COLLEGE_Q = re.compile(r"\b(college|university|institute|institution)\b", re.I)
+_DEGREE_Q = re.compile(
+    r"\b(degree|course|qualification|programme|program|branch|stream|"
+    r"speciali[sz]ation|major|discipline)\b",
+    re.I,
+)
+_SPONSORSHIP_Q = re.compile(
+    r"\b(require|need|request)\w*\s+(visa\s+)?sponsorship\b|"
+    r"\bsponsorship\s+(required|needed)\b|\bwill\s+you\s+require\s+sponsorship\b",
+    re.I,
+)
+_PERCENT_Q = re.compile(r"\b(percentage|percent|marks|score|aggregate|result)\b|%", re.I)
+_CLASS10_Q = re.compile(r"\b(class\s*(x|10)|10th|tenth|ssc|matric\w*)\b", re.I)
+_CLASS12_Q = re.compile(r"\b(class\s*(xii|12)|12th|twelfth|hsc|intermediate|senior\s+secondary)\b", re.I)
+_LINKEDIN_Q = re.compile(r"\blinked-?in\b", re.I)
+_GITHUB_Q = re.compile(r"\bgit\s?hub\b", re.I)
+_PORTFOLIO_Q = re.compile(r"\b(portfolio|personal\s+(web)?site|website|blog)\b", re.I)
 # Availability/logistics questions. These are yes/no in practice, and the user
 # already declared the answer by choosing to apply to an internship at all.
 _CONFIRM = re.compile(
@@ -280,6 +336,84 @@ def _pick_option(field: dict) -> str | None:
     return None
 
 
+def _fit_option(field: dict, value: str) -> str | None:
+    """Map a stored answer onto one of the field's OWN options.
+
+    A dropdown can only be given a label it actually offers — "Yes" typed into a
+    select whose option reads "Yes, I can relocate" makes select_option() throw
+    and takes the whole application down. When nothing matches, the caller falls
+    through and the field is left for the user, which is the honest outcome for a
+    question we can't express in the form's own vocabulary.
+    """
+    options = field.get("options") or []
+    if not options:
+        return value
+    low = value.strip().lower()
+    for option in options:
+        if str(option).strip().lower() == low:
+            return option
+    for option in options:
+        text = str(option).strip().lower()
+        if text.startswith(low) or low.startswith(text):
+            return option
+    return None
+
+
+def _from_setup(label: str, field: dict, profile: dict) -> str | None:
+    """Answers the user gave in setup, matched to the question being asked.
+
+    Nothing here is derived, inferred, or phrased by a model — each one is a
+    value the user typed or picked, returned verbatim. A fact we do not hold
+    returns None and the application stops for them, exactly as before.
+    """
+    def _text(key: str) -> str:
+        return str(profile.get(key) or "").strip()
+
+    def _num(key: str) -> str:
+        value = profile.get(key)
+        if value in (None, "", 0):
+            return ""
+        # 94.0 is a percentage a human wrote as 94. A form's numeric input often
+        # rejects the decimal, and a recruiter reading "94.0%" sees a machine.
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+
+    # Order matters throughout: "Which college/university?" also matches
+    # _DEGREE_Q on "course", and the college is the more specific answer. The
+    # school-level percentages come before the grade/percentage catch-alls for
+    # the same reason.
+    candidates: list[tuple[bool, str]] = [
+        (bool(_SPONSORSHIP_Q.search(label)), _text("needs_sponsorship")),
+        # A percentage only answers a question that ASKS for one. "Class 12 board
+        # name" and "Intermediate college" match the school-level pattern too,
+        # and a percentage typed into either is nonsense.
+        (bool(_CLASS10_Q.search(label) and _PERCENT_Q.search(label)), _num("class10_percent")),
+        (bool(_CLASS12_Q.search(label) and _PERCENT_Q.search(label)), _num("class12_percent")),
+        (bool(_LINKEDIN_Q.search(label)), _text("linkedin_url")),
+        (bool(_GITHUB_Q.search(label)), _text("github_url")),
+        (bool(_PORTFOLIO_Q.search(label)), _text("portfolio_url")),
+        (bool(_GRAD_YEAR_Q.search(label)), _num("grad_year")),
+        (bool(_HOURS_Q.search(label)), _num("hours_per_week")),
+        (bool(_STIPEND_Q.search(label)), _num("expected_stipend")),
+        (bool(_START_Q.search(label)), _text("availability")),
+        (bool(_RELOCATE_Q.search(label)), _text("willing_to_relocate")),
+        (bool(_WORK_AUTH_Q.search(label)), _text("work_authorization")),
+        # Never on a school-level question. "Intermediate college name" and
+        # "Class 12 stream" match these patterns and are asking about the
+        # candidate's SCHOOL — answering them with the university and the B.Tech
+        # states two facts that aren't true, on a form, under their name.
+        (bool(_COLLEGE_Q.search(label) and not _SCHOOL_LEVEL.search(label)),
+         _text("college") or _text("education")),
+        (bool(_DEGREE_Q.search(label) and not _SCHOOL_LEVEL.search(label)),
+         _text("degree") or _text("education")),
+    ]
+    for matches, value in candidates:
+        if matches and value:
+            return _fit_option(field, value)
+    return None
+
+
 def _deterministic(field: dict, profile: dict, name: str, email: str) -> str | None:
     """Answers that must come from the profile, never from a model.
 
@@ -300,6 +434,10 @@ def _deterministic(field: dict, profile: dict, name: str, email: str) -> str | N
     named = _name_answer(label, name)
     if named:
         return named
+
+    stored = _from_setup(label, field, profile)
+    if stored is not None:
+        return stored
     if kind in ("checkbox", "radio") and field["required"]:
         return "__check__"
     # NOT a select: a dropdown's answer has to be one of ITS OWN option labels, and
@@ -308,6 +446,12 @@ def _deterministic(field: dict, profile: dict, name: str, email: str) -> str | N
     if (
         _CONFIRM.search(label)
         and not _FACTUAL_CLAIM.search(label)
+        # A question asking WHEN is not a yes/no question. "When can you start?"
+        # matches _CONFIRM on "can you start" and was being answered "Yes" in a
+        # free-text box — the same shape of nonsense that got "duration" removed
+        # from this branch. "Are you available to start immediately?" still is a
+        # yes/no and still gets one.
+        and not _WHEN_Q.search(label)
         and kind not in ("textarea", "select")
     ):
         return "Yes"

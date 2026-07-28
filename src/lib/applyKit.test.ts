@@ -92,3 +92,48 @@ describe("the kit the extension is handed", () => {
     expect(kit.answers.every((x) => x.a !== "")).toBe(true);
   });
 });
+
+describe("facts collected in setup reach the browser executor", () => {
+  // The point of asking once is that nothing asks again. A field collected in
+  // setup and absent from this kit is a question the extension stops on —
+  // "needs you" on the dashboard — for an answer the user already gave.
+  const FULL = {
+    name: "Ankit Jain",
+    email: "ankit@x.com",
+    profile: {
+      phone: "9000000011", gpa: 8.1, education: "B.Tech CSE, VIT Vellore",
+      degree: "B.Tech in Computer Science", college: "VIT Vellore",
+      gradYear: 2027, availability: "Immediately", workAuthorization: "Indian citizen",
+      needsSponsorship: "No", hoursPerWeek: 20, willingToRelocate: "Yes",
+      expectedStipend: 15000, class10Percent: 92, class12Percent: 94.5,
+      linkedinUrl: "linkedin.com/in/ankit", githubUrl: "github.com/ankit",
+      portfolioUrl: "ankit.dev",
+    },
+  };
+
+  const answerFor = (q: string) =>
+    buildKit(FULL).answers.find((a) => a.q === q)?.a;
+
+  it.each([
+    ["College", "VIT Vellore"],
+    ["Degree", "B.Tech in Computer Science"],
+    ["Do you require sponsorship", "No"],
+    ["Hours per week", "20"],
+    ["Willing to relocate", "Yes"],
+    ["Expected stipend", "15000"],
+    ["Class 12 percentage", "94.5"],
+    ["Class 10 percentage", "92"],
+    ["LinkedIn", "linkedin.com/in/ankit"],
+    ["GitHub", "github.com/ankit"],
+    ["Portfolio", "ankit.dev"],
+  ])("carries %s", (question, expected) => {
+    expect(answerFor(question)).toBe(expected);
+  });
+
+  it("omits anything the user never gave, so the engine asks instead of guessing", () => {
+    const sparse = buildKit({ name: "A", email: "a@x.com", profile: { phone: "9" } });
+    const questions = sparse.answers.map((a) => a.q);
+    expect(questions).not.toContain("Hours per week");
+    expect(questions).not.toContain("Do you require sponsorship");
+  });
+});

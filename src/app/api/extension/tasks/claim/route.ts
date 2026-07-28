@@ -32,6 +32,13 @@ export async function POST(req: Request) {
         select: {
           resumeName: true, phone: true, education: true, gradYear: true,
           gradMonth: true, availability: true, workAuthorization: true, gpa: true,
+          // Everything else setup collects, so the browser executor answers from
+          // the user's own words instead of stopping on a question they already
+          // answered (see lib/applyKit SETUP_QUESTIONS).
+          degree: true, college: true, needsSponsorship: true, hoursPerWeek: true,
+          willingToRelocate: true, expectedStipend: true,
+          class10Percent: true, class12Percent: true,
+          linkedinUrl: true, githubUrl: true, portfolioUrl: true,
           preferredDomains: true, autoApply: true, autoApplyConsentAt: true,
           consentVersion: true, maxPerDay: true, timezone: true,
         },

@@ -4,7 +4,7 @@
  * and become the agent's hard limits (what it may / may not apply to).
  */
 
-export type FieldType = "tags" | "select" | "number" | "toggle" | "text";
+export type FieldType = "tags" | "select" | "number" | "toggle" | "text" | "choice";
 
 export type ProffField = {
   key: string;
@@ -12,10 +12,31 @@ export type ProffField = {
   help: string;
   type: FieldType;
   options?: string[];
+  /**
+   * "choice" fields: pick from `options`, or choose "Something else" and type
+   * your own. Everything the agent states on a form is stored as one string
+   * either way.
+   *
+   * The list matters for more than convenience. These answers are typed into
+   * real applications, and a free-text box produced values the agent could not
+   * use — "around 20-25 hrs depending on my sem" cannot be put in a numeric
+   * "hours per week" input, and "asap" is not one of a dropdown's options. A
+   * fixed list makes the stored value one the agent can hand to a form as-is,
+   * and spares the user guessing what we expect.
+   */
+  suggestions?: string[];
+  /** A "select" whose options are numbers but whose column is an Int. */
+  numeric?: boolean;
   placeholder?: string;
   suffix?: string;
-  group: "About you" | "Targeting" | "Limits & rules";
+  group: "About you" | "Education" | "Targeting" | "Limits & rules";
 };
+
+// Graduation years offered in setup: last year (someone who just finished) plus
+// the next six. A student picks; nobody types a year into a free box and gets it
+// stated on an application as fact.
+const CURRENT_YEAR = new Date().getFullYear();
+export const GRAD_YEARS = Array.from({ length: 8 }, (_, i) => String(CURRENT_YEAR - 1 + i));
 
 export const CONTACT_FIELDS = [
   // Only ever came from Google OAuth before; an account whose Google profile
@@ -32,36 +53,137 @@ export const PROFF_FIELDS: ProffField[] = [
   // invent exactly this class of answer, so an application whose form asks for
   // one we do not hold waits for the user instead of being sent with a guess.
   // lib/readiness.ts gates auto-apply on them.
+  // Split from the old single "Course and college" box because forms ask for
+  // them separately — answering "College name" with "B.Tech CSE, VIT Vellore"
+  // is wrong in a way a recruiter notices. Both arrive pre-filled from the
+  // resume (agent/resume_ai.extract_contact).
   {
-    key: "education",
-    label: "Course and college",
-    help: "Written onto application forms exactly as you type it.",
+    key: "degree",
+    label: "Your degree",
+    help: "Read off your resume — check it. Typed into 'Qualification' and 'Course' boxes.",
+    type: "choice",
+    options: [
+      "B.Tech", "B.E.", "B.Sc", "B.Com", "B.A.", "BCA", "BBA",
+      "M.Tech", "M.Sc", "MCA", "MBA", "Diploma",
+    ],
+    placeholder: "e.g. B.Tech in Computer Science",
+    group: "Education",
+  },
+  {
+    key: "college",
+    label: "College or university",
+    help: "Read off your resume — check it. Typed into 'College name' boxes.",
     type: "text",
-    placeholder: "e.g. B.Tech CSE, VIT Vellore",
-    group: "About you",
+    placeholder: "e.g. VIT Vellore",
+    group: "Education",
   },
   {
     key: "gradYear",
     label: "Expected graduation year",
     help: "Nearly every internship form asks. Also decides which roles you are eligible for.",
+    type: "select",
+    options: GRAD_YEARS,
+    numeric: true,
+    group: "Education",
+  },
+  {
+    key: "class12Percent",
+    label: "Class 12 percentage",
+    help: "Asked on most Indian internship forms. Your college CGPA is a different number and is never used for this.",
     type: "number",
-    suffix: "year",
-    group: "About you",
+    suffix: "%",
+    group: "Education",
+  },
+  {
+    key: "class10Percent",
+    label: "Class 10 percentage",
+    help: "Same — asked often, and never guessed from anything else.",
+    type: "number",
+    suffix: "%",
+    group: "Education",
   },
   {
     key: "availability",
     label: "When can you start?",
-    help: "Stated verbatim on forms that ask about availability.",
-    type: "text",
-    placeholder: "e.g. Immediately, or June 2027",
+    help: "Stated on forms that ask about availability or notice period.",
+    type: "choice",
+    options: ["Immediately", "Within 2 weeks", "Within 1 month", "After my current semester"],
+    placeholder: "e.g. From June 2027",
+    group: "About you",
+  },
+  {
+    key: "hoursPerWeek",
+    label: "Hours a week you can commit",
+    help: "Internshala asks this on nearly every listing, and the box only takes a number.",
+    type: "select",
+    options: ["10", "15", "20", "25", "30", "40"],
+    numeric: true,
+    suffix: "hrs/week",
+    group: "About you",
+  },
+  {
+    key: "willingToRelocate",
+    label: "Would you relocate for a role?",
+    help: "Answered on forms exactly as picked here.",
+    type: "select",
+    options: ["Yes", "No", "Depends on the role"],
     group: "About you",
   },
   {
     key: "workAuthorization",
     label: "Work authorization",
     help: "How you are eligible to work where you are applying. Copied as written, never guessed.",
-    type: "text",
+    type: "choice",
+    options: [
+      "Indian citizen",
+      "Indian citizen — need sponsorship to work abroad",
+      "Student visa (F-1 / OPT)",
+      "Permanent resident",
+      "Work permit holder",
+    ],
     placeholder: "e.g. Indian citizen",
+    group: "About you",
+  },
+  {
+    key: "needsSponsorship",
+    label: "Do you need visa sponsorship?",
+    help: "Every applicant tracking system asks this as a plain yes/no, and it can't be inferred from the line above without putting words in your mouth.",
+    type: "select",
+    options: ["No", "Yes"],
+    group: "About you",
+  },
+  {
+    key: "expectedStipend",
+    label: "Expected stipend",
+    help: "Stated when a form asks what you expect. Different from the minimum below, which only decides what the agent opens.",
+    type: "select",
+    options: ["0", "5000", "10000", "15000", "20000", "25000", "30000", "40000"],
+    numeric: true,
+    suffix: "₹/mo",
+    group: "About you",
+  },
+  {
+    key: "linkedinUrl",
+    label: "LinkedIn profile",
+    help: "Forms ask for this in its own box. Read off your resume where possible.",
+    type: "text",
+    placeholder: "linkedin.com/in/yourname",
+    group: "About you",
+  },
+  {
+    key: "githubUrl",
+    label: "GitHub profile",
+    help: "Same — its own box on most technical applications.",
+    type: "text",
+    placeholder: "github.com/yourname",
+    group: "About you",
+  },
+  {
+    key: "portfolioUrl",
+    label: "Portfolio or personal site",
+    help: "Optional. Left blank if you don't have one.",
+    type: "text",
+    placeholder: "yourname.dev",
     group: "About you",
   },
   {
@@ -70,6 +192,17 @@ export const PROFF_FIELDS: ProffField[] = [
     help: "The agent only applies inside these. Leave empty to let it infer from your resume.",
     type: "tags",
     placeholder: "e.g. Web Development, Data Science, UI/UX",
+    // Tap-to-add, because the wording here decides which listings are even
+    // searched — a typo or an invented category quietly narrows the search to
+    // nothing, and the user has no way to see that happening.
+    suggestions: [
+      "Web Development", "Mobile Development", "Data Science", "Machine Learning",
+      "Artificial Intelligence", "Backend Development", "Frontend Development",
+      "Full Stack Development", "DevOps", "Cloud Computing", "Cybersecurity",
+      "UI/UX Design", "Product Management", "Business Analytics", "Data Analytics",
+      "Software Testing", "Embedded Systems", "Digital Marketing", "Content Writing",
+      "Graphic Design", "Human Resources", "Finance", "Operations", "Sales",
+    ],
     group: "Targeting",
   },
   {
@@ -78,6 +211,11 @@ export const PROFF_FIELDS: ProffField[] = [
     help: "Cities you'd accept. Add 'Remote' for work-from-home roles.",
     type: "tags",
     placeholder: "e.g. Remote, Bangalore, Hyderabad",
+    suggestions: [
+      "Remote", "Bangalore", "Hyderabad", "Pune", "Chennai", "Mumbai", "Delhi",
+      "Noida", "Gurgaon", "Kolkata", "Ahmedabad", "Jaipur", "Kochi",
+      "Coimbatore", "Indore", "Chandigarh", "Bhubaneswar", "Anywhere in India",
+    ],
     group: "Targeting",
   },
   {
@@ -138,9 +276,20 @@ export const DEFAULTS: Record<string, unknown> = {
   // is the one thing this system must never do; readiness holds auto-apply
   // until the user fills them in themselves.
   education: "",
+  degree: "",
+  college: "",
   gradYear: 0,
+  class10Percent: 0,
+  class12Percent: 0,
   availability: "",
+  hoursPerWeek: 0,
+  willingToRelocate: "",
   workAuthorization: "",
+  needsSponsorship: "",
+  expectedStipend: 0,
+  linkedinUrl: "",
+  githubUrl: "",
+  portfolioUrl: "",
   preferredDomains: [],
   preferredLocations: ["Remote"],
   workMode: "any",

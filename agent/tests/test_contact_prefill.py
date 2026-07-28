@@ -104,7 +104,10 @@ def test_cgpa_preferred_over_other_gpa():
 
 
 def test_extract_empty():
-    assert resume_ai.extract_contact("") == {"phone": None, "gpa": None}
+    # Every field, not just phone and GPA: extraction now also reads degree,
+    # college, graduation year and profile links so setup arrives pre-filled.
+    # Empty in, all-None out — nothing is ever guessed into a form.
+    assert all(v is None for v in resume_ai.extract_contact("").values())
 
 
 # ── db.update_contact (fills blanks only) ───────────────────────────────────

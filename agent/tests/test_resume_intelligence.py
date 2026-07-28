@@ -109,3 +109,58 @@ def test_the_gap_list_stays_short_enough_to_act_on():
         "kubernetes", "aws", "azure", "gcp", "terraform", "ansible", "jenkins", "go",
     ]}
     assert len(matcher.missing_skills(job, ["python"])) <= 6
+
+
+# ---------- prefill: what the resume already says, so setup only confirms ----------
+
+def _contact(text, year=2026):
+    return resume_ai.extract_contact(text, this_year=year)
+
+
+def test_degree_college_and_links_come_off_the_resume():
+    out = _contact(
+        "Ankit Jain\nankit@x.com | 9000000011 | linkedin.com/in/ankitjain | github.com/ankitj\n\n"
+        "EDUCATION\nDelhi University\nB.Tech in Computer Science, 2023 - 2027 (CGPA 8.1)\n"
+    )
+    assert out["degree"] == "B.Tech in Computer Science"
+    assert out["college"] == "Delhi University"
+    assert out["grad_year"] == 2027
+    assert out["linkedin_url"] == "linkedin.com/in/ankitjain"
+    assert out["github_url"] == "github.com/ankitj"
+
+
+def test_an_email_is_not_a_degree():
+    """"a@b.com" matched the B.Com alternative, so an email address was read as
+    the candidate's qualification — and would have been typed into a form."""
+    out = _contact("A B\nreach me at a@b.com\n\nEDUCATION\nAnurag University\n")
+    assert out["degree"] is None
+
+
+def test_the_college_name_does_not_swallow_the_line_above():
+    r"""A plain \s+ ran the match backwards across the line break and returned
+    "Ankit Delhi University" — the candidate's own name glued to their college."""
+    out = _contact("Ankit\nDelhi University\nB.Tech CSE\n")
+    assert out["college"] == "Delhi University"
+
+
+def test_a_degree_does_not_carry_the_grade_along_with_it():
+    out = _contact(
+        "S M\nAnurag University\nB.Tech in Artificial Intelligence and Machine Learning (CGPA: 7.45)\n")
+    assert out["degree"] == "B.Tech in Artificial Intelligence and Machine Learning"
+
+
+def test_a_college_written_on_one_line_with_everything_else():
+    out = _contact("Meera K\nAnna University - B.E. Computer Science, expected graduation 2027\n")
+    assert out["college"] == "Anna University"
+    assert out["grad_year"] == 2027
+
+
+def test_a_finished_courses_end_year_is_not_a_graduation_date():
+    """2018-2021 on a 2026 resume is a completed degree. Stating it as the
+    expected graduation year is a false fact on an application."""
+    assert _contact("C D\nSome College\nB.Sc, 2018 - 2021\n")["grad_year"] is None
+
+
+def test_nothing_is_guessed_when_the_resume_says_nothing():
+    out = _contact("Just a paragraph of text with no education section at all. " * 6)
+    assert out["degree"] is None and out["college"] is None and out["grad_year"] is None

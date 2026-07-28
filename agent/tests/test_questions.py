@@ -291,3 +291,93 @@ def test_a_datum_question_is_never_sent_to_the_model(label):
     assert out[0]["answer"] == ""
     assert out[0]["source"] == "unanswerable"
     assert called["n"] == 0, "a datum question was sent to the LLM"
+
+
+# ---------- facts the user gave in setup, used instead of stalling ----------
+#
+# Every question below was REFUSED before this — correctly, while the answers
+# existed nowhere. Setup collects them now, so refusing them means the user is
+# asked for something they already told us, on every application, forever.
+
+_SETUP = {
+    "phone": "9876543210", "gpa": 8.1,
+    "grad_year": 2027, "availability": "Immediately",
+    "work_authorization": "Indian citizen", "needs_sponsorship": "No",
+    "hours_per_week": 20, "willing_to_relocate": "Yes", "expected_stipend": 15000,
+    "college": "VIT Vellore", "degree": "B.Tech in Computer Science",
+    "education": "B.Tech CSE, VIT Vellore",
+    "class10_percent": 92.0, "class12_percent": 94.5,
+    "linkedin_url": "linkedin.com/in/ankit", "github_url": "github.com/ankit",
+    "portfolio_url": "ankit.dev",
+}
+
+
+def _setup_answer(label, kind="text", options=None, profile=None):
+    field = {"label": label, "kind": kind, "options": options or [], "required": True}
+    return questions._deterministic(field, profile if profile is not None else _SETUP,
+                                    "Ankit Jain", "ankit@x.com")
+
+
+@pytest.mark.parametrize("label,expected", [
+    ("When can you start?", "Immediately"),
+    ("Earliest joining date", "Immediately"),
+    ("How many hours per week can you commit?", "20"),
+    ("Hours per week you can devote", "20"),
+    ("Expected stipend (per month)", "15000"),
+    ("Year of passing", "2027"),
+    ("Expected graduation year", "2027"),
+    ("College/University name", "VIT Vellore"),
+    ("Degree / Course", "B.Tech in Computer Science"),
+    ("LinkedIn profile URL", "linkedin.com/in/ankit"),
+    ("GitHub", "github.com/ankit"),
+    ("Portfolio website", "ankit.dev"),
+    ("Class 12 percentage (%)", "94.5"),
+    ("Class 10 marks (%)", "92"),
+    ("Do you require visa sponsorship?", "No"),
+])
+def test_a_fact_from_setup_answers_the_form(label, expected):
+    assert _setup_answer(label) == expected
+
+
+def test_a_whole_number_percentage_keeps_no_decimal():
+    """A numeric input often rejects "92.0", and a recruiter reading it sees a
+    machine filled the form."""
+    assert _setup_answer("Class 10 percentage (%)") == "92"
+
+
+@pytest.mark.parametrize("label", [
+    "Intermediate college name",   # their SCHOOL, not their university
+    "Class 12 board name",
+    "12th school name",
+    "Class 12 stream",
+])
+def test_a_school_level_question_is_never_answered_from_college_facts(label):
+    """"Intermediate college name" matches the college pattern and is asking
+    about somewhere else entirely. Answering it from the university states a
+    false fact on a real form."""
+    assert _setup_answer(label) is None
+
+
+def test_a_dropdown_gets_one_of_its_own_options():
+    """select_option() throws on a label the field doesn't offer, which takes the
+    whole application down."""
+    assert _setup_answer("Are you willing to relocate?", "select",
+                   ["Yes, anywhere in India", "No"]) == "Yes, anywhere in India"
+
+
+def test_a_dropdown_we_cannot_express_is_left_for_the_user():
+    """"Indian citizen" is not a Yes/No. Forcing it into one puts words in the
+    user's mouth; stopping is the honest outcome."""
+    assert _setup_answer("What is your work authorization?", "select",
+                   ["US citizen", "Green card", "H-1B"]) is None
+
+
+def test_a_fact_we_do_not_hold_still_stops_the_application():
+    """The no-invention rule is unchanged — this only reads what the user typed."""
+    assert _setup_answer("When can you start?", profile={}) is None
+    assert _setup_answer("Class 12 percentage (%)", profile={}) is None
+
+
+def test_open_questions_still_go_nowhere_near_the_profile():
+    assert _setup_answer("Why should we hire you?", "textarea") is None
+    assert _setup_answer("Father's name") is None
