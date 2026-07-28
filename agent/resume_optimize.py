@@ -433,6 +433,9 @@ _REWRITE_SYS = (
     "items[head, sub, bullets]]).\n"
     "3. Keep 'name' and 'contact_line' factually identical to the input.\n"
     "4. Keep it to one page of content — be concise.\n"
+    "5. In a skills section every item is a terse comma-separated list of tools "
+    "('Databases: PostgreSQL, MongoDB, Redis'), never a sentence. Prose there "
+    "wastes the line a recruiter scans for keywords.\n"
     "No markdown, no prose outside the JSON object."
 )
 
@@ -904,8 +907,13 @@ def _render_latex(struct: dict) -> str:
             # called unusable. Recruiters and parsers both read "Frontend: Next.js,
             # React" fine, and it costs six lines instead of thirty.
             short = [b for b in (item.get("bullets") or []) if str(b).strip()][:_MAX_BULLETS]
-            if skillsy and short and all(len(str(b).split()) <= 4 for b in short):
-                joined = ", ".join(_esc(str(b).strip()[:_MAX_BULLET_CHARS]) for b in short)
+            if skillsy and short:
+                # Every group inline, not just the ones whose entries are single
+                # words: a section that renders "Programming & Frameworks: Python,
+                # TypeScript" as a line and "AI/ML & Vision" as a bulleted column
+                # right under it looks broken, and that mixture is what shipped.
+                sep = "; " if any("," in str(b) for b in short) else ", "
+                joined = sep.join(_esc(str(b).strip()[:_MAX_BULLET_CHARS]) for b in short)
                 if head:
                     lines.append("\\noindent\\textbf{" + head + ":} " + joined + "\\par")
                 else:
@@ -914,7 +922,16 @@ def _render_latex(struct: dict) -> str:
                 continue
             if head or sub:
                 if head and sub:
-                    lines.append("\\noindent\\textbf{" + head + "} \\hfill " + sub + "\\par")
+                    # \hfill pushes the meta to the right margin, which reads well
+                    # for "AI Intern ......... Piersoft Technologies | 2023" and
+                    # badly once the pair is long enough to wrap: the two run
+                    # together mid-line and the entry becomes unreadable. Past that
+                    # width, stack them.
+                    if len(head) + len(sub) > 85:
+                        lines.append("\\noindent\\textbf{" + head + "}\\par")
+                        lines.append("\\noindent " + sub + "\\par")
+                    else:
+                        lines.append("\\noindent\\textbf{" + head + "} \\hfill " + sub + "\\par")
                 elif head:
                     lines.append("\\noindent\\textbf{" + head + "}\\par")
                 else:

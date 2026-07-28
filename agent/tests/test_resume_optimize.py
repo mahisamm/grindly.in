@@ -533,6 +533,37 @@ def test_a_skills_group_renders_as_a_line_not_a_column_of_words():
     assert "\\textbf{Languages \\& Frameworks:}" in tex
 
 
+def test_every_skills_group_renders_the_same_way():
+    """One group as a line and the next as a bulleted column, inside one section,
+    looks broken — and that mixture shipped."""
+    tex = ro._render_latex({"name": "A B", "contact_line": "c", "sections": [
+        {"heading": "Technical Skills", "items": [
+            {"head": "Programming", "sub": "", "bullets": ["Python", "TypeScript"]},
+            {"head": "AI/ML & Vision", "sub": "", "bullets": [
+                "Machine Learning, Deep Learning, Computer Vision", "YOLOv8, Tesseract"]}]}]})
+    assert "\\begin{itemize}" not in tex, "no group may fall back to bullets"
+    assert "Machine Learning, Deep Learning, Computer Vision; YOLOv8, Tesseract" in tex
+
+
+def test_a_long_title_and_meta_stack_instead_of_colliding():
+    """\\hfill reads well for "AI Intern .... Piersoft | 2023" and turns into a
+    run-together mess once the pair wraps."""
+    tex = ro._render_latex({"name": "A B", "contact_line": "c", "sections": [
+        {"heading": "Experience", "items": [
+            {"head": "AI Tech Lead (Summer of AI 2025)",
+             "sub": "Viswam.AI - IIIT Hyderabad | Jun 2025 - Aug 2025 | Hyderabad, India",
+             "bullets": ["Curated a Telugu LLM dataset"]}]}]})
+    assert "\\hfill" not in tex
+    assert "\\textbf{AI Tech Lead (Summer of AI 2025)}\\par" in tex
+
+
+def test_a_short_title_and_meta_still_share_a_line():
+    tex = ro._render_latex({"name": "A B", "contact_line": "c", "sections": [
+        {"heading": "Experience", "items": [
+            {"head": "AI Intern", "sub": "Piersoft | 2023", "bullets": ["Built a thing"]}]}]})
+    assert "\\textbf{AI Intern} \\hfill Piersoft | 2023\\par" in tex
+
+
 def test_experience_bullets_still_render_as_bullets():
     """The compaction is scoped to skills — achievements stay scannable."""
     tex = ro._render_latex({"name": "A B", "contact_line": "c", "sections": [
