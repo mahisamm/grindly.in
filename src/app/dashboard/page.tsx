@@ -2853,13 +2853,14 @@ export default function Dashboard() {
                                 <span className="text-[0.7rem] font-semibold text-accent">+{delta}</span>
                               )}
                             </div>
-                            {/* Non-winners are shown rather than discarded (users
-                                asked to see the rewrites either way) — but they are
-                                labelled, so nobody switches to a worse resume by
-                                mistake. */}
+                            {/* A version that scores BELOW the master never reaches
+                                this list — the generator discards it. So delta<=0
+                                here means a tie: same score, cleaner template. Say
+                                that, rather than the old "preview only", which was
+                                written when losers were displayed too. */}
                             {delta <= 0 && (
                               <div className="mt-1 text-[0.65rem] text-muted">
-                                Preview only — doesn&apos;t beat your current {v.baselineScore}
+                                Same score as your current {v.baselineScore} — cleaner, parser-friendly layout
                               </div>
                             )}
                             {v.changes.length > 0 && (
@@ -2885,7 +2886,7 @@ export default function Dashboard() {
                                 disabled={usingVariant === v.id}
                                 title={delta > 0
                                   ? "Make this your master resume"
-                                  : `This scores ${v.score} vs your current ${v.baselineScore} — switching would lower your score`}
+                                  : `Same ${v.score} as your current resume, on a template parsers read more reliably`}
                                 className={`press rounded-md px-2.5 py-1 text-[0.7rem] font-medium transition disabled:opacity-50 ${
                                   delta > 0
                                     ? "brand-gradient text-white hover:opacity-90"

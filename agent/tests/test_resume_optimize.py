@@ -167,7 +167,8 @@ def test_rewrite_keeps_one_response_instead_of_merging_to_empty(monkeypatch):
         _rewrite_response("Tech stack: Python, SQL, Git"),
     ])
     out = ro._rewrite_struct(
-        {"name": "A B", "contact_line": "a@b.com", "sections": []}, "keywords", ["python", "sql"])
+        {"name": "A B", "contact_line": "a@b.com", "sections": []}, "keywords", ["python", "sql"],
+        ro._source_stems("Languages Python SQL Git programming tech stack"))
     assert out is not None, "a coherent rewrite existed and must be returned"
     struct = ro._sanitize_struct(out["resume"])
     assert struct and any(s["items"] for s in struct["sections"]), \
@@ -176,7 +177,8 @@ def test_rewrite_keeps_one_response_instead_of_merging_to_empty(monkeypatch):
 
 def test_rewrite_returns_none_when_no_provider_answers(monkeypatch):
     monkeypatch.setattr(ro.llm_mod, "chat_ensemble", lambda *a, **k: [])
-    assert ro._rewrite_struct({"name": "A", "contact_line": "c", "sections": []}, "x", []) is None
+    assert ro._rewrite_struct(
+        {"name": "A", "contact_line": "c", "sections": []}, "x", [], set()) is None
 
 
 def test_rewrite_prefers_the_response_that_kept_the_most_content(monkeypatch):
@@ -195,7 +197,328 @@ def test_rewrite_prefers_the_response_that_kept_the_most_content(monkeypatch):
         {"heading": "PROJECTS", "items": [{"head": "Grindly", "sub": "", "bullets": ["Did Z"]}]}]}, "changes": ["y"]})
     # sparse first, so first-non-empty would wrongly win.
     monkeypatch.setattr(ro.llm_mod, "chat_ensemble", lambda *a, **k: [sparse, rich])
-    out = ro._rewrite_struct({"name": "A", "contact_line": "c", "sections": []}, "keywords", ["python", "sql"])
+    out = ro._rewrite_struct(
+        {"name": "A", "contact_line": "c", "sections": []}, "keywords", ["python", "sql"],
+        ro._source_stems("Grindly 2025 Python SQL Eng built shipped"))
     struct = ro._sanitize_struct(out["resume"])
     kept = [s["heading"] for s in struct["sections"] if s["items"]]
     assert "EXPERIENCE" in kept and "PROJECTS" in kept, "must pick the fuller rewrite"
+
+
+# --- the "resume of someone else" incident ------------------------------------
+#
+# Shipped to a live user: a variant scoring 82 whose Experience read "AI Engineer,
+# XYZ Corp" and "Software Engineer, ABC Tech", whose Education read "MSc,
+# University of Technology | 2020", whose Projects were four inventions, and whose
+# header read "[phone redacted] | [email redacted]". Not one true employer, school,
+# date, or contact detail. Three separate holes let it through, one per block below.
+
+_REAL = """Sammeta Sakthi Mahendhar
+(cid:132) +91 8096267553 | # mahendharsammeta21@gmail.com | (cid:239) mahendhar-sammeta | § mahisamm
+
+EDUCATION
+Anurag University
+B.Tech in Artificial Intelligence and Machine Learning (CGPA: 7.45)   2023 - Present
+
+EXPERIENCE
+Piersoft Technologies
+AI Intern
+- Engineered a zero-budget AI office monitoring system bridging live CCTV feeds with biometric attendance data.
+- Developed an interactive chatbot interface that locates employees and streams live video footage.
+
+PROJECTS
+SpaceVerse
+- Architected a scalable MERN backend with JWT security for real-time astronomical simulations.
+SmartRX
+- Engineered an AI-powered prescription reader using Vision-Language Models and Tesseract OCR.
+Grindly.in
+- Developed a full-stack SaaS orchestrating autonomous AI agents that apply for internships.
+
+SKILLS
+Languages: Python, TypeScript, Java, SQL
+Databases: PostgreSQL, MongoDB, Redis
+"""
+
+
+def _base():
+    """What extraction returns for _REAL — note the redacted contact line, which is
+    exactly what the model is shown and therefore what it copies back."""
+    return {
+        "name": "Sammeta Sakthi Mahendhar",
+        "contact_line": "[phone redacted] | [email redacted] | mahendhar-sammeta | mahisamm",
+        "sections": [
+            {"heading": "Education", "items": [
+                {"head": "B.Tech in Artificial Intelligence and Machine Learning",
+                 "sub": "Anurag University", "bullets": ["CGPA: 7.45"]}]},
+            {"heading": "Experience", "items": [
+                {"head": "AI Intern", "sub": "Piersoft Technologies", "bullets": [
+                    "Engineered a zero-budget AI office monitoring system bridging live CCTV feeds with biometric attendance data.",
+                    "Developed an interactive chatbot interface that locates employees and streams live video footage."]}]},
+            {"heading": "Projects", "items": [
+                {"head": "SpaceVerse", "sub": "", "bullets": [
+                    "Architected a scalable MERN backend with JWT security for real-time astronomical simulations."]},
+                {"head": "SmartRX", "sub": "", "bullets": [
+                    "Engineered an AI-powered prescription reader using Vision-Language Models and Tesseract OCR."]},
+                {"head": "Grindly.in", "sub": "", "bullets": [
+                    "Developed a full-stack SaaS orchestrating autonomous AI agents that apply for internships."]}]},
+        ],
+    }
+
+
+# hole 1: identity was taken from a PII-redacted prompt
+
+def test_identity_is_read_from_the_resume_not_from_the_model():
+    name, contact = ro._identity_from_source(_REAL)
+    assert name == "Sammeta Sakthi Mahendhar"
+    assert "mahendharsammeta21@gmail.com" in contact
+    assert "8096267553" in contact
+
+
+def test_icon_font_debris_is_stripped_from_the_contact_line():
+    """A PDF text layer leaves FontAwesome glyphs with no Unicode mapping. Printed
+    back into a new PDF they render as mojibake beside the phone number."""
+    _, contact = ro._identity_from_source(_REAL)
+    for junk in ("cid:", "#", "§"):
+        assert junk not in contact
+    assert "mahendhar-sammeta" in contact, "real handles must survive the cleanup"
+
+
+def test_the_redaction_placeholder_never_reaches_the_document():
+    """The bug, end to end: without the stamp the compiled resume tells an employer
+    to contact the candidate at "[email redacted]"."""
+    struct = _base()
+    ro._stamp_identity(struct, ro._identity_from_source(_REAL))
+    tex = ro._render_latex(struct)
+    assert "redacted" not in tex
+    assert "mahendharsammeta21@gmail.com" in tex
+
+
+def test_a_profile_fallback_is_used_when_the_resume_header_is_unreadable():
+    name, contact = ro._identity_from_source("no header here at all", "+91 90000 00000 | a@b.com")
+    assert not name
+    assert "a@b.com" in contact
+
+
+# hole 2: the truthfulness gate only ever looked at skills
+
+def test_an_invented_employer_is_dropped():
+    stems = ro._source_stems(_REAL)
+    variant = {"name": "X", "contact_line": "c", "sections": [{"heading": "Experience", "items": [
+        {"head": "AI Engineer", "sub": "XYZ Corp | Jan 2022 - Present",
+         "bullets": ["Developed ML models for a document processing pipeline"]}]}]}
+    out, dropped = ro._ground_struct(variant, stems, _base())
+    assert out["sections"] == []
+    assert dropped and "Experience" in dropped[0]
+
+
+def test_an_invented_degree_and_year_are_dropped():
+    bad = ro._ungrounded_tokens(
+        {"head": "Master of Science in Computer Science",
+         "sub": "University of Technology | 2020", "bullets": []},
+        ro._source_stems(_REAL),
+    )
+    assert "2020" in bad, "a year the resume never mentions is a fabricated claim"
+
+
+def test_a_fabricated_metric_is_caught():
+    """'Achieved 30 FPS on edge devices with TensorRT' — the number is the lie."""
+    bad = ro._ungrounded_tokens(
+        {"head": "SmartRX", "sub": "", "bullets": ["Achieved 30 FPS on edge devices"]},
+        ro._source_stems(_REAL),
+    )
+    assert "30" in bad
+
+
+def test_a_real_number_from_the_resume_is_not_flagged():
+    bad = ro._ungrounded_tokens(
+        {"head": "B.Tech in AI and ML", "sub": "Anurag University | 2023", "bullets": ["CGPA 7.45"]},
+        ro._source_stems(_REAL),
+    )
+    assert bad == []
+
+
+def test_ordinary_rewording_is_not_mistaken_for_invention():
+    """'Engineered' -> 'Engineer' must stay legal, or the gate eats every rewrite."""
+    stems = ro._source_stems(_REAL)
+    assert ro._is_grounded("Engineer", stems)
+    assert ro._is_grounded("Technologies", stems)
+
+
+# hole 3: provenance — a rewrite may reword an entry, never add one
+
+def test_an_invented_project_whose_words_all_exist_is_still_dropped():
+    """Every word of "Scalable Chatbot Backend" appears somewhere on the real
+    resume, so token grounding alone clears it. Provenance is what kills it: no
+    entry on the master resembles it."""
+    stems = ro._source_stems(_REAL)
+    item = {"head": "Scalable Chatbot Backend", "sub": "", "bullets": [
+        "Designed a Node.js service with PostgreSQL for session storage"]}
+    assert ro._ungrounded_tokens(item, stems) == [], "premise: the token gate passes it"
+    out, dropped = ro._ground_struct(
+        {"name": "X", "contact_line": "c",
+         "sections": [{"heading": "Projects", "items": [item]}]},
+        stems, _base(),
+    )
+    assert out["sections"] == []
+    assert "no matching entry" in dropped[0]
+
+
+def test_a_reworded_real_entry_survives():
+    stems = ro._source_stems(_REAL)
+    out, dropped = ro._ground_struct(
+        {"name": "X", "contact_line": "c", "sections": [{"heading": "Experience", "items": [
+            {"head": "AI Intern", "sub": "Piersoft Technologies", "bullets": [
+                "Built an AI office monitoring system bridging live CCTV feeds with biometric attendance data",
+                "Shipped a chatbot interface that locates employees and streams their video footage"]}]}]},
+        stems, _base(),
+    )
+    assert dropped == []
+    assert out["sections"][0]["items"], "a genuine rewrite must not be gated"
+
+
+def test_skills_groupings_are_exempt_from_provenance():
+    """"Frontend"/"Databases" groupings exist on no master resume — regrouping is
+    the point of the feature. _fabricated_skills covers their content."""
+    out, dropped = ro._ground_struct(
+        {"name": "X", "contact_line": "c", "sections": [{"heading": "Technical Skills", "items": [
+            {"head": "Databases", "sub": "", "bullets": ["PostgreSQL", "MongoDB", "Redis"]}]}]},
+        ro._source_stems(_REAL), _base(),
+    )
+    assert dropped == []
+    assert out["sections"][0]["items"]
+
+
+def test_selection_prefers_the_faithful_rewrite_over_the_richer_invented_one(monkeypatch):
+    """The core defect. Candidates were weighed by raw content, so a model that
+    ignored the input and emitted a longer generic resume beat a faithful sibling
+    every time — which is precisely how "XYZ Corp" reached a user's dashboard."""
+    import json
+    invented = json.dumps({"resume": {"name": "N", "contact_line": "c", "sections": [
+        {"heading": "Experience", "items": [
+            {"head": "AI Engineer", "sub": "XYZ Corp | Jan 2022 - Present",
+             "bullets": ["Developed ML models", "Optimized backend services", "Integrated APIs"]},
+            {"head": "Software Engineer", "sub": "ABC Tech | Jun 2020 - Dec 2021",
+             "bullets": ["Built frontends", "Implemented caching", "Automated testing"]}]},
+        {"heading": "Education", "items": [
+            {"head": "Master of Science in Computer Science", "sub": "University of Technology | 2020",
+             "bullets": ["Specialized in Machine Learning"]}]}]}, "changes": ["restructured"]})
+    faithful = json.dumps({"resume": {"name": "N", "contact_line": "c", "sections": [
+        {"heading": "Experience", "items": [
+            {"head": "AI Intern", "sub": "Piersoft Technologies",
+             "bullets": ["Engineered an AI office monitoring system bridging live CCTV feeds with biometric attendance data"]}]},
+        {"heading": "Projects", "items": [
+            {"head": "SmartRX", "sub": "", "bullets": [
+                "Engineered an AI-powered prescription reader using Vision-Language Models and Tesseract OCR"]}]}]},
+        "changes": ["tightened the bullets"]})
+    # Invented first AND longer: it wins on every metric except the truth.
+    monkeypatch.setattr(ro.llm_mod, "chat_ensemble", lambda *a, **k: [invented, faithful])
+    out = ro._rewrite_struct(_base(), "instruction", ["python"], ro._source_stems(_REAL))
+    blob = str(out["resume"])
+    assert "XYZ Corp" not in blob and "University of Technology" not in blob
+    assert "Piersoft" in blob, "the honest rewrite must be the one selected"
+
+
+# --- render: a skills group is a list of words, not a column of achievements ---
+
+def test_a_skills_group_renders_as_a_line_not_a_column_of_words():
+    """One \\item per skill turned seven groups into thirty bullets and pushed a
+    one-page intern resume onto two — the layout a user called unusable."""
+    tex = ro._render_latex({"name": "A B", "contact_line": "a@b.com", "sections": [
+        {"heading": "Technical Skills", "items": [
+            {"head": "Languages & Frameworks", "sub": "", "bullets": ["Python", "TypeScript", "Java", "SQL"]},
+            {"head": "Databases", "sub": "", "bullets": ["MongoDB", "Redis", "PostgreSQL"]}]}]})
+    assert "\\item Python" not in tex
+    assert "Python, TypeScript, Java, SQL" in tex
+    assert "\\textbf{Languages \\& Frameworks:}" in tex
+
+
+def test_experience_bullets_still_render_as_bullets():
+    """The compaction is scoped to skills — achievements stay scannable."""
+    tex = ro._render_latex({"name": "A B", "contact_line": "c", "sections": [
+        {"heading": "Experience", "items": [
+            {"head": "AI Intern", "sub": "Piersoft", "bullets": [
+                "Engineered a zero-budget AI office monitoring system",
+                "Developed an interactive chatbot interface"]}]}]})
+    assert "\\begin{itemize}" in tex
+    assert "\\item Engineered a zero-budget AI office monitoring system" in tex
+
+
+# --- a worse resume is never offered ------------------------------------------
+
+class _FakeCompile:
+    def __init__(self, pages=1):
+        self.ok, self.pages, self.overfull = True, pages, 0
+
+
+def _stub_pipeline(monkeypatch, score):
+    """Everything downstream of the rewrite, faked: compile, parse, re-score."""
+    grounded = {"name": "N", "contact_line": "c", "sections": [
+        {"heading": "Education", "items": [
+            {"head": "B.Tech in Artificial Intelligence and Machine Learning",
+             "sub": "Anurag University", "bullets": ["CGPA 7.45"]}]},
+        {"heading": "Experience", "items": [
+            {"head": "AI Intern", "sub": "Piersoft Technologies",
+             "bullets": ["Engineered an AI office monitoring system"]}]},
+        {"heading": "Projects", "items": [
+            {"head": "SmartRX", "sub": "", "bullets": ["Engineered a prescription reader"]},
+            {"head": "Grindly.in", "sub": "", "bullets": ["Developed a full-stack SaaS"]}]}]}
+    monkeypatch.setattr(ro, "_rewrite_struct",
+                        lambda *a, **k: {"resume": grounded, "changes": ["tightened"], "dropped": []})
+    monkeypatch.setattr(ro.latex_resume, "unsafe_commands", lambda tex: False)
+
+    def _compile(tex, path):
+        with open(path, "wb") as f:
+            f.write(b"%PDF-1.4\n")
+        return _FakeCompile()
+
+    monkeypatch.setattr(ro.latex_resume, "compile_report", _compile)
+    monkeypatch.setattr(ro.resume_parse, "extract_text", lambda p: "readable text " * 40)
+    monkeypatch.setattr(ro.resume_ai, "analyze", lambda t: {})
+    monkeypatch.setattr(ro.resume_ai, "with_ats", lambda a, t, s: {"score": score, "grade": "B"})
+
+
+def _run_variant(monkeypatch, score, baseline=76):
+    _stub_pipeline(monkeypatch, score)
+    return ro._one_variant(
+        "ATS-clean", "instruction", _base(), ro._allowed_tokens(_REAL, []), [], baseline,
+        ro._identity_from_source(_REAL), ro._source_stems(_REAL),
+    )
+
+
+def test_a_variant_that_scores_lower_than_the_master_is_never_offered(monkeypatch):
+    """A 35/F rebuild was displayed beside the user's own 76, behind the same
+    "Use as my resume" button. Showing it was a deliberate choice and a wrong one."""
+    variant, reason = _run_variant(monkeypatch, 35)
+    assert variant is None
+    assert "discarded" in reason and "35" in reason and "76" in reason
+
+
+def test_a_tie_is_still_offered(monkeypatch):
+    """Same score on a single-column template is a real win for a parser."""
+    variant, reason = _run_variant(monkeypatch, 76)
+    assert variant is not None
+    assert variant["beats_baseline"] is False
+    assert "same" in reason.lower()
+
+
+def test_a_winner_is_offered(monkeypatch):
+    variant, _ = _run_variant(monkeypatch, 82)
+    assert variant and variant["score"] == 82 and variant["beats_baseline"] is True
+
+
+def test_a_wholesale_hallucination_is_rejected_as_drift(monkeypatch):
+    """Grounding removes invented items one at a time; a response that invented
+    EVERYTHING therefore arrives here having kept almost nothing of the master."""
+    _stub_pipeline(monkeypatch, 90)
+    monkeypatch.setattr(ro, "_rewrite_struct", lambda *a, **k: {
+        "resume": {"name": "N", "contact_line": "c", "sections": [
+            {"heading": "Technical Skills", "items": [
+                {"head": "Languages", "sub": "", "bullets": ["Python", "SQL"]}]}]},
+        "changes": ["rewrote"],
+        "dropped": ["Experience/AI Engineer: not in your resume (Corp)"]})
+    variant, reason = ro._one_variant(
+        "ATS-clean", "instruction", _base(), ro._allowed_tokens(_REAL, []), [], 76,
+        ro._identity_from_source(_REAL), ro._source_stems(_REAL),
+    )
+    assert variant is None
+    assert "drifted" in reason

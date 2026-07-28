@@ -2598,8 +2598,17 @@ def optimize_variants(uid: str) -> dict:
     # Failed compiles/renders leave their .tex + .pdf here — the only way to tell
     # an empty document from an unextractable one after the fact.
     debug_dir = os.path.join(_ROOT_DIR, "data", "logs", "optimize", uid)
+    # Last-resort header if the resume's own text has no readable contact line.
+    # The generator reads identity off the RAW resume because the LLM boundary
+    # redacts PII — a variant built from what the model saw ships a header reading
+    # "[phone redacted] | [email redacted]" and no employer can reply to it.
+    contact_fallback = " | ".join(
+        p for p in [str(profile.get("phone") or "").strip(), str(user.get("email") or "").strip()] if p
+    )
     try:
-        batch = resume_optimize.generate_variants(text, skills, debug_dir=debug_dir)
+        batch = resume_optimize.generate_variants(
+            text, skills, debug_dir=debug_dir, contact_fallback=contact_fallback
+        )
     except Exception as e:  # noqa: BLE001 — a generation crash must degrade, not kill the worker
         log.exception("optimize: generation failed for %s", uid)
         # NOT "no_gain": this is our failure, and telling the user their resume
@@ -2668,10 +2677,11 @@ def optimize_variants(uid: str) -> dict:
     if winners:
         detail = f"{winners} version(s) beat your {baseline} — best scores {best}."
     else:
-        # Shown, not hidden: the user asked to SEE the rewrites. Be explicit that
-        # they're previews so nobody switches to a lower-scoring resume by accident.
-        detail = (f"None of these beat your current {baseline} (best was {best}), "
-                  f"so they're here for preview only — your resume stays as it is.")
+        # Only ties reach here: a variant that scored BELOW the master is discarded
+        # in resume_optimize, not shown. Offering a worse resume behind the same
+        # "Use as my resume" button is how a 35/F rebuild ended up beside a real 76.
+        detail = (f"These match your current {baseline} rather than beating it — "
+                  f"same facts on a cleaner, parser-friendly layout.")
     db.set_variant_status(uid, "ready", detail)
     log.info("optimize: %s stored %d variant(s), %d beat baseline %d, best=%d",
              uid, len(variants), winners, baseline, best)

@@ -6,15 +6,26 @@ Pipeline (all invisible to the user; they see scores + a plain-English change li
        (name, contact, sections -> items -> bullets) via one LLM call.
     2. Rewrite that structure three ways, each under a different ATS strategy. The
        rewrites may reword, reorder, tighten, and surface real keywords. They may
-       NOT invent: a truthfulness gate rejects any variant that introduces a
-       skill/tool/technology absent from the source before it is ever compiled.
+       NOT invent: three gates run before a variant is ever compiled —
+         * skills:     no tool/technology absent from the source (_fabricated_skills)
+         * grounding:  no company, school, or date whose words aren't in the source
+         * provenance: every non-skills item must descend from a real item on the
+                       master (a rewrite may reword an entry, never add one)
     3. Render each surviving structure into a fixed, safe, single-column LaTeX
        template (ATS-friendly by construction — no columns, tables, or graphics
        for a parser to mangle) with every field escaped.
     4. Compile with Tectonic --untrusted, re-extract the text a recruiter's ATS
        would actually see, and re-score it with the SAME analyzer used on the
-       master. Keep ONLY variants that scored strictly higher than the master —
+       master. Keep ONLY variants that scored at least as high as the master —
        the "higher ATS score" claim is measured, never asserted.
+
+Identity (name + contact line) is NEVER taken from the model. Outbound prompts
+are PII-redacted at the LLM boundary (agent/redact.py), so the model literally
+sees "[phone redacted] | [email redacted]" and — doing exactly as told — copies
+those placeholders back. That shipped: a compiled variant whose header carried no
+phone and no email, i.e. a resume no employer could reply to. Identity is now
+lifted from the raw source text locally and stamped onto every variant after the
+rewrite.
 
 Why a clean rebuild and not a clone of the user's PDF: an LLM cannot faithfully
 reconstruct a multi-column college template's geometry/fonts from extracted text,
@@ -72,10 +83,30 @@ _STRATEGIES: list[tuple[str, str]] = [
 ]
 
 
+# Sections whose items are regrouped freely by a rewrite ("Languages", "Frontend",
+# "Databases" — groupings that exist on no master resume). Provenance can't apply
+# to them; the skills gate (_fabricated_skills) covers their content instead.
+_SKILLS_SECTION_RE = re.compile(r"skill|tool|technolog|language|framework|competenc", re.I)
+
+# Words that carry no fact, so they need no grounding. Deliberately short: every
+# word NOT in here that appears in a company/school/date line must be traceable to
+# the master resume.
+_FREE_WORDS = frozenset({
+    "and", "the", "for", "with", "from", "using", "into", "over", "under",
+    "present", "current", "ongoing", "various", "other", "team", "role",
+    "project", "projects", "experience", "education", "skills", "technical",
+    "summary", "profile", "objective", "work", "position", "intern",
+    "internship", "remote", "hybrid", "onsite", "full", "time", "part",
+})
+
+
 # ---------------- public API ----------------
 
 def generate_variants(
-    source_text: str, master_skills: list[str], debug_dir: str | None = None
+    source_text: str,
+    master_skills: list[str],
+    debug_dir: str | None = None,
+    contact_fallback: str = "",
 ) -> dict:
     """Produce up to 3 compiled, measured resume variants + why any were dropped.
 
@@ -83,11 +114,16 @@ def generate_variants(
     `variants` is best-score-first, each:
         {label, score, grade, baseline_score, beats_baseline, changes: [str], pdf_bytes: bytes}
 
-    Variants that scored at or below the master are KEPT and flagged
-    beats_baseline=False rather than discarded. Dropping them silently is what
-    produced "we couldn't beat your resume, so here is nothing" for a beta user
-    who explicitly wanted to SEE the rewrites; the UI can label a non-winner, but
-    it can't show a row that was thrown away. Only unreadable/unsafe ones die.
+    A variant that scores BELOW the master is discarded, not shown. Showing it was
+    a deliberate earlier choice ("the user asked to see the rewrites") and it was
+    wrong in practice: the card offered a 35/F rebuild beside the user's own 76,
+    behind a button that would have made the worse document their master resume.
+    A losing rewrite is noise wearing the same chrome as a win. It survives only
+    in `reasons`, which is where "we tried it and it scored worse" belongs.
+
+    A TIE is kept and flagged beats_baseline=False — same score on a clean,
+    single-column template is a real (if modest) win for a parser, and the UI
+    labels it as such.
 
     `reasons` is the per-variant audit trail (kept / dropped and why) so the user
     and the admin get a real explanation instead of a guess at their resume being
@@ -121,20 +157,25 @@ def generate_variants(
             "reasons": [], "aborted": "extraction_failed",
         }
 
+    # Identity comes from the raw resume, never from the model — see module docstring.
+    identity = _identity_from_source(text, contact_fallback)
+    _stamp_identity(base_struct, identity)
+
     allowed = _allowed_tokens(text, master_skills)
+    stems = _source_stems(text)
 
     out: list[dict] = []
     reasons: list[str] = []
     for label, instruction in _STRATEGIES:
         variant, reason = _one_variant(
-            label, instruction, base_struct, allowed, master_skills, baseline_score, debug_dir
+            label, instruction, base_struct, allowed, master_skills, baseline_score,
+            identity, stems, debug_dir,
         )
         reasons.append(reason)
         if variant:
             out.append(variant)
 
-    # Winners first, then near-misses by score. A variant that ties or loses is
-    # still shown (flagged), so the user always has something to look at.
+    # Wins first, then ties. Losers never reach this list (_one_variant drops them).
     out.sort(key=lambda v: (v["beats_baseline"], v["score"]), reverse=True)
     return {
         "variants": out[:3],
@@ -153,6 +194,8 @@ def _one_variant(
     allowed: set[str],
     master_skills: list[str],
     baseline_score: int,
+    identity: tuple[str, str],
+    stems: set[str],
     debug_dir: str | None = None,
 ) -> tuple[dict | None, str]:
     """Build one variant. Returns (variant_or_None, human-readable reason).
@@ -161,28 +204,47 @@ def _one_variant(
     batch produces nothing, and it is the only signal that separates "your resume
     is already strong" from "our compiler produced an unreadable PDF".
     """
-    rewritten = _rewrite_struct(base_struct, instruction, master_skills)
+    rewritten = _rewrite_struct(base_struct, instruction, master_skills, stems)
     if not rewritten:
         print(f"[optimize] {label}: rewrite produced nothing")
         return None, f"{label}: the rewrite step returned nothing (model unavailable)"
-    raw_struct = rewritten.get("resume") if isinstance(rewritten.get("resume"), dict) else rewritten
-    # Sanitize the REWRITE too, not just the extraction. _extract_struct returns
-    # _sanitize_struct(out); this path returned the model's JSON untouched and
-    # handed it straight to _render_latex. A response with "bullets" as a plain
-    # string instead of a list is then iterated character by character, emitting
-    # one \item per letter: the section's content vanishes, the PDF still
-    # compiles, it clears the length check, gets scored, stored, and is offered
-    # to the user behind a button that overwrites their real master resume.
-    struct = _sanitize_struct(raw_struct) if isinstance(raw_struct, dict) else None
-    if not struct:
+    # _rewrite_struct already sanitized and ground-checked every candidate and
+    # returned the richest SURVIVING one. Sanitizing the model's JSON matters
+    # because a "bullets" that arrived as a plain string is otherwise iterated
+    # character by character, emitting one \item per letter: the section's content
+    # vanishes, the PDF still compiles, clears the length check, gets scored and
+    # stored, and is offered behind a button that overwrites the master resume.
+    struct = rewritten.get("resume")
+    if not isinstance(struct, dict):
         print(f"[optimize] {label}: rewrite came back malformed")
         return None, f"{label}: the rewrite came back in a shape we couldn't use"
+    dropped = rewritten.get("dropped") or []
     # This one IS rendered, so an empty body has to stop here. Letting it through
     # produces a near-blank PDF that still compiles and only fails later at the
     # readability check, where the user is told it is "a bug on our side".
     if not any(s["items"] for s in struct["sections"]):
+        if dropped:
+            print(f"[optimize] {label}: every item was invented — {dropped[:3]}")
+            return None, f"{label}: dropped — the rewrite replaced your real experience with invented content"
         print(f"[optimize] {label}: rewrite returned no content")
         return None, f"{label}: the rewrite came back empty"
+
+    # Identity is ours, not the model's. Redaction means it never saw the real
+    # values (module docstring); without this the header ships placeholders.
+    _stamp_identity(struct, identity)
+
+    # Drift: a rewrite may reword every real entry, never replace them. Grounding
+    # removes invented items one by one, so a wholesale hallucination arrives here
+    # as a struct that kept almost nothing of the master's factual content.
+    base_items = _factual_item_count(base_struct)
+    kept_items = _factual_item_count(struct)
+    if base_items >= 2 and kept_items * 2 < base_items:
+        print(f"[optimize] {label}: drift — kept {kept_items}/{base_items} real items; dropped {dropped[:3]}")
+        return None, (f"{label}: dropped — the rewrite drifted from your resume "
+                      f"(kept {kept_items} of your {base_items} real entries)")
+    if dropped:
+        print(f"[optimize] {label}: removed {len(dropped)} ungrounded item(s): {dropped[:3]}")
+
     changes = _clean_changes(rewritten.get("changes"))
 
     invented = _fabricated_skills(struct, allowed)
@@ -223,12 +285,19 @@ def _one_variant(
         with open(pdf_path, "rb") as f:
             pdf_bytes = f.read()
 
+    if score < baseline_score:
+        # Never offered. A lower-scoring rebuild next to the user's own resume is
+        # not information — it's a worse document wearing the same "Use as my
+        # resume" button. The audit trail keeps it; the card doesn't.
+        print(f"[optimize] {label}: discarded ({score} < baseline {baseline_score})")
+        return None, f"{label}: scored {score} vs your {baseline_score} — discarded, it came out worse"
+
     if beats:
         print(f"[optimize] {label}: kept ({score} > {baseline_score})")
         reason = f"{label}: {score} vs your {baseline_score} — kept"
     else:
-        print(f"[optimize] {label}: kept for preview ({score} <= baseline {baseline_score})")
-        reason = f"{label}: {score} vs your {baseline_score} — shown for preview, not an improvement"
+        print(f"[optimize] {label}: kept as a tie ({score} == baseline {baseline_score})")
+        reason = f"{label}: {score}, the same as your current resume — kept for its cleaner layout"
     return {
         "label": label,
         "score": score,
@@ -311,7 +380,9 @@ _REWRITE_SYS = (
 )
 
 
-def _rewrite_struct(base_struct: dict, instruction: str, master_skills: list[str]) -> dict | None:
+def _rewrite_struct(
+    base_struct: dict, instruction: str, master_skills: list[str], stems: set[str]
+) -> dict | None:
     skills_line = ", ".join(master_skills) if master_skills else "(none extracted)"
     prompt = (
         f"Strategy: {instruction}\n\n"
@@ -342,27 +413,41 @@ def _rewrite_struct(base_struct: dict, instruction: str, master_skills: list[str
     # ~196 characters and was rejected). The first-non-empty response passed the
     # "any items" check on its skills alone, and a fuller sibling response was
     # thrown away. Score each by how much content survived and keep the best.
+    #
+    # Richest AFTER GROUNDING, though — weighing the raw response made this
+    # function reward fabrication. A model that ignores the input and emits a
+    # generic template resume ("AI Engineer, XYZ Corp"; "MSc, University of
+    # Technology") produces MORE items and bullets than a faithful sibling that
+    # merely rewords the candidate's four real projects, so the invented one won
+    # every time. That reached a user's dashboard as an 82-scoring resume
+    # containing not one true employer, school, or date. Grounding first, then
+    # weigh what's left: a hallucinated response weighs ~0 and can't win.
     fallback = None
     best, best_weight = None, -1
     for raw in llm_mod.chat_ensemble(prompt, system=_REWRITE_SYS, n=3, timeout=120):
         parsed = llm_mod._extract_json(raw)
         if not isinstance(parsed, dict):
             continue
-        fallback = fallback or parsed
         raw_struct = parsed.get("resume") if isinstance(parsed.get("resume"), dict) else parsed
         if not isinstance(raw_struct, dict):
             continue
         sanitized = _sanitize_struct(raw_struct)
-        if not (sanitized and any(sec["items"] for sec in sanitized["sections"])):
+        if not sanitized:
+            continue
+        grounded, dropped = _ground_struct(sanitized, stems, base_struct)
+        changes = _clean_changes(parsed.get("changes"))
+        # Keep one shaped-but-empty response so _one_variant can report an
+        # accurate "empty/invented" reason rather than "model unavailable".
+        fallback = fallback or {"resume": grounded, "changes": changes, "dropped": dropped}
+        if not any(sec["items"] for sec in grounded["sections"]):
             continue
         weight = sum(
             1 + len(item["bullets"])
-            for sec in sanitized["sections"] for item in sec["items"]
+            for sec in grounded["sections"] for item in sec["items"]
         )
         if weight > best_weight:
-            best, best_weight = parsed, weight
-    # If none had usable content, hand back one parsed response anyway so _variant
-    # reports an accurate "empty/malformed" reason, not "model unavailable".
+            best = {"resume": grounded, "changes": changes, "dropped": dropped}
+            best_weight = weight
     return best or fallback
 
 
@@ -428,6 +513,224 @@ def _flatten(struct: dict) -> str:
     return "\n".join(parts)
 
 
+# ---------------- identity (never from the model) ----------------
+
+_CID_RE = re.compile(r"\(cid:\d+\)")
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+_PHONE_RE = re.compile(r"(?:\+\d{1,3}[\s-]?)?\d{5}[\s-]?\d{5}\b|(?:\+\d{1,3}[\s-]?)?\d{10}\b")
+_GLYPH_RE = re.compile(r"[^\w@.+\-/:,&() ]")
+
+
+def _identity_from_source(text: str, contact_fallback: str = "") -> tuple[str, str]:
+    """(name, contact_line) read from the RAW resume, before any redaction.
+
+    Everything the model returns for these two fields is placeholder text — the
+    LLM boundary redacts PII on the way out, so "[email redacted]" is a faithful
+    copy of what it was shown. Taking the header off the source locally is the
+    only way the compiled PDF carries a real phone number.
+    """
+    lines = [ln.strip() for ln in (text or "").splitlines()]
+    lines = [ln for ln in lines if ln][:8]
+
+    name = ""
+    for ln in lines[:3]:
+        cand = _CID_RE.sub("", ln).strip()
+        words = cand.split()
+        if not (1 < len(words) <= 5) or "@" in cand or any(c.isdigit() for c in cand):
+            continue
+        # Capitalisation is what separates a name from the first line of a summary
+        # ("experienced developer with 5 years…"). One lowercase particle is fine
+        # ("van der Berg"); a whole lowercase sentence is not a name.
+        lowercase = sum(1 for w in words if not w[:1].isupper())
+        if lowercase <= 1:
+            name = cand
+            break
+
+    contact = ""
+    for ln in lines[:6]:
+        if _EMAIL_RE.search(ln) or _PHONE_RE.search(ln):
+            contact = _clean_contact_line(ln)
+            break
+    if not contact:
+        # No single header line carried it (two-column templates split the header
+        # across lines). Rebuild from whatever the top of the document holds.
+        head = "\n".join(lines)
+        bits: list[str] = []
+        m = _PHONE_RE.search(head)
+        if m:
+            bits.append(m.group(0).strip())
+        m = _EMAIL_RE.search(head)
+        if m:
+            bits.append(m.group(0).strip())
+        contact = " | ".join(bits)
+    return name, (contact or _clean_contact_line(contact_fallback))
+
+
+def _clean_contact_line(line: str) -> str:
+    """Strip the icon-font debris a PDF text layer leaves in a header line.
+
+    Extracted headers arrive as "(cid:132) +91 90000 00000 | # me@x.com | § handle"
+    — the glyphs are FontAwesome icons with no Unicode mapping. Printing them back
+    into a new PDF renders mojibake next to the phone number.
+    """
+    out = []
+    for seg in _CID_RE.sub("", line or "").split("|"):
+        seg = _GLYPH_RE.sub(" ", seg)
+        seg = re.sub(r"\s+", " ", seg).strip(" .,-")
+        if seg:
+            out.append(seg)
+    return " | ".join(out)
+
+
+def _stamp_identity(struct: dict, identity: tuple[str, str]) -> None:
+    """Force the real name/contact onto a struct, in place. A model-supplied value
+    is used only where we found nothing locally."""
+    name, contact = identity
+    if name:
+        struct["name"] = name
+    if contact:
+        struct["contact_line"] = contact
+
+
+# ---------------- grounding + provenance ----------------
+
+def _source_stems(source_text: str) -> set[str]:
+    """Every token of the master resume, plus 5-char stems so ordinary
+    morphology ("Engineered" -> "engineer") doesn't read as invented."""
+    stems: set[str] = set()
+    for tok in re.findall(r"[a-z0-9][a-z0-9+#./-]*", (source_text or "").lower()):
+        tok = tok.strip("./-")
+        if not tok:
+            continue
+        stems.add(tok)
+        if len(tok) >= 5:
+            stems.add(tok[:5])
+        for part in re.split(r"[./-]", tok):
+            if len(part) >= 2:
+                stems.add(part)
+                if len(part) >= 5:
+                    stems.add(part[:5])
+    return stems
+
+
+def _is_grounded(tok: str, stems: set[str]) -> bool:
+    """A token is grounded if the master resume can defend it.
+
+    Digits are exact-match: a year or a metric is a claim, and "2020" is not
+    supported by "2021". Words match on stem, so rewording stays free.
+    """
+    t = tok.strip("./-").lower()
+    if not t:
+        return True
+    if t.isdigit():
+        return t in stems
+    if t in _FREE_WORDS or len(t) < 4:
+        return True
+    return t in stems or (len(t) >= 5 and t[:5] in stems)
+
+
+def _ungrounded_tokens(item: dict, stems: set[str]) -> list[str]:
+    """Words in an item's title/meta — and NUMBERS anywhere in it — that the master
+    resume cannot defend. This is what catches "XYZ Corp", "University of
+    Technology | 2020" and "Achieved 30 FPS": the skills gate never looked at
+    employers, schools, dates, or metrics, only at tools.
+    """
+    bad: list[str] = []
+    for field in ("head", "sub"):
+        for tok in re.findall(r"[A-Za-z0-9][A-Za-z0-9+#./-]*", str(item.get(field) or "")):
+            if not _is_grounded(tok, stems) and tok.lower() not in [b.lower() for b in bad]:
+                bad.append(tok)
+    for b in item.get("bullets") or []:
+        for tok in re.findall(r"\d[\d,.]*", str(b)):
+            digits = tok.replace(",", "").rstrip(".")
+            if digits and not _is_grounded(digits, stems) and digits not in bad:
+                bad.append(digits)
+    return bad
+
+
+def _content_tokens(item: dict) -> set[str]:
+    """Distinctive words of an item — what provenance matching compares."""
+    blob = " ".join([
+        str(item.get("head") or ""), str(item.get("sub") or ""),
+        " ".join(str(b) for b in (item.get("bullets") or [])),
+    ]).lower()
+    return {
+        t for t in re.findall(r"[a-z0-9][a-z0-9+#./-]*", blob)
+        if len(t) >= 4 and t not in _FREE_WORDS
+    }
+
+
+def _base_item_tokens(base_struct: dict) -> list[set[str]]:
+    return [
+        _content_tokens(item)
+        for sec in base_struct.get("sections") or []
+        for item in sec.get("items") or []
+    ]
+
+
+def _has_ancestor(item: dict, base_index: list[set[str]]) -> bool:
+    """True if this item is a rewrite of something the master actually contains.
+
+    A rewrite may reword, merge, split, and drop entries; it may not ADD one. Any
+    genuine rewording keeps the proper nouns (employer, project name, tools), so
+    three shared distinctive words is a low bar for a real entry and an unreachable
+    one for an invented "Scalable Chatbot Backend" that shares nothing with the
+    candidate's actual projects.
+    """
+    mine = _content_tokens(item)
+    if not mine:
+        return False
+    return any(len(mine & base) >= 3 for base in base_index)
+
+
+def _ground_struct(
+    struct: dict, stems: set[str], base_struct: dict
+) -> tuple[dict, list[str]]:
+    """Remove every item the master resume can't defend. Returns (struct, dropped).
+
+    Repair, not reject: one hallucinated Education entry shouldn't cost the user
+    the three real Projects in the same response. Wholesale invention still fails
+    — it arrives here as a struct that loses nearly everything, which _one_variant
+    catches as drift.
+    """
+    base_index = _base_item_tokens(base_struct)
+    dropped: list[str] = []
+    sections: list[dict] = []
+    for sec in struct.get("sections") or []:
+        heading = sec.get("heading") or ""
+        # Skills groupings ("Frontend", "Databases") exist on no master resume, so
+        # provenance can't apply; _fabricated_skills covers their content instead.
+        skillsy = bool(_SKILLS_SECTION_RE.search(heading))
+        kept: list[dict] = []
+        for item in sec.get("items") or []:
+            label = str(item.get("head") or item.get("sub") or "item")[:60]
+            bad = _ungrounded_tokens(item, stems)
+            if bad:
+                dropped.append(f"{heading}/{label}: not in your resume ({', '.join(bad[:3])})")
+                continue
+            if not skillsy and base_index and not _has_ancestor(item, base_index):
+                dropped.append(f"{heading}/{label}: no matching entry on your resume")
+                continue
+            kept.append(item)
+        if kept:
+            sections.append({"heading": heading, "items": kept})
+    return (
+        {"name": struct.get("name") or "", "contact_line": struct.get("contact_line") or "",
+         "sections": sections},
+        dropped,
+    )
+
+
+def _factual_item_count(struct: dict) -> int:
+    """Items that assert a fact about the candidate's history — skills groupings
+    excluded, since a rewrite is free to regroup those."""
+    return sum(
+        len(sec.get("items") or [])
+        for sec in struct.get("sections") or []
+        if not _SKILLS_SECTION_RE.search(sec.get("heading") or "")
+    )
+
+
 # ---------------- LaTeX render (fixed, safe template) ----------------
 
 _ESCAPE = {
@@ -472,7 +775,8 @@ def _render_latex(struct: dict) -> str:
     lines.append("\\vspace{6pt}")
 
     for sec in (struct.get("sections") or [])[:_MAX_SECTIONS]:
-        heading = _esc(sec.get("heading") or "")
+        raw_heading = str(sec.get("heading") or "").strip()
+        heading = _esc(raw_heading)
         if not heading:
             continue
         # Heading + full-width rule. \hrulefill is horizontal-mode safe (unlike a
@@ -481,9 +785,25 @@ def _render_latex(struct: dict) -> str:
         lines.append("\\vspace{8pt}\\noindent{\\large \\textbf{" + heading + "}}\\par")
         lines.append("\\vspace{1pt}\\noindent\\hrulefill\\par")
         lines.append("\\vspace{3pt}")
+        skillsy = bool(_SKILLS_SECTION_RE.search(raw_heading))
         for item in (sec.get("items") or [])[:_MAX_ITEMS]:
             head = _esc(item.get("head") or "")
             sub = _esc(item.get("sub") or "")
+            # A skills group is a LIST OF WORDS, not a list of achievements. Given
+            # one \item per word it renders as a column of single terms — seven
+            # groups became thirty bullets and pushed a one-page intern resume onto
+            # two, which is exactly the "column of nouns" a user looked at and
+            # called unusable. Recruiters and parsers both read "Frontend: Next.js,
+            # React" fine, and it costs six lines instead of thirty.
+            short = [b for b in (item.get("bullets") or []) if str(b).strip()][:_MAX_BULLETS]
+            if skillsy and short and all(len(str(b).split()) <= 4 for b in short):
+                joined = ", ".join(_esc(str(b).strip()[:_MAX_BULLET_CHARS]) for b in short)
+                if head:
+                    lines.append("\\noindent\\textbf{" + head + ":} " + joined + "\\par")
+                else:
+                    lines.append("\\noindent " + joined + "\\par")
+                lines.append("\\vspace{2pt}")
+                continue
             if head or sub:
                 if head and sub:
                     lines.append("\\noindent\\textbf{" + head + "} \\hfill " + sub + "\\par")
