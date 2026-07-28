@@ -305,3 +305,28 @@ def test_a_punctuation_only_location_never_overrides_a_real_one(monkeypatch):
     assert websource.posting_meta("https://x/1").get("location") is None
     websource._remember_meta("https://x/1", location="Bengaluru, India")
     assert websource.posting_meta("https://x/1")["location"] == "Bengaluru, India"
+
+
+def test_a_workable_url_without_a_slug_names_no_company():
+    """`apply.workable.com/<company>/j/<code>` names the employer;
+    `apply.workable.com/j/<code>` does not. The shared pattern captured "j" from
+    the second and filed eight real postings under a company called J."""
+    assert websource._company_from(
+        "SDE Intern", "https://apply.workable.com/acme/j/ABC123") == "Acme"
+    assert websource._company_from(
+        "SDE Intern at Entru", "https://apply.workable.com/j/ABC123") == "Entru"
+    assert websource._company_from(
+        "SDE Intern", "https://weekday-1.workable.com/j/ABC123") == "Weekday"
+
+
+def test_a_job_title_is_never_used_as_a_company_name():
+    """Live output carried an employer called "Machine Learning Engineer Intern
+    at Entru"."""
+    name = websource._company_from(
+        "Machine Learning Engineer Intern at Machine Learning Engineer",
+        "https://someplace.example/posting")
+    assert not _READS_LIKE_A_ROLE_TEST(name), name
+
+
+def _READS_LIKE_A_ROLE_TEST(name):
+    return bool(websource._READS_LIKE_A_ROLE.search(name or ""))

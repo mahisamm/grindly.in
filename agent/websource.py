@@ -392,17 +392,36 @@ def _company_from(title: str, url: str) -> str:
     the host. Never returns empty — an application filed under a blank company
     is unreadable on the dashboard.
     """
+    # Workable's own URLs come in two shapes and only one names the company:
+    # `apply.workable.com/<company>/j/<code>` does, `apply.workable.com/j/<code>`
+    # does not. The shared pattern captured "j" from the second and filed eight
+    # real postings under a company called J.
+    m = re.search(r"(?:^|//)([^/?#.]+)\.workable\.com", url, re.I)
+    if m and m.group(1).lower() not in ("apply", "www"):
+        return _tidy_company(m.group(1))
     m = re.search(
         r"(?:lever\.co|greenhouse\.io|ashbyhq\.com|smartrecruiters\.com"
         r"|apply\.workable\.com)/([^/?#]+)", url, re.I,
     )
-    if m:
+    if m and m.group(1).lower() not in _NOT_A_COMPANY:
         return _tidy_company(m.group(1))
     m = re.search(r"\bat\s+([A-Z][\w&.\- ]{2,40})", title)
-    if m:
+    if m and not _READS_LIKE_A_ROLE.search(m.group(1)):
         return m.group(1).strip()[:60]
     host = re.sub(r"^www\.", "", re.sub(r"^https?://", "", url).split("/")[0])
     return _tidy_company(host.split(".")[0]) or "Unknown"
+
+
+# Path segments that are part of an ATS's URL structure, never a company name.
+_NOT_A_COMPANY = {"j", "jobs", "job", "apply", "embed", "board", "boards",
+                  "posting", "postings", "careers", "career", "search", "www"}
+
+# A "company" that names a job is a parse that went wrong — live output carried
+# an employer called "Machine Learning Engineer Intern at Entru".
+_READS_LIKE_A_ROLE = re.compile(
+    r"\b(intern|internship|engineer|developer|analyst|designer|manager|"
+    r"scientist|consultant)\b", re.I,
+)
 
 
 # Trailing digits and vendor suffixes an ATS appends to make a slug unique when

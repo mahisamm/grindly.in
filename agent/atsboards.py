@@ -347,6 +347,9 @@ def _postings(vendor: str, payload, slug: str = "") -> list[dict]:
                 "url": f"https://jobs.smartrecruiters.com/{slug}/{job_id}" if job_id else "",
             })
     elif vendor == "workable":
+        # The account's own name, which is the only place a Workable payload
+        # states the employer — the posting URL often does not carry the slug.
+        account = ((payload or {}).get("name") or "").strip()
         for j in (payload or {}).get("jobs") or []:
             where = ", ".join(
                 p for p in (j.get("city"), j.get("state"), j.get("country")) if p
@@ -356,7 +359,7 @@ def _postings(vendor: str, payload, slug: str = "") -> list[dict]:
             out.append({
                 "title": j.get("title") or "",
                 "job_id": str(j.get("shortcode") or j.get("id") or ""),
-                "company": "",
+                "company": account or slug,
                 "posted_days": _age_days(j.get("published_on") or j.get("created_at")),
                 "location": where,
                 "jd": _text(j.get("description") or "", j.get("requirements") or ""),
