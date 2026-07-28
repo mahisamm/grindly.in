@@ -171,9 +171,12 @@ def generate_variants(
             "reasons": [], "aborted": "extraction_failed",
         }
 
-    # Identity comes from the raw resume, never from the model — see module docstring.
+    # Identity comes from the raw resume, never from the model — see module
+    # docstring. It is stamped onto each VARIANT, never onto base_struct: that one
+    # is serialised into the rewrite prompt, and the redaction that keeps a phone
+    # number out of a third-party API is a runtime setting (agent/redact.py), not
+    # a guarantee. Don't put PII somewhere it only stays private if a flag holds.
     identity = _identity_from_source(text, contact_fallback)
-    _stamp_identity(base_struct, identity)
     # How much of the master survived extraction bounds everything downstream: a
     # thin base can only produce thin, low-scoring variants, and from the outside
     # that is indistinguishable from a bad rewrite.
@@ -402,17 +405,28 @@ def _extract_struct(text: str) -> dict | None:
         f'Resume text:\n"""\n{text[:6000]}\n"""\n\n'
         "Return the structured JSON object described in your instructions."
     )
-    merged = llm_mod.chat_json_ensemble(prompt, system=_EXTRACT_SYS, n=3, timeout=90)
-    best = _sanitize_struct(merged) if isinstance(merged, dict) else None
+    # One round of provider calls, merged locally. chat_json_ensemble would do the
+    # same calls and then throw the responses away, leaving a failed merge with
+    # nothing to fall back on but a second full round — and the merge fails on
+    # every real resume tried so far, so that second round was the normal path:
+    # six provider calls and twice the latency for the same three answers.
+    dicts = [
+        parsed for parsed in (llm_mod._extract_json(raw)
+                              for raw in llm_mod.chat_ensemble(prompt, system=_EXTRACT_SYS, n=3, timeout=90)
+                              if raw)
+        if isinstance(parsed, dict)
+    ]
+    if not dicts:
+        return None
+
+    merged = llm_mod._merge_json(dicts) if len(dicts) > 1 else dicts[0]
+    best = _sanitize_struct(merged)
     best_count = _item_count(best)
     if best_count >= _MIN_BASE_ITEMS:
         return best
 
-    print(f"[optimize] merged extraction kept {best_count} item(s) — re-reading un-merged responses")
-    for raw in llm_mod.chat_ensemble(prompt, system=_EXTRACT_SYS, n=3, timeout=90):
-        parsed = llm_mod._extract_json(raw)
-        if not isinstance(parsed, dict):
-            continue
+    print(f"[optimize] merged extraction kept {best_count} item(s) — using the richest single response")
+    for parsed in dicts:
         cand = _sanitize_struct(parsed)
         if _item_count(cand) > best_count:
             best, best_count = cand, _item_count(cand)
@@ -579,6 +593,10 @@ _CID_RE = re.compile(r"\(cid:\d+\)")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 _PHONE_RE = re.compile(r"(?:\+\d{1,3}[\s-]?)?\d{5}[\s-]?\d{5}\b|(?:\+\d{1,3}[\s-]?)?\d{10}\b")
 _GLYPH_RE = re.compile(r"[^\w@.+\-/:,&() ]")
+_PLACEHOLDER_RE = re.compile(r"\[[^\]]*redact[^\]]*\]", re.I)
+# A document title is not a name. Plenty of templates open with "Curriculum Vitae"
+# or "RESUME" on its own line, which passes every other test for a person's name.
+_NOT_A_NAME = frozenset({"resume", "curriculum", "vitae", "cv", "profile", "summary", "biodata"})
 
 
 def _identity_from_source(text: str, contact_fallback: str = "") -> tuple[str, str]:
@@ -597,6 +615,8 @@ def _identity_from_source(text: str, contact_fallback: str = "") -> tuple[str, s
         cand = _CID_RE.sub("", ln).strip()
         words = cand.split()
         if not (1 < len(words) <= 5) or "@" in cand or any(c.isdigit() for c in cand):
+            continue
+        if any(w.lower().strip(".,:") in _NOT_A_NAME for w in words):
             continue
         # Capitalisation is what separates a name from the first line of a summary
         # ("experienced developer with 5 years…"). One lowercase particle is fine
@@ -644,12 +664,17 @@ def _clean_contact_line(line: str) -> str:
 
 def _stamp_identity(struct: dict, identity: tuple[str, str]) -> None:
     """Force the real name/contact onto a struct, in place. A model-supplied value
-    is used only where we found nothing locally."""
+    is used only where we found nothing locally — and even then, never a redaction
+    marker: a header reading "[email redacted]" is worse than no header at all, and
+    it is the model's most likely answer since that is what it was shown."""
     name, contact = identity
     if name:
         struct["name"] = name
     if contact:
         struct["contact_line"] = contact
+        return
+    scrubbed = _PLACEHOLDER_RE.sub("", str(struct.get("contact_line") or ""))
+    struct["contact_line"] = _clean_contact_line(scrubbed)
 
 
 # ---------------- grounding + provenance ----------------
@@ -787,11 +812,18 @@ def _has_ancestor(item: dict, base_index: list[set[str]]) -> bool:
     three shared distinctive words is a low bar for a real entry and an unreachable
     one for an invented "Scalable Chatbot Backend" that shares nothing with the
     candidate's actual projects.
+
+    Except when the entry has fewer than three distinctive words to give. SPLIT is
+    explicitly allowed, and splitting "Certifications: ServiceNow Fundamentals,
+    Python Bootcamp, Data Mining" into one item per certificate leaves each with
+    two words — real content that a flat threshold of three would delete as
+    invented. Short items must instead match ALL of what they have.
     """
     mine = _content_tokens(item)
     if not mine:
         return False
-    return any(len(mine & base) >= 3 for base in base_index)
+    need = min(3, len(mine))
+    return any(len(mine & base) >= need for base in base_index)
 
 
 def _ground_struct(
@@ -896,8 +928,16 @@ def _render_latex(struct: dict) -> str:
         lines.append("\\vspace{8pt}\\noindent{\\large \\textbf{" + heading + "}}\\par")
         lines.append("\\vspace{1pt}\\noindent\\hrulefill\\par")
         lines.append("\\vspace{3pt}")
-        skillsy = bool(_SKILLS_SECTION_RE.search(raw_heading))
-        for item in (sec.get("items") or [])[:_MAX_ITEMS]:
+        items = (sec.get("items") or [])[:_MAX_ITEMS]
+        # Decided once for the whole section, not per item: a rewrite that returns
+        # one terse group and one wordy one would otherwise render half the section
+        # as lines and half as bullets. Long entries mean the model wrote prose
+        # where it was asked for a keyword list — bullets stay readable there,
+        # a paragraph of joined sentences does not.
+        inline_skills = bool(_SKILLS_SECTION_RE.search(raw_heading)) and all(
+            len(str(b)) <= 120 for it in items for b in (it.get("bullets") or [])
+        )
+        for item in items:
             head = _esc(item.get("head") or "")
             sub = _esc(item.get("sub") or "")
             # A skills group is a LIST OF WORDS, not a list of achievements. Given
@@ -907,7 +947,7 @@ def _render_latex(struct: dict) -> str:
             # called unusable. Recruiters and parsers both read "Frontend: Next.js,
             # React" fine, and it costs six lines instead of thirty.
             short = [b for b in (item.get("bullets") or []) if str(b).strip()][:_MAX_BULLETS]
-            if skillsy and short:
+            if inline_skills and short:
                 # Every group inline, not just the ones whose entries are single
                 # words: a section that renders "Programming & Frameworks: Python,
                 # TypeScript" as a line and "AI/ML & Vision" as a bulleted column

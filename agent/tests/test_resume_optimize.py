@@ -267,11 +267,11 @@ def _base():
 
 # hole 0: the extraction collapsed, so the rewrite invented a resume from nothing
 
-def _extract_response(n_items):
+def _extract_response(n_items, tag=""):
     import json
     return json.dumps({"name": "Sammeta Sakthi Mahendhar", "contact_line": "a@b.com", "sections": [
         {"heading": "Projects", "items": [
-            {"head": f"Project {i}", "sub": "", "bullets": ["Built a thing"]} for i in range(n_items)]}]})
+            {"head": f"Project {tag}{i}", "sub": "", "bullets": ["Built a thing"]} for i in range(n_items)]}]})
 
 
 def test_extraction_falls_back_when_the_ensemble_merge_keeps_nothing(monkeypatch):
@@ -279,25 +279,24 @@ def test_extraction_falls_back_when_the_ensemble_merge_keeps_nothing(monkeypatch
     don't agree byte-for-byte on section names or ordering, so on a real 3,778-char
     resume the merge returned 0 items while the individual responses held 12 and
     15. That empty struct is what the rewriter was then asked to "improve"."""
-    monkeypatch.setattr(ro.llm_mod, "chat_json_ensemble",
-                        lambda *a, **k: {"name": "N", "contact_line": "c", "sections": []})
-    monkeypatch.setattr(ro.llm_mod, "chat_ensemble",
-                        lambda *a, **k: [_extract_response(4), _extract_response(7)])
+    calls = []
+
+    def _ensemble(*a, **k):
+        calls.append(1)
+        # Two disjoint sets: nothing has majority support, so the merge keeps none.
+        return [_extract_response(4, "A"), _extract_response(7, "B")]
+
+    monkeypatch.setattr(ro.llm_mod, "chat_ensemble", _ensemble)
     out = ro._extract_struct("a resume long enough to matter " * 20)
     assert ro._item_count(out) == 7, "must recover the richest un-merged response"
+    assert len(calls) == 1, "a failed merge must not cost a second round of provider calls"
 
 
 def test_extraction_keeps_the_merge_when_it_worked(monkeypatch):
     """Cross-model agreement is higher fidelity when it survives — the fallback is
     a repair, not a replacement."""
-    import json
-    merged = json.loads(_extract_response(6))
-    monkeypatch.setattr(ro.llm_mod, "chat_json_ensemble", lambda *a, **k: merged)
-
-    def _boom(*a, **k):
-        raise AssertionError("must not re-query when the merge already has content")
-
-    monkeypatch.setattr(ro.llm_mod, "chat_ensemble", _boom)
+    monkeypatch.setattr(ro.llm_mod, "chat_ensemble", lambda *a, **k: [
+        _extract_response(6), _extract_response(6), _extract_response(3)])
     assert ro._item_count(ro._extract_struct("text " * 100)) == 6
 
 
@@ -346,6 +345,43 @@ def test_the_redaction_placeholder_never_reaches_the_document():
     tex = ro._render_latex(struct)
     assert "redacted" not in tex
     assert "mahendharsammeta21@gmail.com" in tex
+
+
+def test_a_document_title_is_not_mistaken_for_a_name():
+    """"Curriculum Vitae" on its own line passes every other test for a name."""
+    name, _ = ro._identity_from_source("Curriculum Vitae\nPriya Sharma\npriya@example.com")
+    assert name == "Priya Sharma"
+
+
+def test_a_redaction_marker_is_scrubbed_when_no_real_contact_was_found():
+    """Belt and braces on the header: if nothing local was recoverable, an empty
+    contact line beats one that tells an employer to write to [email redacted]."""
+    struct = {"name": "N", "contact_line": "[phone redacted] | [email redacted]", "sections": []}
+    ro._stamp_identity(struct, ("", ""))
+    assert "redacted" not in struct["contact_line"]
+
+
+def test_the_rewrite_prompt_is_never_given_the_real_contact_details(monkeypatch):
+    """Redaction at the LLM boundary is a runtime setting, not a guarantee. The
+    struct that gets serialised into the prompt must not carry PII in the first
+    place — identity is stamped onto the VARIANT, after the model has answered."""
+    seen = {}
+
+    def _capture(prompt, **k):
+        seen["prompt"] = prompt
+        return []
+
+    monkeypatch.setattr(ro.llm_mod, "chat_ensemble", _capture)
+    monkeypatch.setattr(ro.latex_resume, "tectonic_available", lambda: True)
+    monkeypatch.setattr(ro.resume_ai, "analyze", lambda t: {})
+    monkeypatch.setattr(ro.resume_ai, "with_ats", lambda a, t, s: {"score": 70, "grade": "C"})
+    monkeypatch.setattr(ro, "_extract_struct", lambda text: {
+        "name": "N", "contact_line": "[phone redacted]", "sections": [
+            {"heading": "Projects", "items": [
+                {"head": f"P{i}", "sub": "", "bullets": ["did a thing"]} for i in range(4)]}]})
+    ro.generate_variants(_REAL, ["python"])
+    assert "8096267553" not in seen.get("prompt", "")
+    assert "mahendharsammeta21@gmail.com" not in seen.get("prompt", "")
 
 
 def test_a_profile_fallback_is_used_when_the_resume_header_is_unreadable():
@@ -543,6 +579,50 @@ def test_every_skills_group_renders_the_same_way():
                 "Machine Learning, Deep Learning, Computer Vision", "YOLOv8, Tesseract"]}]}]})
     assert "\\begin{itemize}" not in tex, "no group may fall back to bullets"
     assert "Machine Learning, Deep Learning, Computer Vision; YOLOv8, Tesseract" in tex
+
+
+def test_a_split_entry_is_not_read_as_invented():
+    """Splitting an entry is explicitly allowed. "Certifications: ServiceNow
+    Fundamentals, Python Bootcamp, Data Mining" split one-per-certificate leaves
+    each item two words long — real content a flat three-word threshold deletes."""
+    base = {"name": "N", "contact_line": "c", "sections": [{"heading": "Certifications", "items": [
+        {"head": "Certifications", "sub": "", "bullets": [
+            "ServiceNow Fundamentals, Python Bootcamp (Udemy), Data Mining (Infosys)"]}]}]}
+    out, dropped = ro._ground_struct(
+        {"name": "N", "contact_line": "c", "sections": [{"heading": "Certifications", "items": [
+            {"head": "ServiceNow Fundamentals", "sub": "", "bullets": []},
+            {"head": "Python Bootcamp", "sub": "", "bullets": ["Udemy"]}]}]},
+        ro._source_stems("ServiceNow Fundamentals, Python Bootcamp (Udemy), Data Mining (Infosys)"),
+        base,
+    )
+    assert dropped == []
+    assert len(out["sections"][0]["items"]) == 2
+
+
+def test_a_two_word_invention_is_still_dropped():
+    """The short-item allowance must not become a hole: matching ALL of two words
+    is still a real match, and "Kubernetes Migration" matches nothing."""
+    base = {"name": "N", "contact_line": "c", "sections": [{"heading": "Projects", "items": [
+        {"head": "SmartRX", "sub": "", "bullets": ["Prescription reader with Tesseract OCR"]}]}]}
+    out, dropped = ro._ground_struct(
+        {"name": "N", "contact_line": "c", "sections": [{"heading": "Projects", "items": [
+            {"head": "Kubernetes Migration", "sub": "", "bullets": []}]}]},
+        ro._source_stems("SmartRX prescription reader with Tesseract OCR kubernetes migration"),
+        base,
+    )
+    assert out["sections"] == []
+    assert "no matching entry" in dropped[0]
+
+
+def test_a_prose_skills_section_stays_bulleted_rather_than_becoming_a_paragraph():
+    """Compaction assumes keyword lists. Joining full sentences with "; " makes a
+    wall of text — worse than the bullets it replaced."""
+    prose = ("Utilized programming languages including Python, TypeScript and Java, "
+             "as well as SQL for database management across several production systems")
+    tex = ro._render_latex({"name": "A B", "contact_line": "c", "sections": [
+        {"heading": "Technical Skills", "items": [
+            {"head": "", "sub": "", "bullets": [prose, "Employed frameworks such as Next.js and React"]}]}]})
+    assert "\\begin{itemize}" in tex
 
 
 def test_a_long_title_and_meta_stack_instead_of_colliding():
