@@ -106,6 +106,18 @@ describe("the background worker's boundaries", () => {
     ).toEqual(src.content_scripts?.map((c: { matches: string[] }) => c.matches));
   });
 
+  it("closes its own tab when a task ends, and only then", () => {
+    // Autopilot opened the tab; autopilot cleans it up. A day at the cap used
+    // to leave five submitted-application tabs (plus every human gate) crowding
+    // the strip. awaiting_human must NOT close: that page is now the user's to
+    // finish, and yanking it would take their CAPTCHA or question with it.
+    const closer = BG.match(/if \(\s*\(msg\.event === "submitted" \|\| msg\.event === "failed"\)[\s\S]{0,600}?chrome\.tabs\.remove/);
+    expect(closer, "terminal task events must close the task's own tab").toBeTruthy();
+    expect(closer![0]).not.toMatch(/awaiting_human/);
+    // Scoped to the reporting tab — never a lookup that could hit another tab.
+    expect(closer![0]).toMatch(/sender\.tab/);
+  });
+
   it("keeps the extension token out of content scripts", () => {
     // A hostile page that compromised a content script still must not be able
     // to claim tasks or report submissions.

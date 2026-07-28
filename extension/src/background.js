@@ -171,9 +171,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // script: a job page must not be able to pull the next task.
         sendResponse(sender.tab ? { error: "forbidden" } : await claimTask());
         break;
-      case "grindly:taskEvent":
-        sendResponse(await reportTask(msg.taskId, msg.leaseToken, msg.event, msg.extra));
+      case "grindly:taskEvent": {
+        const out = await reportTask(msg.taskId, msg.leaseToken, msg.event, msg.extra);
+        // Autopilot opened this tab; autopilot cleans it up. Terminal states
+        // only — a task at a human gate keeps its tab, because the page is now
+        // the user's to finish. Without this, every completed application left
+        // a background tab behind, and a day at the cap left five of them
+        // (plus every gate) crowding the tab strip.
+        //
+        // sender.tab is the executor's OWN tab — the one the event is about —
+        // and closing is gated on it matching the task we opened, so a report
+        // relayed oddly can never close an unrelated tab.
+        if (
+          (msg.event === "submitted" || msg.event === "failed") &&
+          sender.tab && typeof sender.tab.id === "number"
+        ) {
+          const tabId = sender.tab.id;
+          // A beat first, so someone watching sees the confirmation banner
+          // rather than a tab that blinks out mid-submit.
+          setTimeout(() => { chrome.tabs.remove(tabId).catch?.(() => {}); }, 4000);
+        }
+        sendResponse(out);
         break;
+      }
       case "grindly:autopilot":
         // Popup only (sender.tab is unset there) — a job page must never be
         // able to switch autopilot on for the user.
