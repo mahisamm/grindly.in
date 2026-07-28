@@ -812,3 +812,29 @@ def test_a_wholesale_hallucination_is_rejected_as_drift(monkeypatch):
     )
     assert variant is None
     assert "drifted" in reason
+
+
+# --- a thin resume needs the opposite treatment -------------------------------
+
+def test_a_short_resume_gets_the_expand_strategy_not_the_trim_one():
+    """Measured on a 475-character fresher resume: the source scored 60 and all
+    three rewrites 38-40 — same facts, no ATS warnings, fewer characters than they
+    started with. There was no clutter to cut, so "tighten and de-clutter" just
+    removed the little substance the document had."""
+    short = ro._strategies_for("x" * 400)
+    labels = [label for label, _ in short]
+    assert "ATS-clean" not in labels
+    assert "Detail-first" in labels
+    assert len(short) == 3
+
+
+def test_a_full_resume_keeps_the_standard_strategies():
+    assert ro._strategies_for("x" * 4000) == ro._STRATEGIES
+
+
+def test_the_expand_strategy_still_forbids_invention():
+    """It is the one instruction that asks for MORE text, so it carries the
+    strictest wording about where that text may come from."""
+    _, instruction = ro._EXPAND_STRATEGY
+    assert "Add no fact" in instruction
+    assert "never the" in instruction

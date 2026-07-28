@@ -101,6 +101,30 @@ _STRATEGIES: list[tuple[str, str]] = [
     ),
 ]
 
+# "Tighten and de-clutter" is the wrong instruction for a resume that is already
+# thin. Measured on a 475-character fresher resume: the source scored 60 and all
+# three rewrites scored 38-40 with the same facts, no ATS warnings, and fewer
+# characters than they started with. There was no clutter to cut — compression
+# just removed the little substance the document had. Under this length, the third
+# strategy draws out what is already on the page instead of trimming it.
+_SHORT_SOURCE_CHARS = 1200
+_EXPAND_STRATEGY = (
+    "Detail-first",
+    "This resume is very short, so do NOT shorten it. Draw out what is already "
+    "there: give each project and role its own bullets naming the concrete tools, "
+    "the task, and the outcome ALREADY stated or plainly implied by the source "
+    "text. Split a run-on line into separate bullets. Name the technologies "
+    "explicitly where the source names them. Add no fact, tool, number, employer, "
+    "or outcome that the source does not contain — expand the wording, never the "
+    "claims.",
+)
+
+
+def _strategies_for(text: str) -> list[tuple[str, str]]:
+    if len(text or "") >= _SHORT_SOURCE_CHARS:
+        return _STRATEGIES
+    return _STRATEGIES[:2] + [_EXPAND_STRATEGY]
+
 
 # Sections whose items are regrouped freely by a rewrite ("Languages", "Frontend",
 # "Databases" — groupings that exist on no master resume). Provenance can't apply
@@ -207,7 +231,7 @@ def generate_variants(
 
     out: list[dict] = []
     reasons: list[str] = []
-    for label, instruction in _STRATEGIES:
+    for label, instruction in _strategies_for(text):
         variant, reason = _one_variant(
             label, instruction, base_struct, allowed, master_skills, baseline_score,
             identity, stems, debug_dir,
@@ -465,7 +489,9 @@ _REWRITE_SYS = (
     "2. Keep the exact same JSON schema (name, contact_line, sections[heading, "
     "items[head, sub, bullets]]).\n"
     "3. Keep 'name' and 'contact_line' factually identical to the input.\n"
-    "4. Keep it to one page of content — be concise.\n"
+    "4. Keep it to one page of content — be concise, but never drop a role, "
+    "project, qualification, or concrete detail that is in the input. Losing "
+    "content is a worse resume, not a tighter one.\n"
     "5. In a skills section every item is a terse comma-separated list of tools "
     "('Databases: PostgreSQL, MongoDB, Redis'), never a sentence. Prose there "
     "wastes the line a recruiter scans for keywords.\n"
