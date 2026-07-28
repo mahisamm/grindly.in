@@ -25,6 +25,13 @@ _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 )
+# Completion budget. Ordinary chat models answer well inside the default; a
+# reasoning model bills its thinking against the same budget and needs headroom
+# for both, or it returns nothing at all (see _cerebras_glm).
+_DEFAULT_MAX_TOKENS = max(256, int(os.environ.get("GRINDLY_LLM_MAX_TOKENS", "2048")))
+_REASONING_MAX_TOKENS = max(
+    _DEFAULT_MAX_TOKENS, int(os.environ.get("GRINDLY_LLM_REASONING_MAX_TOKENS", "8192"))
+)
 _MAX_RETRIES = max(1, int(os.environ.get("GRINDLY_LLM_MAX_RETRIES", "3")))
 _RETRY_BASE_SECONDS = max(
     0.0, float(os.environ.get("GRINDLY_LLM_RETRY_BASE_SECONDS", "0.5"))
@@ -109,7 +116,7 @@ def _urlopen_json(req: urllib.request.Request, timeout: int) -> dict:
 
 def _openai_compat(
     base_url: str, api_key: str, model: str, messages: list, timeout: int,
-    temperature: float = 0.3,
+    temperature: float = 0.3, max_tokens: int = _DEFAULT_MAX_TOKENS,
 ) -> str | None:
     if not api_key:
         return None
@@ -119,7 +126,7 @@ def _openai_compat(
                 "model": model,
                 "messages": messages,
                 "temperature": temperature,
-                "max_tokens": 2048,
+                "max_tokens": max_tokens,
             }
         ).encode()
         req = urllib.request.Request(
@@ -132,7 +139,17 @@ def _openai_compat(
             },
         )
         data = _urlopen_json(req, timeout)
-        return data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        content = (choice.get("message") or {}).get("content")
+        if not content:
+            # A reasoning model that ran out of budget mid-thought returns a
+            # message with no "content" key at all — reading it directly raised
+            # KeyError('content'), which surfaced as an unexplained provider
+            # failure. Say what actually happened; the budget is the fix.
+            print(f"[llm] {base_url} ({model}) returned no content "
+                  f"(finish_reason={choice.get('finish_reason')}) — raise its max_tokens")
+            return None
+        return content
     except Exception as error:
         print(f"[llm] {base_url} ({model}) error: {error}")
         return None
@@ -198,6 +215,13 @@ def _cerebras_glm(messages: list, timeout: int, temperature: float = 0.3) -> str
         messages,
         timeout,
         temperature,
+        # A reasoning model: its thinking is billed against the same completion
+        # budget as its answer. On a resume-sized prompt it spent all 2048 tokens
+        # reasoning and returned finish_reason=length with no answer at all —
+        # every substantial call, for as long as this provider has been
+        # configured. Measured on a real resume: 4,834 reasoning tokens before a
+        # 5,520-character answer, so the budget has to clear both.
+        _REASONING_MAX_TOKENS,
     )
 
 

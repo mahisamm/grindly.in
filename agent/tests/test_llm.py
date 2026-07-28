@@ -188,3 +188,50 @@ def test_http_429_is_retried(monkeypatch):
         "ok": True
     }
     assert attempts["count"] == 2
+
+
+# ---------- a reasoning model that thinks past its budget ----------
+
+def _fake_response(payload: dict):
+    def _urlopen(_req, _timeout):
+        return payload
+    return _urlopen
+
+
+def test_a_reply_with_no_content_is_a_clean_failure_not_a_keyerror(monkeypatch):
+    """A reasoning model that spends its whole completion budget thinking returns
+    a message with NO "content" key: {"role", "reasoning"} and
+    finish_reason="length". Reading ["content"] raised KeyError('content'), which
+    reached the logs as an unexplained provider error and silently cost the
+    ensemble a third of its votes on every substantial call."""
+    monkeypatch.setattr(llm, "_urlopen_json", _fake_response({
+        "choices": [{"finish_reason": "length",
+                     "message": {"role": "assistant", "reasoning": "thinking..."}}]}))
+    out = llm._openai_compat("https://api.x/v1", "key", "model", [{"role": "user", "content": "hi"}], 10)
+    assert out is None
+
+
+def test_a_normal_reply_still_comes_back(monkeypatch):
+    monkeypatch.setattr(llm, "_urlopen_json", _fake_response({
+        "choices": [{"finish_reason": "stop",
+                     "message": {"role": "assistant", "content": '{"ok": true}'}}]}))
+    out = llm._openai_compat("https://api.x/v1", "key", "model", [{"role": "user", "content": "hi"}], 10)
+    assert out == '{"ok": true}'
+
+
+def test_the_reasoning_provider_asks_for_enough_budget_to_answer(monkeypatch):
+    """Measured on a real resume prompt: 4,834 reasoning tokens before a 5,520
+    character answer. At the 2,048 default it returned finish_reason=length and no
+    answer at all — every time."""
+    seen = {}
+
+    def _capture(req, _timeout):
+        seen["body"] = json.loads(req.data.decode())
+        return {"choices": [{"finish_reason": "stop",
+                             "message": {"role": "assistant", "content": "ok"}}]}
+
+    monkeypatch.setattr(llm, "_urlopen_json", _capture)
+    monkeypatch.setenv("CEREBRAS_API_KEY", "configured")
+    llm._cerebras_glm([{"role": "user", "content": "hi"}], 10)
+    assert seen["body"]["max_tokens"] >= 8192
+    assert llm._REASONING_MAX_TOKENS > llm._DEFAULT_MAX_TOKENS
