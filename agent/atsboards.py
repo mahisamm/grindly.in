@@ -478,6 +478,7 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                     "location": p["location"][:80],
                     "posted_days": p.get("posted_days"),
                     "stipend": websource.parse_stipend(jd),
+                    "pay_note": websource.parse_pay_note(jd),
                     "duration": websource.parse_duration(jd),
                     "skills": websource._infer_skills(f"{p['title']} {jd}"),
                     "url": p["url"],
@@ -499,6 +500,7 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                 if jd:
                     job["jd_text"] = jd
                     job["stipend"] = websource.parse_stipend(jd)
+                    job["pay_note"] = websource.parse_pay_note(jd)
                     job["duration"] = websource.parse_duration(jd)
                     job["skills"] = websource._infer_skills(
                         f"{job['title']} {jd}") or job["skills"]
@@ -524,8 +526,11 @@ _SLUG_PATTERNS = (
     ("lever", r"lever\.co/([^/?#]+)"),
     ("ashby", r"ashbyhq\.com/([^/?#]+)"),
     ("smartrecruiters", r"smartrecruiters\.com/(?:v1/companies/)?([^/?#]+)"),
-    ("workable", r"(?:apply\.workable\.com/|//)([^/?#.]+)\.?workable\.com|"
-                 r"apply\.workable\.com/([^/?#]+)"),
+    # Two shapes, two entries. Written as one alternation, the branch matching
+    # the HOST won on `apply.workable.com/thirdco/...` and captured "apply" —
+    # a reserved word, so the company was silently never learned.
+    ("workable", r"apply\.workable\.com/([^/?#]+)"),
+    ("workable", r"//([^/?#.]+)\.workable\.com"),
 )
 
 # Path segments that are part of the ATS's own URL structure, never a company.
@@ -533,19 +538,8 @@ _NOT_A_SLUG = {"embed", "jobs", "job", "v1", "companies", "apply", "boards",
                "posting-api", "job-board", "postings", "api", "widget"}
 
 
-def _slugs_seen_before() -> list[tuple[str, str]]:
-    """Boards the rest of the system has already discovered.
-
-    Discovery that only ever looks at a hardcoded list can never learn. Any ATS
-    URL that has ever been recorded names a company worth asking directly from
-    then on — which is how this source grows without anyone editing BOARDS.
-    """
-    try:
-        import db  # local: agent modules import db lazily, tests run without one
-
-        urls = db.known_ats_urls()
-    except Exception:  # noqa: BLE001 — no database is not a reason to discover nothing
-        return []
+def slugs_from_urls(urls) -> set[tuple[str, str]]:
+    """Every (vendor, company) pair named by these URLs."""
     out: set[tuple[str, str]] = set()
     for url in urls or []:
         for vendor, pattern in _SLUG_PATTERNS:
@@ -555,6 +549,84 @@ def _slugs_seen_before() -> list[tuple[str, str]]:
             slug = next((g for g in m.groups() if g), "")
             if slug and slug.lower() not in _NOT_A_SLUG:
                 out.add((vendor, slug))
+    return out
+
+
+# Boards learned from the open web, on the shared data volume.
+#
+# The database path only closes the loop across RUNS, and only after a listing
+# has been written — so a company a search surfaced this morning was not asked
+# directly until tomorrow at the earliest. This file closes it inside a single
+# run: websource hands over every ATS URL it sees the moment it sees it, and
+# atsboards polls those companies in the same sweep. It is also the reason the
+# board list grows at all on an install that has never applied to anything.
+_LEARNED_FILE = os.path.join(
+    os.environ.get("GRINDLY_DATA_DIR")
+    or os.path.join(os.path.dirname(__file__), "..", "data"),
+    "ats_slugs.json",
+)
+_LEARNED: set[tuple[str, str]] = set()
+_learned_loaded = False
+LEARNED_MAX = int(os.environ.get("GRINDLY_ATS_LEARNED_MAX", "1200"))
+
+
+def _load_learned() -> None:
+    global _learned_loaded
+    if _learned_loaded:
+        return
+    _learned_loaded = True  # first: a corrupt file must not be reread per call
+    try:
+        with open(_LEARNED_FILE, encoding="utf-8") as f:
+            for vendor, slug in json.load(f) or []:
+                if vendor in _API:
+                    _LEARNED.add((vendor, slug))
+    except FileNotFoundError:
+        pass
+    except Exception as e:  # noqa: BLE001
+        print(f"[atsboards] learned-slug load skipped: {type(e).__name__}")
+
+
+def remember_slugs(urls) -> int:
+    """Learn the companies behind these URLs. Returns how many were new."""
+    _load_learned()
+    fresh = {pair for pair in slugs_from_urls(urls)
+             if pair[0] in _API and pair not in _LEARNED}
+    if not fresh:
+        return 0
+    _LEARNED.update(fresh)
+    # Bounded so a bad day of results cannot grow the poll list without limit;
+    # sorted so the trim is deterministic rather than whichever set order won.
+    trimmed = sorted(_LEARNED)[:LEARNED_MAX]
+    _LEARNED.clear()
+    _LEARNED.update(trimmed)
+    try:
+        os.makedirs(os.path.dirname(_LEARNED_FILE), exist_ok=True)
+        tmp = _LEARNED_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(sorted(_LEARNED), f)
+        os.replace(tmp, _LEARNED_FILE)  # atomic: a half-written list is a corrupt one
+    except Exception as e:  # noqa: BLE001
+        print(f"[atsboards] learned-slug save skipped: {type(e).__name__}")
+    print(f"[atsboards] learned {len(fresh)} new board(s) from discovery "
+          f"({len(_LEARNED)} known)")
+    return len(fresh)
+
+
+def _slugs_seen_before() -> list[tuple[str, str]]:
+    """Boards the rest of the system has already discovered.
+
+    Discovery that only ever looks at a hardcoded list can never learn. Any ATS
+    URL that has ever been recorded names a company worth asking directly from
+    then on — which is how this source grows without anyone editing BOARDS.
+    """
+    _load_learned()
+    out: set[tuple[str, str]] = set(_LEARNED)
+    try:
+        import db  # local: agent modules import db lazily, tests run without one
+
+        out |= slugs_from_urls(db.known_ats_urls())
+    except Exception:  # noqa: BLE001 — no database is not a reason to discover nothing
+        pass
     return sorted(out)
 
 

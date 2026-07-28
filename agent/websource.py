@@ -63,6 +63,23 @@ _TEMPLATES = [
 MAX_ROLES = int(os.environ.get("GRINDLY_SEARCH_ROLES", "9"))
 QUERY_WORKERS = int(os.environ.get("GRINDLY_SEARCH_WORKERS", "4"))
 
+# Queries that look for COMPANIES rather than for this candidate's role.
+#
+# atsboards can read every opening a company has, but only for companies it has
+# been pointed at — measured live, that was 62 boards, of which six had an India
+# internship open. Its ceiling is the size of that list. These sweeps are how the
+# list grows: every ATS address they return names a company that atsboards then
+# polls directly, in this same run, for roles no search engine ever indexed.
+# Role-independent on purpose, so they cost the same regardless of who is asking.
+_HARVEST_HOSTS = [
+    "boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com",
+    "jobs.smartrecruiters.com", "apply.workable.com",
+]
+_HARVEST_TERMS = [
+    "intern india", "internship bengaluru", "internship hyderabad",
+    "intern pune", "internship remote india",
+]
+
 # Deliberately UNQUOTED. An exact-phrase query ("web development intern")
 # matches almost nothing on a real posting, whose title is "Software Developer
 # Intern" or "SDE Intern - Frontend"; the first live run returned zero for every
@@ -144,6 +161,43 @@ def parse_stipend(text: str) -> str:
         return ""
     unit = {"mo": "month", "yr": "year", "annum": "year"}.get(period, period)
     return f"₹{amount}/{unit}" if unit else f"₹{amount}"
+
+
+# How a posting talks about pay when it declines to name a number. Sampled from
+# ten real India internships on ATS boards: not one carried a figure, but five
+# said something — "a competitive salary", "compensation will be discussed
+# during the interview process", "Stipend (if applicable)". A blank told the
+# candidate nothing and looked like a gap in our reading; saying "the posting
+# doesn't state it" is a real answer to a real question.
+_PAY_DISCUSSED = re.compile(
+    r"(?:stipend|compensation|salary|pay)[^.]{0,60}"
+    r"(?:will be |to be |is )?(?:discussed|determined|shared|decided|disclosed"
+    r"|as per|based on|if applicable|depend)", re.I,
+)
+_PAY_COMPETITIVE = re.compile(
+    r"(?:competitive|attractive|market[- ]lead\w+|industry[- ]standard)\s+"
+    r"(?:salary|compensation|stipend|pay|package)", re.I,
+)
+
+
+def parse_pay_note(text: str) -> str:
+    """What this posting says about money, when it isn't a number.
+
+    Deliberately separate from `parse_stipend`, which must keep returning a
+    figure or nothing at all — the user's stipend_min filter compares numbers,
+    and "Competitive" in that field would be parsed as zero and quietly hide
+    every posting from someone who set a floor.
+    """
+    if not text:
+        return ""
+    window = text[:6000]
+    if _UNPAID_RE.search(window):
+        return "Unpaid"
+    if _PAY_DISCUSSED.search(window):
+        return "Stated at interview"
+    if _PAY_COMPETITIVE.search(window):
+        return "Competitive — amount not stated"
+    return ""
 
 
 def parse_duration(text: str) -> str:
@@ -435,9 +489,42 @@ def _jd_from_ashby(url: str) -> str:
         return ""
     for job in board.get("jobs") or []:
         if str(job.get("id", "")).lower() == job_id:
+            _remember_meta(url, posted=job.get("publishedAt") or job.get("updatedAt"),
+                           location=job.get("location"))
             text = job.get("descriptionPlain") or _MARKUP.sub(" ", job.get("descriptionHtml") or "")
             return re.sub(r"\s+", " ", html.unescape(text)).strip()[:6000]
     return ""
+
+
+# Facts an ATS API hands back alongside the description, keyed by posting URL.
+#
+# A search result carries no date and no structured location — so every listing
+# this source found showed "age ?" while the same posting, read through the same
+# API one function later, was stamped with the day it went up. The information
+# was already arriving and was being thrown away because only the body text was
+# being read out of the response.
+_POSTING_META: dict[str, dict] = {}
+
+
+def _remember_meta(url: str, *, posted=None, location=None, company=None) -> None:
+    meta = _POSTING_META.setdefault(url, {})
+    if posted not in (None, ""):
+        try:
+            import atsboards
+
+            age = atsboards._age_days(posted)
+        except Exception:  # noqa: BLE001
+            age = None
+        if age is not None:
+            meta["posted_days"] = age
+    if location:
+        meta["location"] = str(location)[:80]
+    if company:
+        meta["company"] = str(company)[:60]
+
+
+def posting_meta(url: str) -> dict:
+    return dict(_POSTING_META.get(url) or {})
 
 
 def _jd_from_api(url: str) -> str:
@@ -459,6 +546,17 @@ def _jd_from_api(url: str) -> str:
         except Exception as e:  # noqa: BLE001
             print(f"[websource] ats api miss ({type(e).__name__}) for {url[:60]}")
             return ""
+        loc = data.get("location")
+        if isinstance(loc, dict):
+            loc = loc.get("name")
+        elif isinstance(data.get("categories"), dict):
+            loc = loc or (data["categories"] or {}).get("location")
+        _remember_meta(
+            url,
+            posted=data.get("updated_at") or data.get("createdAt") or data.get("first_published"),
+            location=loc,
+            company=data.get("company_name"),
+        )
         # Greenhouse calls it `content` (HTML-escaped), Lever `descriptionPlain`
         # plus a list of requirement sections.
         parts = [
@@ -524,6 +622,12 @@ def _queries_for(roles: list[str]) -> list[str]:
             if q not in seen:
                 seen.add(q)
                 out.append(q)
+    for host in _HARVEST_HOSTS:
+        for term in _HARVEST_TERMS:
+            q = f"site:{host} {term}"
+            if q not in seen:
+                seen.add(q)
+                out.append(q)
     return out
 
 
@@ -547,6 +651,20 @@ def fetch(roles: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, QUERY_WORKERS)) as ex:
         for q, found in zip(queries, ex.map(lambda q: websearch.search(q, limit=8), queries)):
             results.append((q, found))
+
+    # Hand every ATS address to atsboards before filtering anything: a company
+    # is worth polling directly even when this particular posting is stale, in
+    # the wrong city, or already known. That is the whole compounding loop —
+    # the open web finds WHO is hiring, the vendor APIs then read everything
+    # they have open, today rather than tomorrow.
+    try:
+        import atsboards
+
+        atsboards.remember_slugs(
+            r["url"] for _q, found in results for r in found if hosts.vendor_of(r["url"])
+        )
+    except Exception as e:  # noqa: BLE001 — learning is a bonus, never a blocker
+        print(f"[websource] could not hand slugs to atsboards: {type(e).__name__}: {e}")
 
     jobs: list[dict] = []
     seen: set[str] = set()
@@ -595,8 +713,15 @@ def fetch(roles: list[str], limit: int = 25, uid: str = "") -> list[dict]:
             j["skills"] = _infer_skills(f"{j['title']} {jd}") or j["skills"]
             enriched += 1
         body = j["jd_text"]
-        j["location"] = j["location"] or parse_location(f"{j['title']} {body}")
+        # Whatever the ATS API told us alongside the description outranks a
+        # guess made from prose: it is the board's own structured answer.
+        meta = posting_meta(j["url"])
+        j["posted_days"] = meta.get("posted_days")
+        j["location"] = (meta.get("location") or j["location"]
+                         or parse_location(f"{j['title']} {body}"))
+        j["company"] = meta.get("company") or j["company"]
         j["stipend"] = parse_stipend(body)
+        j["pay_note"] = parse_pay_note(body)
         j["duration"] = parse_duration(body)
 
     kept: list[dict] = []

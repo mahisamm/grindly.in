@@ -89,31 +89,70 @@ def _breadth(rep: dict) -> tuple[float, list[dict]]:
     return sum(s["points"] for s in subs), subs
 
 
+# Words that carry no meaning in a role query. "intern" leads the list because
+# the search template adds it back, so rolequeries strips it — an "ai intern"
+# domain is searched as "ai", and matching on the literal string would report a
+# miss on the one domain that WAS covered.
+_NOISE_WORDS = re.compile(
+    r"\b(intern|interns|internship|internships|trainee|job|jobs|role|roles|"
+    r"and|for|the|with|in|at)\b", re.I,
+)
+
+
+def _capability_clusters(skills: list[str]) -> dict[str, set[str]]:
+    """Group a candidate's skills by the kind of role they qualify for.
+
+    Coverage cannot be measured skill-by-skill against a list of job titles:
+    nobody advertises a "MongoDB internship", so a perfectly-targeted run would
+    score near zero on "skills that appear in a query". What matters is whether
+    every DISTINCT capability the candidate has is represented by some role —
+    a person who is half web and half computer vision must be searched for as
+    both. Reuses rolequeries' own mapping so the metric and the generator
+    cannot disagree about what a skill implies.
+    """
+    try:
+        import rolequeries
+
+        table = rolequeries._FALLBACK
+    except Exception:  # noqa: BLE001
+        return {}
+    blob = " ".join(s.lower() for s in skills)
+    out: dict[str, set[str]] = {}
+    for triggers, roles in table:
+        if any(t in blob for t in triggers):
+            out[roles[0]] = set(roles)
+    return out
+
+
 def _coverage(rep: dict) -> tuple[float, list[dict]]:
     domains = [d.lower() for d in (rep.get("plan", {}).get("domains") or [])]
-    skills = [s.lower() for s in (rep.get("plan", {}).get("skills") or [])][:12]
+    skills = [s.lower() for s in (rep.get("plan", {}).get("skills") or [])]
     sets = rep.get("keyword_sets") or []
-    asked = " ".join(" ".join(s).lower() for s in sets)
+    asked = _NOISE_WORDS.sub(" ", " ".join(" ".join(s).lower() for s in sets))
+
     # A domain counts as searched when its distinctive words appear in some
-    # query — "web developement" is matched by "web development intern", and
-    # demanding the exact string would report a miss on a typo the LLM fixed.
+    # query — "web developement" is matched by "web development", and demanding
+    # the exact string would report a miss on a typo the generator fixed.
     def _covered(phrase: str) -> bool:
-        words = [w for w in re.findall(r"[a-z]+", phrase) if len(w) > 2]
+        words = [w for w in re.findall(r"[a-z]+", _NOISE_WORDS.sub(" ", phrase))
+                 if len(w) > 1]
         if not words:
-            return False
+            return True  # nothing left to look for once the noise is gone
         return sum(1 for w in words if w[:5] in asked) >= max(1, len(words) - 1)
 
     dom_hit = sum(1 for d in domains if _covered(d))
-    skill_hit = sum(1 for s in skills if _covered(s))
+    clusters = _capability_clusters(skills)
+    cluster_hit = sum(1 for names in clusters.values()
+                      if any(n[:6] in asked for n in names))
     angles = len(sets)
 
     subs = [
         _sub("stated domains searched", f"{dom_hit}/{len(domains)}", "all",
              _pct(dom_hit, len(domains)) * 40, 40),
         _sub("distinct role angles queried", angles, TARGETS["role_angles"],
-             _ratio(angles, TARGETS["role_angles"]) * 35, 35),
-        _sub("top skills represented in a query", f"{skill_hit}/{len(skills)}", "60%",
-             min(1.0, _pct(skill_hit, len(skills)) / 0.6) * 25, 25),
+             _ratio(angles, TARGETS["role_angles"]) * 30, 30),
+        _sub("capability clusters covered", f"{cluster_hit}/{len(clusters)}", "all",
+             _pct(cluster_hit, len(clusters)) * 30, 30),
     ]
     return sum(s["points"] for s in subs), subs
 
@@ -185,7 +224,14 @@ def _fit(rep: dict) -> tuple[float, list[dict]]:
     fresh = sum(1 for l in listings
                 if isinstance(l.get("posted_days"), int)
                 and l["posted_days"] <= TARGETS["fresh_days"])
-    paid = sum(1 for l in listings if (l.get("stipend") or "").strip())
+    # Pay STATUS, not a pay figure. Sampled across ten real India internships on
+    # ATS boards, none carried a number — they say "a competitive salary" or
+    # "compensation will be discussed during the interview". Scoring on the
+    # figure graded the Indian market's disclosure habits, not anything this
+    # agent does; scoring on whether we can tell the candidate what the posting
+    # says about money grades the agent.
+    told = sum(1 for l in listings if any(
+        (l.get(k) or "").strip() for k in ("stipend", "pay_note", "duration")))
 
     subs = [
         _sub("location known", f"{located}/{n}", "100%", _pct(located, n) * 30, 30),
@@ -193,7 +239,8 @@ def _fit(rep: dict) -> tuple[float, list[dict]]:
              _pct(in_india, n) * 30, 30),
         _sub(f"posted within {TARGETS['fresh_days']}d", f"{fresh}/{n}", "100%",
              _pct(fresh, n) * 20, 20),
-        _sub("stipend or duration known", f"{paid}/{n}", "100%", _pct(paid, n) * 20, 20),
+        _sub("pay or duration answerable", f"{told}/{n}", "100%",
+             _pct(told, n) * 20, 20),
     ]
     return sum(s["points"] for s in subs), subs
 

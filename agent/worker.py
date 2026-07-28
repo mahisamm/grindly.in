@@ -1364,21 +1364,40 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             else:
                 fetch_errors[src] = "adapter import failed — see worker log"
 
-        # Fetch all platforms in parallel — each has isolated browser context per uid
+        # Board platforms fetch in parallel — each has an isolated browser
+        # context per uid. The always-on sources run as ONE ordered task beside
+        # them, because their order is load-bearing: websource hands every ATS
+        # address it finds to atsboards, which then polls those companies in
+        # this same run instead of tomorrow's. Run concurrently, atsboards would
+        # start before there was anything to hand it.
+        def run_always_on() -> list[tuple[str, list[dict]]]:
+            out = []
+            for name in ALWAYS_ON_SOURCES:
+                mod_on = loaded.get(name)
+                if mod_on is not None:
+                    out.append(_fetch_source_all_kw(
+                        name, mod_on, kw_sets, per_kw, uid, fetch_errors))
+            return out
+
+        board_srcs = {s: m for s, m in loaded.items() if s not in ALWAYS_ON_SOURCES}
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(loaded))) as ex:
             futs = {
                 ex.submit(_fetch_source_all_kw, src, mod, kw_sets, per_kw, uid, fetch_errors): src
-                for src, mod in loaded.items()
+                for src, mod in board_srcs.items()
             }
+            if any(s in loaded for s in ALWAYS_ON_SOURCES):
+                futs[ex.submit(run_always_on)] = "|".join(ALWAYS_ON_SOURCES)
             for fut in concurrent.futures.as_completed(futs):
                 src_done = futs[fut]
                 try:
-                    _, src_jobs = fut.result()
-                    all_jobs.extend(src_jobs)
-                    source_modules[src_done] = loaded[src_done]
+                    result = fut.result()
+                    for name, src_jobs in (result if isinstance(result, list) else [result]):
+                        all_jobs.extend(src_jobs)
+                        source_modules[name] = loaded[name]
                 except Exception as e:  # noqa: BLE001
                     log.error("%s parallel fetch error: %s", src_done, e)
-                    fetch_errors[src_done] = str(e)[:180]
+                    for name in src_done.split("|"):
+                        fetch_errors[name] = str(e)[:180]
 
         log.info("total fetched: %d listings across all sources", len(all_jobs))
 

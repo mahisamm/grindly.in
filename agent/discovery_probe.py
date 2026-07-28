@@ -197,7 +197,9 @@ def probe(email: str, limit: int, with_boards: bool) -> dict:
             "vendor": j.get("vendor") or hosts.vendor_of(url),
             "canonical": j.get("canonical") or url,
             "posted_days": j.get("posted_days"),
-            "stipend": j.get("stipend") or j.get("duration") or "",
+            "stipend": j.get("stipend") or "",
+            "pay_note": j.get("pay_note") or "",
+            "duration": j.get("duration") or "",
             "skills": j.get("skills", [])[:8],
             "jd_chars": len(j.get("jd_text") or ""),
             "score": score,
@@ -264,9 +266,10 @@ def _print(rep: dict) -> None:
         age = f"{r['posted_days']}d ago" if isinstance(r.get("posted_days"), int) else "age ?"
         print(f"\n{i:>2}. [{r['score']:>3}] {flag}  {r['title']}")
         print(f"     company  {r['company']}   {r['location'] or '(no location)'}   {age}")
+        pay = r.get("stipend") or r.get("pay_note") or r.get("duration") or ""
         print(f"     source   {r['source']}  [{r['host_class']}]"
               f"{'  ' + r['vendor'] if r.get('vendor') else ''}"
-              f"{'  ' + r['stipend'] if r.get('stipend') else ''}")
+              f"{'  ' + pay if pay else ''}")
         print(f"     found    {r['found_via']}")
         print(f"     url      {r['url']}")
     print(discovery_score.explain(rep))

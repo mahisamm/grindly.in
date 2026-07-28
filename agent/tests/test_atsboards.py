@@ -342,3 +342,50 @@ def test_a_company_already_on_greenhouse_keeps_the_url_it_advertises(monkeypatch
     _only("greenhouse", "acme", payload, monkeypatch)
     assert atsboards.fetch([], limit=5)[0]["url"] == \
         "https://job-boards.eu.greenhouse.io/acme/jobs/7"
+
+
+# ---- learning inside a single run -------------------------------------------
+
+def test_a_company_found_on_the_web_is_polled_in_the_same_run():
+    """The database path only closes the loop across RUNS, and only after a
+    listing has been written — so a company a search surfaced this morning was
+    not asked directly until tomorrow. This closes it inside one sweep."""
+    assert atsboards.remember_slugs([
+        "https://boards.greenhouse.io/freshco/jobs/9",
+        "https://jobs.lever.co/anotherco/abc12345-1111",
+        "https://apply.workable.com/thirdco/j/ABC123",
+        "https://jobs.smartrecruiters.com/BigCo/744000123",
+    ]) == 4
+    learned = set(_REAL_SLUGS_SEEN())  # the fixture stubs the module attribute
+    assert ("greenhouse", "freshco") in learned
+    assert ("lever", "anotherco") in learned
+    assert ("workable", "thirdco") in learned
+    assert ("smartrecruiters", "BigCo") in learned
+
+
+def test_a_company_is_only_learned_once():
+    urls = ["https://boards.greenhouse.io/freshco/jobs/9"]
+    assert atsboards.remember_slugs(urls) == 1
+    assert atsboards.remember_slugs(urls) == 0
+
+
+def test_a_board_link_names_no_ats_company():
+    assert atsboards.remember_slugs([
+        "https://internshala.com/internship/detail/x",
+        "https://www.linkedin.com/jobs/view/1",
+        "",
+    ]) == 0
+
+
+def test_the_learned_list_is_bounded(monkeypatch):
+    """A bad day of results must not grow the poll list without limit."""
+    monkeypatch.setattr(atsboards, "LEARNED_MAX", 5)
+    atsboards.remember_slugs(
+        f"https://boards.greenhouse.io/co{n}/jobs/1" for n in range(40))
+    assert len(atsboards._LEARNED) == 5
+
+
+def test_an_unwritable_learned_file_does_not_fail_discovery(monkeypatch):
+    monkeypatch.setattr(atsboards, "_LEARNED_FILE", "/nonexistent\x00/bad.json")
+    atsboards.remember_slugs(["https://boards.greenhouse.io/freshco/jobs/9"])
+    assert ("greenhouse", "freshco") in atsboards._LEARNED
