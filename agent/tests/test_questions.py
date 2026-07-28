@@ -381,3 +381,16 @@ def test_a_fact_we_do_not_hold_still_stops_the_application():
 def test_open_questions_still_go_nowhere_near_the_profile():
     assert _setup_answer("Why should we hire you?", "textarea") is None
     assert _setup_answer("Father's name") is None
+
+
+def test_a_college_box_is_never_filled_from_the_combined_education_line():
+    """Seen live: an account whose `education` held only "B.Tech" had its
+    "College name" box answered "B.Tech". The combined line is not a college."""
+    legacy = {"education": "B.Tech"}
+    assert _setup_answer("College/University name", profile=legacy) is None
+    # The same line IS a reasonable answer for the course it describes.
+    assert _setup_answer("Degree / Course", profile=legacy) == "B.Tech"
+
+
+def test_the_college_still_answers_when_we_actually_hold_it():
+    assert _setup_answer("College name", profile={"college": "VIT Vellore"}) == "VIT Vellore"

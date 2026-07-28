@@ -403,8 +403,12 @@ def _from_setup(label: str, field: dict, profile: dict) -> str | None:
         # "Class 12 stream" match these patterns and are asking about the
         # candidate's SCHOOL — answering them with the university and the B.Tech
         # states two facts that aren't true, on a form, under their name.
+        # No `education` fallback here. That column is the combined "course and
+        # college" line, and on older accounts it often holds only the course —
+        # seen live, a "College name" box was answered "B.Tech". Better to stop
+        # and ask than to write the degree where the college goes.
         (bool(_COLLEGE_Q.search(label) and not _SCHOOL_LEVEL.search(label)),
-         _text("college") or _text("education")),
+         _text("college")),
         (bool(_DEGREE_Q.search(label) and not _SCHOOL_LEVEL.search(label)),
          _text("degree") or _text("education")),
     ]
