@@ -22,9 +22,12 @@ def clean(monkeypatch):
 
 
 def _results(*urls):
+    # The snippet names a city on purpose: `fetch` drops anything it cannot
+    # place in India, because the word "india" in a query is a hint to the
+    # search engine and never a filter on what comes back.
     return [
         {"title": "Software Development Intern at Acme", "url": u,
-         "snippet": "We are hiring a 2026 summer intern. Apply now."}
+         "snippet": "We are hiring a 2026 summer intern in Bengaluru, India. Apply now."}
         for u in urls
     ]
 
@@ -411,14 +414,22 @@ def test_every_template_is_executed(monkeypatch):
     assert any("careers" in q for q in asked), "careers pages never queried"
 
 
-def test_the_query_budget_is_bounded_by_domains(monkeypatch):
+def test_the_query_budget_is_bounded_by_roles(monkeypatch):
     """This runs per user per sweep against a self-hosted metasearch instance;
     an unbounded fan-out gets the server's IP blocked, which ends discovery for
     every user at once."""
     asked: list[str] = []
     monkeypatch.setattr(websearch, "search", lambda q, limit=10: (asked.append(q), [])[1])
-    websource.fetch(["a", "b", "c", "d", "e"], limit=25)
-    assert len(asked) == 3 * len(websource._TEMPLATES)
+    roles = [f"role {n}" for n in range(websource.MAX_ROLES + 6)]
+    websource.fetch(roles, limit=25)
+    assert len(asked) == websource.MAX_ROLES * len(websource._TEMPLATES)
+
+
+def test_a_role_is_never_searched_twice(monkeypatch):
+    asked: list[str] = []
+    monkeypatch.setattr(websearch, "search", lambda q, limit=10: (asked.append(q), [])[1])
+    websource.fetch(["data science", "data science", " data science "], limit=25)
+    assert len(asked) == len(set(asked))
 
 
 @pytest.mark.parametrize("title", [

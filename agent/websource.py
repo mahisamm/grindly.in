@@ -14,14 +14,17 @@ so worker.py treats it as one more source. It opens no browser: search results
 plus the resolver's existing link-following are enough to reach a real form.
 """
 from __future__ import annotations
+import concurrent.futures
 from datetime import datetime, timezone
 import hashlib
 import html
 import json
+import os
 import re
 import urllib.request
 
 import flags
+import hosts
 import websearch
 
 # Must match this module's import name: worker.py resolves a listing's source
@@ -32,18 +35,33 @@ SOURCE = "websource"
 # Query templates. Each aims at a page an employer OWNS, not a board listing:
 # ATS hosts are where a company's own postings live, and "apply"/"careers"
 # wording is what a real application page says about itself.
+#
+# `{role}` is a job title the candidate could hold — "machine learning
+# engineer", "computer vision engineer" — not a skill and not a domain. See
+# agent/rolequeries.py for why: nobody advertises a "YOLOv8 internship".
 _TEMPLATES = [
     # site:-scoped ATS queries carry this source. Verified against the live
     # instance: they return real Indian employers' own postings (Paytm, FamPay,
     # Epifi, Graviton, Ogilvy...), many of them the /apply page itself. Every
     # one is TIER_A — the candidate holds no account there.
-    "site:boards.greenhouse.io {domain} intern india",
-    "site:jobs.lever.co {domain} intern india",
-    "site:jobs.ashbyhq.com {domain} intern india",
-    # Employer-owned forms outside the big three ATSs.
-    "{domain} internship india apply site:docs.google.com/forms",
-    "{domain} internship india careers apply 2026",
+    "site:boards.greenhouse.io {role} intern india",
+    "site:jobs.lever.co {role} intern india",
+    "site:jobs.ashbyhq.com {role} intern india",
+    # The two vendors atsboards can also read directly. Worth searching as well
+    # as polling: a search finds the COMPANIES, and every ATS URL that lands in
+    # the jobs table becomes a board atsboards asks directly from then on.
+    "site:jobs.smartrecruiters.com {role} intern india",
+    "site:apply.workable.com {role} intern india",
+    # Employer-owned forms and careers pages outside any ATS.
+    "{role} internship india apply site:docs.google.com/forms",
+    "{role} internship india careers apply {year}",
 ]
+
+# How many role titles get the full template treatment. Seven templates each, so
+# nine roles is ~63 queries a run — up from the fifteen the old three-domain
+# budget allowed, and affordable now that the queries run concurrently.
+MAX_ROLES = int(os.environ.get("GRINDLY_SEARCH_ROLES", "9"))
+QUERY_WORKERS = int(os.environ.get("GRINDLY_SEARCH_WORKERS", "4"))
 
 # Deliberately UNQUOTED. An exact-phrase query ("web development intern")
 # matches almost nothing on a real posting, whose title is "Software Developer
@@ -69,6 +87,111 @@ def says_internship(title: str) -> bool:
     return bool(_INTERN_RE.search(title or ""))
 
 
+# ---- where, how much, how long ---------------------------------------------
+#
+# All three were left empty by both employer-hosted sources, which quietly
+# disabled three things at once: the user's stipend_min filter had nothing to
+# filter on, their location preference had nothing to compare, and the dashboard
+# showed a blank where the answer to "can I actually take this?" belongs. The
+# facts are in the posting text; nothing was reading them.
+
+_CITY = (
+    "bengaluru", "bangalore", "mumbai", "new delhi", "delhi", "ncr", "gurgaon",
+    "gurugram", "hyderabad", "pune", "chennai", "noida", "kolkata", "ahmedabad",
+    "jaipur", "chandigarh", "kochi", "coimbatore", "indore", "bhubaneswar",
+    "nagpur", "visakhapatnam", "thiruvananthapuram", "mysuru", "mysore",
+)
+_CITY_RE = re.compile(r"\b(" + "|".join(_CITY) + r")\b", re.I)
+_INDIA_RE = re.compile(r"\bindia\b", re.I)
+_REMOTE_RE = re.compile(r"\b(remote|work from home|wfh|anywhere in india)\b", re.I)
+
+# Stipend, as an Indian posting writes it: "₹15,000/month", "INR 20000 per
+# month", "Rs. 10,000 - 25,000", "25k/month", "unpaid".
+_STIPEND_RE = re.compile(
+    r"(?:(?:₹|rs\.?|inr)\s*([\d,]{3,12}(?:\s*[-–to]{1,3}\s*[\d,]{3,12})?)"
+    r"|(\b\d{1,3}(?:,\d{3})+|\b\d{1,3}\s*k\b)"
+    r")\s*(?:/|per\s+)?\s*(month|mo\b|annum|year|yr\b|week)?",
+    re.I,
+)
+_UNPAID_RE = re.compile(r"\bunpaid\b|\bno stipend\b", re.I)
+_DURATION_RE = re.compile(
+    r"\b(\d{1,2})\s*(?:\+)?\s*(month|months|week|weeks)\b(?:\s*(?:internship|duration))?",
+    re.I,
+)
+
+
+def parse_stipend(text: str) -> str:
+    """A stipend out of posting text, or "" when it doesn't say.
+
+    Deliberately conservative: a number with no currency marker and no period is
+    as likely to be a headcount or a revenue figure as a salary, and a wrong
+    stipend on the dashboard is worse than a blank one.
+    """
+    if not text:
+        return ""
+    window = text[:4000]
+    if _UNPAID_RE.search(window):
+        return "Unpaid"
+    m = _STIPEND_RE.search(window)
+    if not m:
+        return ""
+    amount = (m.group(1) or m.group(2) or "").strip()
+    if not amount:
+        return ""
+    period = (m.group(3) or "").lower()
+    # No currency symbol AND no period means we are guessing at a bare number.
+    if not m.group(1) and not period:
+        return ""
+    unit = {"mo": "month", "yr": "year", "annum": "year"}.get(period, period)
+    return f"₹{amount}/{unit}" if unit else f"₹{amount}"
+
+
+def parse_duration(text: str) -> str:
+    if not text:
+        return ""
+    m = _DURATION_RE.search(text[:4000])
+    if not m:
+        return ""
+    n, unit = m.group(1), m.group(2).lower().rstrip("s")
+    return f"{n} {unit}s" if n != "1" else f"1 {unit}"
+
+
+def parse_location(text: str) -> str:
+    """Best-effort place, preferring a named city over the country.
+
+    A blank location is not neutral — the user asked for Remote or for a
+    specific city, and a listing with no place cannot be checked against either,
+    so it silently bypasses their preference.
+    """
+    if not text:
+        return ""
+    window = text[:6000]
+    city = _CITY_RE.search(window)
+    remote = bool(_REMOTE_RE.search(window))
+    if city:
+        place = city.group(1).title()
+        return f"Remote — {place}, India" if remote else f"{place}, India"
+    if _INDIA_RE.search(window):
+        return "Remote — India" if remote else "India"
+    return "Remote" if remote else ""
+
+
+def in_india(*texts: str) -> bool:
+    """Could a candidate in India take this role?
+
+    atsboards has always enforced this from the board's own location field.
+    websource enforced nothing, so a run that asked five times for "india"
+    returned EU Greenhouse boards, Wellfound and Bayt — the word in the query is
+    a hint to the engine, never a filter on the result.
+    """
+    blob = " ".join(t for t in texts if t)[:8000]
+    if _INDIA_RE.search(blob) or _CITY_RE.search(blob):
+        return True
+    # A bare "Remote" on a foreign company's posting usually means remote in
+    # THEIR country, so it only counts when India is named somewhere too.
+    return False
+
+
 def enabled() -> bool:
     """Both switches must agree: the feature flag AND a usable provider. A flag
     on with no reachable search backend would log one failure per query and
@@ -85,9 +208,14 @@ _ATS_POSTING = re.compile(
     r"(?:jobs\.lever\.co/[^/]+/[0-9a-f-]{8,}"          # lever: company/uuid
     r"|greenhouse\.io/[^/]+/jobs/\d+"                   # greenhouse: company/jobs/id
     r"|ashbyhq\.com/[^/]+/[0-9a-f-]{8,}"                # ashby: company/uuid
+    r"|smartrecruiters\.com/[^/]+/\d{6,}"               # smartrecruiters: company/id
+    r"|apply\.workable\.com/[^/]+/j/[0-9A-Z]{6,}"       # workable: company/j/shortcode
     r"|docs\.google\.com/forms)", re.I,
 )
-_ATS_HOST = re.compile(r"(?:lever\.co|greenhouse\.io|ashbyhq\.com)", re.I)
+_ATS_HOST = re.compile(
+    r"(?:lever\.co|greenhouse\.io|ashbyhq\.com|smartrecruiters\.com|workable\.com)",
+    re.I,
+)
 
 # Titles that belong to an index page rather than one role.
 _INDEX_TITLES = re.compile(
@@ -95,18 +223,68 @@ _INDEX_TITLES = re.compile(
     r"job application for)?$", re.I,
 )
 
+# A title that counts the roles on the page is an index announcing itself:
+# "53 Fullstack Developer Intern Jobs in India", "Top 10 Internships". Both
+# arrived live and outscored real postings, because the matcher then scored the
+# aggregate text of every unrelated role listed below.
+_COUNTS_ROLES = re.compile(
+    r"^\s*(?:top\s+)?\d{1,4}\s*\+?\s+[\w /,-]{0,40}\b(jobs?|internships?|openings?|"
+    r"vacanc(?:y|ies)|roles?|opportunit(?:y|ies))\b", re.I,
+)
+
+# Paths that list roles rather than hold one. The second alternative matters as
+# much as the first: `web3.career/full-stack+intern-jobs` is an index whose last
+# segment merely ENDS in "jobs" rather than being it, and that one reached the
+# candidate list and scored 84 off the pooled text of every role on the page.
+_INDEX_PATH = re.compile(
+    r"/(jobs?|careers?|internships?|openings?|vacanc(?:y|ies)|search|browse|"
+    r"category|categories|tag|tags|page)/?$"
+    r"|[-+_](jobs|internships|openings|vacancies)/?$"
+    r"|[?&](page|start|offset)=", re.I,
+)
+
+# How many distinct role-ish headings a page may contain before it is a list of
+# jobs rather than one job.
+_MAX_ROLE_MENTIONS = int(os.environ.get("GRINDLY_INDEX_ROLE_LIMIT", "6"))
+
 
 def _is_a_single_posting(title: str, url: str) -> bool:
     """Is this one applyable role, or a company's list of roles?
 
     On a known ATS the URL settles it: a per-job path is a posting, a bare
-    company path is the index. Elsewhere we cannot tell from the URL, so fall
-    back to the title — an index page is usually titled just "Careers" or the
-    company's own name.
+    company path is the index. Elsewhere, three cheap tells — a title that
+    counts roles, a title that is only the word "Careers", or a path that ends
+    at a listing segment. `looks_like_an_index` adds a fourth once the page text
+    is in hand, which is the one that catches a listicle whose title says
+    nothing.
     """
     if _ATS_HOST.search(url):
         return bool(_ATS_POSTING.search(url))
-    return not _INDEX_TITLES.match(title.strip())
+    title = (title or "").strip()
+    if _INDEX_TITLES.match(title) or _COUNTS_ROLES.search(title):
+        return False
+    return not _INDEX_PATH.search(url or "")
+
+
+def looks_like_an_index(text: str) -> bool:
+    """Does the fetched page hold many postings rather than one?
+
+    Structure, not wording. A real posting names its role once in the heading
+    and then describes it; an index repeats "... Intern", "... Developer",
+    "Apply Now" once per row. Counting those repeats catches the aggregator
+    listicles that no title test can — the AICTE portal, ambitionbox's "53
+    jobs", web3.career — all of which passed every check we had and then scored
+    in the 80s and 90s off the pooled text of dozens of unrelated roles.
+    """
+    if not text:
+        return False
+    window = text[:20000].lower()
+    apply_buttons = len(re.findall(r"\bapply\s+(?:now|here|online)\b", window))
+    role_headings = len(re.findall(
+        r"\b(?:intern|internship|developer|engineer|analyst|designer)\b(?=[^.]{0,30}"
+        r"(?:\||·|•|–|—|\d{1,2}\s*(?:days?|hours?|months?)\s+ago))", window))
+    stipend_rows = len(re.findall(r"₹\s*[\d,]{3,}", window))
+    return max(apply_buttons, role_headings, stipend_rows) > _MAX_ROLE_MENTIONS
 
 
 def _looks_like_an_internship(title: str, snippet: str) -> bool:
@@ -146,14 +324,32 @@ def _company_from(title: str, url: str) -> str:
     the host. Never returns empty — an application filed under a blank company
     is unreadable on the dashboard.
     """
-    m = re.search(r"(?:lever\.co|greenhouse\.io|ashbyhq\.com)/([^/?#]+)", url, re.I)
+    m = re.search(
+        r"(?:lever\.co|greenhouse\.io|ashbyhq\.com|smartrecruiters\.com"
+        r"|apply\.workable\.com)/([^/?#]+)", url, re.I,
+    )
     if m:
-        return m.group(1).replace("-", " ").replace("_", " ").strip().title()[:60]
+        return _tidy_company(m.group(1))
     m = re.search(r"\bat\s+([A-Z][\w&.\- ]{2,40})", title)
     if m:
         return m.group(1).strip()[:60]
     host = re.sub(r"^www\.", "", re.sub(r"^https?://", "", url).split("/")[0])
-    return (host.split(".")[0] or "Unknown").title()[:60]
+    return _tidy_company(host.split(".")[0]) or "Unknown"
+
+
+# Trailing digits and vendor suffixes an ATS appends to make a slug unique when
+# the name is taken. Left in, the dashboard reads "Stable Money1", "Quantco-",
+# "Plus-2" and "Bookeeapp" — which is what the employer is called nowhere.
+_SLUG_NOISE = re.compile(r"(?:[-_ ]?\d+|[-_]+|inc|llc|ltd|pvt|technologies|hq)$", re.I)
+
+
+def _tidy_company(slug: str) -> str:
+    name = (slug or "").replace("-", " ").replace("_", " ").strip()
+    prev = None
+    while name and name != prev:
+        prev = name
+        name = _SLUG_NOISE.sub("", name).strip()
+    return name.title()[:60]
 
 
 def _clean_title(title: str) -> str:
@@ -314,72 +510,129 @@ def scrape_jd(url: str, uid: str = "") -> str:
     return re.sub(r"\s+", " ", text).strip()[:6000]
 
 
-def fetch(domains: list[str], limit: int = 25, uid: str = "") -> list[dict]:
-    """Search the web for employer-hosted internships in these domains."""
+def _queries_for(roles: list[str]) -> list[str]:
+    """Every search this run will issue, deduped and in a stable order."""
+    year = datetime.now(timezone.utc).year
+    out: list[str] = []
+    seen: set[str] = set()
+    for role in (roles or [])[:MAX_ROLES]:
+        role = (role or "").strip()
+        if not role:
+            continue
+        for template in _TEMPLATES:
+            q = template.format(role=role, year=year)
+            if q not in seen:
+                seen.add(q)
+                out.append(q)
+    return out
+
+
+def fetch(roles: list[str], limit: int = 25, uid: str = "") -> list[dict]:
+    """Search the web for employer-hosted internships for these role titles.
+
+    `roles` are job titles, not skills — see rolequeries.py. The parameter used
+    to be `domains` and was fed the user's two profile domains, which is how a
+    resume full of computer-vision work was searched for as "web developement"
+    and nothing else.
+    """
     if not enabled():
         return []
 
+    queries = _queries_for(roles)
+    # Concurrent, because the budget went from fifteen queries to ~sixty and
+    # serially that is five minutes of a sweep. Four at a time: SearXNG paces its
+    # own upstreams, and a burst wide enough to get this server's IP blocked
+    # would end discovery for every user at once.
+    results: list[tuple[str, list[dict]]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, QUERY_WORKERS)) as ex:
+        for q, found in zip(queries, ex.map(lambda q: websearch.search(q, limit=8), queries)):
+            results.append((q, found))
+
     jobs: list[dict] = []
     seen: set[str] = set()
-    # Budget queries: this runs per user per sweep, and a self-hosted metasearch
-    # instance that hammers its upstream engines gets the server's IP blocked —
-    # which would end discovery for every user at once. Three domains by five
-    # templates is fifteen queries a run, the figure this instance was sized for.
-    #
-    # It used to slice `_TEMPLATES[:min(3, len(_TEMPLATES))]` — a budget that
-    # ignored `domains` entirely and simply cut the list at three, so the Google
-    # Forms and careers-page templates were never once executed. Employer-owned
-    # discovery outside the big three ATSs was unreachable by construction, and
-    # nothing said so: the source reported the results it did find and looked
-    # perfectly healthy.
-    for domain in (domains or [])[:3]:
-        for template in _TEMPLATES:
-            if len(jobs) >= limit:
-                break
-            for r in websearch.search(template.format(domain=domain), limit=8):
-                url = r["url"]
-                if url in seen:
-                    continue
-                seen.add(url)
-                if not _looks_like_an_internship(r["title"], r["snippet"]):
-                    continue
-                title = _clean_title(r["title"])
-                # An index page has no form to submit; scoring it means scoring
-                # the aggregate text of every unrelated role the company lists.
-                if not _is_a_single_posting(title, url):
-                    continue
-                jobs.append({
-                    # Stable across runs so the same posting dedupes instead of
-                    # reappearing as new work every sweep.
-                    "external_id": hashlib.sha1(url.encode()).hexdigest()[:16],
-                    "title": title,
-                    "company": _company_from(r["title"], url),
-                    "location": "",
-                    "stipend": "",
-                    "duration": "",
-                    "skills": _infer_skills(f"{title} {r['snippet']}"),
-                    "url": url,
-                    "jd_text": r["snippet"],
-                    "source": SOURCE,
-                })
-                if len(jobs) >= limit:
-                    break
+    for _query, found in results:
+        for r in found:
+            url = r["url"]
+            if url in seen or len(jobs) >= limit:
+                continue
+            seen.add(url)
+            if not _looks_like_an_internship(r["title"], r["snippet"]):
+                continue
+            title = _clean_title(r["title"])
+            # An index page has no form to submit; scoring it means scoring the
+            # aggregate text of every unrelated role the company lists.
+            if not _is_a_single_posting(title, url):
+                continue
+            jobs.append({
+                # Stable across runs so the same posting dedupes instead of
+                # reappearing as new work every sweep.
+                "external_id": hashlib.sha1(url.encode()).hexdigest()[:16],
+                "canonical": _canonical(url),
+                "host_class": hosts.classify(url),
+                "vendor": hosts.vendor_of(url),
+                "title": title,
+                "company": _company_from(r["title"], url),
+                "location": parse_location(f"{title} {r['snippet']}"),
+                "stipend": "",
+                "duration": "",
+                "skills": _infer_skills(f"{title} {r['snippet']}"),
+                "url": url,
+                "jd_text": r["snippet"],
+                "source": SOURCE,
+            })
 
-    # Enrich with the real posting text BEFORE these are scored. Bounded by the
-    # candidate list itself (a dozen or so), each a plain HTTP GET.
+    # Enrich with the real posting text BEFORE anything is judged on it. Every
+    # gate below reads better from 6,000 characters of the posting than from a
+    # 400-character search snippet, and the matcher scores on it too.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, QUERY_WORKERS)) as ex:
+        texts = list(ex.map(lambda j: scrape_jd(j["url"], uid), jobs))
     enriched = 0
-    for j in jobs:
-        jd = scrape_jd(j["url"], uid)
+    for j, jd in zip(jobs, texts):
         if len(jd) > len(j["jd_text"]):
             j["jd_text"] = jd
             # Re-derive skills from the full text; the title alone rarely names
             # the stack, and skills are what the matcher actually compares on.
             j["skills"] = _infer_skills(f"{j['title']} {jd}") or j["skills"]
             enriched += 1
+        body = j["jd_text"]
+        j["location"] = j["location"] or parse_location(f"{j['title']} {body}")
+        j["stipend"] = parse_stipend(body)
+        j["duration"] = parse_duration(body)
 
-    print(f"[websource] {len(jobs)} employer-hosted candidate(s) from "
-          f"{websearch.provider()} ({enriched} with a full description)")
-    return jobs
+    kept: list[dict] = []
+    dropped = {"index": 0, "not_india": 0, "duplicate": 0}
+    canonical_seen: set[str] = set()
+    for j in jobs:
+        if looks_like_an_index(j["jd_text"]):
+            dropped["index"] += 1
+            continue
+        # The word "india" in a query is a hint to the engine, never a filter on
+        # the result — five of these queries said india and returned EU boards.
+        if not in_india(j["title"], j["location"], j["jd_text"]):
+            dropped["not_india"] += 1
+            continue
+        if j["canonical"] in canonical_seen:
+            dropped["duplicate"] += 1
+            continue
+        canonical_seen.add(j["canonical"])
+        kept.append(j)
+
+    print(f"[websource] {len(kept)} employer-hosted candidate(s) from "
+          f"{websearch.provider()} over {len(queries)} quer(ies) "
+          f"({enriched} with a full description); dropped "
+          f"{dropped['index']} index page(s), {dropped['not_india']} outside India, "
+          f"{dropped['duplicate']} duplicate(s)")
+    return kept
+
+
+def _canonical(url: str) -> str:
+    """One identity per posting, whatever address it arrived at."""
+    try:
+        import atsboards
+
+        return atsboards.canonical_key(url)
+    except Exception:  # noqa: BLE001 — circular import in a test harness, say
+        return (url or "").strip().lower()
 
 
 def close(uid: str = "") -> None:

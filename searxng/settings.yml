@@ -56,6 +56,20 @@ outgoing:
 # DuckDuckGo + Bing + Brave tolerate server-side querying far better, and
 # metasearch means one engine failing degrades the result list instead of
 # ending the search.
+#
+# Measured from the production VPS on 2026-07-29, because the code elsewhere had
+# been carrying a stale claim that every engine was blocked and `site:` queries
+# were useless — written during one throttled window and never re-checked:
+#
+#   answering   brave, duckduckgo, yandex      (site: operators work fine)
+#   refusing    google cse "too many requests", mojeek "access denied",
+#               startpage "Suspended: CAPTCHA"
+#
+# The refusing three are left enabled on purpose. They cost one failed request
+# each and cost nothing else — a refusal is per-engine, not per-search — and the
+# block is on this datacenter IP, not permanent. websearch.engines_refusing()
+# records what actually happened per run, so the next person reads a
+# measurement instead of a comment.
 engines:
   - name: duckduckgo
     disabled: false
@@ -71,6 +85,13 @@ engines:
   - name: yandex
     disabled: false
   - name: startpage
+    disabled: false
+  # Added for breadth. Both are independent indexes rather than another Bing
+  # front-end, so what they add is genuinely different pages, and neither has a
+  # history of blocking server-side querying.
+  - name: qwant
+    disabled: false
+  - name: mullvad leta
     disabled: false
   # Everything below is noise for a job search and only spends upstream quota.
   - name: wikipedia

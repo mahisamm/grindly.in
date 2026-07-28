@@ -32,7 +32,9 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import db  # noqa: E402
+import discovery_score  # noqa: E402
 import flags  # noqa: E402
+import hosts  # noqa: E402
 import matcher  # noqa: E402
 import worker  # noqa: E402
 
@@ -182,22 +184,32 @@ def probe(email: str, limit: int, with_boards: bool) -> dict:
         score, reason = matcher.score_job(
             j, skills, plan["domains"], profile.get("experience_level"), j.get("jd_text", "")
         )
+        url = j.get("url", "")
         scored.append({
             "title": j.get("title", ""),
             "company": j.get("company", ""),
             "location": j.get("location", ""),
-            "url": j.get("url", ""),
+            "url": url,
             "source": j.get("source", ""),
+            # Written by the adapters now; recomputed here only for a source
+            # that predates them, so the grade never rests on a missing field.
+            "host_class": j.get("host_class") or hosts.classify(url),
+            "vendor": j.get("vendor") or hosts.vendor_of(url),
+            "canonical": j.get("canonical") or url,
+            "posted_days": j.get("posted_days"),
+            "stipend": j.get("stipend") or j.get("duration") or "",
             "skills": j.get("skills", [])[:8],
             "jd_chars": len(j.get("jd_text") or ""),
             "score": score,
             "reason": reason,
             "passes_threshold": score >= threshold,
-            "found_via": trace.origin.get(j.get("url", ""), "adapter search"),
+            "found_via": trace.origin.get(url, "adapter search"),
         })
     scored.sort(key=lambda r: -r["score"])
 
-    return {
+    import websearch
+
+    rep = {
         "user": {"email": user["email"], "id": user["id"]},
         "plan": {
             "domains": plan["domains"],
@@ -211,10 +223,18 @@ def probe(email: str, limit: int, with_boards: bool) -> dict:
         "boards_included": with_boards,
         "per_source": per_source,
         "web_queries": trace.queries,
+        "engines_answering": websearch.engines_answering(),
+        "engines_refusing": websearch.engines_refusing(),
         "ats_boards": trace.boards,
-        "listings": scored[:limit],
+        # The grade reads EVERY listing found, not the slice printed below —
+        # scoring the top N would reward a run that found one good posting and
+        # fifty bad ones exactly as much as one that found only the good one.
+        "listings": scored,
+        "shown": limit,
         "total_found": len(scored),
     }
+    rep["grade"] = discovery_score.score(rep)
+    return rep
 
 
 def _print(rep: dict) -> None:
@@ -237,14 +257,19 @@ def _print(rep: dict) -> None:
         for b in sorted(rep["ats_boards"], key=lambda x: -x["india_internships"])[:20]:
             print(f"  {b['vendor']:<11} {b['slug']:<32} "
                   f"{b['postings']:>4} postings  {b['india_internships']:>2} match")
-    print(f"\nlistings ({rep['total_found']} found, showing {len(rep['listings'])})")
-    for i, r in enumerate(rep["listings"], 1):
+    shown = rep["listings"][: rep.get("shown") or 20]
+    print(f"\nlistings ({rep['total_found']} found, showing {len(shown)})")
+    for i, r in enumerate(shown, 1):
         flag = "PASS" if r["passes_threshold"] else "    "
+        age = f"{r['posted_days']}d ago" if isinstance(r.get("posted_days"), int) else "age ?"
         print(f"\n{i:>2}. [{r['score']:>3}] {flag}  {r['title']}")
-        print(f"     company  {r['company']}   {r['location']}")
-        print(f"     source   {r['source']}")
+        print(f"     company  {r['company']}   {r['location'] or '(no location)'}   {age}")
+        print(f"     source   {r['source']}  [{r['host_class']}]"
+              f"{'  ' + r['vendor'] if r.get('vendor') else ''}"
+              f"{'  ' + r['stipend'] if r.get('stipend') else ''}")
         print(f"     found    {r['found_via']}")
         print(f"     url      {r['url']}")
+    print(discovery_score.explain(rep))
 
 
 def main() -> None:

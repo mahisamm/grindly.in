@@ -105,13 +105,26 @@ def test_expand_search_keywords_adds_matching_role_variants():
     assert ["frontend developer"] in variants
 
 
-def test_expand_search_keywords_deduplicates_and_caps_at_4():
+def test_expand_search_keywords_deduplicates_and_stays_bounded():
     variants = worker._expand_search_keywords(
         ["web development", "data science"],
         ["react", "python", "sql", "kotlin", "java", "node"],
     )
-    assert len(variants) <= 4
+    assert len(variants) <= worker.MAX_SEARCH_ANGLES
     assert len(variants) == len({str(v) for v in variants})  # no dupes
+
+
+def test_every_stated_domain_is_searched():
+    """The cap used to be four, applied to `domains[:2]` plus skill variants —
+    so a third domain the user typed themselves was dropped without a word, and
+    an AI-heavy resume was searched for as "web development" and nothing else."""
+    variants = worker._expand_search_keywords(
+        ["web development", "full stack", "ai intern"],
+        ["python", "pytorch", "opencv", "yolov8", "react"],
+    )
+    asked = " ".join(v[0] for v in variants)
+    assert "ai" in asked or "machine learning" in asked or "computer vision" in asked
+    assert any("computer vision" in v[0] or "machine learning" in v[0] for v in variants)
 
 
 # ---------- _tailor_key ----------

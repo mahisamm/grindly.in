@@ -289,12 +289,17 @@ def test_every_seeded_slug_is_a_plausible_one():
     """A slug that 404s costs a request and yields nothing, and a typo here is
     invisible in the logs of a source expected to return nothing for most boards
     on most days."""
+    # SmartRecruiters slugs are case-SENSITIVE identifiers ("BoschGroup",
+    # "AveryDennison") and 404 when lowercased, unlike the big three's, which
+    # are lowercase by convention.
+    case_sensitive = {"smartrecruiters"}
     for vendor, slugs in atsboards.BOARDS.items():
         assert vendor in atsboards._API
-        assert slugs, vendor
         assert len(set(slugs)) == len(slugs), f"{vendor} has a duplicate slug"
         for s in slugs:
-            assert s == s.strip().lower()
+            assert s == s.strip()
+            if vendor not in case_sensitive:
+                assert s == s.lower()
             assert "/" not in s and " " not in s, s
 
 

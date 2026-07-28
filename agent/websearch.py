@@ -24,36 +24,16 @@ import time
 import urllib.parse
 import urllib.request
 
+import hosts
+
 TIMEOUT = int(os.environ.get("GRINDLY_SEARCH_TIMEOUT", "20"))
 
-# Domains whose "results" are never an employer's own application page. Boards
-# are handled by their own adapters, and aggregator/spam mirrors reprint the same
-# listing without ever owning an apply form.
-# Matched as a DOMAIN LABEL, not a full host: these brands run one site per
-# country ("glassdoor.co.in", "indeed.co.uk", "uk.linkedin.com"), and a
-# suffix-match list of ".com" names lets every regional twin straight through —
-# which is how a Glassdoor link survived the filter in the first live run.
-_EXCLUDED_BRANDS = {
-    # Job boards. Either an adapter already owns them, or applying needs the
-    # user's account there, which is never submitted from our servers.
-    "linkedin", "indeed", "naukri", "unstop", "internshala", "glassdoor",
-    "monster", "shine", "timesjobs", "simplyhired", "ziprecruiter", "jooble",
-    "neuvoo", "foundit", "hirist", "cutshort", "instahyre", "apna",
-    # Aggregators and scraped mirrors: they reprint a listing and own no form.
-    "myinternships", "internshipdunia", "letsintern", "twenty19", "jobsuche",
-    "careerjet", "trovit", "adzuna", "talent", "jora", "whatjobs", "expertini",
-    # Indian mirrors. Every one of these arrived in the first live run of the
-    # careers-page query reprinting the SAME Microsoft and Google internships —
-    # a page about an application is not an application, and following one
-    # spends the resolver's budget to arrive back at the employer's own site.
-    "careeralerts", "yohire", "prosple", "jobinsider", "talentd", "freshersworld",
-    "fresherscamp", "jobsvacancy", "sarkariresult", "internshipwala", "placement",
-    "offcampusjobs4u", "freshersvoice", "jobslibrary", "hirist", "naukridaddy",
-    # Social, docs and reference — never an application page.
-    "facebook", "twitter", "instagram", "reddit", "youtube", "quora",
-    "pinterest", "medium", "wikipedia", "wikimedia", "whatsapp", "telegram",
-    "blogspot", "wordpress", "amazon", "flipkart",
-}
+# Which hosts survive a search lives in agent/hosts.py now, as a classification
+# rather than a denylist. The list that used to sit here named ~50 brands and
+# implicitly trusted everything else; measured live, eight mirror sites nobody
+# had written down yet — alexahire, vthetecheejobs, hellointern, jobgrid,
+# internshiphub, antaltechjobs, beincareer, ambitionbox — outranked real
+# employers in the same run. A denylist can only ever describe yesterday.
 
 
 def provider() -> str:
@@ -73,24 +53,19 @@ def _searxng_url() -> str:
 
 
 def _host_of(url: str) -> str:
-    try:
-        return (urllib.parse.urlparse(url).hostname or "").lower().lstrip("www.")
-    except Exception:  # noqa: BLE001
-        return ""
+    return hosts.host_of(url)
 
 
 def _is_useful(url: str) -> bool:
     """Could this URL plausibly be an employer's own application page?
 
-    Rejects on any domain label matching an excluded brand, so "glassdoor.co.in",
-    "uk.linkedin.com" and "in.indeed.com" all go with the parent. Cheap and
-    deliberately blunt — the point is to stop spending the resolver's page
-    budget on hosts that can never hold a form the agent may submit."""
-    host = _host_of(url)
-    if not host:
-        return False
-    labels = set(host.split("."))
-    return not (labels & _EXCLUDED_BRANDS)
+    Delegates to the shared classifier: an ATS posting or a company's own
+    careers path is kept, a job board belongs to its own adapter, and a mirror
+    site owns no form to submit. An unrecognised host is KEPT — a small employer
+    on a domain nobody has seen is exactly the listing the boards miss — but
+    downstream knows not to trust it.
+    """
+    return hosts.is_useful(url)
 
 
 def _get_json(url: str, headers: dict | None = None, payload: dict | None = None) -> dict | None:
@@ -106,6 +81,23 @@ def _get_json(url: str, headers: dict | None = None, payload: dict | None = None
         return None
 
 
+# Which upstream engines have actually answered this process, and which refused.
+# Discovery breadth is bounded by this and nothing reported it: the code
+# elsewhere still carried a comment claiming every engine was blocked, written
+# during one throttled window and never re-measured. It is a fact about right
+# now, so it is recorded rather than assumed.
+_ENGINES_ANSWERED: set[str] = set()
+_ENGINES_REFUSED: dict[str, str] = {}
+
+
+def engines_answering() -> list[str]:
+    return sorted(_ENGINES_ANSWERED)
+
+
+def engines_refusing() -> dict[str, str]:
+    return dict(_ENGINES_REFUSED)
+
+
 def _from_searxng(query: str, limit: int) -> list[dict]:
     url = (
         f"{_searxng_url()}/search?"
@@ -115,9 +107,12 @@ def _from_searxng(query: str, limit: int) -> list[dict]:
     data = _get_json(url, headers={"User-Agent": "Grindly/1.0 (+internal discovery)"})
     if not data:
         return []
+    for engine, why in (data.get("unresponsive_engines") or []):
+        _ENGINES_REFUSED[str(engine)] = str(why)
     out = []
     for r in (data.get("results") or [])[: limit * 3]:
         link = r.get("url") or ""
+        _ENGINES_ANSWERED.update(str(e) for e in (r.get("engines") or []))
         if _is_useful(link):
             out.append({
                 "title": (r.get("title") or "").strip(),

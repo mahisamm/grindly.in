@@ -331,27 +331,59 @@ def applied_external_ids(uid: str) -> set[str]:
         return {r["url"] for r in rows}
 
 
-def known_ats_urls(limit: int = 500) -> list[str]:
-    """Every ATS posting URL the system has ever recorded, for any user.
+# Hosts worth remembering a company slug from. Kept as a plain list because it
+# is spliced into SQL below — every entry is a literal written here, never user
+# input. Mirrors agent/hosts.py's ATS vendor list; a host added there and
+# forgotten here costs only learning speed, not correctness.
+_ATS_URL_MARKERS = (
+    "greenhouse.io", "lever.co", "ashbyhq.com", "smartrecruiters.com",
+    "myworkdayjobs.com", "workable.com", "recruitee.com", "darwinbox.in",
+    "darwinbox.com", "keka.com", "zohorecruit.com", "zohorecruit.in",
+    "freshteam.com", "teamtailor.com",
+)
+
+
+def known_ats_urls(limit: int = 2000) -> list[str]:
+    """Every ATS posting URL the system has ever seen, for any user.
 
     `atsboards` reads company slugs back out of these. Discovery that only ever
     looks at a hardcoded list of boards cannot learn, and the boards worth
-    asking are exactly the ones something already found — so a company web
+    asking are exactly the ones something already found — so a company a web
     search surfaced once on a good day gets queried directly from then on.
+
+    Reads `jobs`, NOT `applications`. It used to read applications, which made
+    the whole learning loop conditional on somebody having APPLIED to a company
+    before it was worth asking that company for openings — so a fresh install
+    (zero applications) could never learn a single board, and clearing one
+    account's history froze the board list at whatever was hardcoded. Measured
+    live: exactly the 58 hardcoded boards, no matter how many ATS postings
+    discovery had already found. `jobs` holds every listing ever discovered, is
+    global rather than per-user, and survives a user reset.
 
     Fleet-wide on purpose and safe to be: a board's public postings are the same
     for everyone, and nothing here reads a user's own rows — only which
     employers exist.
     """
+    like = " OR ".join(f"url LIKE '%{marker}%'" for marker in _ATS_URL_MARKERS)
     with conn() as c:
         rows = c.execute(
-            "SELECT DISTINCT url FROM applications "
-            "WHERE url IS NOT NULL AND ("
-            "url LIKE '%greenhouse.io%' OR url LIKE '%lever.co%' "
-            "OR url LIKE '%ashbyhq.com%') LIMIT ?",
+            "SELECT DISTINCT url FROM jobs "
+            f"WHERE url IS NOT NULL AND ({like}) "
+            "ORDER BY scraped_at DESC LIMIT ?",
             (int(limit),),
         ).fetchall()
-        return [r["url"] for r in rows if r["url"]]
+        urls = [r["url"] for r in rows if r["url"]]
+        # Applications stay a secondary source: a listing can be applied to via a
+        # route that never created a job row (the Apply Kit, the extension), and
+        # that employer is still worth asking directly.
+        rows = c.execute(
+            "SELECT DISTINCT url FROM applications "
+            f"WHERE url IS NOT NULL AND ({like}) LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+        seen = set(urls)
+        urls.extend(r["url"] for r in rows if r["url"] and r["url"] not in seen)
+        return urls
 
 
 def committed_role_keys(uid: str) -> set[tuple[str, str]]:

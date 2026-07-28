@@ -23,6 +23,7 @@ source, so worker.py treats it as one more adapter.
 """
 from __future__ import annotations
 import concurrent.futures
+import datetime
 import hashlib
 import html
 import json
@@ -31,6 +32,7 @@ import re
 import time
 import urllib.request
 
+import hosts
 import websource
 
 SOURCE = "atsboards"
@@ -65,7 +67,28 @@ BOARDS: dict[str, list[str]] = {
         "spotdraft", "composio", "elevenlabs", "cursor", "fireworksai",
         "supabase", "posthog", "langchain", "deel",
     ],
+    # Verified live from the VPS: Bosch alone publishes 21 open India roles
+    # through this API, Avery Dennison 10. Same public-JSON deal as the big
+    # three, and it reaches large manufacturers and enterprises that never
+    # appear on a startup-heavy Greenhouse/Lever list.
+    "smartrecruiters": [
+        "BoschGroup", "AveryDennison", "WesternDigital", "Visa",
+    ],
+    # Shape verified live; slugs arrive mostly through _slugs_seen_before, since
+    # Workable accounts are named after the company and are exactly what a
+    # site:apply.workable.com search returns.
+    "workable": [],
 }
+
+# Deliberately NOT here: Workday. Measured before adding it — its job search is
+# a fuzzy full-text match, so `searchText: "intern"` returns "Senior Platform
+# Software Engineer", "Manager, Product Management" and "Analyst, Tax" (all real
+# results from nvidia, mastercard and paypal), because it matches "internal" and
+# "international" too. Filtering those back out with the same word-boundary test
+# every other vendor uses left approximately zero real India internships across
+# ten large tenants: the companies on Workday hire interns through campus
+# programmes, not their public board. It also costs five paginated POSTs per
+# tenant. Cost real, yield nil.
 
 # Where the role has to be. Deliberately does NOT include a bare "Remote": most
 # of these boards are global, and "Remote" on a US company's posting means
@@ -81,6 +104,17 @@ _API = {
     "greenhouse": "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true",
     "lever": "https://api.lever.co/v0/postings/{slug}?mode=json",
     "ashby": "https://api.ashbyhq.com/posting-api/job-board/{slug}",
+    "smartrecruiters": "https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=100",
+    "workable": "https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true",
+}
+
+# Where a posting's description lives when the list endpoint doesn't carry it.
+# SmartRecruiters returns a catalogue without any body text, so the description
+# has to be asked for per posting — bounded to the ones that already passed the
+# internship and India gates, which is a handful, not the whole board.
+_DETAIL_API = {
+    "smartrecruiters":
+        "https://api.smartrecruiters.com/v1/companies/{slug}/postings/{job_id}",
 }
 
 _MARKUP = re.compile(r"<[^>]+>")
@@ -177,6 +211,54 @@ def _place(value) -> str:
     return str(value or "")
 
 
+def _age_days(value) -> int | None:
+    """How many days ago was this posted? None when the board didn't say.
+
+    Every vendor stamps a date and none of them were read, so a posting from
+    2023 ranked exactly like one from this morning — and a stale posting is not
+    a neutral result, it is an application that gets no reply and a slot spent.
+    Accepts ISO strings (all five vendors) and epoch millis (Workable).
+    """
+    if value in (None, "", 0):
+        return None
+    try:
+        if isinstance(value, (int, float)) or str(value).isdigit():
+            secs = float(value)
+            if secs > 1e11:  # milliseconds
+                secs /= 1000.0
+            when = datetime.datetime.fromtimestamp(secs, datetime.timezone.utc)
+        else:
+            text = str(value).strip().replace("Z", "+00:00")
+            when = datetime.datetime.fromisoformat(text)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=datetime.timezone.utc)
+    except Exception:  # noqa: BLE001 — an unparseable date is "unknown", not a crash
+        return None
+    delta = datetime.datetime.now(datetime.timezone.utc) - when
+    return max(0, delta.days)
+
+
+def canonical_key(url: str, vendor: str = "", slug: str = "", job_id: str = "") -> str:
+    """One identity per posting, whatever address it arrived at.
+
+    Greenhouse alone publishes the same job on `boards.greenhouse.io`,
+    `job-boards.greenhouse.io` and `job-boards.eu.greenhouse.io`; a live run
+    returned all three hosts at once and counted them as separate finds. Keying
+    on the URL makes one posting look like three — inflating the pipeline with
+    duplicates the user then sees three times.
+    """
+    vendor = vendor or hosts.vendor_of(url)
+    if vendor and slug and job_id:
+        return f"{vendor}:{slug.lower()}:{job_id}".lower()
+    if vendor:
+        # Last path segment that looks like an id, else the whole path.
+        path = re.sub(r"[?#].*$", "", url or "").rstrip("/")
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 2:
+            return f"{vendor}:{parts[-2].lower()}:{parts[-1].lower()}"
+    return (url or "").strip().lower()
+
+
 def _greenhouse_url(slug: str, job: dict) -> str:
     """The posting's canonical address on the ATS itself.
 
@@ -193,12 +275,20 @@ def _greenhouse_url(slug: str, job: dict) -> str:
 
 
 def _postings(vendor: str, payload, slug: str = "") -> list[dict]:
-    """Normalise a vendor's payload to {title, location, url, jd}."""
+    """Normalise a vendor's payload to {title, location, url, jd, ...}.
+
+    Every posting also carries `job_id`, `posted_days` and `company` where the
+    board supplies them — the identity, the age and the employer's real name,
+    none of which were read before.
+    """
     out: list[dict] = []
     if vendor == "greenhouse":
         for j in (payload or {}).get("jobs") or []:
             out.append({
                 "title": j.get("title") or "",
+                "job_id": str(j.get("id") or ""),
+                "company": (j.get("company_name") or "").strip(),
+                "posted_days": _age_days(j.get("updated_at") or j.get("first_published")),
                 "location": _place(j.get("location")),
                 # `absolute_url` is wherever the company chose to publish — for
                 # Stripe that is stripe.com/jobs/listing/..., their own careers
@@ -214,6 +304,9 @@ def _postings(vendor: str, payload, slug: str = "") -> list[dict]:
             cats = j.get("categories") or {}
             out.append({
                 "title": j.get("text") or "",
+                "job_id": str(j.get("id") or ""),
+                "company": "",
+                "posted_days": _age_days(j.get("createdAt")),
                 "location": _place(cats.get("location")),
                 "url": j.get("hostedUrl") or j.get("applyUrl") or "",
                 "jd": _text(
@@ -226,15 +319,63 @@ def _postings(vendor: str, payload, slug: str = "") -> list[dict]:
         for j in (payload or {}).get("jobs") or []:
             out.append({
                 "title": j.get("title") or "",
+                "job_id": str(j.get("id") or ""),
+                "company": "",
+                "posted_days": _age_days(j.get("publishedAt") or j.get("updatedAt")),
                 "location": _place(j.get("location")),
                 "url": j.get("jobUrl") or j.get("applyUrl") or "",
                 "jd": _text(j.get("descriptionPlain") or j.get("descriptionHtml") or ""),
             })
+    elif vendor == "smartrecruiters":
+        for j in (payload or {}).get("content") or []:
+            loc = j.get("location") if isinstance(j.get("location"), dict) else {}
+            where = (loc.get("fullLocation")
+                     or ", ".join(p for p in (loc.get("city"), loc.get("region"),
+                                              loc.get("country")) if p))
+            if loc.get("remote") and "remote" not in where.lower():
+                where = f"Remote — {where}" if where else "Remote"
+            job_id = str(j.get("id") or j.get("uuid") or "")
+            out.append({
+                "title": j.get("name") or "",
+                "job_id": job_id,
+                "company": ((j.get("company") or {}).get("name") or "").strip(),
+                "posted_days": _age_days(j.get("releasedDate")),
+                "location": where,
+                # The list endpoint carries no body text at all; `_enrich` fetches
+                # it for the few postings that survive the gates.
+                "jd": "",
+                "url": f"https://jobs.smartrecruiters.com/{slug}/{job_id}" if job_id else "",
+            })
+    elif vendor == "workable":
+        for j in (payload or {}).get("jobs") or []:
+            where = ", ".join(
+                p for p in (j.get("city"), j.get("state"), j.get("country")) if p
+            )
+            if str(j.get("telecommuting") or "").lower() in ("true", "1"):
+                where = f"Remote — {where}" if where else "Remote"
+            out.append({
+                "title": j.get("title") or "",
+                "job_id": str(j.get("shortcode") or j.get("id") or ""),
+                "company": "",
+                "posted_days": _age_days(j.get("published_on") or j.get("created_at")),
+                "location": where,
+                "jd": _text(j.get("description") or "", j.get("requirements") or ""),
+                "url": j.get("application_url") or j.get("url") or j.get("shortlink") or "",
+            })
+    for p in out:
+        p.setdefault("job_id", "")
+        p.setdefault("company", "")
+        p.setdefault("posted_days", None)
     return [p for p in out if p["url"]]
 
 
+# A posting older than this is treated as gone. Boards leave filled roles up for
+# months, and an application to one costs a daily slot to receive no reply.
+MAX_AGE_DAYS = int(os.environ.get("GRINDLY_MAX_POSTING_AGE_DAYS", "120"))
+
+
 def _wanted(p: dict) -> bool:
-    """An internship, in India, not from an archived year.
+    """An internship, in India, still open.
 
     The intern test is `websource`'s, so the two sources cannot drift into
     different opinions about what an internship is — and it is a word-boundary
@@ -242,6 +383,11 @@ def _wanted(p: dict) -> bool:
     as an internship.
     """
     if not _INDIA.search(p["location"] or ""):
+        return False
+    age = p.get("posted_days")
+    # Unknown age is not stale — some boards publish no date at all, and
+    # rejecting those would silently drop whole vendors.
+    if isinstance(age, int) and age > MAX_AGE_DAYS:
         return False
     return websource._looks_like_an_internship(p["title"], p["jd"][:600])
 
@@ -259,19 +405,48 @@ def _relevance(p: dict, keywords: list[str]) -> int:
     return sum(1 for k in keywords if k and k.lower().strip() in blob)
 
 
+def _enrich(vendor: str, slug: str, posting: dict) -> str:
+    """Fetch a posting's description when the list endpoint carried none.
+
+    Only called for postings that already passed the internship and India gates,
+    so this is a handful of requests per run, not one per opening on the board.
+    A board with 4,700 openings would otherwise cost 4,700 round trips to read
+    four internships.
+    """
+    template = _DETAIL_API.get(vendor)
+    if not template or not posting.get("job_id"):
+        return ""
+    detail = _get_json(template.format(slug=slug, job_id=posting["job_id"]))
+    if not isinstance(detail, dict):
+        return ""
+    ad = detail.get("jobAd") or {}
+    sections = (ad.get("sections") or {}) if isinstance(ad, dict) else {}
+    parts = []
+    for key in ("companyDescription", "jobDescription", "qualifications", "additionalInformation"):
+        section = sections.get(key)
+        if isinstance(section, dict):
+            parts.append(str(section.get("text") or ""))
+    return _text(*parts)
+
+
 def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     """Internships posted on employers' own ATS boards. Never raises."""
     targets = [(v, s) for v, slugs in BOARDS.items() for s in sorted(set(slugs))]
+    learned = 0
     for vendor, slug in _slugs_seen_before():
         if (vendor, slug) not in targets:
             targets.append((vendor, slug))
+            learned += 1
 
     found: list[tuple[int, dict]] = []
+    # Keyed by canonical identity, not URL: Greenhouse publishes the same job on
+    # three hosts, and keying on the address counts one posting as three.
     seen: set[str] = set()
-    # Modest fan-out: these are three companies' APIs, not a search engine, and
-    # a burst that gets this server's IP throttled would take the one working
+    needs_enrichment: list[tuple[str, str, dict, dict]] = []
+    # Modest fan-out: these are a handful of vendors' APIs, not a search engine,
+    # and a burst that gets this server's IP throttled would take the one working
     # discovery path down with it.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
         futures = {ex.submit(_board, v, s): (v, s) for v, s in targets}
         for fut in concurrent.futures.as_completed(futures):
             vendor, slug = futures[fut]
@@ -286,38 +461,84 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                 print(f"[atsboards] unreadable payload from {slug}: {type(e).__name__}")
                 continue
             for p in postings:
-                if p["url"] in seen or not _wanted(p):
+                key = canonical_key(p["url"], vendor, slug, p.get("job_id", ""))
+                if key in seen or not _wanted(p):
                     continue
-                seen.add(p["url"])
+                seen.add(key)
                 jd = p["jd"]
-                found.append((_relevance(p, keywords or []), {
-                    "external_id": hashlib.sha1(p["url"].encode()).hexdigest()[:16],
+                job = {
+                    "external_id": hashlib.sha1(key.encode()).hexdigest()[:16],
+                    "canonical": key,
+                    "vendor": vendor,
                     "title": websource._clean_title(p["title"]),
-                    "company": websource._company_from(p["title"], p["url"]),
+                    # The board's own company name where it gave one; the URL slug
+                    # is a fallback that yields "Stable Money1" and "Bookeeapp".
+                    "company": (p.get("company")
+                                or websource._company_from(p["title"], p["url"])),
                     "location": p["location"][:80],
-                    "stipend": "",
-                    "duration": "",
+                    "posted_days": p.get("posted_days"),
+                    "stipend": websource.parse_stipend(jd),
+                    "duration": websource.parse_duration(jd),
                     "skills": websource._infer_skills(f"{p['title']} {jd}"),
                     "url": p["url"],
                     "jd_text": jd,
                     "source": SOURCE,
-                }))
+                }
+                found.append((_relevance(p, keywords or []), job))
+                if not jd:
+                    needs_enrichment.append((vendor, slug, p, job))
+
+    # Descriptions, only for what survived. Parallel because each is one GET and
+    # the matcher cannot score what it cannot read.
+    if needs_enrichment:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+            for (vendor, slug, posting, job), jd in zip(
+                needs_enrichment,
+                ex.map(lambda t: _enrich(t[0], t[1], t[2]), needs_enrichment),
+            ):
+                if jd:
+                    job["jd_text"] = jd
+                    job["stipend"] = websource.parse_stipend(jd)
+                    job["duration"] = websource.parse_duration(jd)
+                    job["skills"] = websource._infer_skills(
+                        f"{job['title']} {jd}") or job["skills"]
     _save_cache()
 
-    found.sort(key=lambda pair: -pair[0])
+    # Freshest first among equally relevant postings: an unknown date sorts as
+    # if it were at the age limit, so a dated posting always wins the tie.
+    found.sort(key=lambda pair: (
+        -pair[0],
+        pair[1].get("posted_days") if isinstance(pair[1].get("posted_days"), int) else MAX_AGE_DAYS,
+    ))
     jobs = [j for _, j in found[: max(1, limit)]]
     print(f"[atsboards] {len(jobs)} employer-hosted internship(s) from "
-          f"{len(targets)} board(s)")
+          f"{len(targets)} board(s) across {len(BOARDS)} vendor(s); "
+          f"{learned} board(s) learned from earlier discovery")
     return jobs
+
+
+# How a company slug appears in each vendor's URLs. Used to learn new boards
+# from postings the rest of the system already found.
+_SLUG_PATTERNS = (
+    ("greenhouse", r"greenhouse\.io/(?:embed/job_board\?for=)?([^/?#]+)"),
+    ("lever", r"lever\.co/([^/?#]+)"),
+    ("ashby", r"ashbyhq\.com/([^/?#]+)"),
+    ("smartrecruiters", r"smartrecruiters\.com/(?:v1/companies/)?([^/?#]+)"),
+    ("workable", r"(?:apply\.workable\.com/|//)([^/?#.]+)\.?workable\.com|"
+                 r"apply\.workable\.com/([^/?#]+)"),
+)
+
+# Path segments that are part of the ATS's own URL structure, never a company.
+_NOT_A_SLUG = {"embed", "jobs", "job", "v1", "companies", "apply", "boards",
+               "posting-api", "job-board", "postings", "api", "widget"}
 
 
 def _slugs_seen_before() -> list[tuple[str, str]]:
     """Boards the rest of the system has already discovered.
 
     Discovery that only ever looks at a hardcoded list can never learn. Any ATS
-    URL websource surfaced on a day the search engines answered names a company
-    worth asking directly from then on — which is how this source stays useful
-    without anyone editing BOARDS.
+    URL that has ever been recorded names a company worth asking directly from
+    then on — which is how this source grows without anyone editing BOARDS.
     """
     try:
         import db  # local: agent modules import db lazily, tests run without one
@@ -327,14 +548,13 @@ def _slugs_seen_before() -> list[tuple[str, str]]:
         return []
     out: set[tuple[str, str]] = set()
     for url in urls or []:
-        for vendor, pattern in (
-            ("greenhouse", r"greenhouse\.io/(?:embed/job_board\?for=)?([^/?#]+)"),
-            ("lever", r"lever\.co/([^/?#]+)"),
-            ("ashby", r"ashbyhq\.com/([^/?#]+)"),
-        ):
+        for vendor, pattern in _SLUG_PATTERNS:
             m = re.search(pattern, url or "", re.I)
-            if m and m.group(1).lower() not in ("embed", "jobs"):
-                out.add((vendor, m.group(1)))
+            if not m:
+                continue
+            slug = next((g for g in m.groups() if g), "")
+            if slug and slug.lower() not in _NOT_A_SLUG:
+                out.add((vendor, slug))
     return sorted(out)
 
 

@@ -668,34 +668,44 @@ def cover_letter(name: str, title: str, company: str, skills: list[str], job: di
     )
 
 
-def _expand_search_keywords(domains: list[str], skills: list[str]) -> list[list[str]]:
-    """Return 2-4 keyword variant sets for broader job discovery."""
-    skill_low = {s.lower() for s in skills}
-    variants: list[list[str]] = [[d] for d in domains[:2]]
+# How many role angles a single run may search. The old value was 4, and it was
+# not a pacing decision so much as an accident: the list was built from
+# `domains[:2]` plus up to seven skill-derived variants and then truncated, so
+# the third domain a user typed and every variant after the fourth were dropped
+# without a word. Measured on a real resume, a candidate whose profile said
+# "ai intern" and whose skills were YOLOv8, Tesseract, OpenCV, PyTorch and the
+# OpenAI API was searched for as: web development, full stack, frontend
+# developer, python developer. Not one AI query, ever.
+MAX_SEARCH_ANGLES = int(os.environ.get("GRINDLY_SEARCH_ANGLES", "12"))
 
-    if skill_low & {"react", "javascript", "typescript", "vue", "angular"}:
-        variants.append(["frontend developer"])
-    if skill_low & {"python", "django", "flask", "fastapi"}:
-        variants.append(["python developer"])
-    if skill_low & {"machine learning", "pytorch", "tensorflow", "pandas", "sklearn"}:
-        variants.append(["machine learning engineer"])
-    if skill_low & {"kotlin", "android", "flutter", "dart", "swift"}:
-        variants.append(["mobile developer"])
-    if skill_low & {"java", "spring", "springboot"}:
-        variants.append(["java developer"])
-    if skill_low & {"node", "express", "mongodb", "nestjs"}:
-        variants.append(["backend developer"])
-    if skill_low & {"sql", "postgresql", "mysql", "data analysis", "excel", "tableau"}:
-        variants.append(["data analyst"])
+
+def _expand_search_keywords(domains: list[str], skills: list[str]) -> list[list[str]]:
+    """The role titles this run will search for, one per set.
+
+    Delegates to rolequeries, which asks a model to map skills onto the titles
+    employers actually advertise and falls back to a deterministic ladder when
+    no model answers. Kept returning list-of-lists because every board adapter
+    takes a keyword LIST — one title per set is what "search for this role"
+    means to them.
+    """
+    try:
+        import rolequeries
+
+        roles = rolequeries.roles_for(skills, domains)
+    except Exception as e:  # noqa: BLE001 — discovery must never fail on this
+        log.warning("role query generation failed (%s); using domains as typed", e)
+        roles = [d for d in (domains or []) if d]
 
     seen: set[str] = set()
     result: list[list[str]] = []
-    for v in variants:
-        key = str(v)
-        if key not in seen:
+    for role in roles:
+        key = (role or "").strip().lower()
+        if key and key not in seen:
             seen.add(key)
-            result.append(v)
-    return result[:4]  # cap at 4 to avoid hammering platforms
+            result.append([key])
+    if not result:
+        result = [["software engineer"]]
+    return result[:MAX_SEARCH_ANGLES]
 
 
 def _scrape_jd_if_available(src: str, mod, url: str, uid: str) -> str:
@@ -774,6 +784,16 @@ def _ist_hour() -> int:
     return ist.hour
 
 
+def _search_engines_answering() -> list[str]:
+    """Which upstream engines actually replied this process. [] when unknown."""
+    try:
+        import websearch
+
+        return websearch.engines_answering()
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _load_module(source: str):
     """Import platform module; returns None if import fails."""
     try:
@@ -811,6 +831,27 @@ def _fetch_source_all_kw(
     matches that rhythm without materially slowing the run."""
     seen_eids: set[str] = set()
     jobs: list[dict] = []
+    # The always-on sources take the whole keyword list in one call and pace
+    # themselves. Splitting their work per keyword set made atsboards re-poll
+    # every board once per set — 232 requests for 58 boards, measured — while
+    # the keywords only ever affected which results it ranked first.
+    if src in ALWAYS_ON_SOURCES:
+        flat = [kw for kw_list in kw_sets for kw in kw_list]
+        try:
+            for j in _fetch_live(src, mod, flat, max(per_kw * len(kw_sets), per_kw), uid,
+                                 errors=errors):
+                eid = j.get("external_id") or j.get("url", "")
+                if eid and eid not in seen_eids:
+                    jobs.append(j)
+                    seen_eids.add(eid)
+        finally:
+            try:
+                mod.close(uid)
+            except Exception:  # noqa: BLE001
+                log.exception("failed to close %s in fetch thread for %s", src, uid)
+        log.info("%s: fetched %d unique listings (%d keyword(s), one pass)",
+                 src, len(jobs), len(flat))
+        return src, jobs
     try:
         for i, kw_list in enumerate(kw_sets):
             if i > 0:
@@ -1364,6 +1405,37 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 log.warning("source %s yielded 0 listings this run: %s", src_name, why_zero)
                 db.add_audit("source_zero_yield", user_id=uid, target=src_name, detail=why_zero)
         log.info("per-source yield: %s", per_source or "{}")
+
+        # Coverage, recorded rather than assumed. Nothing in the system could
+        # have told you the agent never searched a user's stated domain — the
+        # run reported listings found and looked healthy, and the gap was
+        # invisible for as long as it existed. These four numbers make a
+        # regression in BREADTH visible the same way source_zero_yield makes a
+        # dead adapter visible.
+        try:
+            angles = [kw[0] for kw in kw_sets if kw]
+            trusted = sum(1 for j in all_jobs if j.get("host_class") in ("ats", "employer")
+                          or j.get("source") == "atsboards")
+            employers = {(j.get("company") or "").strip().lower()
+                         for j in all_jobs if (j.get("company") or "").strip()}
+            coverage = {
+                "angles": angles,
+                "sources": active_sources,
+                "listings": len(all_jobs),
+                "trusted": trusted,
+                "employers": len(employers),
+                "engines": _search_engines_answering(),
+            }
+            log.info(
+                "discovery coverage: %d angle(s) %s | %d listing(s), %d on an "
+                "employer page, %d distinct employer(s) | engines: %s",
+                len(angles), angles, len(all_jobs), trusted, len(employers),
+                ", ".join(coverage["engines"]) or "none",
+            )
+            db.add_audit("discovery_coverage", user_id=uid,
+                         detail=json.dumps(coverage)[:900])
+        except Exception as e:  # noqa: BLE001 — telemetry never fails a run
+            log.warning("could not record discovery coverage: %s", e)
 
         # Core-value alarm: discovery yielding >0 is the whole product. If every
         # rotated board fetched nothing, the scrapers are almost certainly broken
