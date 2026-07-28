@@ -215,3 +215,48 @@ def test_a_url_with_no_host_is_not_queued(capdb):
 def test_queueing_never_raises(capdb):
     """Extra work is never worth failing a run over."""
     assert db.enqueue_browser_task("u1", "", "https://x.com/1") is None
+
+
+def test_a_refused_server_send_falls_back_to_the_users_browser(capdb, monkeypatch):
+    """The VPS is a datacenter IP with no session; ATS portals routinely answer
+    it with a human-check. The user's own signed-in browser never sees that
+    check — so a refusal at the door must become a browser task, or web-found
+    employer applications only ever retry from the one place that cannot pass."""
+    import resolver
+    import worker
+
+    monkeypatch.setenv("GRINDLY_BROWSER_EXECUTOR_ENABLED", "1")
+    dest = resolver.destination(
+        channel=resolver.CHANNEL_ATS, tier=resolver.TIER_A,
+        target="https://boards.greenhouse.io/acme/jobs/1", vendor="greenhouse",
+        evidence="test",
+    )
+    queued = worker._queue_browser_task(
+        "u1", dest, "https://acme.com/careers/1", True, application_id="app1",
+    )
+    assert queued is True
+    with db.conn() as c:
+        row = c.execute("SELECT url, host, state FROM browser_tasks").fetchone()
+    # The browser gets the RESOLVED application form, not the listing page.
+    assert row["url"] == "https://boards.greenhouse.io/acme/jobs/1"
+    assert row["host"] == "boards.greenhouse.io"
+    assert row["state"] == "queued"
+
+
+def test_no_fallback_without_the_users_readiness(capdb, monkeypatch):
+    """The executor acts under the user's name in their browser — an unready or
+    unconsented profile must gate the fallback exactly like the bank branch."""
+    import resolver
+    import worker
+
+    monkeypatch.setenv("GRINDLY_BROWSER_EXECUTOR_ENABLED", "1")
+    dest = resolver.destination(
+        channel=resolver.CHANNEL_ATS, tier=resolver.TIER_A,
+        target="https://boards.greenhouse.io/acme/jobs/1", vendor="greenhouse",
+        evidence="test",
+    )
+    # False, and it returns before any DB write — this test db has no
+    # browser_tasks table at all, so a write attempt would raise, not queue.
+    assert worker._queue_browser_task(
+        "u1", dest, "https://acme.com/careers/1", False, application_id="app1",
+    ) is False

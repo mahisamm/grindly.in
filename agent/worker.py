@@ -452,6 +452,41 @@ def _dispatch_apply(
     return status, why
 
 
+def _queue_browser_task(uid: str, dest: dict, job_url: str, ready: bool,
+                        application_id: str = "") -> bool:
+    """Queue this application for the user's OWN browser, if it can run there.
+
+    One producer-shape for both of its call sites: the bank-it branch (our
+    servers may not send this) and the refused-at-the-door fallback (our servers
+    TRIED and the page demanded a human). The second is what makes web-found
+    employer sites actually reachable: the VPS is a datacenter IP with no
+    session and no history, so ATS portals routinely answer it with a
+    human-check — which the user's signed-in, lived-in browser never sees.
+    Without the fallback those applications just looped: re-scored next run,
+    refused again, forever server-side-only on the one path that cannot pass.
+    """
+    channel = dest.get("channel")
+    browser_url = (
+        dest.get("target")
+        if channel in (resolver.CHANNEL_ATS, resolver.CHANNEL_GOOGLE_FORM)
+        else job_url
+    )
+    browserable = (
+        channel == resolver.CHANNEL_PLATFORM
+        or channel in (resolver.CHANNEL_ATS, resolver.CHANNEL_GOOGLE_FORM)
+    )
+    if not (
+        flags.browser_executor_enabled()
+        and browserable
+        and ready
+        and isinstance(browser_url, str)
+        and browser_url.startswith("https://")
+    ):
+        return False
+    app_id = application_id or _last_application_id(uid, job_url)
+    return bool(app_id and db.enqueue_browser_task(uid, app_id, browser_url))
+
+
 def _cooldown_active(row: dict | None, cutoff) -> bool:
     """True if an integration row is still inside its post-challenge cooldown.
     Pure function (no DB access) so it's testable with plain dicts: caller
@@ -1751,6 +1786,15 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 screenshot_path=rec.get("screenshot_path"),
                 answers_json=rec.get("answers"),
             )
+            # Same refused-at-the-door fallback as the discovery loop: the user
+            # tapped Approve, our server was shown a human-check — their own
+            # browser is the next honest attempt, not a dead end.
+            if provably_not_sent and _queue_browser_task(
+                uid, row_dest, job.get("url") or "", plan["ready"],
+                application_id=app_row["id"],
+            ):
+                log.info("approved row refused at the door — queued for the user's own browser: %s",
+                         app_row["id"])
             db.add_audit("apply", user_id=uid, target=job.get("url"),
                          detail=f"{src}:{status}")
             already.add(job["url"])
@@ -2029,26 +2073,9 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             # endpoint has nothing to hand out, which is how the browser executor
             # shipped complete, switched on, and did nothing at all: the queue was
             # empty by construction.
-            browser_url = (
-                dest.get("target")
-                if dest.get("channel") in (resolver.CHANNEL_ATS, resolver.CHANNEL_GOOGLE_FORM)
-                else job.get("url")
-            )
-            browserable = (
-                is_platform_channel
-                or dest.get("channel") in (resolver.CHANNEL_ATS, resolver.CHANNEL_GOOGLE_FORM)
-            )
-            if (
-                flags.browser_executor_enabled()
-                and browserable
-                and plan["ready"]
-                and isinstance(browser_url, str)
-                and browser_url.startswith("https://")
-            ):
-                app_id = _last_application_id(uid, job.get("url"))
-                if app_id and db.enqueue_browser_task(uid, app_id, browser_url):
-                    log.info("queued a browser task for %s @ %s",
-                             job.get("title"), job.get("company"))
+            if _queue_browser_task(uid, dest, job.get("url") or "", plan["ready"]):
+                log.info("queued a browser task for %s @ %s",
+                         job.get("title"), job.get("company"))
             continue
 
         if remaining <= 0:
@@ -2264,6 +2291,14 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 answers_json=rec.get("answers"),
                 destination=dest,
             )
+            # Refused at the door — hand it to the one browser that CAN pass.
+            # The page demanded a human (a check, a question); the user's own
+            # signed-in browser has a person, a session and a residential IP.
+            # Without this, a web-found employer application only ever retried
+            # from the same datacenter IP that was just refused.
+            if not ambiguous and _queue_browser_task(uid, dest, job.get("url") or "", plan["ready"]):
+                log.info("refused at the door — queued for the user's own browser: %s @ %s",
+                         job.get("title"), job.get("company"))
             db.add_audit("apply_needs_review", user_id=uid, target=job.get("url"), detail=why[:120])
             # Pace only after something actually went out. A sender that was
             # refused at the door sent nothing to space out, and yielding the
