@@ -265,6 +265,61 @@ def _base():
     }
 
 
+# hole 0: the extraction collapsed, so the rewrite invented a resume from nothing
+
+def _extract_response(n_items):
+    import json
+    return json.dumps({"name": "Sammeta Sakthi Mahendhar", "contact_line": "a@b.com", "sections": [
+        {"heading": "Projects", "items": [
+            {"head": f"Project {i}", "sub": "", "bullets": ["Built a thing"]} for i in range(n_items)]}]})
+
+
+def test_extraction_falls_back_when_the_ensemble_merge_keeps_nothing(monkeypatch):
+    """chat_json_ensemble majority-votes each list item by exact content. Models
+    don't agree byte-for-byte on section names or ordering, so on a real 3,778-char
+    resume the merge returned 0 items while the individual responses held 12 and
+    15. That empty struct is what the rewriter was then asked to "improve"."""
+    monkeypatch.setattr(ro.llm_mod, "chat_json_ensemble",
+                        lambda *a, **k: {"name": "N", "contact_line": "c", "sections": []})
+    monkeypatch.setattr(ro.llm_mod, "chat_ensemble",
+                        lambda *a, **k: [_extract_response(4), _extract_response(7)])
+    out = ro._extract_struct("a resume long enough to matter " * 20)
+    assert ro._item_count(out) == 7, "must recover the richest un-merged response"
+
+
+def test_extraction_keeps_the_merge_when_it_worked(monkeypatch):
+    """Cross-model agreement is higher fidelity when it survives — the fallback is
+    a repair, not a replacement."""
+    import json
+    merged = json.loads(_extract_response(6))
+    monkeypatch.setattr(ro.llm_mod, "chat_json_ensemble", lambda *a, **k: merged)
+
+    def _boom(*a, **k):
+        raise AssertionError("must not re-query when the merge already has content")
+
+    monkeypatch.setattr(ro.llm_mod, "chat_ensemble", _boom)
+    assert ro._item_count(ro._extract_struct("text " * 100)) == 6
+
+
+def test_an_empty_extraction_aborts_instead_of_being_rewritten(monkeypatch):
+    """The load-bearing guard. Handed an empty resume, a model does not fail — it
+    writes a plausible career and hands it back, and the result scores well because
+    the scorer measures parseability, not truth. That is the whole incident."""
+    monkeypatch.setattr(ro.latex_resume, "tectonic_available", lambda: True)
+    monkeypatch.setattr(ro.resume_ai, "analyze", lambda t: {})
+    monkeypatch.setattr(ro.resume_ai, "with_ats", lambda a, t, s: {"score": 76, "grade": "B"})
+    monkeypatch.setattr(ro, "_extract_struct",
+                        lambda text: {"name": "N", "contact_line": "c", "sections": []})
+
+    def _never(*a, **k):
+        raise AssertionError("a rewrite must never run on an empty base")
+
+    monkeypatch.setattr(ro, "_rewrite_struct", _never)
+    out = ro.generate_variants(_REAL, ["python"])
+    assert out["aborted"] == "extraction_failed"
+    assert out["variants"] == []
+
+
 # hole 1: identity was taken from a PII-redacted prompt
 
 def test_identity_is_read_from_the_resume_not_from_the_model():

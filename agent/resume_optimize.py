@@ -54,6 +54,10 @@ _MAX_ITEMS = 8
 _MAX_BULLETS = 6
 _MAX_BULLET_CHARS = 240
 _MAX_PAGES = 2  # a variant that spills past this isn't an ATS win, it's a mess
+# Below this, the extraction didn't understand the resume. Rewriting from it is
+# not "a thin variant" — it is a model being handed an empty document and asked to
+# improve it, which it does by inventing a career. See _extract_struct.
+_MIN_BASE_ITEMS = 3
 
 # Each strategy is (label, instruction). Order is display order before re-scoring
 # re-sorts by measured score. Three genuinely different levers, none of which
@@ -150,8 +154,12 @@ def generate_variants(
     print(f"[optimize] baseline (re-scored) = {baseline_score}")
 
     base_struct = _extract_struct(text)
-    if not base_struct:
-        print("[optimize] structured extraction failed — aborting")
+    # An empty (or near-empty) base is a hard stop, not thin input. A rewriter
+    # handed a resume with no content fills the gap from its own imagination and
+    # returns a fluent, well-formatted, entirely fictional career — which then
+    # scores well, because the scorer measures parseability, not truth.
+    if _item_count(base_struct) < _MIN_BASE_ITEMS:
+        print(f"[optimize] structured extraction kept only {_item_count(base_struct)} item(s) — aborting")
         return {
             "variants": [], "baseline": baseline_score,
             "reasons": [], "aborted": "extraction_failed",
@@ -358,13 +366,50 @@ _EXTRACT_SYS = (
 )
 
 
+def _item_count(struct: dict | None) -> int:
+    if not struct:
+        return 0
+    return sum(len(sec.get("items") or []) for sec in struct.get("sections") or [])
+
+
 def _extract_struct(text: str) -> dict | None:
+    """The master resume as structured JSON — the input every rewrite works from.
+
+    An empty result here is the single most dangerous outcome in this module, and
+    it is the one that shipped. chat_json_ensemble merges the N responses by
+    majority vote on each list item's exact content (llm._merge_lists). That was
+    assumed safe for extraction because models are told to copy facts verbatim —
+    but they don't agree byte-for-byte on section names, ordering, or where a
+    date lives, so the merge kept nothing. Measured on a real 3,778-character
+    resume: response 0 held 12 items, response 1 held 15, the merge returned 0.
+
+    Downstream, an empty resume JSON does not fail loudly — it is handed to a
+    model with "rewrite this resume", and the model obliges by inventing one.
+    That is exactly how a user's dashboard came to offer a resume whose employers
+    were "XYZ Corp" and "ABC Tech". So: keep the merge (cross-model agreement is
+    genuinely higher fidelity when it survives), but never accept its result on
+    faith — fall back to the richest single response the way the rewrite path
+    already does.
+    """
     prompt = (
         f'Resume text:\n"""\n{text[:6000]}\n"""\n\n'
         "Return the structured JSON object described in your instructions."
     )
-    out = llm_mod.chat_json_ensemble(prompt, system=_EXTRACT_SYS, n=3, timeout=90)
-    return _sanitize_struct(out) if isinstance(out, dict) else None
+    merged = llm_mod.chat_json_ensemble(prompt, system=_EXTRACT_SYS, n=3, timeout=90)
+    best = _sanitize_struct(merged) if isinstance(merged, dict) else None
+    best_count = _item_count(best)
+    if best_count >= _MIN_BASE_ITEMS:
+        return best
+
+    print(f"[optimize] merged extraction kept {best_count} item(s) — re-reading un-merged responses")
+    for raw in llm_mod.chat_ensemble(prompt, system=_EXTRACT_SYS, n=3, timeout=90):
+        parsed = llm_mod._extract_json(raw)
+        if not isinstance(parsed, dict):
+            continue
+        cand = _sanitize_struct(parsed)
+        if _item_count(cand) > best_count:
+            best, best_count = cand, _item_count(cand)
+    return best
 
 
 _REWRITE_SYS = (
