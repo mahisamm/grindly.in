@@ -60,8 +60,12 @@ _TEMPLATES = [
 # How many role titles get the full template treatment. Seven templates each, so
 # nine roles is ~63 queries a run — up from the fifteen the old three-domain
 # budget allowed, and affordable now that the queries run concurrently.
-MAX_ROLES = int(os.environ.get("GRINDLY_SEARCH_ROLES", "9"))
-QUERY_WORKERS = int(os.environ.get("GRINDLY_SEARCH_WORKERS", "4"))
+# Matches worker.MAX_SEARCH_ANGLES on purpose. At nine, three of the twelve role
+# angles the generator produced were never actually searched — the run reported
+# twelve angles and issued queries for nine, so coverage looked complete from
+# every side except the one that mattered.
+MAX_ROLES = int(os.environ.get("GRINDLY_SEARCH_ROLES", "12"))
+QUERY_WORKERS = int(os.environ.get("GRINDLY_SEARCH_WORKERS", "5"))
 
 # Queries that look for COMPANIES rather than for this candidate's role.
 #
@@ -131,8 +135,13 @@ _STIPEND_RE = re.compile(
     re.I,
 )
 _UNPAID_RE = re.compile(r"\bunpaid\b|\bno stipend\b", re.I)
+# Duration, as postings actually write it: "6 months", "6-month", "3 to 6
+# months", "3–6 months", "12 week". The original required a space and a plural,
+# which missed every hyphenated and every ranged form — and hyphenated is how a
+# job title says it ("6-month Internship").
 _DURATION_RE = re.compile(
-    r"\b(\d{1,2})\s*(?:\+)?\s*(month|months|week|weeks)\b(?:\s*(?:internship|duration))?",
+    r"\b(\d{1,2})\s*(?:\+|\s*(?:-|–|—|to)\s*\d{1,2})?\s*[-–—]?\s*"
+    r"(month|months|week|weeks)\b",
     re.I,
 )
 
@@ -527,11 +536,85 @@ def posting_meta(url: str) -> dict:
     return dict(_POSTING_META.get(url) or {})
 
 
+_SMARTRECRUITERS = re.compile(r"jobs\.smartrecruiters\.com/([^/?#]+)/(\d{6,})", re.I)
+_WORKABLE = re.compile(r"apply\.workable\.com/([^/?#]+)/j/([0-9A-Za-z]{6,})", re.I)
+
+
+def _jd_from_smartrecruiters(url: str) -> str:
+    m = _SMARTRECRUITERS.search(url)
+    if not m:
+        return ""
+    slug, job_id = m.group(1), m.group(2)
+    data = _get_json_quiet(
+        f"https://api.smartrecruiters.com/v1/companies/{slug}/postings/{job_id}")
+    if not isinstance(data, dict):
+        return ""
+    loc = data.get("location") if isinstance(data.get("location"), dict) else {}
+    _remember_meta(
+        url,
+        posted=data.get("releasedDate"),
+        location=loc.get("fullLocation") or ", ".join(
+            p for p in (loc.get("city"), loc.get("country")) if p),
+        company=(data.get("company") or {}).get("name"),
+    )
+    sections = ((data.get("jobAd") or {}).get("sections") or {})
+    parts = [str((sections.get(k) or {}).get("text") or "")
+             for k in ("companyDescription", "jobDescription", "qualifications",
+                       "additionalInformation")]
+    text = _MARKUP.sub(" ", html.unescape(" ".join(p for p in parts if p)))
+    return re.sub(r"\s+", " ", text).strip()[:6000]
+
+
+def _jd_from_workable(url: str) -> str:
+    m = _WORKABLE.search(url)
+    if not m:
+        return ""
+    slug, code = m.group(1), m.group(2)
+    data = _get_json_quiet(
+        f"https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true")
+    if not isinstance(data, dict):
+        return ""
+    for job in data.get("jobs") or []:
+        if str(job.get("shortcode") or "").lower() != code.lower():
+            continue
+        _remember_meta(
+            url,
+            posted=job.get("published_on") or job.get("created_at"),
+            location=", ".join(p for p in (job.get("city"), job.get("country")) if p),
+            company=data.get("name"),
+        )
+        text = _MARKUP.sub(" ", html.unescape(
+            f"{job.get('description') or ''} {job.get('requirements') or ''}"))
+        return re.sub(r"\s+", " ", text).strip()[:6000]
+    return ""
+
+
+def _get_json_quiet(api: str):
+    try:
+        req = urllib.request.Request(
+            api, headers={"User-Agent": "Grindly/1.0", "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except Exception as e:  # noqa: BLE001 — a vendor miss costs one listing's detail
+        print(f"[websource] ats api miss ({type(e).__name__}) for {api[:70]}")
+        return None
+
+
 def _jd_from_api(url: str) -> str:
-    """Read a posting through its ATS's own JSON API, when it has one."""
+    """Read a posting through its ATS's own JSON API, when it has one.
+
+    Every vendor here stamps a publication date next to the description. Only
+    the description was ever read, so a posting found by search showed no age
+    while the same posting found by atsboards showed one — and the freshness
+    half of "can I actually take this?" was blank for two thirds of results.
+    """
     ashby = _jd_from_ashby(url)
     if ashby:
         return ashby
+    for reader in (_jd_from_smartrecruiters, _jd_from_workable):
+        text = reader(url)
+        if text:
+            return text
     for pattern, build in _API_PATTERNS:
         m = pattern.search(url)
         if not m:

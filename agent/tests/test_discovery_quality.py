@@ -222,3 +222,36 @@ def test_the_grade_is_explainable():
 
 def test_the_weights_sum_to_one():
     assert abs(sum(discovery_score.WEIGHTS.values()) - 1.0) < 1e-9
+
+
+def test_a_hyphenated_or_ranged_duration_is_read():
+    """The original pattern needed a space and a plural, so it missed every
+    hyphenated form — which is how a job TITLE writes it."""
+    assert websource.parse_duration("6-month Internship, Bengaluru") == "6 months"
+    assert websource.parse_duration("Duration: 3 to 6 months") == "3 months"
+    assert websource.parse_duration("a 3–6 months programme") == "3 months"
+    assert websource.parse_duration("12 week programme") == "12 weeks"
+
+
+def test_pay_status_is_reported_when_no_figure_is_given():
+    """Sampled across ten real India internships on ATS boards, not one carried
+    a number. "The posting doesn't say" is a real answer; a blank is not."""
+    assert websource.parse_pay_note(
+        "Internship duration and compensation will be discussed during the "
+        "interview process.") == "Stated at interview"
+    assert websource.parse_pay_note(
+        "You'll be rewarded a competitive salary as well as generous perks."
+    ) == "Competitive — amount not stated"
+    assert websource.parse_pay_note("Stipend (if applicable) and a certificate") \
+        == "Stated at interview"
+    assert websource.parse_pay_note("This is an unpaid internship") == "Unpaid"
+    assert websource.parse_pay_note("We build developer tools.") == ""
+
+
+def test_a_pay_note_is_never_put_where_a_number_belongs():
+    """`stipend` feeds the user's stipend_min filter, which compares numbers —
+    "Competitive" there parses as zero and hides every posting from anyone who
+    set a floor."""
+    text = "You'll be rewarded a competitive salary."
+    assert websource.parse_stipend(text) == ""
+    assert websource.parse_pay_note(text)

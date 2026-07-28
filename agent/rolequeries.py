@@ -100,6 +100,38 @@ _FALLBACK: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
 ]
 
 
+def triggered_clusters(skills: list[str], domains: list[str]) -> list[tuple[str, ...]]:
+    """The distinct kinds of role this candidate's skills qualify them for."""
+    blob = " ".join(str(s).lower() for s in list(skills) + list(domains))
+    return [roles for triggers, roles in _FALLBACK if any(t in blob for t in triggers)]
+
+
+def _every_capability_represented(
+    merged: list[str], skills: list[str], domains: list[str],
+) -> list[str]:
+    """Guarantee one role per capability the candidate actually has.
+
+    Truncating a merged list to a cap drops whichever capabilities happened to
+    sort last — measured, that silently lost data, devops and graphics for a
+    candidate holding SQL, Docker and Three.js, because the model's twelve
+    answers filled the cap before the ladder's clusters were reached. Coverage
+    has to be a property of the list, not a coincidence of its ordering.
+    """
+    clusters = triggered_clusters(skills, domains)
+    if not clusters:
+        return merged
+    head = merged[:max(0, MAX_ROLES - len(clusters))]
+    covered = " ".join(head)
+    missing = [names[0] for names in clusters
+               if not any(n[:6] in covered for n in names)]
+    tail = [r for r in merged if r not in head and r not in missing]
+    out: list[str] = []
+    for r in head + missing + tail:
+        if r not in out:
+            out.append(r)
+    return out
+
+
 def _norm(role: str) -> str:
     role = re.sub(r"[^a-z0-9+/. ]+", " ", (role or "").lower())
     # "machine learning engineer intern" and "intern - data analyst" are the same
@@ -222,7 +254,7 @@ def roles_for(skills: list[str], domains: list[str], use_llm: bool = True) -> li
         if r and r not in seen and len(r) > 2:
             seen.add(r)
             merged.append(r)
-    merged = merged[:MAX_ROLES]
+    merged = _every_capability_represented(merged, skills, domains)[:MAX_ROLES]
 
     if roles:  # only cache a real model answer; the fallback is free to recompute
         _CACHE[key] = (time.time(), merged)

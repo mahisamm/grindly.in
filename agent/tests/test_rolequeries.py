@@ -112,3 +112,26 @@ def test_a_model_returning_junk_cannot_empty_the_list(monkeypatch):
     for junk in (None, {}, {"roles": None}, {"roles": [1, 2]}, "not json"):
         monkeypatch.setattr(llm, "chat_json", lambda *a, **k: junk)
         assert rolequeries.roles_for(["python", "react"], ["web"])
+
+
+def test_every_capability_survives_the_cap(monkeypatch):
+    """Truncating a merged list drops whichever capabilities sorted last.
+    Measured, a candidate holding SQL, Docker and Three.js silently lost data,
+    devops and graphics because the model's twelve answers filled the cap
+    first."""
+    monkeypatch.setenv("GRINDLY_ROLE_QUERIES_LLM", "1")
+    monkeypatch.setattr(rolequeries, "_CACHE", {})
+    monkeypatch.setattr(rolequeries, "_loaded", True)
+    monkeypatch.setattr(rolequeries, "_save", lambda: None)
+
+    import llm
+
+    # A model that answers only about one capability, at full length.
+    monkeypatch.setattr(llm, "chat_json", lambda *a, **k: {"roles": [
+        f"web role {n}" for n in range(rolequeries.MAX_ROLES)]})
+
+    skills = ["react", "sql", "docker", "three.js", "opencv", "kotlin", "figma"]
+    roles = rolequeries.roles_for(skills, [])
+    asked = " ".join(roles)
+    for cluster in rolequeries.triggered_clusters(skills, []):
+        assert any(name[:6] in asked for name in cluster), (cluster, roles)
