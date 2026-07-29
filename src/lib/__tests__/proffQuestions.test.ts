@@ -176,9 +176,26 @@ describe("how much setup asks for", () => {
     // carries and no application can be finished without.
     expect(required).toContain("currentSalary");
     expect(required).toContain("previousInternship");
-    expect(required).toContain("workAuthorization");
+    expect(required).toContain("availability");
     expect(required).not.toContain("gender");
     expect(required).not.toContain("dateOfBirth");
+    // Grindly only applies to internships in India. Asking every user to
+    // confirm the country they are in, and that they may work there, is asking
+    // them to restate the product's own premise — so both are preset and
+    // editable rather than demanded.
+    expect(required).not.toContain("country");
+    expect(required).not.toContain("workAuthorization");
+  });
+
+  it("presets what the product's own scope already decides", () => {
+    // A default is normally an invented fact. These are the scope of the
+    // product, stated once, visible and changeable under "More answers".
+    expect(DEFAULTS.country).toBe("India");
+    expect(DEFAULTS.workAuthorization).toBe("Indian citizen");
+    expect(DEFAULTS.nationality).toBe("Indian");
+    for (const key of ["country", "workAuthorization", "nationality"]) {
+      expect(PROFF_FIELDS.find((f) => f.key === key)!.advanced, key).toBe(true);
+    }
   });
 
   it("never hides a required question behind the More toggle", () => {

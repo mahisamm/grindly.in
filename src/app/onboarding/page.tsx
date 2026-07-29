@@ -225,9 +225,23 @@ export default function OnboardingPage() {
           availability: p.availability || "",
           hoursPerWeek: p.hoursPerWeek || 0,
           willingToRelocate: p.willingToRelocate || "",
-          workAuthorization: p.workAuthorization || "",
-          needsSponsorship: p.needsSponsorship || "",
+          workAuthorization: p.workAuthorization || DEFAULTS.workAuthorization,
+          needsSponsorship: p.needsSponsorship || DEFAULTS.needsSponsorship,
           expectedStipend: p.expectedStipend || 0,
+          // Everything below was missing from this list while being posted back
+          // on every save — so a user who filled them in, came back and saved
+          // again had the lot overwritten with blanks, and the agent lost facts
+          // it had already been given. Presets fall back to DEFAULTS; the rest
+          // fall back to empty.
+          currentSalary: p.currentSalary || "",
+          previousInternship: p.previousInternship || "",
+          noticePeriod: p.noticePeriod || "",
+          currentLocation: p.currentLocation || "",
+          dateOfBirth: p.dateOfBirth || "",
+          gender: p.gender || "",
+          differentlyAbled: p.differentlyAbled || "",
+          nationality: p.nationality || DEFAULTS.nationality,
+          country: p.country || DEFAULTS.country,
           linkedinUrl: p.linkedinUrl || "",
           githubUrl: p.githubUrl || "",
           portfolioUrl: p.portfolioUrl || "",
@@ -1229,7 +1243,7 @@ export default function OnboardingPage() {
                   lib/notifyChannels.ts and agent/notify.py, which agree on the
                   fallback order. */}
               <div className="mt-5 rounded-xl border border-accent/30 bg-accent/5 p-4 text-sm">
-                <p className="font-medium text-accent">✓ In your dashboard, always</p>
+                <p className="font-medium text-accent">🔔 In your dashboard, always</p>
                 <p className="mt-1 text-muted">
                   Every report, match and alert appears under the bell on your dashboard.
                   Nothing to set up and nothing to miss.
@@ -1237,10 +1251,24 @@ export default function OnboardingPage() {
               </div>
 
               {!channels.email && !channels.slack && (
-                <div className="mt-4 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
-                  Email and Slack delivery aren&apos;t switched on for this deploy yet, so the
-                  dashboard is where reports land for now. You&apos;ll be able to add a channel
-                  from your dashboard once they are.
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  {/* Shown, not hidden. The two channels people expect to see
+                      are named with their icons and marked as not ready, which
+                      is more honest than a step that silently offers one option
+                      and looks broken. */}
+                  {[
+                    ["📧", "Email", "Coming soon"],
+                    ["💬", "Slack DM", "Coming soon"],
+                  ].map(([icon, name, note]) => (
+                    <div
+                      key={name}
+                      className="rounded-xl border-2 border-dashed border-border p-4 text-left opacity-60"
+                    >
+                      <div className="text-xl mb-1">{icon}</div>
+                      <div className="font-semibold text-sm">{name}</div>
+                      <div className="text-xs text-muted mt-0.5">{note}</div>
+                    </div>
+                  ))}
                 </div>
               )}
 
