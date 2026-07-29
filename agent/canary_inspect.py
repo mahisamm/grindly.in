@@ -47,6 +47,18 @@ def inspect(url: str, profile: dict, skills: list[str], resume_path: str) -> dic
     try:
         browser = pw.chromium.launch(headless=False, args=["--no-sandbox"])
         page = browser.new_page()
+
+        # channel_ats.apply navigates BEFORE calling open_the_form — that
+        # function's job is to get from wherever we landed to the page holding
+        # the form, not to do the first hop. Skipping this left the inspector on
+        # about:blank, where _looks_gone quite correctly reported a dead posting.
+        page.goto(url, timeout=channel_ats._NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:  # noqa: BLE001
+            pass          # client-rendered pages often never go fully idle
+        channel_ats._dismiss_consent(page)
+
         reached = channel_ats.open_the_form(page, url)
         out["form_url"] = page.url
         out["open_the_form"] = reached
