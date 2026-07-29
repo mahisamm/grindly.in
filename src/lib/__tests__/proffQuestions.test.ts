@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { PROFF_FIELDS, DEFAULTS, GRAD_YEARS } from "@/lib/proffQuestions";
+import {
+  PROFF_FIELDS,
+  DEFAULTS,
+  GRAD_YEARS,
+  missingRequired,
+  blankOptional,
+} from "@/lib/proffQuestions";
 
 /**
  * Setup is where the agent gets every fact it will state on an application. A
@@ -64,5 +70,66 @@ describe("setup questions", () => {
     // Forms ask for them in separate boxes; one combined string answers neither.
     expect(PROFF_FIELDS.find((f) => f.key === "degree")).toBeDefined();
     expect(PROFF_FIELDS.find((f) => f.key === "college")).toBeDefined();
+  });
+});
+
+/**
+ * Required questions exist because a measured dry run of real application pages
+ * stalled on them. The rules that matter are which answers count as answers:
+ * "0" and "No" are facts a form can be filled with, and treating either as a
+ * blank would put the user in a loop they cannot exit.
+ */
+describe("required setup questions", () => {
+  it("blocks setup on the questions real forms were measured to stop on", () => {
+    const gaps = missingRequired({ ...DEFAULTS });
+    expect(gaps.map((f) => f.key).sort()).toEqual(["currentSalary", "previousInternship"]);
+  });
+
+  it("counts a picked '0' as an answer, not a blank", () => {
+    // A student earning nothing HAS a current salary, and the option list offers
+    // it. Refusing the pick would demand an answer the form itself accepts as 0.
+    const gaps = missingRequired({ ...DEFAULTS, currentSalary: "0", previousInternship: "No" });
+    expect(gaps).toEqual([]);
+  });
+
+  it("does not count a numeric 0 as an answer", () => {
+    // Same rule as agent/questions.py (`if matches and value`): every numeric
+    // field in DEFAULTS starts at 0 as its empty marker, and nobody scored 0%
+    // in class 12. Disagreeing with the agent here is how a field reads as
+    // filled in setup and blank at apply time.
+    const blanks = blankOptional({ ...DEFAULTS, class12Percent: 0 }).map((f) => f.key);
+    expect(blanks).toContain("class12Percent");
+    expect(blankOptional({ ...DEFAULTS, class12Percent: 82 }).map((f) => f.key)).not.toContain(
+      "class12Percent",
+    );
+  });
+
+  it("treats whitespace as unanswered", () => {
+    const gaps = missingRequired({ ...DEFAULTS, currentSalary: "   ", previousInternship: "No" });
+    expect(gaps.map((f) => f.key)).toEqual(["currentSalary"]);
+  });
+
+  it("names the optional blanks instead of hiding them", () => {
+    // Every one of these stalls some application eventually; the user is the
+    // only one who can fill them, so they have to be told which.
+    const blanks = blankOptional({ ...DEFAULTS }).map((f) => f.key);
+    expect(blanks).toContain("class12Percent");
+    expect(blanks).toContain("currentLocation");
+    // A required field is reported by missingRequired, never twice.
+    expect(blanks).not.toContain("currentSalary");
+  });
+
+  it("stops naming a blank once it is filled", () => {
+    const blanks = blankOptional({ ...DEFAULTS, currentLocation: "Hyderabad" }).map((f) => f.key);
+    expect(blanks).not.toContain("currentLocation");
+  });
+
+  it("gives every required field a one-tap way to answer it", () => {
+    // A required box with no options is a required essay. Both of these are
+    // answerable in one tap by someone who has never been employed.
+    for (const f of PROFF_FIELDS.filter((x) => x.required)) {
+      expect(["select", "choice"], `${f.key} is free text`).toContain(f.type);
+      expect(f.options!.length, `${f.key} has no options`).toBeGreaterThan(1);
+    }
   });
 });

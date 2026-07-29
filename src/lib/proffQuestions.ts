@@ -29,6 +29,17 @@ export type ProffField = {
   numeric?: boolean;
   placeholder?: string;
   suffix?: string;
+  /**
+   * Setup will not continue until this has a value.
+   *
+   * Reserved for questions a real application form has been MEASURED to stop
+   * on. Every "About you" answer left blank stalls some application eventually
+   * — agent/questions.py refuses to invent any of them — but requiring all
+   * fifteen would trade a wall of boxes at signup for a problem the user has
+   * not hit yet. So: the measured ones block, the rest are counted and named on
+   * the way past (see `blankOptional`), which is the honest version of both.
+   */
+  required?: boolean;
   group: "About you" | "Education" | "Targeting" | "Limits & rules";
 };
 
@@ -174,6 +185,7 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "choice",
     options: ["0", "Not currently employed"],
     placeholder: "e.g. 300000",
+    required: true,
     group: "About you",
   },
   {
@@ -182,6 +194,7 @@ export const PROFF_FIELDS: ProffField[] = [
     help: "Answered exactly as picked here. Never read off your resume, because a missed line there would state 'no' on your behalf.",
     type: "select",
     options: ["No", "Yes"],
+    required: true,
     group: "About you",
   },
   {
@@ -387,3 +400,51 @@ export const DEFAULTS: Record<string, unknown> = {
   phone: "",
   gpa: 0,
 };
+
+/**
+ * Has the user actually answered this question?
+ *
+ * Deliberately the same rule agent/questions.py applies (`if matches and value`),
+ * because the two must agree about what counts as a held fact: a question setup
+ * calls answered but the agent calls blank is an application that stalls with
+ * nothing on screen explaining why.
+ *
+ * So a numeric 0 is NOT an answer — it is the empty marker every numeric field
+ * in DEFAULTS starts at (gradYear, class12Percent, gpa), and nobody scored 0% in
+ * class 12. A STRING "0" is an answer: it can only get there by being picked
+ * from a dropdown, which is exactly how a student states a current salary of
+ * zero.
+ */
+function answered(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "number") return value !== 0;
+  return String(value ?? "").trim() !== "";
+}
+
+/**
+ * Required questions still unanswered. Setup blocks on these.
+ *
+ * Note what counts as answered: 0 and "No" are ANSWERS, not blanks. A student
+ * earning nothing has a current salary of zero, and the agent can put that in a
+ * form; what it cannot do is put anything in a box the user never filled.
+ */
+export function missingRequired(form: Record<string, unknown>): ProffField[] {
+  return PROFF_FIELDS.filter((f) => f.required && !answered(form[f.key]));
+}
+
+/**
+ * Optional "About you" questions still blank — named rather than hidden.
+ *
+ * Each of these is a screening question the agent will refuse to answer on an
+ * application that asks it, and the application waits instead of being sent.
+ * That trade is the right one, but it is only fair if the user is told which
+ * blanks are buying it.
+ */
+export function blankOptional(form: Record<string, unknown>): ProffField[] {
+  return PROFF_FIELDS.filter(
+    (f) =>
+      !f.required &&
+      (f.group === "About you" || f.group === "Education") &&
+      !answered(form[f.key]),
+  );
+}

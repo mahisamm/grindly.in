@@ -8,7 +8,14 @@ import dynamic from "next/dynamic";
 // @novnc/novnc touches `window` at module scope, so a static import fails
 // the prerender of this page outright ("window is not defined").
 const ConnectViewer = dynamic(() => import("@/components/ConnectViewer"), { ssr: false });
-import { PROFF_FIELDS, CONTACT_FIELDS, DEFAULTS, type ProffField } from "@/lib/proffQuestions";
+import {
+  PROFF_FIELDS,
+  CONTACT_FIELDS,
+  DEFAULTS,
+  missingRequired,
+  blankOptional,
+  type ProffField,
+} from "@/lib/proffQuestions";
 import { PLANS, type Plan } from "@/lib/adapters/payment";
 
 type Form = Record<string, unknown>;
@@ -160,6 +167,16 @@ export default function OnboardingPage() {
   const [slackId, setSlackId] = useState("");
   const [slackDone, setSlackDone] = useState(false);
   const [notifChannel, setNotifChannel] = useState<"slack" | "email">("email");
+  // Required questions the user tried to walk past, so the boxes themselves can
+  // say so instead of only the error line at the bottom of a long form.
+  const [requiredGaps, setRequiredGaps] = useState<string[]>([]);
+  // What this deploy can actually deliver a report on. Assume neither external
+  // channel works until /api/me says otherwise: promising an inbox that never
+  // fills is worse than under-promising and being right.
+  const [channels, setChannels] = useState<{ email: boolean; slack: boolean }>({
+    email: false,
+    slack: false,
+  });
   const [plan, setPlan] = useState<Plan>("plus");
   const [busy, setBusy] = useState(false);
   const [tosAck, setTosAck] = useState(false);
@@ -203,6 +220,7 @@ export default function OnboardingPage() {
         if (!d?.user) return;
         setPaymentsEnabled(!!d.user.paymentsEnabled);
         setIsAdmin(d.user.role === "admin");
+        if (d.notifyChannels) setChannels(d.notifyChannels);
         const allowed = d.user.hasAccess ?? (d.user.role === "admin" || d.user.accessStatus === "approved");
         if (!allowed) {
           window.location.href = "/waitlist";
@@ -473,6 +491,24 @@ export default function OnboardingPage() {
   }
 
   async function saveProff() {
+    // Block on the questions real application forms were measured to stop on.
+    // Sending the user past them means their first week is applications that
+    // sit waiting on an answer they were never asked for — which reads as a
+    // broken agent, not as a blank field.
+    const gaps = missingRequired(form as Record<string, unknown>);
+    if (gaps.length) {
+      setRequiredGaps(gaps.map((f) => f.key));
+      setMsg(
+        `Please answer: ${gaps.map((f) => f.label).join(", ")}. ` +
+          `Application forms ask for these, and the agent will never make one up for you.`,
+      );
+      document
+        .getElementById(`field-${gaps[0].key}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    setRequiredGaps([]);
+    setMsg("");
     setBusy(true);
     await fetch("/api/profile", {
       method: "POST",
@@ -769,8 +805,19 @@ export default function OnboardingPage() {
                   <div className="text-xs uppercase tracking-wide text-muted mb-3">{group}</div>
                   <div className="space-y-5">
                     {PROFF_FIELDS.filter((f) => f.group === group).map((f) => (
-                      <div key={f.key}>
-                        <label className="text-sm font-medium">{f.label}</label>
+                      <div
+                        key={f.key}
+                        id={`field-${f.key}`}
+                        className={
+                          requiredGaps.includes(f.key)
+                            ? "rounded-lg border border-danger/60 bg-danger/5 p-3 -m-1"
+                            : undefined
+                        }
+                      >
+                        <label className="text-sm font-medium">
+                          {f.label}
+                          {f.required && <span className="ml-1 text-danger">*</span>}
+                        </label>
                         <p className="text-xs text-muted mb-1.5">{f.help}</p>
                         {f.type === "tags" && (
                           <>
@@ -880,6 +927,28 @@ export default function OnboardingPage() {
                 </div>
               ))}
 
+              {/* Blanks are not free, and the user is the only one who can fill
+                  them. Naming them here is cheaper than an application that
+                  silently waits a week for an answer nobody asked for. */}
+              {blankOptional(form as Record<string, unknown>).length > 0 && (
+                <div className="mt-6 rounded-xl border border-warn/40 bg-warn/5 p-4 text-sm">
+                  <p className="font-medium text-warn">
+                    {blankOptional(form as Record<string, unknown>).length} answers still blank
+                  </p>
+                  <p className="mt-1 text-muted">
+                    An application whose form asks one of these will wait for you instead of
+                    being sent — the agent never invents a fact about you. You can fill them
+                    now or later from your dashboard:{" "}
+                    {blankOptional(form as Record<string, unknown>)
+                      .map((f) => f.label)
+                      .join(", ")}
+                    .
+                  </p>
+                </div>
+              )}
+
+              {msg && <p className="mt-4 text-sm text-danger">{msg}</p>}
+
               <div className="mt-7 flex justify-between">
                 <button
                   onClick={() => setStep(0)}
@@ -974,33 +1043,64 @@ export default function OnboardingPage() {
             <div>
               <h2 className="font-display text-2xl font-semibold">Stay updated</h2>
               <p className="mt-1 text-sm text-muted">
-                The agent sends you a daily progress report. Choose how you want to receive it.
+                {channels.email || channels.slack
+                  ? "The agent sends you a daily progress report. Choose how you want to receive it."
+                  : "The agent writes you a daily progress report."}
               </p>
 
+              {/* The bell is the one channel that cannot be unreachable, so it is
+                  stated first and unconditionally. Email and Slack are offered
+                  only where this deploy can actually deliver them — see
+                  lib/notifyChannels.ts and agent/notify.py, which agree on the
+                  fallback order. */}
+              <div className="mt-5 rounded-xl border border-accent/30 bg-accent/5 p-4 text-sm">
+                <p className="font-medium text-accent">✓ In your dashboard, always</p>
+                <p className="mt-1 text-muted">
+                  Every report, match and alert appears under the bell on your dashboard.
+                  Nothing to set up and nothing to miss.
+                </p>
+              </div>
+
+              {!channels.email && !channels.slack && (
+                <div className="mt-4 rounded-xl border border-border bg-surface p-4 text-sm text-muted">
+                  Email and Slack delivery aren&apos;t switched on for this deploy yet, so the
+                  dashboard is where reports land for now. You&apos;ll be able to add a channel
+                  from your dashboard once they are.
+                </div>
+              )}
+
               {/* Channel picker */}
-              <div className="mt-5 grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => setNotifChannel("slack")}
-                  aria-pressed={notifChannel === "slack"}
-                  className={`rounded-xl border-2 p-4 text-left transition ${notifChannel === "slack" ? "border-brand bg-brand/5" : "border-border hover:border-brand/40"}`}
-                >
-                  <div className="text-xl mb-1">💬</div>
-                  <div className="font-semibold text-sm">Slack DM</div>
-                  <div className="text-xs text-muted mt-0.5">Real-time DMs to your Slack account</div>
-                </button>
-                <button
-                  onClick={() => setNotifChannel("email")}
-                  aria-pressed={notifChannel === "email"}
-                  className={`rounded-xl border-2 p-4 text-left transition ${notifChannel === "email" ? "border-brand bg-brand/5" : "border-border hover:border-brand/40"}`}
-                >
-                  <div className="text-xl mb-1">📧</div>
-                  <div className="font-semibold text-sm">Email</div>
-                  <div className="text-xs text-muted mt-0.5">Reports sent to your registered email</div>
-                </button>
+              <div
+                className={`mt-5 grid grid-cols-2 gap-3 ${
+                  channels.email || channels.slack ? "" : "hidden"
+                }`}
+              >
+                {channels.slack && (
+                  <button
+                    onClick={() => setNotifChannel("slack")}
+                    aria-pressed={notifChannel === "slack"}
+                    className={`rounded-xl border-2 p-4 text-left transition ${notifChannel === "slack" ? "border-brand bg-brand/5" : "border-border hover:border-brand/40"}`}
+                  >
+                    <div className="text-xl mb-1">💬</div>
+                    <div className="font-semibold text-sm">Slack DM</div>
+                    <div className="text-xs text-muted mt-0.5">Real-time DMs to your Slack account</div>
+                  </button>
+                )}
+                {channels.email && (
+                  <button
+                    onClick={() => setNotifChannel("email")}
+                    aria-pressed={notifChannel === "email"}
+                    className={`rounded-xl border-2 p-4 text-left transition ${notifChannel === "email" ? "border-brand bg-brand/5" : "border-border hover:border-brand/40"}`}
+                  >
+                    <div className="text-xl mb-1">📧</div>
+                    <div className="font-semibold text-sm">Email</div>
+                    <div className="text-xs text-muted mt-0.5">Reports sent to your registered email</div>
+                  </button>
+                )}
               </div>
 
               {/* Slack setup */}
-              {notifChannel === "slack" && (
+              {notifChannel === "slack" && channels.slack && (
                 <div className="mt-5">
                   <div className="rounded-xl border border-border bg-surface p-4 text-sm text-muted">
                     <p className="font-medium text-foreground">How to find your Slack member ID</p>
@@ -1022,12 +1122,14 @@ export default function OnboardingPage() {
               )}
 
               {/* Email — no setup needed */}
-              {notifChannel === "email" && (
+              {notifChannel === "email" && channels.email && (
                 <div className="mt-5 rounded-xl border border-accent/30 bg-accent/5 p-4 text-sm">
                   <p className="font-medium text-accent">✓ No setup needed</p>
                   <p className="mt-1 text-muted">
                     Daily reports + interview alerts go to your registered email automatically.
-                    You can connect Slack later from the dashboard if you change your mind.
+                    {channels.slack
+                      ? " You can connect Slack later from the dashboard if you change your mind."
+                      : ""}
                   </p>
                 </div>
               )}
@@ -1042,7 +1144,7 @@ export default function OnboardingPage() {
                   Back
                 </button>
                 <div className="flex flex-wrap gap-2">
-                  {notifChannel === "slack" ? (
+                  {notifChannel === "slack" && channels.slack ? (
                     <>
                       <button
                         onClick={async () => { await saveReportChannel("email"); setStep(4); }}
@@ -1063,7 +1165,10 @@ export default function OnboardingPage() {
                       onClick={async () => { await saveReportChannel("email"); setStep(4); }}
                       className="rounded-lg brand-gradient px-5 py-2.5 font-medium text-white hover:opacity-90 transition"
                     >
-                      Continue with Email →
+                      {/* The saved choice stays "email" either way: the moment SMTP is
+                          configured, agent/notify.py starts delivering there with no
+                          second visit to setup. */}
+                      {channels.email ? "Continue with Email →" : "Continue →"}
                     </button>
                   )}
                 </div>

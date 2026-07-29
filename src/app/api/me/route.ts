@@ -7,6 +7,7 @@ import { visibleToUser } from "@/lib/pipeline";
 import { getQuota } from "@/lib/quota";
 import { hasAppAccess } from "@/lib/access";
 import { autoApplyMode, agentWillSend } from "@/lib/applyPolicy";
+import { notifyChannels } from "@/lib/notifyChannels";
 
 const PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"] as const;
 
@@ -312,5 +313,8 @@ export async function GET() {
       unread: notifUnread,
       items: notifItems.map((n) => ({ ...n, read: n.readAt !== null })),
     },
+    // Which report channels this deploy can actually deliver on, so setup stops
+    // offering an inbox nothing sends to. See lib/notifyChannels.ts.
+    notifyChannels: notifyChannels(),
   });
 }
