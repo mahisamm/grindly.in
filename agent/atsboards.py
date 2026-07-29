@@ -106,6 +106,12 @@ _API = {
     "ashby": "https://api.ashbyhq.com/posting-api/job-board/{slug}",
     "smartrecruiters": "https://api.smartrecruiters.com/v1/companies/{slug}/postings?limit=100",
     "workable": "https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true",
+    # Indian ATS. Everything above it is where a foreign-headquartered company
+    # posts; Keka is where an Indian one does, and the whole board list was
+    # skewed away from exactly the employers this product exists to reach.
+    # Takes a second placeholder — see _keka_board for why the GUID is fetched
+    # rather than guessed.
+    "keka": "https://{slug}.keka.com/careers/api/embedjobs/default/active/{guid}",
 }
 
 # Where a posting's description lives when the list endpoint doesn't carry it.
@@ -178,6 +184,31 @@ def _get_json(url: str):
         return None
 
 
+_KEKA_INFO = "https://{slug}.keka.com/careers/api/organization/default/careerportalinfo"
+# Keka addresses a board by an opaque per-organisation GUID, not by the
+# subdomain — /careers/api/embedjobs/default/active/<guid>. The GUID is not
+# published anywhere as a field; it appears inside the asset paths the portal
+# hands out ("/ats/documents/<guid>/careerportal/..."), which is a public,
+# unauthenticated response and the only place to read it from outside.
+_KEKA_GUID = re.compile(r"/ats/documents/([0-9a-f-]{36})/", re.I)
+
+
+def _keka_board(slug: str):
+    """Keka's postings: one call to learn the org GUID, one to use it.
+
+    Cheap enough to do per board — both responses are small and the whole thing
+    sits behind the same six-hour cache as every other vendor.
+    """
+    info = _get_json(_KEKA_INFO.format(slug=slug))
+    if not info:
+        return None
+    found = _KEKA_GUID.search(json.dumps(info))
+    if not found:
+        print(f"[atsboards] keka/{slug}: no org id in the portal info")
+        return None
+    return _get_json(_API["keka"].format(slug=slug, guid=found.group(1)))
+
+
 def _board(vendor: str, slug: str):
     """One board's postings, from cache when it is fresh."""
     key = f"{vendor}::{slug}"
@@ -185,7 +216,7 @@ def _board(vendor: str, slug: str):
     hit = _CACHE.get(key)
     if hit and time.time() - hit[0] <= CACHE_TTL:
         return hit[1]
-    payload = _get_json(_API[vendor].format(slug=slug))
+    payload = _keka_board(slug) if vendor == "keka" else _get_json(_API[vendor].format(slug=slug))
     if payload:
         _CACHE[key] = (time.time(), payload)
     elif (vendor, slug) in _LEARNED:
@@ -452,11 +483,64 @@ def _postings(vendor: str, payload, slug: str = "") -> list[dict]:
                 "jd": _text(j.get("description") or "", j.get("requirements") or ""),
                 "url": j.get("application_url") or j.get("url") or j.get("shortlink") or "",
             })
+    elif vendor == "keka":
+        # Keka answers with a bare array, and several of its fields are Python
+        # reprs rather than JSON — jobLocations comes back as
+        # "[{'id': 181, 'name': 'Mumbai', ...}]", single quotes and all. That is
+        # not a shape json.loads can read, so the values are pulled out with a
+        # pattern instead of being parsed; guessing at the structure would drop
+        # every Indian city on the board over a quoting style.
+        for j in payload or []:
+            job_id = str(j.get("id") or "")
+            out.append({
+                "title": j.get("title") or "",
+                "job_id": job_id,
+                # The portal states the employer's legal name in careerportalinfo,
+                # but _board caches only the postings; the slug IS the company on
+                # Keka (ketto.keka.com), so it is the honest fallback.
+                "company": slug,
+                "posted_days": _age_days(j.get("publishedOn")),
+                "location": _keka_places(j.get("jobLocations")),
+                "jd": _text(
+                    j.get("description") or "",
+                    j.get("excerpt") or "",
+                    _keka_list(j.get("skillNames")),
+                ),
+                "url": f"https://{slug}.keka.com/careers/jobdetails/{job_id}" if job_id else "",
+            })
     for p in out:
         p.setdefault("job_id", "")
         p.setdefault("company", "")
         p.setdefault("posted_days", None)
     return [p for p in out if p["url"]]
+
+
+# Keka embeds structured data as a Python repr inside a JSON string. Both of
+# these read values out of it without pretending it is parseable JSON.
+_KEKA_CITY = re.compile(r"'(?:city|name)':\s*'([^']+)'")
+_KEKA_ITEM = re.compile(r"'([^']+)'")
+
+
+def _keka_places(raw) -> str:
+    """"[{'id': 181, 'name': 'Mumbai', 'city': 'Mumbai', 'countryCode': 'IN'}]"
+    -> "Mumbai". Deduplicated in first-seen order so a two-city posting reads
+    "Mumbai, Pune" rather than "Mumbai, Mumbai, Pune, Pune"."""
+    if not raw:
+        return ""
+    seen: list[str] = []
+    for city in _KEKA_CITY.findall(str(raw)):
+        if city and city not in seen:
+            seen.append(city)
+    return ", ".join(seen)
+
+
+def _keka_list(raw) -> str:
+    """"['Python', 'SQL']" -> "Python, SQL". Feeds the JD text the matcher
+    scores against, so an unparsed skills list is a posting that looks
+    irrelevant to a candidate who is a perfect fit for it."""
+    if not raw:
+        return ""
+    return ", ".join(_KEKA_ITEM.findall(str(raw)))
 
 
 # A posting older than this is treated as gone. Boards leave filled roles up for
