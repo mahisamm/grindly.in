@@ -105,3 +105,19 @@ def test_the_widgets_own_placeholder_is_never_read_as_an_option():
     assert questions._PLACEHOLDER_LABEL.match("Select...")
     assert questions._PLACEHOLDER_LABEL.match("Search")
     assert not questions._PLACEHOLDER_LABEL.match("Yes, immediately")
+
+
+def test_greenhouses_education_end_year_is_the_graduation_year_we_already_hold():
+    # A required number box that stopped a real application dead, while the same
+    # year sat in the profile under a different name.
+    rec = _answer(
+        {"label": "End date year", "kind": "number", "required": True, "options": []},
+        profile={"grad_year": 2027},
+    )
+    assert rec["answer"] == "2027"
+    assert rec["source"] == "profile"
+
+
+def test_a_year_we_do_not_hold_is_still_not_invented():
+    rec = _answer({"label": "End date year", "kind": "number", "required": True, "options": []})
+    assert rec["answer"] == ""

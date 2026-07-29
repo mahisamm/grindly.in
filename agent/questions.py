@@ -211,6 +211,16 @@ def read_fields(page) -> list[dict]:
                 continue
             if _SKIP_NAMES.search(name):
                 continue
+            # Off-screen inputs are not questions. react-select keeps a hidden
+            # twin of every dropdown to carry its value, and Playwright will
+            # patiently retry a click on one for a full minute before giving up
+            # — 58 retries on a single field, in a run that has a whole form to
+            # get through.
+            try:
+                if not el.is_visible():
+                    continue
+            except Exception:  # noqa: BLE001
+                continue
             if tag != "select" and (el.input_value() or "").strip():
                 continue  # already answered (cover letter, prefilled profile data)
 
@@ -341,7 +351,11 @@ _EMAIL = re.compile(r"\b(e-?mail)\b", re.I)
 # rule: it is the rule working as designed, with the user as the source.
 _GRAD_YEAR_Q = re.compile(
     r"\b(graduation\s+year|year\s+of\s+(graduation|passing)|passing\s*(-|\s)?out\s+year|"
-    r"passing\s+year|batch\s+year|when\s+do\s+you\s+graduate|expected\s+graduation)\b",
+    r"passing\s+year|batch\s+year|when\s+do\s+you\s+graduate|expected\s+graduation|"
+    # Greenhouse's education block asks it as "End date year" against the
+    # degree. It is the same fact, it is required, and leaving it blank stopped
+    # a real application on a number we already held.
+    r"end\s+date\s+year|end\s+year)\b",
     re.I,
 )
 _HOURS_Q = re.compile(
