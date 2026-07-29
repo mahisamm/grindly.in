@@ -421,6 +421,17 @@ def open_the_form(page, url: str) -> list:
     if uploads:
         return uploads
 
+    # Don't go hunting for the apply page of a posting that is gone. Ashby
+    # client-routes a removed posting to the board index; navigating to
+    # <posting>/application from there puts the posting id back in the address
+    # bar and erases the only evidence that it was ever taken down — so the
+    # caller reports "could not find the form" for a job that no longer exists.
+    try:
+        if _looks_gone(url, page.url or ""):
+            return []
+    except Exception:  # noqa: BLE001
+        pass
+
     direct = _apply_url_for(url, ats_vendor(url) or "")
     if not direct:
         return []
