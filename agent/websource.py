@@ -21,6 +21,7 @@ import html
 import json
 import os
 import re
+import urllib.parse
 import urllib.request
 
 import flags
@@ -573,6 +574,66 @@ def posting_meta(url: str) -> dict:
     return dict(_POSTING_META.get(url) or {})
 
 
+# ---- where the application actually lives -----------------------------------
+#
+# A company careers page is employer-owned but holds no form of its own: the
+# Apply button links out to the company's ATS or to a Google Form. That link was
+# being destroyed before anything could use it — `scrape_jd` flattens the HTML to
+# text with `_TAGS.sub`, so by the time `resolver.resolve` read the JD, every
+# href in it was gone. The resolver then found no employer channel, fell back to
+# the board channel with source "websource", and graded it TIER_C: never sent,
+# and not sendable, because no adapter is named "websource" either.
+#
+# Measured on production data, that was 34% of everything web discovery found.
+#
+# So the links are kept, from the page we ALREADY fetched — no extra request, no
+# crawl, no page budget. Only links that lead somewhere we can actually submit
+# are worth carrying, which is also what keeps this from becoming a link dump.
+_HREF = re.compile(r"""<a\b[^>]*?href\s*=\s*["']([^"'#][^"']*)["']""", re.I)
+MAX_APPLY_LINKS = 12
+
+_POSTING_LINKS: dict[str, list[str]] = {}
+
+
+def _apply_links_in(page_url: str, raw_html: str) -> list[str]:
+    """ATS / Google Form addresses linked from a page, absolute and deduped."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for href in _HREF.findall(raw_html or ""):
+        href = html.unescape(href.strip())
+        if href.lower().startswith(("javascript:", "mailto:", "tel:", "data:")):
+            continue
+        try:
+            absolute = urllib.parse.urljoin(page_url, href)
+        except Exception:  # noqa: BLE001
+            continue
+        if not absolute.lower().startswith(("http://", "https://")):
+            continue
+        # Worth keeping only if it is somewhere we have a sender for. An ATS
+        # vendor host, or a Google Form — the resolver decides which, this only
+        # decides what is worth carrying to it.
+        interesting = bool(hosts.vendor_of(absolute)) or "docs.google.com/" in absolute or \
+            "forms.gle/" in absolute
+        if not interesting:
+            continue
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        out.append(absolute)
+        if len(out) >= MAX_APPLY_LINKS:
+            break
+    return out
+
+
+def _remember_links(url: str, links: list[str]) -> None:
+    if links:
+        _POSTING_LINKS[url] = links
+
+
+def posting_links(url: str) -> list[str]:
+    return list(_POSTING_LINKS.get(url) or [])
+
+
 _SMARTRECRUITERS = re.compile(r"jobs\.smartrecruiters\.com/([^/?#]+)/(\d{6,})", re.I)
 _WORKABLE = re.compile(r"apply\.workable\.com/([^/?#]+)/j/([0-9A-Za-z]{6,})", re.I)
 
@@ -723,6 +784,8 @@ def scrape_jd(url: str, uid: str = "") -> str:
     except Exception as e:  # noqa: BLE001
         print(f"[websource] jd fetch failed ({type(e).__name__}) for {url[:60]}")
         return ""
+    # Read the Apply links out of the markup before the markup is thrown away.
+    _remember_links(url, _apply_links_in(url, raw))
     text = _MARKUP.sub(" ", _TAGS.sub(" ", raw))
     text = html.unescape(text)
     return re.sub(r"\s+", " ", text).strip()[:6000]
@@ -843,6 +906,9 @@ def fetch(roles: list[str], limit: int = 25, uid: str = "") -> list[dict]:
         j["stipend"] = parse_stipend(body)
         j["pay_note"] = parse_pay_note(body)
         j["duration"] = parse_duration(body)
+        # Where the Apply button on that page actually points. The resolver
+        # reads this to route a careers page to the employer's real intake.
+        j["apply_links"] = posting_links(j["url"])
 
     kept: list[dict] = []
     dropped = {"index": 0, "not_india": 0, "duplicate": 0, "unreadable": 0, "stale": 0}

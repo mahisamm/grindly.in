@@ -40,6 +40,7 @@ import random
 import re
 
 import questions
+import resolver
 import safety
 import selector_ai
 import stealth
@@ -138,6 +139,74 @@ _SUCCESS_SELECTORS = [
     ":text('We have received your application')",
     ":text('Thank you for your application')",
 ]
+
+# What each vendor actually says, and where it goes, when a submit lands.
+#
+# The generic list above is a net for text; these are the vendor's own markup and
+# its own post-submit URL. Both matter, because `safety.classify_submit` returns
+# needs_review when it cannot confirm — and a needs_review on a submit that
+# WORKED is the worst outcome in the system: the daily slot and the idempotency
+# claim both stay spent (correctly — the click landed), the user is asked to go
+# check an application that is already filed, and the run reports a success as an
+# unknown. Every vendor here was read off its own confirmation page.
+_VENDOR_SUCCESS: dict[str, list[str]] = {
+    "greenhouse": [
+        "#application_confirmation",
+        ":text('Your application has been submitted')",
+        ":text('Thank you for applying')",
+    ],
+    "lever": [
+        ".application-confirmation",
+        ":text('Thank you for applying')",
+        ":text('Your application has been submitted')",
+    ],
+    "ashby": [
+        "[data-testid='application-submitted']",
+        ":text('Thanks for applying')",
+        ":text('Application received')",
+    ],
+    "smartrecruiters": [
+        "[data-test='application-success']",
+        ":text('Thank you for applying')",
+        ":text('Your application was sent')",
+    ],
+    "workable": [
+        "[data-ui='application-success']",
+        ":text('Thank you for applying')",
+        ":text(\"We've received your application\")",
+    ],
+    "zoho": [":text('Thank you for applying')", ":text('successfully submitted')"],
+    "freshteam": [":text('Thank you for applying')", ":text('Application submitted')"],
+    "keka": [":text('Thank you for applying')", ":text('Application submitted')"],
+    "darwinbox": [":text('Thank you')", ":text('Application submitted')"],
+}
+
+# A URL the vendor only ever navigates to AFTER a successful submit. Cheaper and
+# harder to fake than text — Lever's /thanks is a different page, not a banner.
+_VENDOR_SUCCESS_URLS: dict[str, tuple[str, ...]] = {
+    "lever": ("/thanks", "/applied"),
+    "greenhouse": ("confirmation", "/thanks"),
+    "ashby": ("/application-submitted", "/confirmation"),
+    "smartrecruiters": ("/confirmation", "thankyou", "thank-you"),
+    "workable": ("/success", "/thanks"),
+}
+
+
+def vendor_success_selectors(vendor: str) -> list[str]:
+    """Confirmation markup specific to one ATS vendor, or [] if we have none."""
+    return list(_VENDOR_SUCCESS.get((vendor or "").lower(), []))
+
+
+def _confirmed_by_url(page, vendor: str) -> bool:
+    """Did the browser end up somewhere only a successful submit leads?"""
+    markers = _VENDOR_SUCCESS_URLS.get((vendor or "").lower())
+    if not markers:
+        return False
+    try:
+        current = (page.url or "").lower()
+    except Exception:  # noqa: BLE001
+        return False
+    return any(m in current for m in markers)
 
 # Cookie/consent walls sit on top of the form on several EU-hosted ATS tenants.
 _CONSENT_CANDIDATES = [
@@ -419,7 +488,16 @@ def apply(
             pass
         _pause(page, 1500, 3000)
 
-        status, why = safety.classify_submit(page, _SUCCESS_SELECTORS)
+        vendor = resolver.ats_vendor(url) or ""
+        status, why = safety.classify_submit(
+            page, vendor_success_selectors(vendor) + _SUCCESS_SELECTORS
+        )
+        # A vendor that answers a successful submit by NAVIGATING says so in the
+        # URL bar even when its confirmation text is inside a shadow root or an
+        # iframe we cannot query. Only ever upgrades an unconfirmed result — an
+        # explicit validation error on the page still wins.
+        if status == safety.APPLY_STATUS.NEEDS_REVIEW and _confirmed_by_url(page, vendor):
+            status, why = safety.APPLY_STATUS.APPLIED, f"submitted — {vendor} confirmation page"
 
         # Proof for the states the user most needs it for: the success they are
         # being asked to believe, and the ambiguous one they may have to check.

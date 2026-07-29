@@ -73,14 +73,24 @@ _ATS_HOSTS: dict[str, str] = {
     "darwinbox.in": "darwinbox",
 }
 
+# Google serves the same form from four shapes of URL, and only one of them was
+# matched here. The others are not exotic: `/a/<domain>/` is what every Google
+# Workspace company's form looks like, and `/u/0/` is what a browser copies out
+# of the address bar when the person is signed into more than one account. Live,
+# two real Coalition Technologies application forms —
+#   docs.google.com/a/coalitiontechnologies.com/forms/d/e/<id>/viewform
+# — were graded TIER_C and never sent, on the one channel that needs no browser,
+# no account and has no captcha wall. Both optional segments are matched here.
+_GF_HOST = r"docs\.google\.com(?:/a/[^/\s\"'<>)\]]+)?/forms(?:/u/\d+)?"
+
 _GOOGLE_FORM_RE = re.compile(
-    r"https?://docs\.google\.com/forms/d/e/[A-Za-z0-9_-]+/viewform[^\s\"'<>)\]]*",
+    rf"https?://{_GF_HOST}/d/e/[A-Za-z0-9_-]+/viewform[^\s\"'<>)\]]*",
     re.I,
 )
 # The short /forms/d/<id>/ form (no /e/) is the *edit*-side id; its public
 # viewform still resolves, so accept it too.
 _GOOGLE_FORM_SHORT_RE = re.compile(
-    r"https?://(?:docs\.google\.com/forms/d/|forms\.gle/)[A-Za-z0-9_-]+[^\s\"'<>)\]]*",
+    rf"https?://(?:{_GF_HOST}/d/|forms\.gle/)[A-Za-z0-9_-]+[^\s\"'<>)\]]*",
     re.I,
 )
 
@@ -368,7 +378,17 @@ def resolve(
     back to the platform channel, which is exactly today's behaviour.
     """
     url = job.get("url") or ""
-    haystack = f"{url}\n{jd_text or ''}"
+    # `apply_links` are hrefs the discovery adapter read off the posting page
+    # BEFORE it flattened the HTML into text — the Apply button on a company's
+    # careers page, which is otherwise destroyed before anything can follow it.
+    # Free to use: that page was already fetched, so this costs no page load and
+    # no fetch budget. Placed ahead of the JD so an explicit Apply target beats
+    # an ATS link that merely happens to appear in the description prose.
+    links = job.get("apply_links") or []
+    if isinstance(links, str):
+        links = [links]
+    linked = "\n".join(str(u) for u in links[:20])
+    haystack = f"{url}\n{linked}\n{jd_text or ''}"
 
     # 1. The listing URL is already the real destination.
     vendor = ats_vendor(url)
