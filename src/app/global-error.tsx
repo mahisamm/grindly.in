@@ -28,6 +28,32 @@ export default function GlobalError({
   // retry isn't provided.
   const retry = unstable_retry ?? reset;
 
+  // Tell the server. A root-layout failure renders entirely in the browser, so
+  // without this the only record of it is on the screen of the person it broke
+  // for — we found out about it when they complained, if they complained.
+  //
+  // fetch() and not a helper import, for the same reason this file imports
+  // nothing else: whatever just failed might be the module we would be reaching
+  // for. Fire-and-forget, and a failure to report a failure is not worth a
+  // second error screen.
+  if (typeof window !== "undefined") {
+    try {
+      void fetch("/api/errors", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: error?.name || "unhandled",
+          message: error?.message || "root layout crashed",
+          stack: error?.stack || "",
+          path: window.location?.pathname || "",
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch {
+      /* reporting must never be the thing that breaks the error page */
+    }
+  }
+
   return (
     <html lang="en">
       <body

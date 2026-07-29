@@ -15,6 +15,7 @@ const LINKS = [
   ["/admin/support", "Support"],
   ["/admin/integrations", "Integrations"],
   ["/admin/audit", "Audit log"],
+  ["/admin/errors", "Crashes"],
   ["/admin/settings", "Settings"],
 ];
 

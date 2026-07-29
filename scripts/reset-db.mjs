@@ -115,6 +115,7 @@ async function resetDb() {
     prisma.backupHealth.deleteMany(),
     prisma.accessAllowlist.deleteMany(),
     prisma.pageView.deleteMany(),
+    prisma.errorEvent.deleteMany(),
   ]);
 
   const labels = [
@@ -125,7 +126,7 @@ async function resetDb() {
     "rate_limit_entries", "agent_runs", "platform_credentials",
     "user_integrations", "applications", "resume_variants",
     "resume_versions", "profiles", "company_reputation", "jobs", "users",
-    "backup_health", "access_allowlist", "page_views",
+    "backup_health", "access_allowlist", "page_views", "error_events",
   ];
   results.forEach((r, i) => console.log(`  deleted ${r.count} ${labels[i]}`));
 

@@ -728,6 +728,44 @@ model BackupHealth {
   @@map("backup_health")
 }
 
+// Crashes, in our own database.
+//
+// Sentry is wired (sentry.server.config.ts, SENTRY_DSN in compose) and has never
+// been switched on, because switching it on needs an account on someone else's
+// service. Meanwhile a break at 2am for a stranger was something we found out
+// about from a complaint. This is the version that needs nobody's signup: the
+// worker and the web both write here, /admin/errors reads it.
+//
+// Grouped by `fingerprint` rather than stored one row per occurrence. An
+// exception inside a retry loop fires hundreds of times in a minute, and a table
+// that grows a row for each of them is a table nobody can read and a disk nobody
+// budgeted for — so a repeat bumps `count` and `lastSeenAt` on the row that is
+// already there.
+model ErrorEvent {
+  id          String   @id @default(cuid())
+  // sha1 of source+kind+message, computed by the writer. Same bug, same row.
+  fingerprint String   @unique
+  source      String // "worker" | "web" | "browser"
+  kind        String // exception class, HTTP status, or "unhandled"
+  message     String
+  // Truncated at the writer. A full trace is megabytes and the top frames are
+  // the only part anyone reads.
+  stack       String?
+  // Whatever the writer knew: the user, the run, the URL. Never credentials —
+  // redact.py on the worker side, and the web writer never forwards a body.
+  context     String?
+  count       Int      @default(1)
+  firstSeenAt DateTime @default(now()) @map("first_seen_at") @db.Timestamptz
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at") @db.Timestamptz
+  // An operator saying "seen it, it's known" — so the page can show what is NEW
+  // since they last looked, which is the only question that matters at 2am.
+  resolvedAt  DateTime? @map("resolved_at") @db.Timestamptz
+
+  @@index([lastSeenAt])
+  @@index([resolvedAt])
+  @@map("error_events")
+}
+
 // Pre-approved emails for the gated beta. An admin can allow an email BEFORE the
 // person has signed up; the Google sign-in callback consults this on account
 // creation and auto-approves a match. Separate from User so a grant can exist

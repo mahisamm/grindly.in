@@ -436,6 +436,19 @@ def drain(worker_id: str, run_fn) -> int:
                 log.error("job %s completed after its lease was lost; result discarded", job["id"])
         except Exception as e:  # noqa: BLE001
             log.error("job %s failed (attempt %d): %s", job["id"], job["attempts"], e)
+            # Also to the database. A run that dies here is the single most
+            # important thing an operator can know about, and until now it lived
+            # only in a container log that rotates and that nobody reads until a
+            # user complains.
+            try:
+                import error_log
+
+                error_log.capture(e, context={
+                    "job": job["id"], "user": job.get("user_id"),
+                    "mode": job.get("mode"), "attempt": job["attempts"],
+                })
+            except Exception:  # noqa: BLE001
+                pass
             try:
                 mark_failed(job["id"], worker_id, str(e))
             except Exception:  # noqa: BLE001
