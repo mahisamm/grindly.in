@@ -128,6 +128,33 @@ def _is_combobox(el) -> bool:
         return False
 
 
+def _select_shell_ghost(el) -> bool:
+    """An input react-select renders that is not a question.
+
+    Every react-select mounts a second, empty input alongside its combobox —
+    Greenhouse ships it as `class="...-requiredInput"` — purely so the browser's
+    native validation can say "please fill out this field" when nothing is
+    chosen. It has no name, no id, no label and no options, and it is REQUIRED.
+
+    Read as a question it is unanswerable by construction, so every dropdown on
+    the page produced a phantom required field that nothing could ever fill and
+    that blocked the submit. Inside a select shell, only the combobox is real.
+    """
+    try:
+        return bool(el.evaluate(
+            """e => {
+              if ((e.getAttribute('role') || '') === 'combobox') return false;
+              if (/requiredInput/i.test(e.className || '')) return true;
+              const shell = e.closest(
+                '[class*="select-shell" i],[class*="-container" i],[class*="select__" i]'
+              );
+              return !!(shell && shell.querySelector('[role="combobox"]'));
+            }"""
+        ))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _wrapper_required(el) -> bool:
     """Is the dropdown this input belongs to marked required?
 
@@ -220,6 +247,8 @@ def read_fields(page) -> list[dict]:
                 if not el.is_visible():
                     continue
             except Exception:  # noqa: BLE001
+                continue
+            if _select_shell_ghost(el):
                 continue
             if tag != "select" and (el.input_value() or "").strip():
                 continue  # already answered (cover letter, prefilled profile data)

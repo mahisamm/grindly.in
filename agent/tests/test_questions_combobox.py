@@ -121,3 +121,23 @@ def test_greenhouses_education_end_year_is_the_graduation_year_we_already_hold()
 def test_a_year_we_do_not_hold_is_still_not_invented():
     rec = _answer({"label": "End date year", "kind": "number", "required": True, "options": []})
     assert rec["answer"] == ""
+
+
+def test_react_selects_phantom_required_input_is_not_a_question():
+    # Every react-select mounts an empty second input beside its combobox, purely
+    # so the browser can say "please fill out this field". No name, no label, no
+    # options — and required. Treated as a question it is unanswerable by
+    # construction, so every dropdown on the page produced a phantom blocker.
+    ghost = FakeEl({"class": "remix-css-1a0ro4n-requiredInput"},
+                   {"requiredInput": True})
+    assert questions._select_shell_ghost(ghost) is True
+
+
+def test_the_combobox_itself_is_never_treated_as_a_ghost():
+    real = FakeEl({"role": "combobox"}, {"requiredInput": False})
+    assert questions._select_shell_ghost(real) is False
+
+
+def test_an_ordinary_text_input_is_not_a_ghost():
+    plain = FakeEl({"type": "text", "name": "first_name"}, {"requiredInput": False})
+    assert questions._select_shell_ghost(plain) is False
