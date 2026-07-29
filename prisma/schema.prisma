@@ -295,6 +295,12 @@ model Profile {
   dateOfBirth       String? @map("date_of_birth")    // as the user writes it
   differentlyAbled  String? @map("differently_abled") // "Yes" | "No"
   nationality       String?
+  // Its own required box on nearly every applicant tracking system, and NOT
+  // derivable from nationality — "Indian" is not what a country dropdown wants,
+  // and a candidate can hold one and live in the other. Left to a model, it
+  // answered "India" on a real Greenhouse form: plausible, unverified, and
+  // stated under the candidate's name.
+  country           String?
   // Profile links. Forms ask for these in their own boxes, so parsing them back
   // out of the resume PDF per application is both slow and lossy.
   linkedinUrl       String? @map("linkedin_url")

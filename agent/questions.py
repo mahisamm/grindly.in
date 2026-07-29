@@ -123,6 +123,37 @@ def read_fields(page) -> list[dict]:
     return fields
 
 
+# A "label" that is really a widget's placeholder. Greenhouse, Ashby and Lever
+# all build their dropdowns as a React combobox — a plain <input> with
+# role=combobox and a placeholder of "Select..." or "Search" — so _LABEL_JS's
+# last resort returns the placeholder and we hand a model a question that reads
+# "Select...". It answered, in production, "I don't have information to select
+# from", typed that into a REQUIRED dropdown, and the employer's form rejected
+# the submission.
+#
+# The honest reading is that we could not find the question, which is a
+# different thing from a question with no good answer: it stops the application
+# for the candidate instead of filling the box with prose.
+_PLACEHOLDER_LABEL = re.compile(
+    r"^\s*(select|search|choose|pick|type to search|start typing|"
+    r"select\.{2,3}|select…|--+)\s*\.{0,3}\s*$",
+    re.I,
+)
+
+# Input kinds that can only accept a specific shape of value. A model's prose is
+# never one of them: "I don't have a specific end date to provide" went into a
+# `number` box for "End date year*", which is both nonsense to a recruiter and
+# an instant client-side validation failure — the one that killed the first real
+# submission this system ever attempted.
+_TYPED_INPUTS = ("number", "date", "month", "week", "time", "search", "range", "color")
+
+
+def unreadable_label(label: str) -> bool:
+    """True when what we scraped is a widget's placeholder, not its question."""
+    text = (label or "").strip()
+    return not text or bool(_PLACEHOLDER_LABEL.match(text))
+
+
 # --- answering --------------------------------------------------------------
 
 _CGPA = re.compile(r"\b(cgpa|gpa|grade point)\b", re.I)
@@ -248,6 +279,13 @@ _DISABILITY_Q = re.compile(
     re.I,
 )
 _NATIONALITY_Q = re.compile(r"\bnationalit(y|ies)\b|\bcountry\s+of\s+citizenship\b", re.I)
+# Deliberately a different question from nationality, and deliberately matched
+# after it: "Country of citizenship" is a nationality box, while a bare
+# "Country" asks where the candidate is applying from. Neither is derivable from
+# the other — "Indian" is not what a country dropdown wants, and a candidate can
+# hold one and live in the other — so a model answered it "India" on a real
+# Greenhouse form: plausible, unverified, stated under their name.
+_COUNTRY_Q = re.compile(r"^\s*country\b(?!\s+of\s+citizenship)", re.I)
 _COLLEGE_Q = re.compile(r"\b(college|university|institute|institution)\b", re.I)
 _DEGREE_Q = re.compile(
     r"\b(degree|course|qualification|programme|program|branch|stream|"
@@ -434,6 +472,7 @@ def _setup_candidates(label: str, profile: dict) -> list[tuple[bool, str, str]]:
         (bool(_DOB_Q.search(label)), "date_of_birth", _text("date_of_birth")),
         (bool(_DISABILITY_Q.search(label)), "differently_abled", _text("differently_abled")),
         (bool(_NATIONALITY_Q.search(label)), "nationality", _text("nationality")),
+        (bool(_COUNTRY_Q.search(label)), "country", _text("country")),
         # A percentage only answers a question that ASKS for one. "Class 12 board
         # name" and "Intermediate college" match the school-level pattern too,
         # and a percentage typed into either is nonsense.
@@ -656,6 +695,38 @@ def answer_fields(
             })
             continue
 
+        # Two more shapes the model must never be asked to fill, both learned
+        # from the first real submission, both of which it answered fluently and
+        # wrongly:
+        #
+        #   * a box whose question we could not read (a combobox placeholder —
+        #     "Select...", "Search"). Answering it is answering a question
+        #     nobody asked.
+        #   * an input that only accepts a number, a date or a search term.
+        #     Prose in a `number` box fails validation before a human ever sees
+        #     it, and the application dies with no explanation.
+        #
+        # Both stop here as unanswerable, so a REQUIRED one blocks the submit
+        # and reaches the candidate instead of the employer.
+        #   * a question SETUP knows how to ask but we hold no answer for. The
+        #     deterministic pass above already returned any stored value, so
+        #     reaching here means the box is genuinely empty — and a model
+        #     filling it invents precisely the class of fact this module exists
+        #     to refuse. It answered "Country*" with "India" from the résumé
+        #     alone: plausible, unverified, and stated under the candidate's
+        #     name. missing_fact_for names which one, so the user can fill it
+        #     once and never see it again.
+        if (
+            unreadable_label(f["label"])
+            or f["kind"] in _TYPED_INPUTS
+            or missing_fact_for(f["label"] or "", profile)
+        ):
+            out.append({
+                "question": f["label"], "answer": "",
+                "source": "unanswerable", "kind": f["kind"], "_i": i,
+            })
+            continue
+
         # Free text — this is what the LLM is for.
         out.append({
             "question": f["label"], "answer": "",
@@ -678,6 +749,18 @@ def answer_fields(
         # blank blocks the submit instead, and the candidate answers it.
         label_l = f["label"] or ""
         if _FACTUAL_CLAIM.search(label_l) or _WANTS_A_DATUM.search(label_l):
+            continue
+        # Same exclusion as the answering pass above, and for the same reason:
+        # a box whose question we could not read is not a box we may put a
+        # paragraph in. Without this the refusal above is undone one loop later
+        # — the field ends up holding "My background is in python…" under the
+        # label "Select...", which is how a required dropdown gets prose typed
+        # into it and the whole submission is rejected.
+        if (
+            unreadable_label(label_l)
+            or rec["kind"] in _TYPED_INPUTS
+            or missing_fact_for(label_l, profile)
+        ):
             continue
         if not rec["answer"] and f["required"] and rec["kind"] in ("textarea", "text"):
             top = ", ".join(skills[:3]) if skills else "the tools this role uses"

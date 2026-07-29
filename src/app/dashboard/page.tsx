@@ -148,6 +148,7 @@ type RawProfile = {
   currentLocation: string | null;
   dateOfBirth: string | null;
   nationality: string | null;
+  country: string | null;
   gender: string | null;
   differentlyAbled: string | null;
   linkedinUrl: string | null;
@@ -260,6 +261,7 @@ type ProfileForm = {
   currentLocation: string;
   dateOfBirth: string;
   nationality: string;
+  country: string;
   gender: string;
   differentlyAbled: string;
   linkedinUrl: string;
@@ -567,6 +569,7 @@ function profileToForm(p: RawProfile): ProfileForm {
     currentLocation: p.currentLocation || "",
     dateOfBirth: p.dateOfBirth || "",
     nationality: p.nationality || "",
+    country: p.country || "",
     gender: p.gender || "",
     differentlyAbled: p.differentlyAbled || "",
     linkedinUrl: p.linkedinUrl || "",

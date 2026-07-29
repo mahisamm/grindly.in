@@ -232,6 +232,15 @@ export const PROFF_FIELDS: ProffField[] = [
     group: "About you",
   },
   {
+    key: "country",
+    label: "Country you're applying from",
+    help: "Its own required box on nearly every applicant tracking system. Not the same as nationality — you can hold one and live in another, and neither is guessed from the other.",
+    type: "choice",
+    options: ["India"],
+    placeholder: "e.g. India",
+    group: "About you",
+  },
+  {
     key: "gender",
     label: "Gender",
     help: "Optional. Asked on the diversity section of most application forms. Leave blank and those applications wait for you rather than being sent with a guess.",
@@ -389,6 +398,7 @@ export const DEFAULTS: Record<string, unknown> = {
   currentLocation: "",
   dateOfBirth: "",
   nationality: "",
+  country: "",
   gender: "",
   differentlyAbled: "",
   linkedinUrl: "",

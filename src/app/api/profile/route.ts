@@ -63,6 +63,7 @@ const STR_FIELDS = new Set([
   "currentLocation",
   "dateOfBirth",
   "nationality",
+  "country",
   "gender",
   "differentlyAbled",
   // Its own box on most applications, so it isn't re-parsed out of the PDF.
