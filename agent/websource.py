@@ -634,6 +634,17 @@ def posting_links(url: str) -> list[str]:
     return list(_POSTING_LINKS.get(url) or [])
 
 
+# Postings the fetch proved are no longer there. A search index is days behind
+# an ATS, so "found by search" and "still open" are different claims — and the
+# ATS answers a dead posting with its board INDEX, not a 404, which reads as a
+# fat, healthy job description to everything downstream. See resolver.looks_gone.
+_GONE: set[str] = set()
+
+
+def is_gone(url: str) -> bool:
+    return url in _GONE
+
+
 _SMARTRECRUITERS = re.compile(r"jobs\.smartrecruiters\.com/([^/?#]+)/(\d{6,})", re.I)
 _WORKABLE = re.compile(r"apply\.workable\.com/([^/?#]+)/j/([0-9A-Za-z]{6,})", re.I)
 
@@ -780,9 +791,16 @@ def scrape_jd(url: str, uid: str = "") -> str:
             "Accept-Language": "en-IN,en;q=0.9",
         })
         with urllib.request.urlopen(req, timeout=15) as resp:
+            landed = resp.geturl()
             raw = resp.read(400_000).decode("utf-8", "replace")
     except Exception as e:  # noqa: BLE001
         print(f"[websource] jd fetch failed ({type(e).__name__}) for {url[:60]}")
+        return ""
+    # The redirect is the answer: this posting has been taken down.
+    import resolver as _resolver
+
+    if _resolver.looks_gone(url, landed):
+        _GONE.add(url)
         return ""
     # Read the Apply links out of the markup before the markup is thrown away.
     _remember_links(url, _apply_links_in(url, raw))
@@ -911,10 +929,16 @@ def fetch(roles: list[str], limit: int = 25, uid: str = "") -> list[dict]:
         j["apply_links"] = posting_links(j["url"])
 
     kept: list[dict] = []
-    dropped = {"index": 0, "not_india": 0, "duplicate": 0, "unreadable": 0, "stale": 0}
+    dropped = {"index": 0, "not_india": 0, "duplicate": 0, "unreadable": 0,
+               "stale": 0, "gone": 0}
     canonical_seen: set[str] = set()
     role_seen: set[tuple] = set()
     for j in jobs:
+        # Taken down between being indexed and being read. Dropped first: every
+        # gate below would read the company's board index and pass it.
+        if is_gone(j["url"]):
+            dropped["gone"] += 1
+            continue
         # atsboards has always dropped postings past MAX_AGE_DAYS; this source
         # never checked, because until now it had no date to check. A graded run
         # surfaced a Ubisoft internship 1,887 days old — five years — alongside
@@ -969,7 +993,7 @@ def fetch(roles: list[str], limit: int = 25, uid: str = "") -> list[dict]:
           f"{websearch.provider()} over {len(queries)} quer(ies) "
           f"({enriched} with a full description); dropped "
           f"{dropped['index']} index page(s), {dropped['not_india']} outside India, "
-          f"{dropped['stale']} stale, "
+          f"{dropped['stale']} stale, {dropped['gone']} taken down, "
           f"{dropped['unreadable']} unreadable on an unvouched host, "
           f"{dropped['duplicate']} duplicate(s)")
     return kept

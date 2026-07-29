@@ -168,3 +168,68 @@ def test_closed_listing_phrasings_are_detected(text):
 ])
 def test_open_listings_are_not_mistaken_for_closed(text):
     assert channel_ats._CLOSED_RE.search(text) is None
+
+
+# ── Embedded forms ──────────────────────────────────────────────────────────
+
+class _FramePage:
+    """Minimal page stub: query_selector answers for one selector only."""
+
+    def __init__(self, sel: str | None = None, src: str = ""):
+        self.sel, self.src = sel, src
+
+    def query_selector(self, sel):
+        if sel != self.sel:
+            return None
+        src = self.src
+
+        class _El:
+            def get_attribute(self, name):
+                return src if name == "src" else None
+
+        return _El()
+
+
+@pytest.mark.parametrize("sel,src", [
+    ("iframe#grnhse_iframe", "https://boards.greenhouse.io/embed/job_app?token=1"),
+    ("iframe[src*='lever.co']", "https://jobs.lever.co/acme/abc-123"),
+    ("iframe[src*='ashbyhq.com']", "https://jobs.ashbyhq.com/acme/abc-123/application"),
+])
+def test_an_embedded_ats_form_is_found_by_its_frame_src(sel, src):
+    """Employers embed the ATS form in their own careers page. The form is
+    perfectly fillable — it is just in another document, and every selector in
+    this module queries the top frame only."""
+    assert channel_ats._embedded_form_url(_FramePage(sel, src)) == src
+
+
+def test_a_page_with_no_embedded_form_reports_none():
+    assert channel_ats._embedded_form_url(_FramePage()) == ""
+
+
+def test_a_relative_iframe_src_is_ignored():
+    # Navigating to "/embed/form" would leave the site entirely.
+    assert channel_ats._embedded_form_url(
+        _FramePage("iframe#grnhse_iframe", "/embed/job_app")) == ""
+
+
+# ── Vendor confirmation signals ─────────────────────────────────────────────
+
+@pytest.mark.parametrize("vendor", ["greenhouse", "lever", "ashby",
+                                    "smartrecruiters", "workable"])
+def test_every_vendor_we_poll_has_its_own_success_signal(vendor):
+    """A submit that WORKED coming back as needs_review is the worst outcome in
+    the system: the slot and the idempotency claim stay spent, and the user is
+    sent to check an application that is already filed."""
+    assert channel_ats.vendor_success_selectors(vendor)
+
+
+def test_an_unknown_vendor_has_no_signal_rather_than_a_wrong_one():
+    assert channel_ats.vendor_success_selectors("mystery-ats") == []
+
+
+def test_a_vendor_confirmation_url_only_counts_for_that_vendor():
+    class _P:
+        url = "https://jobs.lever.co/acme/abc-123/thanks"
+
+    assert channel_ats._confirmed_by_url(_P(), "lever")
+    assert not channel_ats._confirmed_by_url(_P(), "workable")

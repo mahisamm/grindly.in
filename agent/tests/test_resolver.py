@@ -238,3 +238,86 @@ def test_a_lookalike_domain_is_not_an_ats():
     not Greenhouse."""
     assert resolver.ats_vendor("https://greenhouse.io.evil.com/acme/jobs/1") is None
     assert resolver.ats_vendor("https://notgreenhouse.io/acme/jobs/1") is None
+
+
+# ── Google Forms, in every shape Google serves them ─────────────────────────
+
+@pytest.mark.parametrize("url", [
+    "https://docs.google.com/forms/d/e/1FAIpQLSfabc/viewform",
+    # A Workspace company's own form. Two real Coalition Technologies
+    # application forms arrived like this and were graded TIER_C — never sent,
+    # on the one channel with no browser, no account and no captcha wall.
+    "https://docs.google.com/a/coalitiontechnologies.com/forms/d/e/1FAIpQLSfabc/viewform",
+    # What a browser copies out of the address bar for a multi-account session.
+    "https://docs.google.com/forms/u/0/d/e/1FAIpQLSfabc/viewform",
+    "https://forms.gle/AbCd1234",
+])
+def test_a_google_form_is_tier_a_however_google_addresses_it(url):
+    dest = resolver.resolve({"url": url, "source": "websource"}, "")
+    assert dest["tier"] == resolver.TIER_A
+    assert dest["channel"] == resolver.CHANNEL_GOOGLE_FORM
+
+
+# ── The Apply button on a careers page ──────────────────────────────────────
+
+def test_an_apply_link_read_off_the_page_routes_the_application():
+    """A company careers page owns no form: its Apply button points at the
+    employer's ATS. Discovery reads that href off the page it already fetched
+    and hands it over here — without it the listing resolved to the board
+    channel with source "websource", TIER_C, and no adapter to send it."""
+    job = {
+        "url": "https://acme.example/careers/ml-intern",
+        "source": "websource",
+        "apply_links": ["https://boards.greenhouse.io/acme/jobs/4242424"],
+    }
+    dest = resolver.resolve(job, "We are hiring an ML intern.")
+    assert dest["tier"] == resolver.TIER_A
+    assert dest["channel"] == resolver.CHANNEL_ATS
+    assert dest["target"] == "https://boards.greenhouse.io/acme/jobs/4242424"
+
+
+def test_an_apply_link_outranks_an_ats_url_mentioned_in_the_prose():
+    job = {
+        "url": "https://acme.example/careers/ml-intern",
+        "source": "websource",
+        "apply_links": ["https://jobs.lever.co/acme/1234-abcd-5678"],
+    }
+    jd = "Our sister company also hires at https://boards.greenhouse.io/other/jobs/9"
+    assert resolver.resolve(job, jd)["target"] == "https://jobs.lever.co/acme/1234-abcd-5678"
+
+
+def test_apply_links_that_are_not_a_list_do_not_break_resolution():
+    job = {"url": "https://acme.example/careers/x", "source": "websource",
+           "apply_links": "https://boards.greenhouse.io/acme/jobs/4242424"}
+    assert resolver.resolve(job, "")["channel"] == resolver.CHANNEL_ATS
+
+
+# ── Postings that have been taken down ──────────────────────────────────────
+
+def test_a_posting_that_bounced_to_the_board_index_reads_as_gone():
+    """An ATS answers a removed posting with the company's board index, not a
+    404 — 50KB of real job text that reads as a live posting to everything
+    downstream."""
+    assert resolver.looks_gone(
+        "https://boards.greenhouse.io/truveta/jobs/4906665004",
+        "https://job-boards.greenhouse.io/truveta?error=true",
+    )
+
+
+def test_a_posting_that_merely_moved_hosts_is_not_gone():
+    assert not resolver.looks_gone(
+        "https://boards.greenhouse.io/acme/jobs/4906665004",
+        "https://job-boards.greenhouse.io/acme/jobs/4906665004",
+    )
+
+
+def test_a_url_with_no_posting_id_opts_out_of_the_check():
+    # A careers page with no identifier cannot be tested this way, and guessing
+    # would drop live listings.
+    assert not resolver.looks_gone("https://acme.example/careers",
+                                   "https://acme.example/careers/all")
+
+
+def test_landing_on_the_same_url_is_never_gone():
+    url = "https://jobs.lever.co/acme/1234-5678"
+    assert not resolver.looks_gone(url, url)

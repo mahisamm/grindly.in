@@ -38,6 +38,7 @@ from __future__ import annotations
 import os
 import random
 import re
+from urllib.parse import urlparse
 
 import questions
 import resolver
@@ -198,13 +199,21 @@ def vendor_success_selectors(vendor: str) -> list[str]:
 
 
 def _confirmed_by_url(page, vendor: str) -> bool:
-    """Did the browser end up somewhere only a successful submit leads?"""
+    """Did the browser end up somewhere only a successful submit leads?
+
+    The host has to match the vendor too. "/thanks" is Lever's confirmation path
+    and also a substring of half the internet; reading it as a Workable success
+    would report an application as delivered on the strength of someone else's
+    thank-you page.
+    """
     markers = _VENDOR_SUCCESS_URLS.get((vendor or "").lower())
     if not markers:
         return False
     try:
         current = (page.url or "").lower()
     except Exception:  # noqa: BLE001
+        return False
+    if (resolver.ats_vendor(current) or "") != (vendor or "").lower():
         return False
     return any(m in current for m in markers)
 
@@ -252,6 +261,55 @@ def _dismiss_consent(page) -> None:
                 return
         except Exception:  # noqa: BLE001
             continue
+
+
+# A posting that has been taken down does not answer 404 on an ATS — it bounces
+# to the company's board index. Greenhouse appends ?error=true; the tell that
+# works across vendors is simpler: the address we landed on no longer mentions
+# the posting we asked for.
+#
+# Worth its own branch because the fallback is so much worse. The board index
+# lists every open role at the company, so the page is 50KB of real job text: it
+# reads as a live posting, `_CLOSED_RE` finds nothing to match, and the sender
+# then reports "could not find the application form" — sending the user to open
+# a link that leads nowhere. Two of eight postings in a live probe were this.
+# Lives in resolver so discovery can use the same test without importing this
+# module (and Playwright with it) — a posting that is gone should be dropped
+# before it is ever offered, not discovered at submit time.
+_looks_gone = resolver.looks_gone
+
+
+# Employers embed the ATS form in their own careers page inside an iframe. The
+# form is perfectly fillable — it is just in another document, and every
+# selector in this module (and in questions.read_fields) queries the top frame
+# only. Rather than teach the whole stack about frames, go to the frame's own
+# URL: it is a normal, standalone ATS application page.
+_EMBED_SELECTORS = (
+    "iframe#grnhse_iframe",
+    "iframe[src*='greenhouse.io']",
+    "iframe[src*='lever.co']",
+    "iframe[src*='ashbyhq.com']",
+    "iframe[src*='workable.com']",
+    "iframe[src*='smartrecruiters.com']",
+    "iframe[src*='zohorecruit']",
+)
+
+
+def _embedded_form_url(page) -> str:
+    for sel in _EMBED_SELECTORS:
+        try:
+            el = page.query_selector(sel)
+        except Exception:  # noqa: BLE001
+            continue
+        if el is None:
+            continue
+        try:
+            src = el.get_attribute("src") or ""
+        except Exception:  # noqa: BLE001
+            continue
+        if src.startswith("http"):
+            return src
+    return ""
 
 
 def _page_text(page) -> str:
@@ -417,12 +475,28 @@ def apply(
 
         _dismiss_consent(page)
 
+        try:
+            landed = page.url or ""
+        except Exception:  # noqa: BLE001
+            landed = ""
+        if _looks_gone(url, landed):
+            return "skipped", "listing is closed — the posting is no longer on the employer's board"
+
         body = _page_text(page)
         if _CLOSED_RE.search(body[:4000]):
             return "skipped", "listing is closed — the ATS is no longer accepting applications"
 
         if safety.detect_challenge(page) == safety.FAILURE_REASON.CAPTCHA:
             return "needs_review", "the application page shows a human-check — open it yourself"
+
+        # The employer's page may only be a wrapper around the real form.
+        embed = _embedded_form_url(page)
+        if embed:
+            try:
+                page.goto(embed, timeout=_NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:  # noqa: BLE001
+                pass          # the wrapper page is still there to try
 
         _reveal_form(page)
 

@@ -468,6 +468,51 @@ def resolve(
     return platform_destination(job, platform_tier(job.get("source") or ""))
 
 
+# ── Is this posting still there? ────────────────────────────────────────────
+#
+# A posting that has been taken down does not answer 404 on an ATS — it bounces
+# to the company's board index. Greenhouse appends ?error=true; the tell that
+# generalises across vendors is simpler: the address we landed on no longer
+# mentions the posting we asked for.
+#
+# Worth checking explicitly because the fallback is so much worse than a 404.
+# The board index lists every open role at the company, so the page is 50KB of
+# real job text: it reads as a live posting, no "closed" wording matches, the
+# matcher scores it against the aggregate of a dozen unrelated roles, and the
+# sender eventually reports "could not find the application form" — sending the
+# user to open a link that leads nowhere. Two of eight postings in a live probe
+# were exactly this.
+_GONE_MARKERS = ("error=true", "job_not_found", "no+longer+available")
+
+
+def posting_id(url: str) -> str:
+    """The posting's own identifier inside its URL, when it has an obvious one.
+
+    Numeric (Greenhouse, SmartRecruiters), a uuid (Lever, Ashby) or a shortcode
+    (Workable). A trailing word like "apply" or "careers" is not an id, so a
+    URL without one simply opts out of this check rather than failing it.
+    """
+    try:
+        path = urlparse(url).path.rstrip("/")
+    except Exception:  # noqa: BLE001
+        return ""
+    tail = path.rsplit("/", 1)[-1] if path else ""
+    if len(tail) >= 6 and re.search(r"\d", tail):
+        return tail
+    return ""
+
+
+def looks_gone(requested: str, landed: str) -> bool:
+    """Did the request for a posting land somewhere that is not that posting?"""
+    if not landed or landed == requested:
+        return False
+    low = landed.lower()
+    if any(m in low for m in _GONE_MARKERS):
+        return True
+    ident = posting_id(requested)
+    return bool(ident) and ident.lower() not in low
+
+
 def looks_like_external_apply(jd_text: str) -> bool:
     """True when the JD tells the reader to apply somewhere else. Used only to
     decide whether following a link is worth a page load."""

@@ -206,13 +206,16 @@ def test_scrape_jd_strips_scripts_and_keeps_the_skills(monkeypatch):
         b"<p>You will use Python, SQL and Docker.</p></body></html>"
     )
 
+    url = "https://jobs.lever.co/acme/4bcdec99-9f2e-416c-8e26-4aaa"
+
     class _Resp:
         def read(self, _n=None): return page
+        def geturl(self): return url          # where the fetch actually landed
         def __enter__(self): return self
         def __exit__(self, *a): return False
 
     monkeypatch.setattr(websource.urllib.request, "urlopen", lambda *a, **k: _Resp())
-    jd = websource.scrape_jd("https://jobs.lever.co/acme/4bcdec99-9f2e-416c-8e26-4aaa")
+    jd = websource.scrape_jd(url)
     assert "Python, SQL and Docker" in jd
     assert "Machine Learning Intern" in jd
     # Script/style content must not leak in — a variable named after a tool the

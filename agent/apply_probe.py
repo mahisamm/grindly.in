@@ -151,6 +151,14 @@ def _dry_run_ats(url: str, job: dict, profile: dict, skills: list[str],
 
         channel_ats._dismiss_consent(page)
 
+        try:
+            landed = page.url or ""
+        except Exception:  # noqa: BLE001
+            landed = ""
+        if channel_ats._looks_gone(url, landed):
+            out.update(outcome="closed", detail=f"posting is gone — landed on {landed[:90]}")
+            return out
+
         body = channel_ats._page_text(page)
         if channel_ats._CLOSED_RE.search(body[:4000]):
             out.update(outcome="closed", detail="listing is no longer accepting applications")
@@ -158,6 +166,16 @@ def _dry_run_ats(url: str, job: dict, profile: dict, skills: list[str],
         if safety.detect_challenge(page) == safety.FAILURE_REASON.CAPTCHA:
             out.update(outcome="challenge", detail="page showed a human-check")
             return out
+
+        embed = channel_ats._embedded_form_url(page)
+        if embed:
+            out["followed_embed"] = embed[:120]
+            try:
+                page.goto(embed, timeout=channel_ats._NAV_TIMEOUT_MS,
+                          wait_until="domcontentloaded")
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:  # noqa: BLE001
+                pass
 
         channel_ats._reveal_form(page)
 
