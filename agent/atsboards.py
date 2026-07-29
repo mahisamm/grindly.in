@@ -82,12 +82,24 @@ BOARDS: dict[str, list[str]] = {
     # a foreign-headquartered company posts; a Bangalore startup posts here.
     # Counted live at the time of writing — India-located openings per board:
     # vyaparapp 57, turno 28, satsure 22, unboxrobotics 21, ketto 11, lumel 8,
-    # mayhem 1. Deliberately NOT here: royalhealth, whose 82 openings are all
-    # Singapore, and futops/express/flentas/clrfacility, whose boards did not
-    # answer at all.
+    # mayhem 1, and a second sweep of the open web added fifteen more.
+    #
+    # Deliberately NOT here: `salesdemo`, which is Keka's own sales-demo tenant
+    # — 129 India-shaped openings, duplicated rows, a careers link pointing at
+    # itself, and an application into a demo environment that no employer will
+    # ever read. royalhealth, whose 82 openings are all Singapore. And
+    # futops/appbuilder/ekincare/foodforeducation/ocean/scrut, whose boards did
+    # not answer at all.
+    #
+    # The slug is not the company: caterpillar.keka.com is Group Bayport and
+    # 100.keka.com is an NGO called Bright Future. Both are real employers with
+    # real India openings, which is why the employer name is read from the
+    # portal rather than inferred from the address.
     "keka": [
         "vyaparapp", "turno", "satsure", "unboxrobotics", "ketto", "lumel",
-        "mayhem",
+        "mayhem", "100", "caterpillar", "comprinno", "gokwik", "evolve",
+        "qualminds", "disprz", "amura", "jupiter", "adda247",
+        "thewholetruthfoods", "flentas", "entropik", "nurix",
     ],
 }
 
@@ -221,7 +233,14 @@ def _keka_board(slug: str):
     if not found:
         print(f"[atsboards] keka/{slug}: no org id in the portal info or page")
         return None
-    return _get_json(_API["keka"].format(slug=slug, guid=found.group(1)))
+    jobs = _get_json(_API["keka"].format(slug=slug, guid=found.group(1)))
+    if jobs is None:
+        return None
+    # Carry the employer's real name alongside the postings. The slug is NOT the
+    # company: caterpillar.keka.com is Group Bayport, and 100.keka.com is an NGO
+    # called Bright Future. Reporting the slug would put the wrong employer on
+    # the user's dashboard and into the cover letter addressed to them.
+    return {"name": (info or {}).get("name") or "", "jobs": jobs}
 
 
 def _get_text(url: str) -> str:
@@ -518,15 +537,18 @@ def _postings(vendor: str, payload, slug: str = "") -> list[dict]:
         # not a shape json.loads can read, so the values are pulled out with a
         # pattern instead of being parsed; guessing at the structure would drop
         # every Indian city on the board over a quoting style.
-        for j in payload or []:
+        # Two shapes accepted on purpose: the current {name, jobs} and the bare
+        # list an already-warm six-hour cache is still holding from before the
+        # employer name was carried. Refusing the old shape would blank every
+        # Keka board until its cache expired.
+        listing = payload if isinstance(payload, dict) else {"jobs": payload or []}
+        company = (listing.get("name") or "").strip() or slug
+        for j in listing.get("jobs") or []:
             job_id = str(j.get("id") or "")
             out.append({
                 "title": j.get("title") or "",
                 "job_id": job_id,
-                # The portal states the employer's legal name in careerportalinfo,
-                # but _board caches only the postings; the slug IS the company on
-                # Keka (ketto.keka.com), so it is the honest fallback.
-                "company": slug,
+                "company": company,
                 "posted_days": _age_days(j.get("publishedOn")),
                 "location": _keka_places(j.get("jobLocations")),
                 "jd": _text(
