@@ -169,9 +169,13 @@ def _dry_run_ats(url: str, job: dict, profile: dict, skills: list[str],
 
         uploads = channel_ats.open_the_form(page, url)
         try:
-            out["form_url"] = (page.url or "")[:140]
+            landed = page.url or ""
         except Exception:  # noqa: BLE001
-            pass
+            landed = ""
+        out["form_url"] = landed[:140]
+        if not uploads and channel_ats._looks_gone(url, landed):
+            out.update(outcome="closed", detail=f"posting is gone — landed on {landed[:90]}")
+            return out
         if not uploads:
             out.update(outcome="no_form", detail="no file input on the page")
             return out

@@ -53,6 +53,18 @@ const STR_FIELDS = new Set([
   "degree",
   "college",
   "willingToRelocate",
+  // The questions a measured dry run showed were actually stalling unattended
+  // applications — "current salary", "previous internship experience" — plus the
+  // boxes Indian portals mark required. Stated verbatim like everything else
+  // here; the agent invents none of them.
+  "currentSalary",
+  "previousInternship",
+  "noticePeriod",
+  "currentLocation",
+  "dateOfBirth",
+  "nationality",
+  "gender",
+  "differentlyAbled",
   // Its own box on most applications, so it isn't re-parsed out of the PDF.
   "linkedinUrl",
   "githubUrl",

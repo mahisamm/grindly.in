@@ -394,3 +394,82 @@ def test_a_college_box_is_never_filled_from_the_combined_education_line():
 
 def test_the_college_still_answers_when_we_actually_hold_it():
     assert _setup_answer("College name", profile={"college": "VIT Vellore"}) == "VIT Vellore"
+
+
+# ── The questions that were actually stalling applications ──────────────────
+#
+# Measured: a dry run of fourteen real application pages stopped three times,
+# twice on "What's your current salary?" and once on "Do you have previous
+# internship experience?". Each is a fact only the candidate can state.
+
+_BANK = {
+    "current_salary": "0",
+    "previous_internship": "Yes",
+    "notice_period": "Immediate",
+    "current_location": "Hyderabad",
+    "gender": "Prefer not to say",
+    "date_of_birth": "14/03/2005",
+    "differently_abled": "No",
+    "nationality": "Indian",
+    "work_authorization": "Indian citizen — need sponsorship to work abroad",
+    "availability": "Immediately",
+    "expected_stipend": 20000,
+}
+
+
+def _box(label, kind="text", required=True, options=None):
+    return {"el": None, "kind": kind, "label": label,
+            "required": required, "options": options or []}
+
+
+@pytest.mark.parametrize("label,expected", [
+    ("What's your current salary? (in lakhs per annum)", "0"),
+    ("Current CTC", "0"),
+    ("Do you have previous Internship Experience?", "Yes"),
+    ("Any internship experience?", "Yes"),
+    ("Notice period", "Immediate"),
+    ("Where are you currently based?", "Hyderabad"),
+    ("Current location", "Hyderabad"),
+    ("Gender", "Prefer not to say"),
+    ("Date of Birth", "14/03/2005"),
+    ("Do you identify as differently abled?", "No"),
+    ("Nationality", "Indian"),
+])
+def test_a_stored_fact_answers_every_phrasing_of_its_question(label, expected):
+    answers = questions.answer_fields(
+        [_box(label)], profile=_BANK, resume_text="", skills=[], job={},
+        name="Priya", email="p@example.com",
+    )
+    assert answers[0]["answer"] == expected
+    assert answers[0]["source"] == "profile"
+
+
+def test_expected_salary_is_not_answered_with_the_current_one():
+    """Both match on the word "salary". Answering "What salary do you expect?"
+    with the current one understates the candidate to an employer."""
+    answers = questions.answer_fields(
+        [_box("Expected salary")], profile=_BANK, resume_text="", skills=[],
+        job={}, name="", email="",
+    )
+    assert answers[0]["answer"] == "20000"
+
+
+def test_nationality_is_not_answered_with_the_work_authorization_sentence():
+    """A one-word box used to receive "Indian citizen — need sponsorship to work
+    abroad", because the work-authorization pattern claimed the word."""
+    answers = questions.answer_fields(
+        [_box("Nationality")], profile=_BANK, resume_text="", skills=[],
+        job={}, name="", email="",
+    )
+    assert answers[0]["answer"] == "Indian"
+
+
+def test_a_fact_the_user_never_gave_still_stops_the_application():
+    """The whole point of collecting these is that the alternative is refusal,
+    never invention."""
+    answers = questions.answer_fields(
+        [_box("What is your current salary?")], profile={}, resume_text="",
+        skills=[], job={}, name="", email="",
+    )
+    assert answers[0]["answer"] == ""
+    assert answers[0]["source"] == "unanswerable"

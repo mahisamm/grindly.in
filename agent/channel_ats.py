@@ -114,7 +114,12 @@ _APPLY_BUTTON_CANDIDATES = [
     "a:has-text('Apply for this job')",
     "button:has-text('Apply for this Job')",
     "a#apply_button",
-    "button:has-text(\"I'm interested\")",
+    # Matched on the word alone, never on the apostrophe. SmartRecruiters
+    # renders "I’m interested" with a typographic apostrophe (U+2019), so the
+    # straight-quote selector matched nothing and a perfectly fillable form was
+    # reported as "could not find the application form".
+    "button:has-text('interested')",
+    "a:has-text('interested')",
     "a:has-text('Apply now')",
     "button:has-text('Apply now')",
     "a:has-text('Apply')",
@@ -537,6 +542,17 @@ def apply(
             return "needs_review", "the application page shows a human-check — open it yourself"
 
         uploads = open_the_form(page, url)
+        # Ashby and friends are single-page apps: a removed posting is fetched,
+        # 404s, and only THEN client-side-routes to the board index — after
+        # networkidle, so the check above the fold ran while the URL was still
+        # the one we asked for. Re-asking here is what turns "we could not find
+        # the form" into the true answer, which is "this posting is gone".
+        try:
+            landed = page.url or ""
+        except Exception:  # noqa: BLE001
+            landed = ""
+        if not uploads and _looks_gone(url, landed):
+            return "skipped", "listing is closed — the posting is no longer on the employer's board"
         if not uploads:
             return "needs_review", "could not find the application form — open it yourself to send it"
         if not _attach_resume(page, uploads, resume_path):

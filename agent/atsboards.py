@@ -277,6 +277,67 @@ def canonical_key(url: str, vendor: str = "", slug: str = "", job_id: str = "") 
     return (url or "").strip().lower()
 
 
+def _still_on_the_ats(url: str) -> bool:
+    """Does this posting's own address still serve the posting?
+
+    Some employers wire their ATS board to bounce every posting to their own
+    careers site — Stripe's boards.greenhouse.io address 302s to
+    stripe.com/jobs/listing/... The posting is real and the API lists it, but
+    the page the candidate reaches is a bespoke React application with no form
+    this sender can drive, so offering it produces one guaranteed "could not
+    find the application form" per listing.
+
+    Checked with a HEAD (a GET only if the host refuses HEAD), and only for the
+    handful of postings that advertise an off-vendor address, so the cost is a
+    few requests per run rather than one per posting.
+    """
+    import urllib.error
+    import urllib.request
+
+    class _Head(urllib.request.Request):
+        def get_method(self) -> str:  # noqa: D401
+            return "HEAD"
+
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125"}
+    for build in (_Head, urllib.request.Request):
+        try:
+            with urllib.request.urlopen(build(url, headers=headers), timeout=12) as r:
+                return bool(hosts.vendor_of(r.geturl()))
+        except urllib.error.HTTPError as e:
+            # 4xx/5xx says nothing about ownership; keep the listing and let the
+            # sender's own closed/gone checks judge it at submit time.
+            return e.code not in (404, 410)
+        except Exception:  # noqa: BLE001
+            continue
+    return True
+
+
+def _drop_postings_that_leave_the_ats(jobs: list[dict]) -> list[dict]:
+    """Remove postings whose ATS address redirects to an employer-run page.
+
+    "Remove what the agent cannot do" — a listing that can only ever come back
+    as needs_review is worth less than no listing at all, because it spends a
+    daily slot and asks the user to finish it by hand.
+    """
+    suspects = [j for j in jobs if j.get("offsite_apply")]
+    if not suspects:
+        return [{k: v for k, v in j.items() if k != "offsite_apply"} for j in jobs]
+
+    verdicts: dict[str, bool] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+        for j, ok in zip(suspects, ex.map(lambda j: _still_on_the_ats(j["url"]), suspects)):
+            verdicts[j["url"]] = ok
+
+    kept: list[dict] = []
+    for j in jobs:
+        if not verdicts.get(j["url"], True):
+            print(f"[atsboards] dropping {j['company']}: its board address leaves "
+                  f"the ATS for a page we cannot submit on")
+            continue
+        kept.append({k: v for k, v in j.items() if k != "offsite_apply"})
+    return kept
+
+
 def _greenhouse_url(slug: str, job: dict) -> str:
     """The posting's canonical address on the ATS itself.
 
@@ -315,6 +376,14 @@ def _postings(vendor: str, payload, slug: str = "") -> list[dict]:
                 # platform channel and TIER_C: never sent. The board's canonical
                 # URL is the same posting on the ATS, where the tier is provable.
                 "url": _greenhouse_url(slug, j) or (j.get("absolute_url") or ""),
+                # A company that publishes off the ATS may also have wired its
+                # board to bounce there, which leaves the sender on a page it
+                # cannot drive. Flagged here, verified once at the end of the
+                # run — see _drop_postings_that_leave_the_ats.
+                "offsite_apply": bool(
+                    (j.get("absolute_url") or "")
+                    and not hosts.vendor_of(j.get("absolute_url") or "")
+                ),
                 "jd": _text(j.get("content") or ""),
             })
     elif vendor == "lever":
@@ -505,6 +574,7 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                     "url": p["url"],
                     "jd_text": jd,
                     "source": SOURCE,
+                    "offsite_apply": bool(p.get("offsite_apply")),
                 }
                 found.append((_relevance(p, keywords or []), job))
                 if not jd:
@@ -533,7 +603,9 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
         -pair[0],
         pair[1].get("posted_days") if isinstance(pair[1].get("posted_days"), int) else MAX_AGE_DAYS,
     ))
-    jobs = [j for _, j in found[: max(1, limit)]]
+    jobs = _drop_postings_that_leave_the_ats(
+        [j for _, j in found[: max(1, limit)]]
+    )
     print(f"[atsboards] {len(jobs)} employer-hosted internship(s) from "
           f"{len(targets)} board(s) across {len(BOARDS)} vendor(s); "
           f"{learned} board(s) learned from earlier discovery")

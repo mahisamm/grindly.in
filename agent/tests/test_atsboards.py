@@ -328,8 +328,43 @@ def test_a_posting_the_company_publishes_on_its_own_site_still_resolves(monkeypa
         "content": "Work on payments.",
     }]}
     _only("greenhouse", "stripe", payload, monkeypatch)
+    monkeypatch.setattr(atsboards, "_still_on_the_ats", lambda _url: True)
     assert atsboards.fetch([], limit=5)[0]["url"] == \
         "https://boards.greenhouse.io/stripe/jobs/42"
+
+
+def test_a_board_address_that_bounces_to_the_employers_own_site_is_dropped(monkeypatch):
+    """Some employers wire their ATS board to redirect every posting to their own
+    careers site. The posting is real and the API lists it, but the page the
+    candidate reaches is a bespoke application we cannot drive — so offering it
+    produces one guaranteed "could not find the application form", spends a daily
+    slot, and asks the user to finish it by hand. Better to not offer it."""
+    payload = {"jobs": [{
+        "id": 42, "title": "Engineering Intern",
+        "location": {"name": "Bengaluru, India"},
+        "absolute_url": "https://stripe.com/jobs/listing/engineering-intern/42",
+        "content": "Work on payments.",
+    }]}
+    _only("greenhouse", "stripe", payload, monkeypatch)
+    monkeypatch.setattr(atsboards, "_still_on_the_ats", lambda _url: False)
+    assert atsboards.fetch([], limit=5) == []
+
+
+def test_a_posting_that_never_left_the_ats_is_not_even_checked(monkeypatch):
+    """The redirect check costs a request, so it only runs for the postings that
+    advertise an off-vendor address."""
+    checked: list[str] = []
+    payload = {"jobs": [{
+        "id": 7, "title": "Engineering Intern",
+        "location": {"name": "Pune, India"},
+        "absolute_url": "https://job-boards.eu.greenhouse.io/acme/jobs/7",
+        "content": "x",
+    }]}
+    _only("greenhouse", "acme", payload, monkeypatch)
+    monkeypatch.setattr(atsboards, "_still_on_the_ats",
+                        lambda url: checked.append(url) or True)
+    assert len(atsboards.fetch([], limit=5)) == 1
+    assert checked == []
 
 
 def test_a_company_already_on_greenhouse_keeps_the_url_it_advertises(monkeypatch):

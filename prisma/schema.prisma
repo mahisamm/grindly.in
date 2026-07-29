@@ -277,6 +277,24 @@ model Profile {
   willingToRelocate String? @map("willing_to_relocate") // Yes | No | Depends on the role
   expectedStipend   Int?    @map("expected_stipend") // ₹/month STATED on forms — not the
   // stipendMin filter above, which only decides what the agent bothers to open.
+  // The questions that were actually stopping unattended applications, measured
+  // rather than guessed: a dry run of fourteen real application pages stalled
+  // three times, twice on "What's your current salary?" and once on "Do you have
+  // previous internship experience?". Both are facts about the candidate that no
+  // model may supply — so they are collected once here, and the agent then
+  // answers every phrasing of them on every site, forever.
+  currentSalary     String? @map("current_salary")   // "0" for a student — stated as written
+  previousInternship String? @map("previous_internship") // "Yes" | "No"
+  noticePeriod      String? @map("notice_period")    // "Immediate" for most students
+  currentLocation   String? @map("current_location") // the city they are in now
+  // Required boxes on Indian ATS tenants (Darwinbox, Keka, Zoho) and on the
+  // diversity sections of Greenhouse/Lever. Optional here: a user who would
+  // rather not say leaves them blank, and those applications wait for them
+  // instead of being sent with an invented answer.
+  gender            String?
+  dateOfBirth       String? @map("date_of_birth")    // as the user writes it
+  differentlyAbled  String? @map("differently_abled") // "Yes" | "No"
+  nationality       String?
   // Profile links. Forms ask for these in their own boxes, so parsing them back
   // out of the resume PDF per application is both slow and lossy.
   linkedinUrl       String? @map("linkedin_url")

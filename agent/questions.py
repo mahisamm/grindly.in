@@ -205,14 +205,49 @@ _WHEN_Q = re.compile(
 )
 _WORK_AUTH_Q = re.compile(
     r"\b(work\s+authori[sz]ation|authori[sz]ed\s+to\s+work|"
-    r"(require|need)\w*\s+(visa|sponsorship)|sponsorship|work\s+permit|citizenship|nationality)\b",
+    r"(require|need)\w*\s+(visa|sponsorship)|sponsorship|work\s+permit|citizenship)\b",
     re.I,
 )
+# "Nationality" used to be matched here and answered with the work-authorization
+# sentence — so a box asking for one word got "Indian citizen — need sponsorship
+# to work abroad". It has its own stored fact and its own pattern now.
 _STIPEND_Q = re.compile(
     r"\bexpected\s+(stipend|salary|ctc|compensation|pay)\b|"
     r"\b(stipend|salary)\s+expectation\b",
     re.I,
 )
+# Questions a measured dry run of fourteen real application pages actually
+# stalled on. Every one is a fact about the candidate that no model may supply,
+# so each maps to a value the user stated once in setup.
+_CURRENT_SALARY_Q = re.compile(
+    r"\b(current|present|existing)\s+(salary|ctc|compensation|pay|package)\b|"
+    r"\bcurrent\s+annual\s+(salary|income)\b|\bsalary\s+drawn\b",
+    re.I,
+)
+_PREV_INTERNSHIP_Q = re.compile(
+    r"\b(previous|prior|past|any)\s+internship\b|"
+    r"\binternship\s+experience\b|"
+    r"\bhave\s+you\s+(ever\s+)?(done|completed|had|interned)\b[^?]{0,40}\bintern",
+    re.I,
+)
+_NOTICE_Q = re.compile(
+    r"\bnotice\s+period\b|\bhow\s+soon\s+can\s+you\s+join\b|\bjoining\s+time\b",
+    re.I,
+)
+_CURRENT_LOCATION_Q = re.compile(
+    r"\b(current|present)\s+(location|city|residence|address)\b|"
+    r"\bwhere\s+are\s+you\s+(currently\s+)?(based|located|living)\b|"
+    r"\bcity\s+of\s+residence\b",
+    re.I,
+)
+_GENDER_Q = re.compile(r"\bgender\b", re.I)
+_DOB_Q = re.compile(r"\b(date\s+of\s+birth|d\.?o\.?b\.?|birth\s*date)\b", re.I)
+_DISABILITY_Q = re.compile(
+    r"\b(differently[\s-]?abled|disabilit(y|ies)|physically\s+challenged|"
+    r"person\s+with\s+a\s+disability)\b",
+    re.I,
+)
+_NATIONALITY_Q = re.compile(r"\bnationalit(y|ies)\b|\bcountry\s+of\s+citizenship\b", re.I)
 _COLLEGE_Q = re.compile(r"\b(college|university|institute|institution)\b", re.I)
 _DEGREE_Q = re.compile(
     r"\b(degree|course|qualification|programme|program|branch|stream|"
@@ -385,6 +420,17 @@ def _from_setup(label: str, field: dict, profile: dict) -> str | None:
     # the same reason.
     candidates: list[tuple[bool, str]] = [
         (bool(_SPONSORSHIP_Q.search(label)), _text("needs_sponsorship")),
+        # Ahead of the stipend and start-date patterns below, which both claim
+        # some of the same words: "current salary" is not "expected salary", and
+        # "notice period" is its own box on forms that also ask when you start.
+        (bool(_CURRENT_SALARY_Q.search(label)), _text("current_salary")),
+        (bool(_PREV_INTERNSHIP_Q.search(label)), _text("previous_internship")),
+        (bool(_NOTICE_Q.search(label)), _text("notice_period")),
+        (bool(_CURRENT_LOCATION_Q.search(label)), _text("current_location")),
+        (bool(_GENDER_Q.search(label)), _text("gender")),
+        (bool(_DOB_Q.search(label)), _text("date_of_birth")),
+        (bool(_DISABILITY_Q.search(label)), _text("differently_abled")),
+        (bool(_NATIONALITY_Q.search(label)), _text("nationality")),
         # A percentage only answers a question that ASKS for one. "Class 12 board
         # name" and "Intermediate college" match the school-level pattern too,
         # and a percentage typed into either is nonsense.
