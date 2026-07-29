@@ -29,6 +29,7 @@ Three rules here, in priority order:
 from __future__ import annotations
 
 import json
+import os
 import re
 
 import llm as llm_mod
@@ -58,6 +59,20 @@ el => {
     const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
     if (l && clean(l.innerText)) return clean(l.innerText);
   }
+  // A React combobox has no <label for>, but it does point at its question with
+  // aria-labelledby. Without this the ancestor walk below reads the widget's own
+  // placeholder — which is how "Select..." and "Search" ended up being treated
+  // as the questions on a real Greenhouse application, and answered.
+  const by = el.getAttribute('aria-labelledby');
+  if (by) {
+    const text = by.split(/\\s+/)
+      .map(id => document.getElementById(id))
+      .filter(Boolean)
+      .map(n => clean(n.innerText))
+      .filter(Boolean)
+      .join(' ');
+    if (text) return text;
+  }
   const wrap = el.closest('label');
   if (wrap && clean(wrap.innerText)) return clean(wrap.innerText);
   const aria = el.getAttribute('aria-label');
@@ -67,6 +82,15 @@ el => {
   while (n && hops < 4) {
     const c = n.cloneNode(true);
     c.querySelectorAll('input,textarea,select,button,script,style').forEach(x => x.remove());
+    // The widget's own furniture is not its question. react-select renders the
+    // placeholder, the chosen value and the dropdown arrow as ordinary divs
+    // INSIDE the container, so a clone that keeps them reports "Select..." as
+    // the label of every dropdown on the page.
+    c.querySelectorAll(
+      '[class*="placeholder" i],[class*="indicator" i],[class*="singleValue" i],' +
+      '[class*="multiValue" i],[class*="menu" i],[role="listbox"],[role="option"],' +
+      '[aria-hidden="true"]'
+    ).forEach(x => x.remove());
     const t = clean(c.innerText);
     if (t.length > 8) return t;
     n = n.parentElement; hops++;
@@ -74,6 +98,93 @@ el => {
   return clean(el.getAttribute('placeholder')) || clean(el.getAttribute('name'));
 }
 """
+
+
+# How long to wait for a dropdown's own list to render after it is opened.
+# react-select mounts the menu in a portal on click; there is nothing to read
+# before it does.
+_MENU_WAIT_MS = int(os.environ.get("GRINDLY_COMBOBOX_MENU_WAIT_MS", "900"))
+
+
+def _is_combobox(el) -> bool:
+    """A text input that is really a dropdown.
+
+    Greenhouse, Ashby and Lever all build their selects as a react-select
+    combobox: a plain <input> with role=combobox, no options in the DOM until it
+    is opened, and a placeholder of "Select..." where a question should be. Typed
+    into like a text box it takes prose and the form rejects the submission —
+    which is exactly how the first real application this system sent died.
+    """
+    try:
+        if (el.get_attribute("role") or "").lower() == "combobox":
+            return True
+        # Some builds put the role on the wrapper and leave the input bare.
+        return bool(el.evaluate(
+            "e => !!(e.getAttribute('aria-expanded') !== null"
+            " || e.closest('[role=combobox]')"
+            " || (e.getAttribute('aria-autocomplete') === 'list'))"
+        ))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _wrapper_required(el) -> bool:
+    """Is the dropdown this input belongs to marked required?
+
+    The input itself never is. The vendor marks the field group instead — with
+    aria-required, a `required` class, or an asterisk in the label.
+    """
+    try:
+        return bool(el.evaluate(
+            """e => {
+              const g = e.closest('[class*="field" i],[class*="form" i],div');
+              if (!g) return false;
+              if (g.querySelector('[aria-required="true"]')) return true;
+              if (/required/i.test(g.className || '')) return true;
+              const lab = g.querySelector('label');
+              return !!(lab && /\\*/.test(lab.innerText || ''));
+            }"""
+        ))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _combobox_options(page, el) -> list[str]:
+    """Open the dropdown, read what it actually offers, close it again.
+
+    There is no way to know a react-select's options without opening it: they do
+    not exist in the DOM until the menu mounts. Costs one click per dropdown and
+    a fraction of a second, on a handful of fields per form — cheap against the
+    alternative, which is answering a question we cannot see the answers to.
+
+    Leaves the page as it found it: the menu is dismissed with Escape, and
+    nothing is selected.
+    """
+    try:
+        el.click()
+        page.wait_for_timeout(_MENU_WAIT_MS)
+        options = page.evaluate(
+            """() => {
+              const seen = [];
+              document.querySelectorAll('[role="option"]').forEach(o => {
+                const t = (o.innerText || '').trim().replace(/\\s+/g, ' ');
+                // "Select..." and friends are the widget telling you nothing is
+                // chosen, not something a candidate can be.
+                if (t && t.length < 120 && !seen.includes(t)) seen.push(t);
+              });
+              return seen;
+            }"""
+        ) or []
+    except Exception as e:  # noqa: BLE001
+        print(f"[questions] could not read a dropdown's options: {e}")
+        options = []
+    finally:
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(120)
+        except Exception:  # noqa: BLE001
+            pass
+    return [o for o in options if not _PLACEHOLDER_LABEL.match(o)]
 
 
 def read_fields(page) -> list[dict]:
@@ -104,18 +215,34 @@ def read_fields(page) -> list[dict]:
                 continue  # already answered (cover letter, prefilled profile data)
 
             options: list[str] = []
+            combobox = _is_combobox(el)
             if tag == "select":
                 options = [
                     (o.inner_text() or "").strip()
                     for o in el.query_selector_all("option")
                 ]
                 options = [o for o in options if o]
+            elif combobox:
+                options = _combobox_options(page, el)
 
             fields.append({
                 "el": el,
-                "kind": "select" if tag == "select" else ("textarea" if tag == "textarea" else itype),
+                "kind": (
+                    "select" if tag == "select"
+                    else "combobox" if combobox
+                    else "textarea" if tag == "textarea"
+                    else itype
+                ),
                 "label": (el.evaluate(_LABEL_JS) or "").strip()[:300],
-                "required": el.get_attribute("required") is not None,
+                # A react-select input is never marked `required` on the input
+                # itself — the wrapper carries aria-required. Reading only the
+                # attribute made every ATS dropdown look optional, so an
+                # unanswered one sailed through to a submit the form rejected.
+                "required": (
+                    el.get_attribute("required") is not None
+                    or (el.get_attribute("aria-required") or "").lower() == "true"
+                    or _wrapper_required(el)
+                ),
                 "options": options,
             })
         except Exception:  # noqa: BLE001
@@ -575,7 +702,7 @@ def _deterministic(field: dict, profile: dict, name: str, email: str) -> str | N
         # from this branch. "Are you available to start immediately?" still is a
         # yes/no and still gets one.
         and not _WHEN_Q.search(label)
-        and kind not in ("textarea", "select")
+        and kind not in ("textarea", "select", "combobox")
     ):
         return "Yes"
     return None
@@ -656,14 +783,14 @@ def answer_fields(
             })
             continue
 
-        if f["kind"] == "select":
+        if f["kind"] in ("select", "combobox"):
             # Only an affirmative option. See _pick_option for why "first real
             # choice" was removed: it turned every preference question into an
             # invented fact, and every rating scale into a 1-out-of-5.
             pick = _pick_option(f)
             out.append({
                 "question": f["label"], "answer": pick or "",
-                "source": "default" if pick else "unanswerable", "kind": "select", "_i": i,
+                "source": "default" if pick else "unanswerable", "kind": f["kind"], "_i": i,
             })
             continue
 
@@ -775,6 +902,72 @@ def answer_fields(
 
 # --- writing it back --------------------------------------------------------
 
+def _choose_in_combobox(page, el, value: str) -> bool:
+    """Pick `value` from a react-select dropdown. True only if it stuck.
+
+    Open, narrow the list by typing (these menus virtualise, so the option you
+    want may not be mounted until you filter for it), click the option whose
+    text matches, then CHECK. The check is the point: a click that lands on a
+    menu which has already re-rendered silently selects nothing, and a dropdown
+    that looks answered but is empty is exactly the state that gets a whole
+    application rejected on submit.
+    """
+    wanted = (value or "").strip()
+    if not wanted:
+        return False
+    try:
+        el.click()
+        page.wait_for_timeout(250)
+        # Typing filters; it does not commit. Kept short so a stored answer that
+        # is merely a prefix of the option ("Yes" for "Yes, immediately") still
+        # narrows to it rather than to nothing.
+        try:
+            el.fill("")
+            el.type(wanted[:24], delay=25)
+            page.wait_for_timeout(_MENU_WAIT_MS)
+        except Exception:  # noqa: BLE001
+            page.wait_for_timeout(_MENU_WAIT_MS)
+
+        picked = page.evaluate(
+            """(want) => {
+              const norm = s => (s || '').trim().replace(/\\s+/g, ' ').toLowerCase();
+              const target = norm(want);
+              const opts = Array.from(document.querySelectorAll('[role="option"]'));
+              let hit = opts.find(o => norm(o.innerText) === target);
+              if (!hit) hit = opts.find(o => norm(o.innerText).startsWith(target));
+              if (!hit) hit = opts.find(o => target.startsWith(norm(o.innerText)));
+              if (!hit) return false;
+              hit.scrollIntoView({block: 'nearest'});
+              hit.click();
+              return true;
+            }""",
+            wanted,
+        )
+        if not picked:
+            page.keyboard.press("Escape")
+            return False
+        page.wait_for_timeout(250)
+
+        # Did it actually take? react-select writes the chosen label into the
+        # container as its single value; an input that is still empty and a
+        # container that still shows the placeholder mean the click did nothing.
+        return bool(el.evaluate(
+            """(e) => {
+              const box = e.closest('[class*="control" i]') || e.parentElement;
+              const shown = (box ? box.innerText : '').trim();
+              if (!shown) return false;
+              return !/^(select\\.{0,3}|search|choose)$/i.test(shown);
+            }"""
+        ))
+    except Exception as e:  # noqa: BLE001
+        print(f"[questions] combobox interaction failed: {e}")
+        try:
+            page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+
 def fill(page, fields: list[dict], answers: list[dict], typer) -> int:
     """Type the answers in. `typer(page, el, text)` is the caller's human-paced
     typing function — pacing is the adapter's business, not ours.
@@ -792,6 +985,15 @@ def fill(page, fields: list[dict], answers: list[dict], typer) -> int:
                 el.check()
             elif f["kind"] == "select":
                 el.select_option(label=val)
+            elif f["kind"] == "combobox":
+                if not _choose_in_combobox(page, el, val):
+                    # Not filled, and deliberately not typed into either. A
+                    # react-select left holding raw text submits nothing and the
+                    # form rejects the whole application; leaving it empty makes
+                    # the required-field check stop us first, which is the
+                    # outcome the candidate can actually act on.
+                    print(f"[questions] could not pick {val!r} in {f['label'][:40]!r}")
+                    continue
             else:
                 typer(page, el, val)
             filled += 1
