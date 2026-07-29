@@ -496,3 +496,32 @@ def test_a_question_setup_does_not_collect_is_not_blamed_on_the_user():
     fact the user forgot to type in."""
     assert questions.missing_fact_for("Attach your consolidated marksheet", {}) == ""
     assert questions.missing_fact_for("Describe your favourite project", {}) == ""
+
+
+def test_a_stored_answer_is_stripped_before_it_reaches_a_form():
+    """A profile saved before the API trimmed its input still carries the space.
+
+    "indian " was typed once into a free-text box and would be typed onto every
+    application after that, exactly as stored — including into plain text inputs,
+    where there is no option list for _fit_option to normalise it against.
+    """
+    profile = {"work_authorization": "indian "}
+    box = {"label": "Work authorization", "type": "text", "options": []}
+    assert questions._from_setup("Work authorization", box, profile) == "indian"
+
+
+def test_a_padded_answer_still_matches_a_dropdown_option():
+    profile = {"work_authorization": "  Indian citizen  "}
+    box = {
+        "label": "Work authorization",
+        "type": "select",
+        "options": ["Indian citizen", "Student visa (F-1 / OPT)"],
+    }
+    assert questions._from_setup("Work authorization", box, profile) == "Indian citizen"
+
+
+def test_a_whitespace_only_answer_is_not_an_answer():
+    """Otherwise the agent states a blank on a real application and calls it filled."""
+    profile = {"work_authorization": "   "}
+    box = {"label": "Work authorization", "type": "text", "options": []}
+    assert questions._from_setup("Work authorization", box, profile) is None

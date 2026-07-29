@@ -509,6 +509,22 @@ function parseJ<T>(v: string | null | undefined, fallback: T): T {
 }
 
 
+/**
+ * A stored 0 in an eligibility field means "never answered", not "zero".
+ *
+ * Every numeric fact starts at 0 as its empty marker (see DEFAULTS in
+ * lib/proffQuestions, and agent/questions.py, which reads 0 as no-fact-held and
+ * refuses the question). Rendering that marker as the digit 0 told the user
+ * their class 12 percentage was on file and was 0% — so the one screen that
+ * exists to show them what is missing showed it as answered instead.
+ *
+ * Deliberately NOT applied to stipendMin or minMatchScore, where 0 is a real
+ * setting the user can mean.
+ */
+function blankIfUnset(v: unknown): string {
+  return v === 0 || v === null || v === undefined ? "" : String(v);
+}
+
 function profileToForm(p: RawProfile): ProfileForm {
   return {
     preferredDomains: parseJ<string[]>(p.preferredDomains, []),
@@ -2934,7 +2950,7 @@ export default function Dashboard() {
                       {f.type === "choice" && (
                         <ChoiceField
                           field={f}
-                          value={String(profileForm[f.key as keyof ProfileForm] ?? "")}
+                          value={blankIfUnset(profileForm[f.key as keyof ProfileForm])}
                           onChange={(v) =>
                             patchForm(f.key as keyof ProfileForm, v as ProfileForm[keyof ProfileForm])
                           }
@@ -2943,7 +2959,7 @@ export default function Dashboard() {
                       {f.type === "select" && (
                         <select
                           id={`field-${f.key}`}
-                          value={String(profileForm[f.key as keyof ProfileForm] ?? "")}
+                          value={blankIfUnset(profileForm[f.key as keyof ProfileForm])}
                           onChange={(e) =>
                             patchForm(
                               f.key as keyof ProfileForm,
@@ -2967,7 +2983,7 @@ export default function Dashboard() {
                           <input
                             id={`field-${f.key}`}
                             type={f.type}
-                            value={String(profileForm[f.key as keyof ProfileForm] ?? "")}
+                            value={blankIfUnset(profileForm[f.key as keyof ProfileForm])}
                             placeholder={f.placeholder}
                             onChange={(e) =>
                               patchForm(

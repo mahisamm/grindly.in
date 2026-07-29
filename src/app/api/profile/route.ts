@@ -117,8 +117,13 @@ export async function POST(req: Request) {
     else if (DECIMAL_FIELDS.has(k)) data[k] = Math.max(0, Math.round((Number(v) || 0) * 100) / 100);
     else if (NUM_FIELDS.has(k)) data[k] = Math.max(0, Math.round(Number(v) || 0));
     else if (BOOL_FIELDS.has(k)) data[k] = Boolean(v);
-    else if (ENUM_FIELDS[k]) { if (ENUM_FIELDS[k].has(String(v))) data[k] = String(v); }
-    else if (STR_FIELDS.has(k)) data[k] = String(v ?? "");
+    else if (ENUM_FIELDS[k]) { if (ENUM_FIELDS[k].has(String(v).trim())) data[k] = String(v).trim(); }
+    // Trimmed, because every one of these is typed onto a real application
+    // exactly as stored. A stray trailing space in "indian " is invisible in the
+    // box the user typed it into and permanent on every form after that; worse,
+    // agent/questions._fit_option matches a stored value against a form's own
+    // dropdown options, and " Indian citizen " matches nothing.
+    else if (STR_FIELDS.has(k)) data[k] = String(v ?? "").trim();
   }
 
   if (Object.keys(data).length === 0) return NextResponse.json({ ok: true });

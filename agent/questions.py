@@ -475,7 +475,11 @@ def _from_setup(label: str, field: dict, profile: dict) -> str | None:
     """
     for matches, _key, value in _setup_candidates(label, profile):
         if matches and value:
-            return _fit_option(field, value)
+            # Stripped here as well as at the write (src/app/api/profile), because
+            # rows saved before that trim existed still carry the stray space —
+            # and this value goes into a free-text box verbatim, where
+            # `_fit_option` has no option list to normalise it against.
+            return _fit_option(field, str(value).strip())
     return None
 
 
