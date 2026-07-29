@@ -124,6 +124,9 @@ export default function OnboardingPage() {
   // Is the worker still reading the resume? Setup says so rather than showing a
   // wall of blank boxes that fill themselves a moment later.
   const [reading, setReading] = useState(false);
+  // The long tail is folded away until asked for. See ProffField.advanced.
+  const [showMore, setShowMore] = useState(false);
+  const advancedCount = PROFF_FIELDS.filter((f) => f.advanced).length;
   // Which answers came off the resume, so each one can say so and be checked
   // rather than typed.
   const [fromResume, setFromResume] = useState<string[]>([]);
@@ -795,6 +798,11 @@ export default function OnboardingPage() {
                   disabled={!resumeName && !resumeText.trim()}
                   onClick={async () => {
                     await savePasted();
+                    // Straight to the questions once the read is done or was
+                    // never started (pasted text). While it IS running, the
+                    // extraction screen below holds the step — showing empty
+                    // boxes that fill themselves thirty seconds later is what
+                    // made people type in their own degree.
                     setStep(1);
                   }}
                   className="rounded-lg brand-gradient px-5 py-2.5 font-medium text-white hover:opacity-90 transition disabled:opacity-50"
@@ -805,8 +813,68 @@ export default function OnboardingPage() {
             </div>
           )}
 
+          {/* Reading the resume. Holds step 1 until the worker is done, because
+              the alternative is a form full of blanks that answer themselves a
+              moment later — which reads as "type all this in". */}
+          {step === 1 && reading && (
+            <div className="py-10 text-center">
+              <div className="relative mx-auto h-24 w-24">
+                <span className="absolute inset-0 animate-ping rounded-full bg-brand/20" />
+                <span className="absolute inset-2 animate-pulse rounded-full bg-brand/25" />
+                <span className="absolute inset-0 flex items-center justify-center text-4xl">
+                  📄
+                </span>
+              </div>
+
+              <h2 className="mt-8 font-display text-2xl font-semibold">
+                Reading your resume
+              </h2>
+              <p className="mx-auto mt-2 max-w-sm text-sm text-muted">
+                Pulling out everything an application form is going to ask for, so you
+                only answer what your resume doesn&apos;t already say.
+              </p>
+
+              <ul className="mx-auto mt-7 max-w-xs space-y-2.5 text-left">
+                {[
+                  ["Name, phone and email", ["name", "phone"]],
+                  ["Degree, college, graduation year", ["degree", "college", "gradYear"]],
+                  ["CGPA and board percentages", ["gpa", "class12Percent", "class10Percent"]],
+                  ["LinkedIn, GitHub, portfolio", ["linkedinUrl", "githubUrl", "portfolioUrl"]],
+                ].map(([label, keys]) => {
+                  const done = (keys as string[]).some((k) => fromResume.includes(k));
+                  return (
+                    <li key={label as string} className="flex items-center gap-3 text-sm">
+                      <span
+                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[11px] ${
+                          done
+                            ? "border-accent bg-accent/15 text-accent"
+                            : "border-border text-muted"
+                        }`}
+                      >
+                        {done ? "✓" : ""}
+                      </span>
+                      <span className={done ? "text-foreground" : "text-muted"}>
+                        {label as string}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <p className="mt-8 text-xs text-muted">
+                This takes a few seconds. Nothing is sent anywhere.
+              </p>
+              <button
+                onClick={() => setReading(false)}
+                className="mt-4 text-xs text-muted underline transition hover:text-foreground"
+              >
+                Skip and fill it in myself
+              </button>
+            </div>
+          )}
+
           {/* STEP 1 — Profile questions */}
-          {step === 1 && (
+          {step === 1 && !reading && (
             <div>
               <h2 className="font-display text-2xl font-semibold">A few profile questions</h2>
               <p className="mt-1 text-sm text-muted">
@@ -874,7 +942,7 @@ export default function OnboardingPage() {
                 <div key={group} className="mt-6">
                   <div className="text-xs uppercase tracking-wide text-muted mb-3">{group}</div>
                   <div className="space-y-5">
-                    {PROFF_FIELDS.filter((f) => f.group === group).map((f) => (
+                    {PROFF_FIELDS.filter((f) => f.group === group && (showMore || !f.advanced)).map((f) => (
                       <div
                         key={f.key}
                         id={`field-${f.key}`}
@@ -920,7 +988,23 @@ export default function OnboardingPage() {
                             )}
                           </>
                         )}
-                        {f.type === "select" && (
+                        {f.choices && (
+                          <select
+                            aria-label={f.label}
+                            value={pickedValue(form[f.key])}
+                            onChange={(e) =>
+                              set(f.key, f.numeric ? Number(e.target.value) : e.target.value)
+                            }
+                            className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-brand transition"
+                          >
+                            {f.choices.map((c) => (
+                              <option key={c.value} value={c.value}>
+                                {c.label}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        {!f.choices && f.type === "select" && (
                           <div className="flex items-center gap-2">
                             <select
                               aria-label={f.label}
@@ -997,6 +1081,26 @@ export default function OnboardingPage() {
                   </div>
                 </div>
               ))}
+
+              {/* The long tail, folded away. Every question behind this is real —
+                  some form somewhere asks it — but twenty-six boxes before
+                  anyone has seen an application go out is how a person
+                  abandons setup. Opening it is a choice to widen coverage,
+                  not a toll on the way in. */}
+              <button
+                type="button"
+                onClick={() => setShowMore((v) => !v)}
+                className="mt-6 w-full rounded-xl border border-border bg-surface px-4 py-3 text-left text-sm transition hover:border-brand/50"
+              >
+                <span className="font-medium text-foreground">
+                  {showMore ? "Hide the extra questions" : `More answers (${advancedCount} optional)`}
+                </span>
+                <span className="mt-0.5 block text-xs text-muted">
+                  Gender, date of birth, notice period, profile links and the rest. Every
+                  one you answer is another form the agent can finish on its own — but
+                  none of them are needed to start.
+                </span>
+              </button>
 
               {/* Blanks are not free, and the user is the only one who can fill
                   them. Naming them here is cheaper than an application that

@@ -3055,7 +3055,26 @@ export default function Dashboard() {
                         placeholder={f.placeholder}
                       />
                     )}
-                    {f.type === "select" && (
+                    {f.choices && (
+                      <select
+                        id={`field-${f.key}`}
+                        value={String(profileForm[f.key as keyof ProfileForm] ?? "")}
+                        onChange={(e) =>
+                          patchForm(
+                            f.key as keyof ProfileForm,
+                            (f.numeric
+                              ? Number(e.target.value)
+                              : e.target.value) as ProfileForm[keyof ProfileForm],
+                          )
+                        }
+                        className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none"
+                      >
+                        {f.choices.map((c) => (
+                          <option key={c.value} value={c.value}>{c.label}</option>
+                        ))}
+                      </select>
+                    )}
+                    {!f.choices && f.type === "select" && (
                       <div className="flex items-center gap-2">
                         <select
                           id={`field-${f.key}`}

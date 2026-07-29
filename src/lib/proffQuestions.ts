@@ -40,6 +40,23 @@ export type ProffField = {
    * the way past (see `blankOptional`), which is the honest version of both.
    */
   required?: boolean;
+  /**
+   * A dropdown whose stored value is not what the user should be reading.
+   *
+   * "Minimum monthly stipend: 1" is a filter setting; "Only paid internships"
+   * is the same fact in a sentence a person can answer without doing arithmetic
+   * about their own worth. Setup asks the question, the column keeps the number.
+   */
+  choices?: { value: string; label: string }[];
+  /**
+   * Hidden behind "More answers" in setup.
+   *
+   * Everything here is real — some form somewhere asks it — but a wall of
+   * twenty-six boxes is how a person abandons setup and never sends a single
+   * application. The visible set is what the agent is blocked without; the rest
+   * waits until someone wants their coverage to be wider.
+   */
+  advanced?: boolean;
   group: "About you" | "Education" | "Targeting" | "Limits & rules";
 };
 
@@ -79,6 +96,7 @@ export const PROFF_FIELDS: ProffField[] = [
     ],
     placeholder: "e.g. B.Tech in Computer Science",
     group: "Education",
+    required: true,
   },
   {
     key: "college",
@@ -87,6 +105,7 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "text",
     placeholder: "e.g. VIT Vellore",
     group: "Education",
+    required: true,
   },
   {
     key: "gradYear",
@@ -96,14 +115,16 @@ export const PROFF_FIELDS: ProffField[] = [
     options: GRAD_YEARS,
     numeric: true,
     group: "Education",
+    required: true,
   },
   {
     key: "class12Percent",
     label: "Class 12 percentage",
-    help: "Asked on most Indian internship forms. Your college CGPA is a different number and is never used for this.",
+    help: "Asked on most Indian internship forms. Read off your resume where possible — your college CGPA is a different number and is never used here.",
     type: "number",
     suffix: "%",
     group: "Education",
+    required: true,
   },
   {
     key: "class10Percent",
@@ -112,25 +133,28 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "number",
     suffix: "%",
     group: "Education",
+    advanced: true,
   },
   {
     key: "availability",
     label: "When can you start?",
-    help: "Stated on forms that ask about availability or notice period.",
+    help: "Answered on any form asking about start date or notice period.",
     type: "choice",
     options: ["Immediately", "Within 2 weeks", "Within 1 month", "After my current semester"],
     placeholder: "e.g. From June 2027",
     group: "About you",
+    required: true,
   },
   {
     key: "hoursPerWeek",
-    label: "Hours a week you can commit",
+    label: "Hours a week you can work",
     help: "Internshala asks this on nearly every listing, and the box only takes a number.",
     type: "select",
     options: ["10", "15", "20", "25", "30", "40"],
     numeric: true,
     suffix: "hrs/week",
     group: "About you",
+    required: true,
   },
   {
     key: "willingToRelocate",
@@ -139,11 +163,12 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "select",
     options: ["Yes", "No", "Depends on the role"],
     group: "About you",
+    advanced: true,
   },
   {
     key: "workAuthorization",
-    label: "Work authorization",
-    help: "How you are eligible to work where you are applying. Copied as written, never guessed.",
+    label: "Are you allowed to work in India?",
+    help: "Copied onto forms exactly as picked. Never guessed.",
     type: "choice",
     options: [
       "Indian citizen",
@@ -154,6 +179,7 @@ export const PROFF_FIELDS: ProffField[] = [
     ],
     placeholder: "e.g. Indian citizen",
     group: "About you",
+    required: true,
   },
   {
     key: "needsSponsorship",
@@ -162,6 +188,7 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "select",
     options: ["No", "Yes"],
     group: "About you",
+    advanced: true,
   },
   {
     key: "expectedStipend",
@@ -172,6 +199,7 @@ export const PROFF_FIELDS: ProffField[] = [
     numeric: true,
     suffix: "₹/mo",
     group: "About you",
+    advanced: true,
   },
   // Measured, not guessed. A dry run of fourteen real application pages stalled
   // three times: twice on "What's your current salary?" and once on "Do you have
@@ -180,22 +208,22 @@ export const PROFF_FIELDS: ProffField[] = [
   // turns those three stalls into three sent applications.
   {
     key: "currentSalary",
-    label: "Your current salary",
-    help: "Asked by most applicant tracking systems, including of students. Pick 0 if you aren't earning — the box usually only takes a number.",
+    label: "Are you earning right now?",
+    help: "Most applicant tracking systems ask students this too. Pick the first option if you are not earning.",
     type: "choice",
-    options: ["0", "Not currently employed"],
+    options: ["Not earning — I am a student", "0"],
     placeholder: "e.g. 300000",
-    required: true,
     group: "About you",
+    required: true,
   },
   {
     key: "previousInternship",
-    label: "Have you done an internship before?",
-    help: "Answered exactly as picked here. Never read off your resume, because a missed line there would state 'no' on your behalf.",
+    label: "Done an internship before?",
+    help: "Answered exactly as picked. Never read off your resume, because a missed line there would answer 'no' for you.",
     type: "select",
     options: ["No", "Yes"],
-    required: true,
     group: "About you",
+    required: true,
   },
   {
     key: "noticePeriod",
@@ -205,14 +233,17 @@ export const PROFF_FIELDS: ProffField[] = [
     options: ["Immediate", "15 days", "1 month", "2 months", "3 months"],
     placeholder: "e.g. Immediate",
     group: "About you",
+    advanced: true,
   },
   {
     key: "currentLocation",
-    label: "Where are you based right now?",
-    help: "The city you are in today — different from the locations you'd accept a role in.",
-    type: "text",
+    label: "Which city are you in?",
+    help: "Typed into 'Current location' boxes. Pick the nearest if yours isn't listed.",
+    type: "choice",
     placeholder: "e.g. Hyderabad",
     group: "About you",
+    required: true,
+    options: ["Hyderabad", "Bengaluru", "Chennai", "Mumbai", "Pune", "Delhi NCR", "Kolkata", "Ahmedabad", "Jaipur", "Kochi", "Coimbatore", "Indore", "Chandigarh", "Remote / from home"],
   },
   {
     key: "dateOfBirth",
@@ -221,6 +252,7 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "text",
     placeholder: "e.g. 14/03/2005",
     group: "About you",
+    advanced: true,
   },
   {
     key: "nationality",
@@ -230,15 +262,17 @@ export const PROFF_FIELDS: ProffField[] = [
     options: ["Indian"],
     placeholder: "e.g. Indian",
     group: "About you",
+    advanced: true,
   },
   {
     key: "country",
-    label: "Country you're applying from",
-    help: "Its own required box on nearly every applicant tracking system. Not the same as nationality — you can hold one and live in another, and neither is guessed from the other.",
+    label: "Which country are you applying from?",
+    help: "Its own required box on nearly every application. Not the same as nationality.",
     type: "choice",
     options: ["India"],
     placeholder: "e.g. India",
     group: "About you",
+    required: true,
   },
   {
     key: "gender",
@@ -248,6 +282,7 @@ export const PROFF_FIELDS: ProffField[] = [
     options: ["Male", "Female", "Non-binary", "Prefer not to say"],
     placeholder: "Type your own",
     group: "About you",
+    advanced: true,
   },
   {
     key: "differentlyAbled",
@@ -256,6 +291,7 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "select",
     options: ["No", "Yes", "Prefer not to say"],
     group: "About you",
+    advanced: true,
   },
   {
     key: "linkedinUrl",
@@ -264,6 +300,7 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "text",
     placeholder: "linkedin.com/in/yourname",
     group: "About you",
+    advanced: true,
   },
   {
     key: "githubUrl",
@@ -272,6 +309,7 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "text",
     placeholder: "github.com/yourname",
     group: "About you",
+    advanced: true,
   },
   {
     key: "portfolioUrl",
@@ -280,6 +318,7 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "text",
     placeholder: "yourname.dev",
     group: "About you",
+    advanced: true,
   },
   {
     key: "preferredDomains",
@@ -331,10 +370,14 @@ export const PROFF_FIELDS: ProffField[] = [
   },
   {
     key: "stipendMin",
-    label: "Minimum monthly stipend",
-    help: "Skip anything below this. 0 = unpaid is fine.",
-    type: "number",
-    suffix: "₹/mo",
+    label: "Unpaid internships",
+    help: "Most Indian internships never state a figure, and those are always kept — this only decides what to do with the ones that say zero.",
+    type: "select",
+    numeric: true,
+    choices: [
+      { value: "0", label: "Include unpaid ones too" },
+      { value: "1", label: "Only paid internships" },
+    ],
     group: "Limits & rules",
   },
   {

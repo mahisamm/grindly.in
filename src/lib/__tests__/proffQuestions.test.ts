@@ -80,15 +80,26 @@ describe("setup questions", () => {
  * blank would put the user in a loop they cannot exit.
  */
 describe("required setup questions", () => {
+  // Everything required, answered — the baseline the cases below vary one
+  // field away from.
+  function answeredAll(over: Record<string, unknown> = {}) {
+    const filled: Record<string, unknown> = { ...DEFAULTS };
+    for (const f of PROFF_FIELDS.filter((x) => x.required)) {
+      filled[f.key] = f.numeric || f.type === "number" ? 1 : "answered";
+    }
+    return { ...filled, ...over };
+  }
+
   it("blocks setup on the questions real forms were measured to stop on", () => {
-    const gaps = missingRequired({ ...DEFAULTS });
-    expect(gaps.map((f) => f.key).sort()).toEqual(["currentSalary", "previousInternship"]);
+    const gaps = missingRequired({ ...DEFAULTS }).map((f) => f.key);
+    expect(gaps).toContain("currentSalary");
+    expect(gaps).toContain("previousInternship");
   });
 
   it("counts a picked '0' as an answer, not a blank", () => {
     // A student earning nothing HAS a current salary, and the option list offers
     // it. Refusing the pick would demand an answer the form itself accepts as 0.
-    const gaps = missingRequired({ ...DEFAULTS, currentSalary: "0", previousInternship: "No" });
+    const gaps = missingRequired(answeredAll({ currentSalary: "0", previousInternship: "No" }));
     expect(gaps).toEqual([]);
   });
 
@@ -97,15 +108,15 @@ describe("required setup questions", () => {
     // field in DEFAULTS starts at 0 as its empty marker, and nobody scored 0%
     // in class 12. Disagreeing with the agent here is how a field reads as
     // filled in setup and blank at apply time.
-    const blanks = blankOptional({ ...DEFAULTS, class12Percent: 0 }).map((f) => f.key);
-    expect(blanks).toContain("class12Percent");
-    expect(blankOptional({ ...DEFAULTS, class12Percent: 82 }).map((f) => f.key)).not.toContain(
-      "class12Percent",
+    const blanks = blankOptional({ ...DEFAULTS, class10Percent: 0 }).map((f) => f.key);
+    expect(blanks).toContain("class10Percent");
+    expect(blankOptional({ ...DEFAULTS, class10Percent: 82 }).map((f) => f.key)).not.toContain(
+      "class10Percent",
     );
   });
 
   it("treats whitespace as unanswered", () => {
-    const gaps = missingRequired({ ...DEFAULTS, currentSalary: "   ", previousInternship: "No" });
+    const gaps = missingRequired(answeredAll({ currentSalary: "   " }));
     expect(gaps.map((f) => f.key)).toEqual(["currentSalary"]);
   });
 
@@ -113,23 +124,87 @@ describe("required setup questions", () => {
     // Every one of these stalls some application eventually; the user is the
     // only one who can fill them, so they have to be told which.
     const blanks = blankOptional({ ...DEFAULTS }).map((f) => f.key);
-    expect(blanks).toContain("class12Percent");
-    expect(blanks).toContain("currentLocation");
+    expect(blanks).toContain("class10Percent");
+    expect(blanks).toContain("gender");
     // A required field is reported by missingRequired, never twice.
     expect(blanks).not.toContain("currentSalary");
-  });
-
-  it("stops naming a blank once it is filled", () => {
-    const blanks = blankOptional({ ...DEFAULTS, currentLocation: "Hyderabad" }).map((f) => f.key);
     expect(blanks).not.toContain("currentLocation");
   });
 
+  it("stops naming a blank once it is filled", () => {
+    const blanks = blankOptional({ ...DEFAULTS, gender: "Prefer not to say" }).map((f) => f.key);
+    expect(blanks).not.toContain("gender");
+  });
+
   it("gives every required field a one-tap way to answer it", () => {
-    // A required box with no options is a required essay. Both of these are
-    // answerable in one tap by someone who has never been employed.
-    for (const f of PROFF_FIELDS.filter((x) => x.required)) {
+    // A required box with no options is a required essay. The exceptions are
+    // the two the resume normally fills in for you — a college name and a board
+    // percentage cannot come from a list, and arrive pre-filled when the read
+    // works.
+    const typedByHand = ["college", "class12Percent"];
+    for (const f of PROFF_FIELDS.filter((x) => x.required && !typedByHand.includes(x.key))) {
       expect(["select", "choice"], `${f.key} is free text`).toContain(f.type);
-      expect(f.options!.length, `${f.key} has no options`).toBeGreaterThan(1);
+      expect(f.options!.length, `${f.key} has no options`).toBeGreaterThan(0);
+      // A "select" is the whole world of answers, so one option is a question
+      // with no answer. A "choice" always offers "Something else…", so a single
+      // listed option ("Country: India") is still a one-tap answer for almost
+      // everyone and never traps the person it does not fit.
+      if (f.type === "select") {
+        expect(f.options!.length, `${f.key} offers no real choice`).toBeGreaterThan(1);
+      }
     }
+  });
+});
+
+/**
+ * Setup asked twenty-six questions before anyone had seen an application go
+ * out, and the owner abandoned it halfway through typing facts their own resume
+ * already stated. What is VISIBLE on the way in is now the thing under test.
+ */
+describe("how much setup asks for", () => {
+  const asked = PROFF_FIELDS.filter(
+    (f) => (f.group === "About you" || f.group === "Education") && !f.advanced,
+  );
+
+  it("keeps the questions asked up front down to something answerable", () => {
+    expect(asked.length).toBeLessThanOrEqual(12);
+  });
+
+  it("only blocks on questions the agent is genuinely stuck without", () => {
+    const required = PROFF_FIELDS.filter((f) => f.required).map((f) => f.key);
+    // The two a measured dry run stalled on, plus eligibility facts no resume
+    // carries and no application can be finished without.
+    expect(required).toContain("currentSalary");
+    expect(required).toContain("previousInternship");
+    expect(required).toContain("workAuthorization");
+    expect(required).not.toContain("gender");
+    expect(required).not.toContain("dateOfBirth");
+  });
+
+  it("never hides a required question behind the More toggle", () => {
+    // A blocked step whose blocking field is folded away is a dead end.
+    for (const f of PROFF_FIELDS.filter((x) => x.required)) {
+      expect(f.advanced, `${f.key} is required AND hidden`).toBeFalsy();
+    }
+  });
+
+  it("makes every visible question answerable in one tap where it can be", () => {
+    // College and the percentages are genuinely free text or numeric; the rest
+    // of what we ask for up front is a list to pick from.
+    const typed = asked.filter(
+      (f) => !["select", "choice"].includes(f.type) && !f.choices,
+    );
+    expect(typed.map((f) => f.key).sort()).toEqual(
+      ["class12Percent", "college"].sort(),
+    );
+  });
+
+  it("asks about pay as a choice, not as a number to guess at", () => {
+    // "Minimum monthly stipend" invited a figure people over-estimate, and the
+    // matcher then filtered their whole queue away.
+    const stipend = PROFF_FIELDS.find((f) => f.key === "stipendMin")!;
+    expect(stipend.choices).toBeTruthy();
+    expect(stipend.choices!.map((c) => c.value).sort()).toEqual(["0", "1"]);
+    expect(stipend.choices!.some((c) => /unpaid/i.test(c.label))).toBe(true);
   });
 });
