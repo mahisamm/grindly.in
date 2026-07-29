@@ -78,6 +78,17 @@ BOARDS: dict[str, list[str]] = {
     # Workable accounts are named after the company and are exactly what a
     # site:apply.workable.com search returns.
     "workable": [],
+    # Indian ATS, and the reason this list needed one. Everything above is where
+    # a foreign-headquartered company posts; a Bangalore startup posts here.
+    # Counted live at the time of writing — India-located openings per board:
+    # vyaparapp 57, turno 28, satsure 22, unboxrobotics 21, ketto 11, lumel 8,
+    # mayhem 1. Deliberately NOT here: royalhealth, whose 82 openings are all
+    # Singapore, and futops/express/flentas/clrfacility, whose boards did not
+    # answer at all.
+    "keka": [
+        "vyaparapp", "turno", "satsure", "unboxrobotics", "ketto", "lumel",
+        "mayhem",
+    ],
 }
 
 # Deliberately NOT here: Workday. Measured before adding it — its job search is
@@ -200,13 +211,30 @@ def _keka_board(slug: str):
     sits behind the same six-hour cache as every other vendor.
     """
     info = _get_json(_KEKA_INFO.format(slug=slug))
-    if not info:
-        return None
-    found = _KEKA_GUID.search(json.dumps(info))
+    found = _KEKA_GUID.search(json.dumps(info)) if info else None
     if not found:
-        print(f"[atsboards] keka/{slug}: no org id in the portal info")
+        # A portal with no custom background or logo has no asset path to read
+        # the id out of — three of fourteen live boards were shaped that way.
+        # The careers page itself always carries it, so fall back to the HTML
+        # rather than writing the board off as dead.
+        found = _KEKA_GUID.search(_get_text(f"https://{slug}.keka.com/careers/"))
+    if not found:
+        print(f"[atsboards] keka/{slug}: no org id in the portal info or page")
         return None
     return _get_json(_API["keka"].format(slug=slug, guid=found.group(1)))
+
+
+def _get_text(url: str) -> str:
+    """A page's raw text. Only used where a value we need is in the markup and
+    nowhere in the JSON — never to read postings, which are always taken from a
+    vendor's own API."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Grindly/1.0"})
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            return resp.read(400_000).decode("utf-8", "replace")
+    except Exception as e:  # noqa: BLE001
+        print(f"[atsboards] {type(e).__name__} for {url[:70]}")
+        return ""
 
 
 def _board(vendor: str, slug: str):
@@ -708,6 +736,9 @@ _SLUG_PATTERNS = (
     # a reserved word, so the company was silently never learned.
     ("workable", r"apply\.workable\.com/([^/?#]+)"),
     ("workable", r"//([^/?#.]+)\.workable\.com"),
+    # Keka names the board after the company in the subdomain, so any Keka
+    # posting the open web turns up teaches us a whole board.
+    ("keka", r"//([^/?#.]+)\.keka\.com"),
 )
 
 # Path segments that are part of the ATS's own URL structure, never a company.
