@@ -86,6 +86,21 @@ const ACCEPT_ATTR = [
   "text/plain",
 ].join(",");
 
+/**
+ * Marks an answer the agent read off the resume rather than asked for.
+ *
+ * The distinction is the whole point of this screen: a value here is something
+ * to CHECK, and a blank box is something only the candidate can supply. Without
+ * the mark the two look identical and the user retypes what they already wrote.
+ */
+function FromResume() {
+  return (
+    <span className="ml-2 rounded-full border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent align-middle">
+      from your resume
+    </span>
+  );
+}
+
 /** A stored value is "unset" when it's empty or a zero placeholder. */
 function pickedValue(v: unknown): string {
   return v === 0 || v === null || v === undefined ? "" : String(v);
@@ -106,6 +121,17 @@ export default function OnboardingPage() {
   // Required questions the user tried to walk past, so the boxes themselves can
   // say so instead of only the error line at the bottom of a long form.
   const [requiredGaps, setRequiredGaps] = useState<string[]>([]);
+  // Is the worker still reading the resume? Setup says so rather than showing a
+  // wall of blank boxes that fill themselves a moment later.
+  const [reading, setReading] = useState(false);
+  // Which answers came off the resume, so each one can say so and be checked
+  // rather than typed.
+  const [fromResume, setFromResume] = useState<string[]>([]);
+  // Fields the user has edited by hand. The resume read must never overwrite
+  // one: the extractor is best-effort, the person is not.
+  const [touched, setTouched] = useState<string[]>([]);
+  const touchedRef = useRef<string[]>([]);
+  useEffect(() => { touchedRef.current = touched; }, [touched]);
   // What this deploy can actually deliver a report on. Assume neither external
   // channel works until /api/me says otherwise: promising an inbox that never
   // fills is worse than under-promising and being right.
@@ -327,7 +353,80 @@ export default function OnboardingPage() {
   }
 
   function set(key: string, v: unknown) {
+    // Remember that a human touched this. The resume read lands asynchronously
+    // and must never overwrite something the user has already corrected — the
+    // extractor is best-effort, the person is not.
+    setTouched((t) => (t.includes(key) ? t : [...t, key]));
     setForm((f) => ({ ...f, [key]: v }));
+  }
+
+  /** Fields the resume can supply, and which profile column each comes from. */
+  const FROM_RESUME: [string, string][] = [
+    ["name", "name"],
+    ["phone", "phone"],
+    ["gpa", "gpa"],
+    ["degree", "degree"],
+    ["college", "college"],
+    ["gradYear", "gradYear"],
+    ["class12Percent", "class12Percent"],
+    ["class10Percent", "class10Percent"],
+    ["linkedinUrl", "linkedinUrl"],
+    ["githubUrl", "githubUrl"],
+    ["portfolioUrl", "portfolioUrl"],
+  ];
+
+  function hasValue(v: unknown): boolean {
+    if (typeof v === "number") return v !== 0;
+    return String(v ?? "").trim() !== "";
+  }
+
+  /**
+   * Wait for the worker to finish reading the resume, then fill the form from it.
+   *
+   * Uploading only enqueues the read; the worker polls its queue every ten
+   * seconds and then calls an LLM, so the answers arrive well after this page
+   * rendered. Polling here is what turns setup from "type your degree" into
+   * "check we read your degree correctly", which is what it was always meant to
+   * be.
+   *
+   * Gives up quietly after a couple of minutes. A slow read is a reason to ask
+   * the user to confirm the fields by hand, not to hold setup hostage.
+   */
+  async function waitForResumeRead() {
+    setReading(true);
+    const deadline = Date.now() + 150_000;
+    try {
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const res = await fetch("/api/profile").catch(() => null);
+        if (!res?.ok) continue;
+        const d = await res.json().catch(() => null);
+        const p = d?.profile;
+        if (!p) continue;
+
+        const values: Record<string, unknown> = { ...p, name: d?.user?.name ?? "" };
+        const landed: string[] = [];
+        setForm((f) => {
+          const next = { ...f };
+          for (const [formKey, column] of FROM_RESUME) {
+            if (touchedRef.current.includes(formKey)) continue;
+            if (hasValue(next[formKey])) continue;
+            if (!hasValue(values[column])) continue;
+            next[formKey] = values[column];
+            landed.push(formKey);
+          }
+          return next;
+        });
+        if (landed.length) {
+          setFromResume((prev) => [...new Set([...prev, ...landed])]);
+        }
+        // The worker records a score (or a parse failure) as the last thing it
+        // does, so either one means the read is over and nothing more is coming.
+        if (p.resumeScore != null || p.resumeParseFailed) break;
+      }
+    } finally {
+      setReading(false);
+    }
   }
 
   async function uploadResume(file: File) {
@@ -379,6 +478,13 @@ export default function OnboardingPage() {
             const j = await res.json();
             setResumeName(j.resumeName);
             setMsg("");
+            // The upload only QUEUES the read. Everything the resume states —
+            // name, phone, CGPA, degree, college, graduation year, board
+            // percentages, links — is written to the profile by the worker some
+            // seconds later, and this form used to fetch the profile exactly
+            // once, on page load. So the user typed in facts their own resume
+            // stated, while the answers landed in the database behind them.
+            void waitForResumeRead();
             return;
           }
           const j = await res.json().catch(() => ({}));
@@ -704,8 +810,33 @@ export default function OnboardingPage() {
             <div>
               <h2 className="font-display text-2xl font-semibold">A few profile questions</h2>
               <p className="mt-1 text-sm text-muted">
-                These are the hard limits the agent plans and applies inside — it can never cross them.
+                Anything your resume already states is filled in below — check it rather
+                than type it. The rest are facts no resume carries and the agent will
+                never invent.
               </p>
+
+              {reading && (
+                <div className="mt-4 flex items-center gap-3 rounded-xl border border-brand/30 bg-brand/5 p-4 text-sm">
+                  <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                  <p className="text-muted">
+                    Reading your resume — name, degree, college, graduation year, CGPA,
+                    board percentages and links will fill themselves in here. Keep going;
+                    anything you type yourself is kept.
+                  </p>
+                </div>
+              )}
+
+              {!reading && fromResume.length > 0 && (
+                <div className="mt-4 rounded-xl border border-accent/30 bg-accent/5 p-4 text-sm">
+                  <p className="font-medium text-accent">
+                    ✓ Read {fromResume.length} answer{fromResume.length === 1 ? "" : "s"} off your resume
+                  </p>
+                  <p className="mt-1 text-muted">
+                    They are marked below. Check them — they get typed onto real
+                    applications exactly as they read here.
+                  </p>
+                </div>
+              )}
 
               <div className="mt-6">
                 <div className="text-xs uppercase tracking-wide text-muted mb-3">Contact</div>
@@ -716,7 +847,10 @@ export default function OnboardingPage() {
                 <div className="space-y-5">
                   {CONTACT_FIELDS.map((f) => (
                     <div key={f.key}>
-                      <label className="text-sm font-medium">{f.label}</label>
+                      <label className="text-sm font-medium">
+                        {f.label}
+                        {fromResume.includes(f.key) && <FromResume />}
+                      </label>
                       <p className="text-xs text-muted mb-1.5">{f.help}</p>
                       <div className="flex items-center gap-2">
                         <input
@@ -753,6 +887,7 @@ export default function OnboardingPage() {
                         <label className="text-sm font-medium">
                           {f.label}
                           {f.required && <span className="ml-1 text-danger">*</span>}
+                          {fromResume.includes(f.key) && <FromResume />}
                         </label>
                         <p className="text-xs text-muted mb-1.5">{f.help}</p>
                         {f.type === "tags" && (

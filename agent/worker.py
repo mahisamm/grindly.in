@@ -1092,15 +1092,15 @@ def _analyze_if_changed(uid: str, profile: dict, text: str, skills: list[str],
     # never aborts analysis on failure.
     try:
         contact = resume_ai.extract_contact(text, this_year=datetime.date.today().year)
+        # Everything the extractor found, forwarded verbatim. Listing the keys by
+        # hand here is what silently dropped name, the school percentages and the
+        # portfolio link on the floor after the extractor learned to read them —
+        # the user then typed, by hand, facts their own resume already stated.
         filled = db.update_contact(
             uid,
             phone=contact.get("phone"),
             gpa=contact.get("gpa"),
-            degree=contact.get("degree"),
-            college=contact.get("college"),
-            grad_year=contact.get("grad_year"),
-            linkedin_url=contact.get("linkedin_url"),
-            github_url=contact.get("github_url"),
+            **{k: v for k, v in contact.items() if k not in ("phone", "gpa")},
         )
         if filled:
             log.info("prefilled from resume: %s", ", ".join(filled.keys()))

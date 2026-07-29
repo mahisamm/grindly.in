@@ -518,11 +518,24 @@ def update_contact(uid: str, phone: str | None = None, gpa: float | None = None,
     """
     text_columns = ("degree", "college", "linkedin_url", "github_url", "portfolio_url")
     num_columns = ("grad_year",)
+    # Percentages are decimals (94.5 is a real board result), so they cannot ride
+    # along with grad_year's int() cast.
+    decimal_columns = ("class12_percent", "class10_percent")
     filled: dict = {}
+    # The candidate's name lives on `users`, not `profiles` — and it is the one
+    # field setup used to demand by hand from every user whose Google account had
+    # no name on it, while their own resume stated it in the first line.
+    name = str(extra.get("name") or "").strip()
+    if name:
+        with conn() as c:
+            row = c.execute("SELECT name FROM users WHERE id=?", (uid,)).fetchone()
+            if row is not None and not str(row["name"] or "").strip():
+                c.execute("UPDATE users SET name=? WHERE id=?", (name[:200], uid))
+                filled["name"] = name
     with conn() as c:
         _ensure_profile_columns(c)
         _ensure_profile_row(c, uid)
-        columns = ["phone", "gpa", *text_columns, *num_columns]
+        columns = ["phone", "gpa", *text_columns, *num_columns, *decimal_columns]
         row = c.execute(
             f"SELECT {', '.join(columns)} FROM profiles WHERE user_id=?", (uid,)
         ).fetchone()
@@ -551,6 +564,14 @@ def update_contact(uid: str, phone: str | None = None, gpa: float | None = None,
             if value and not row[column]:
                 sets.append(f"{column}=?")
                 vals.append(int(value))
+                filled[column] = value
+        for column in decimal_columns:
+            value = extra.get(column)
+            # `not row[column]` is the right emptiness test here as well as
+            # elsewhere: 0 is the unset marker for these, and nobody scored 0%.
+            if value and not row[column]:
+                sets.append(f"{column}=?")
+                vals.append(float(value))
                 filled[column] = value
         if sets:
             vals.append(now_db())

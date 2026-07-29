@@ -156,6 +156,67 @@ _COLLEGE_LINE = re.compile(
     r"\b((?:[A-Z][\w.&'-]+[^\S\n]+){0,4}(?:University|College|Institute)"
     r"(?:[^\S\n]+of[^\S\n]+[A-Z][\w.&'-]+(?:[^\S\n]+[A-Z][\w.&'-]+){0,2})?)"
 )
+_PORTFOLIO_URL = re.compile(
+    r"\b((?:https?://)?(?:www\.)?[\w-]+\.(?:dev|me|io|xyz|site|tech|portfolio)"
+    r"(?:/[\w\-./%]*)?)", re.I,
+)
+# School results. Anchored on the level, because a bare percentage on a resume is
+# just as likely to be a project metric ("improved throughput by 94%") — and a
+# wrong number here is typed into a real eligibility box as fact.
+#
+# Both orders occur: "Class 12: 94%" and "94% - Class XII". The value is bounded
+# to 0-100 by the caller; a CGPA written on the same line ("Class 12 - 9.4 CGPA")
+# must not be read as a percentage, hence the explicit % or "percentage".
+def _school_percent(t: str, level: str) -> float | None:
+    names = {
+        "12": r"(?:class\s*(?:12|xii)|12th|twelfth|intermediate|hsc|senior\s+secondary|\+2)",
+        "10": r"(?:class\s*(?:10|x)\b|10th|tenth|ssc|matriculation|secondary)",
+    }[level]
+    forward = re.compile(
+        names + r"[^\n%]{0,40}?(\d{1,3}(?:\.\d{1,2})?)\s*(?:%|percent|percentage)", re.I)
+    backward = re.compile(
+        r"(\d{1,3}(?:\.\d{1,2})?)\s*(?:%|percent|percentage)[^\n]{0,25}?" + names, re.I)
+    for rx in (forward, backward):
+        m = rx.search(t or "")
+        if m:
+            try:
+                value = float(m.group(1))
+            except ValueError:
+                continue
+            if 0 < value <= 100:
+                return round(value, 2)
+    return None
+
+
+# A line that is a person's name and nothing else: resumes put it first, in
+# title case, with no digits, no email and no job words. Deliberately strict —
+# this becomes the name on every application, and "Curriculum Vitae" or
+# "Software Engineer" arriving there is worse than asking.
+_NAME_LINE = re.compile(r"^[A-Z][a-z'’.-]+(?:\s+[A-Z][a-z'’.-]+){1,3}$")
+_NOT_A_NAME = re.compile(
+    r"\b(resume|curriculum|vitae|profile|summary|objective|engineer|developer|"
+    r"intern|student|manager|analyst|university|college|institute|linkedin|"
+    r"github|email|phone|mobile|contact|address)\b",
+    re.I,
+)
+
+
+def _extract_name(t: str) -> str | None:
+    """The candidate's own name, off the top of the resume.
+
+    Only the first few lines are considered: a name-shaped string further down is
+    far more likely to be a referee, a manager, or a project's author. Nothing is
+    returned unless a line is a name and only a name.
+    """
+    for raw in (t or "").splitlines()[:8]:
+        line = re.sub(r"\s+", " ", raw).strip(" |•·—–-")
+        if not line or len(line) > 48 or any(ch.isdigit() for ch in line):
+            continue
+        if "@" in line or _NOT_A_NAME.search(line):
+            continue
+        if _NAME_LINE.match(line):
+            return line
+    return None
 
 
 def extract_contact(text: str, this_year: int | None = None) -> dict:
@@ -208,14 +269,26 @@ def extract_contact(text: str, this_year: int | None = None) -> dict:
         found = pattern.search(t)
         return found.group(1).rstrip("/.,") if found else None
 
+    portfolio = _url(_PORTFOLIO_URL)
+    # linkedin.com and github.com both end in a TLD the portfolio pattern also
+    # accepts on other hosts; without this the same link lands in two boxes.
+    if portfolio and re.search(r"(linkedin|github)\.com", portfolio, re.I):
+        portfolio = None
+
     return {
+        "name": _extract_name(t),
         "phone": phone,
         "gpa": _extract_gpa(t),
         "degree": degree,
         "college": college,
         "grad_year": grad_year,
+        # The two numbers every Indian internship form asks for and no other
+        # field can supply — a college CGPA is a different number entirely.
+        "class12_percent": _school_percent(t, "12"),
+        "class10_percent": _school_percent(t, "10"),
         "linkedin_url": _url(_LINKEDIN_URL),
         "github_url": _url(_GITHUB_URL),
+        "portfolio_url": portfolio,
     }
 
 
