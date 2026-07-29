@@ -473,3 +473,26 @@ def test_a_fact_the_user_never_gave_still_stops_the_application():
     )
     assert answers[0]["answer"] == ""
     assert answers[0]["source"] == "unanswerable"
+
+
+# ── "could not answer" has two very different causes ────────────────────────
+
+def test_a_question_setup_collects_names_the_missing_fact():
+    """The agent knew exactly what was being asked and had nothing true to say.
+    Only the user can fix that, and fixing it once fixes every future
+    application that asks the same thing."""
+    assert questions.missing_fact_for("Class 12 percentage (%)", {}) == "class12_percent"
+    assert questions.missing_fact_for("What is your current CTC?", {}) == "current_salary"
+    assert questions.missing_fact_for("LinkedIn profile", {}) == "linkedin_url"
+
+
+def test_a_question_answered_from_a_stored_fact_is_not_a_gap():
+    assert questions.missing_fact_for("Class 12 percentage (%)",
+                                      {"class12_percent": 91.0}) == ""
+
+
+def test_a_question_setup_does_not_collect_is_not_blamed_on_the_user():
+    """"Upload your Class 12 marksheet" is the agent's problem to solve, not a
+    fact the user forgot to type in."""
+    assert questions.missing_fact_for("Attach your consolidated marksheet", {}) == ""
+    assert questions.missing_fact_for("Describe your favourite project", {}) == ""

@@ -69,6 +69,34 @@ def _jlist(v) -> list:
 
 # ---- answer provenance ------------------------------------------------------
 
+def _classify_stall(missing: list[str], profile: dict) -> dict:
+    """Two very different failures wear the same face on a dashboard.
+
+    "Could not answer a required question" can mean the agent failed to read a
+    form it should have understood — its problem — or that the form asked for a
+    fact about the candidate that the candidate has never given us: their class
+    12 percentage, their current salary, their date of birth. The second is not
+    fixable by better code, and refusing is the correct behaviour. It IS fixable
+    once, by the user, for every future application at the same time — so it has
+    to be told apart and named, not buried in a count.
+    """
+    gaps = [questions.missing_fact_for(label, profile) for label in missing]
+    named = sorted({g for g in gaps if g})
+    if named and all(gaps):
+        return {
+            "outcome": "waiting_on_a_fact_you_have_not_given",
+            "detail": "needs: " + ", ".join(named),
+            "required_unanswered": missing[:6],
+            "missing_profile_facts": named,
+        }
+    return {
+        "outcome": "unanswered_required",
+        "detail": "; ".join(missing[:3]),
+        "required_unanswered": missing[:6],
+        "missing_profile_facts": named,
+    }
+
+
 def _invented(fields: list[dict], answers: list[dict]) -> int:
     """Answers that state something we do not actually know.
 
@@ -197,8 +225,7 @@ def _dry_run_ats(url: str, job: dict, profile: dict, skills: list[str],
 
         missing = channel_ats._unanswered_required(fields, answers)
         if missing:
-            out.update(outcome="unanswered_required", detail="; ".join(missing[:3]),
-                       required_unanswered=missing[:6])
+            out.update(**_classify_stall(missing, profile))
             return out
 
         import selector_ai
@@ -275,8 +302,7 @@ def _dry_run_google_form(url: str, job: dict, profile: dict, skills: list[str]) 
             for i, f in enumerate(fields) if f.get("required") and i not in answered
         ]
         if missing:
-            out.update(outcome="unanswered_required", detail="; ".join(missing[:3]),
-                       required_unanswered=missing[:6])
+            out.update(**_classify_stall(missing, profile))
             return out
         out.update(outcome="submit_ready", detail="every required question answered — not posted")
         return out

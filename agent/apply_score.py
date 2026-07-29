@@ -113,21 +113,34 @@ def _deliverability(rep: dict) -> tuple[float, dict]:
     }
 
 
-def _fillability(rep: dict) -> tuple[float, dict]:
-    """Did the dry run get all the way to the submit button?
+# Outcomes that are the RIGHT answer rather than a failure, and so are not the
+# agent's to be graded on:
+#
+#   closed   the posting came down between discovery and the dry run. Stopping
+#            is correct; there is nothing to apply to.
+#   waiting_on_a_fact_you_have_not_given
+#            the form asked the candidate something only the candidate knows —
+#            their class 12 percentage, their current salary — and setup has
+#            never been told. Refusing is the whole point: the alternative is
+#            stating an invented fact on a real application under their name.
+#            Reported loudly instead (see `_setup_gap`), because unlike every
+#            other stop it is fixed once and never recurs.
+_NOT_THE_AGENTS_FAULT = ("closed", "waiting_on_a_fact_you_have_not_given")
 
-    A listing the agent correctly REFUSED (the role closed between discovery and
-    the dry run) is not a fillability failure — the outcome was right. It is
-    dropped from the denominator, and reported, so a run cannot quietly improve
-    its score by finding more dead links.
-    """
+
+def _fillability(rep: dict) -> tuple[float, dict]:
+    """Did the dry run get all the way to the submit button?"""
     runs = [r for r in (rep.get("listings") or []) if r.get("dry_run")]
-    graded = [r for r in runs if (r["dry_run"].get("outcome") != "closed")]
+    graded = [r for r in runs
+              if r["dry_run"].get("outcome") not in _NOT_THE_AGENTS_FAULT]
     ready = [r for r in graded if r["dry_run"].get("outcome") == "submit_ready"]
     stops: dict[str, int] = {}
-    for r in graded:
+    excluded: dict[str, int] = {}
+    for r in runs:
         outcome = r["dry_run"].get("outcome") or "?"
-        if outcome != "submit_ready":
+        if outcome in _NOT_THE_AGENTS_FAULT:
+            excluded[outcome] = excluded.get(outcome, 0) + 1
+        elif outcome != "submit_ready":
             stops[outcome] = stops.get(outcome, 0) + 1
     share = _pct(len(ready), len(graded))
     return _ratio(share, TARGETS["fillability"]), {
@@ -136,8 +149,30 @@ def _fillability(rep: dict) -> tuple[float, dict]:
         "submit_ready": len(ready),
         "share": round(share, 3),
         "stopped_at": stops,
-        "closed_listings_excluded": len(runs) - len(graded),
+        "excluded_not_the_agents_call": excluded,
         "target": TARGETS["fillability"],
+    }
+
+
+def setup_gap(rep: dict) -> dict:
+    """Which facts about the candidate are missing, and what they are costing.
+
+    Deliberately NOT one of the weighted dimensions. This grades the agent; a
+    profile field nobody has filled in is not a property of the software, and
+    burying it inside a score would both distort the grade and hide the single
+    most actionable thing in the whole report.
+    """
+    runs = [r["dry_run"] for r in (rep.get("listings") or []) if r.get("dry_run")]
+    blocked = [d for d in runs
+               if d.get("outcome") == "waiting_on_a_fact_you_have_not_given"]
+    facts: dict[str, int] = {}
+    for d in runs:
+        for key in d.get("missing_profile_facts") or []:
+            facts[key] = facts.get(key, 0) + 1
+    return {
+        "applications_waiting_on_you": len(blocked),
+        "of_dry_runs": len(runs),
+        "facts_to_fill_in_once": dict(sorted(facts.items(), key=lambda kv: -kv[1])),
     }
 
 
@@ -237,7 +272,11 @@ def score(rep: dict) -> dict:
             "detail": detail,
         }
         total += raw * weight
-    return {"total": round(total * 100, 1), "dimensions": out}
+    return {
+        "total": round(total * 100, 1),
+        "dimensions": out,
+        "setup_gap": setup_gap(rep),
+    }
 
 
 def explain(graded: dict) -> str:
@@ -246,5 +285,15 @@ def explain(graded: dict) -> str:
         lines.append(f"  {name:<14} {d['score']:>5.1f}  x{d['weight']:.2f}")
         for k, v in d["detail"].items():
             lines.append(f"      {k}: {v}")
+        lines.append("")
+    gap = graded.get("setup_gap") or {}
+    if gap.get("applications_waiting_on_you"):
+        lines.append(
+            f"  NOT A SCORE — {gap['applications_waiting_on_you']} of "
+            f"{gap['of_dry_runs']} applications are waiting on facts only you can "
+            f"give. Fill these once in setup and they stop recurring:"
+        )
+        for key, hits in (gap.get("facts_to_fill_in_once") or {}).items():
+            lines.append(f"      {key}  (asked by {hits} form(s))")
         lines.append("")
     return "\n".join(lines)

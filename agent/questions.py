@@ -394,12 +394,15 @@ def _fit_option(field: dict, value: str) -> str | None:
     return None
 
 
-def _from_setup(label: str, field: dict, profile: dict) -> str | None:
-    """Answers the user gave in setup, matched to the question being asked.
+def _setup_candidates(label: str, profile: dict) -> list[tuple[bool, str, str]]:
+    """(this pattern matches, which stored fact answers it, its current value).
 
-    Nothing here is derived, inferred, or phrased by a model — each one is a
-    value the user typed or picked, returned verbatim. A fact we do not hold
-    returns None and the application stops for them, exactly as before.
+    One table, two readers. `_from_setup` takes the first row that matches AND
+    has a value; `missing_fact_for` takes the first that matches and has NONE —
+    which is the difference between "the agent could not read this form" and
+    "the user never told us this about themselves". Those two failures look
+    identical on a dashboard and need completely different fixes, so they must
+    not be derived from two drifting copies of this list.
     """
     def _text(key: str) -> str:
         return str(profile.get(key) or "").strip()
@@ -418,33 +421,35 @@ def _from_setup(label: str, field: dict, profile: dict) -> str | None:
     # _DEGREE_Q on "course", and the college is the more specific answer. The
     # school-level percentages come before the grade/percentage catch-alls for
     # the same reason.
-    candidates: list[tuple[bool, str]] = [
-        (bool(_SPONSORSHIP_Q.search(label)), _text("needs_sponsorship")),
+    candidates: list[tuple[bool, str, str]] = [
+        (bool(_SPONSORSHIP_Q.search(label)), "needs_sponsorship", _text("needs_sponsorship")),
         # Ahead of the stipend and start-date patterns below, which both claim
         # some of the same words: "current salary" is not "expected salary", and
         # "notice period" is its own box on forms that also ask when you start.
-        (bool(_CURRENT_SALARY_Q.search(label)), _text("current_salary")),
-        (bool(_PREV_INTERNSHIP_Q.search(label)), _text("previous_internship")),
-        (bool(_NOTICE_Q.search(label)), _text("notice_period")),
-        (bool(_CURRENT_LOCATION_Q.search(label)), _text("current_location")),
-        (bool(_GENDER_Q.search(label)), _text("gender")),
-        (bool(_DOB_Q.search(label)), _text("date_of_birth")),
-        (bool(_DISABILITY_Q.search(label)), _text("differently_abled")),
-        (bool(_NATIONALITY_Q.search(label)), _text("nationality")),
+        (bool(_CURRENT_SALARY_Q.search(label)), "current_salary", _text("current_salary")),
+        (bool(_PREV_INTERNSHIP_Q.search(label)), "previous_internship", _text("previous_internship")),
+        (bool(_NOTICE_Q.search(label)), "notice_period", _text("notice_period")),
+        (bool(_CURRENT_LOCATION_Q.search(label)), "current_location", _text("current_location")),
+        (bool(_GENDER_Q.search(label)), "gender", _text("gender")),
+        (bool(_DOB_Q.search(label)), "date_of_birth", _text("date_of_birth")),
+        (bool(_DISABILITY_Q.search(label)), "differently_abled", _text("differently_abled")),
+        (bool(_NATIONALITY_Q.search(label)), "nationality", _text("nationality")),
         # A percentage only answers a question that ASKS for one. "Class 12 board
         # name" and "Intermediate college" match the school-level pattern too,
         # and a percentage typed into either is nonsense.
-        (bool(_CLASS10_Q.search(label) and _PERCENT_Q.search(label)), _num("class10_percent")),
-        (bool(_CLASS12_Q.search(label) and _PERCENT_Q.search(label)), _num("class12_percent")),
-        (bool(_LINKEDIN_Q.search(label)), _text("linkedin_url")),
-        (bool(_GITHUB_Q.search(label)), _text("github_url")),
-        (bool(_PORTFOLIO_Q.search(label)), _text("portfolio_url")),
-        (bool(_GRAD_YEAR_Q.search(label)), _num("grad_year")),
-        (bool(_HOURS_Q.search(label)), _num("hours_per_week")),
-        (bool(_STIPEND_Q.search(label)), _num("expected_stipend")),
-        (bool(_START_Q.search(label)), _text("availability")),
-        (bool(_RELOCATE_Q.search(label)), _text("willing_to_relocate")),
-        (bool(_WORK_AUTH_Q.search(label)), _text("work_authorization")),
+        (bool(_CLASS10_Q.search(label) and _PERCENT_Q.search(label)),
+         "class10_percent", _num("class10_percent")),
+        (bool(_CLASS12_Q.search(label) and _PERCENT_Q.search(label)),
+         "class12_percent", _num("class12_percent")),
+        (bool(_LINKEDIN_Q.search(label)), "linkedin_url", _text("linkedin_url")),
+        (bool(_GITHUB_Q.search(label)), "github_url", _text("github_url")),
+        (bool(_PORTFOLIO_Q.search(label)), "portfolio_url", _text("portfolio_url")),
+        (bool(_GRAD_YEAR_Q.search(label)), "grad_year", _num("grad_year")),
+        (bool(_HOURS_Q.search(label)), "hours_per_week", _num("hours_per_week")),
+        (bool(_STIPEND_Q.search(label)), "expected_stipend", _num("expected_stipend")),
+        (bool(_START_Q.search(label)), "availability", _text("availability")),
+        (bool(_RELOCATE_Q.search(label)), "willing_to_relocate", _text("willing_to_relocate")),
+        (bool(_WORK_AUTH_Q.search(label)), "work_authorization", _text("work_authorization")),
         # Never on a school-level question. "Intermediate college name" and
         # "Class 12 stream" match these patterns and are asking about the
         # candidate's SCHOOL — answering them with the university and the B.Tech
@@ -454,14 +459,39 @@ def _from_setup(label: str, field: dict, profile: dict) -> str | None:
         # seen live, a "College name" box was answered "B.Tech". Better to stop
         # and ask than to write the degree where the college goes.
         (bool(_COLLEGE_Q.search(label) and not _SCHOOL_LEVEL.search(label)),
-         _text("college")),
+         "college", _text("college")),
         (bool(_DEGREE_Q.search(label) and not _SCHOOL_LEVEL.search(label)),
-         _text("degree") or _text("education")),
+         "degree", _text("degree") or _text("education")),
     ]
-    for matches, value in candidates:
+    return candidates
+
+
+def _from_setup(label: str, field: dict, profile: dict) -> str | None:
+    """Answers the user gave in setup, matched to the question being asked.
+
+    Nothing here is derived, inferred, or phrased by a model — each one is a
+    value the user typed or picked, returned verbatim. A fact we do not hold
+    returns None and the application stops for them, exactly as before.
+    """
+    for matches, _key, value in _setup_candidates(label, profile):
         if matches and value:
             return _fit_option(field, value)
     return None
+
+
+def missing_fact_for(label: str, profile: dict) -> str:
+    """Which stored fact WOULD have answered this question, but is empty?
+
+    "" when the question is not one setup collects — that is a form the agent
+    could not read, which is its own problem to fix. A name here means the
+    opposite: the agent knew exactly what was being asked and had nothing true
+    to say, because nobody has ever told it. Only the user can fix that one, and
+    they can fix it for every future application at once.
+    """
+    for matches, key, value in _setup_candidates(label, profile):
+        if matches and not value:
+            return key
+    return ""
 
 
 def _deterministic(field: dict, profile: dict, name: str, email: str) -> str | None:
