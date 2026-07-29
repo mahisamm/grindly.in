@@ -130,6 +130,90 @@ def test_classify_submit_success_checked_before_error():
     assert status == safety.APPLY_STATUS.APPLIED
 
 
+# ─── detect_challenge ────────────────────────────────────────────────────
+
+class _FakeChallengePage:
+    """Fake Playwright page for detect_challenge: `widgets` maps a selector to
+    the bounding box its element is drawn at (None = not visible)."""
+
+    def __init__(self, widgets: dict | None = None, title: str = "Careers",
+                 body: str = "Apply for this job"):
+        self.widgets = widgets or {}
+        self._title = title
+        self._body = body
+
+    def query_selector(self, sel):
+        if sel not in self.widgets:
+            return None
+        box = self.widgets[sel]
+
+        class _El:
+            def is_visible(self):
+                return box is not None
+
+            def bounding_box(self):
+                return box
+
+        return _El()
+
+    def title(self):
+        return self._title
+
+    def inner_text(self, _sel):
+        return self._body
+
+
+def test_detect_challenge_ignores_an_invisible_recaptcha_script():
+    """The regression this was written for: every Greenhouse/Lever/Ashby apply
+    page loads recaptcha/api.js as an invisible spam control. Reading the HTML
+    source for the word "recaptcha" refused seven of eight real applications."""
+    page = _FakeChallengePage(
+        body="Apply for this job. This site is protected by reCAPTCHA and the "
+             "Google Privacy Policy and Terms of Service apply.",
+    )
+    assert safety.detect_challenge(page) is None
+
+
+def test_detect_challenge_ignores_the_invisible_recaptcha_badge():
+    # The corner badge injects a real, visible anchor iframe — ~70px wide, and
+    # nobody is being asked anything.
+    page = _FakeChallengePage(
+        {"iframe[src*='recaptcha/api2/anchor']": {"width": 70, "height": 60}}
+    )
+    assert safety.detect_challenge(page) is None
+
+
+def test_detect_challenge_catches_a_drawn_checkbox_widget():
+    page = _FakeChallengePage(
+        {"iframe[src*='recaptcha/api2/anchor']": {"width": 304, "height": 78}}
+    )
+    assert safety.detect_challenge(page) == safety.FAILURE_REASON.CAPTCHA
+
+
+def test_detect_challenge_catches_a_cloudflare_interstitial():
+    page = _FakeChallengePage(title="Just a moment...")
+    assert safety.detect_challenge(page) == safety.FAILURE_REASON.CAPTCHA
+
+
+def test_detect_challenge_catches_challenge_wording_in_rendered_text():
+    page = _FakeChallengePage(body="Verify you are human to continue")
+    assert safety.detect_challenge(page) == safety.FAILURE_REASON.CAPTCHA
+
+
+def test_detect_challenge_survives_a_page_that_raises():
+    class _Broken:
+        def query_selector(self, _sel):
+            raise RuntimeError("detached")
+
+        def title(self):
+            raise RuntimeError("detached")
+
+        def inner_text(self, _sel):
+            raise RuntimeError("detached")
+
+    assert safety.detect_challenge(_Broken()) is None
+
+
 def test_classify_submit_tolerates_query_selector_raising():
     class _RaisingPage:
         def query_selector(self, sel):

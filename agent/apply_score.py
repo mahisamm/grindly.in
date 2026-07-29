@@ -196,13 +196,17 @@ def _spread(rep: dict) -> tuple[float, dict]:
     import rolequeries
 
     rows = [r for r in (rep.get("listings") or []) if r.get("tier") == "A" and r.get("target")]
-    clusters = rolequeries._FALLBACK
     hit: set[str] = set()
     for r in rows:
         blob = f"{r.get('title', '')} {' '.join(r.get('skills') or [])}".lower()
-        for names in clusters:
-            if any(n.lower() in blob for n in names):
-                hit.add(names[0])
+        # _FALLBACK entries are (skill triggers, role titles). A listing belongs
+        # to a cluster when either side of that pair shows up in it — the title
+        # names the role, the extracted skills name the capability, and a run
+        # that matched only on titles would under-count every backend posting
+        # that calls itself "SDE Intern".
+        for triggers, roles in rolequeries._FALLBACK:
+            if any(t in blob for t in triggers) or any(role in blob for role in roles):
+                hit.add(roles[0])
     return _ratio(len(hit), TARGETS["clusters"]), {
         "clusters_represented": sorted(hit),
         "count": len(hit),

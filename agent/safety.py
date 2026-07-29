@@ -44,7 +44,6 @@ class FAILURE_REASON:
 
 
 _LOGIN_URL_HINTS = ("login", "signin", "sign-in", "/account/login", "authwall")
-_CAPTCHA_HINTS = ("captcha", "are you a human", "verify you", "recaptcha", "hcaptcha")
 
 # Safe Apply Mode is the fallback answer, not the only one.  It is what a user
 # sees whenever policy cannot say yes: auto-apply switched off, an unknown tier,
@@ -225,13 +224,100 @@ def session_ok(page, authed_selector: str | None = None) -> bool:
     return True
 
 
-def detect_challenge(page) -> str | None:
-    """Return FAILURE_REASON.CAPTCHA if a human-check is visibly present, else None."""
+# A challenge WIDGET, as opposed to a challenge SCRIPT. The distinction is the
+# whole point: every Greenhouse, Lever and Ashby application page loads
+# recaptcha/api.js as a spam control that runs invisibly and blocks nothing. The
+# old check searched page.content() for the string "recaptcha", so it fired on
+# that script tag — and a measured probe of eight real ATS postings reported
+# seven "human-check" refusals on pages that had no human-check at all. Every one
+# of those was an application the agent could have completed and didn't.
+_CHALLENGE_SELECTORS = (
+    "iframe[src*='recaptcha/api2/anchor']",
+    "iframe[src*='recaptcha/api2/bframe']",
+    "iframe[src*='hcaptcha.com']",
+    "iframe[title*='challenge']",
+    "div.g-recaptcha",
+    "div.h-captcha",
+    "div.cf-turnstile",
+    "#challenge-form",
+    "#cf-challenge-running",
+    "#px-captcha",
+)
+
+# Words a page only uses when it is genuinely asking a person to prove they are
+# one. Read from the RENDERED text, never from the HTML source, so a string
+# sitting in a JS bundle cannot trip it.
+_CHALLENGE_TEXT = re.compile(
+    r"verify (that )?you(?:'re|’re| are)? ?(a )?human"
+    r"|are you a human"
+    r"|complete the (security|captcha) check"
+    r"|unusual traffic from your"
+    r"|checking your browser before"
+    r"|please verify you are a human"
+    r"|press and hold to confirm",
+    re.I,
+)
+
+# Cloudflare / Akamai interstitials name themselves in the title.
+_CHALLENGE_TITLES = ("just a moment", "attention required", "access denied",
+                     "security check", "verifying you are human")
+
+# The smallest a real challenge widget is drawn. An invisible reCAPTCHA still
+# injects an anchor iframe (inside the little corner badge), and that iframe is
+# technically "visible" — but it is ~70px wide, and no human is being asked
+# anything. A v2 checkbox is ~304x78; Turnstile ~300x65.
+_MIN_WIDGET_W = 150
+_MIN_WIDGET_H = 30
+
+
+def _is_a_drawn_widget(el) -> bool:
     try:
-        content = (page.content() or "").lower()
+        if not el.is_visible():
+            return False
     except Exception:  # noqa: BLE001
-        return None
-    if any(h in content for h in _CAPTCHA_HINTS):
+        return False
+    try:
+        box = el.bounding_box()
+    except Exception:  # noqa: BLE001
+        return True          # cannot measure it, but it is visible — assume real
+    if not box:
+        return False
+    return (box.get("width") or 0) >= _MIN_WIDGET_W and (box.get("height") or 0) >= _MIN_WIDGET_H
+
+
+def detect_challenge(page) -> str | None:
+    """Return FAILURE_REASON.CAPTCHA if a human-check is actually being ASKED.
+
+    Three kinds of evidence, all of them about what the page is showing a person
+    rather than what it has loaded:
+
+      1. a challenge widget drawn at a size a human could interact with
+      2. an interstitial that says so in its title (Cloudflare's "Just a moment")
+      3. challenge wording in the RENDERED text
+
+    Anything less — a script tag, a hidden iframe, the word "captcha" inside a
+    bundle — is not a challenge, and refusing on it costs a real application.
+    """
+    for sel in _CHALLENGE_SELECTORS:
+        try:
+            el = page.query_selector(sel)
+        except Exception:  # noqa: BLE001
+            continue
+        if el is not None and _is_a_drawn_widget(el):
+            return FAILURE_REASON.CAPTCHA
+
+    try:
+        title = (page.title() or "").lower()
+    except Exception:  # noqa: BLE001
+        title = ""
+    if any(t in title for t in _CHALLENGE_TITLES):
+        return FAILURE_REASON.CAPTCHA
+
+    try:
+        text = (page.inner_text("body") or "")[:20000]
+    except Exception:  # noqa: BLE001
+        text = ""
+    if _CHALLENGE_TEXT.search(text):
         return FAILURE_REASON.CAPTCHA
     return None
 
