@@ -1338,7 +1338,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         _platforms_for_today(
             uid, [s for s in DISCOVERY_PLATFORMS if flags.source_enabled(s)]
         )
-        if discover else []
+        if discover and not flags.no_touch_only() else []
     )
     if discover:
         # Appended after the rotation, never subject to it.
@@ -2145,6 +2145,19 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             policy_reason = _UNDELIVERABLE_REASON.get(
                 dest["channel"], "prepared — open it yourself to send it"
             )
+
+        # No-touch mode: a match the agent cannot finish alone is not offered at
+        # all. Dropped rather than banked, because banking is what puts a row on
+        # the dashboard with a daily slot against its name and a tap waiting on
+        # the user — the exact thing this mode exists to remove. Deliberately
+        # placed AFTER the policy checks so `per_channel` still records what was
+        # found: the operator needs to see what the mode is costing.
+        if flags.no_touch_only() and not (auto_ok or channel_deliverable(dest)):
+            log.info("no-touch mode: dropping %s @ %s (%s, tier %s)",
+                     job.get("title"), job.get("company"),
+                     dest.get("channel"), dest.get("tier"))
+            matched -= 1
+            continue
 
         if not auto_ok:
             # Bank it with a due date instead of dumping it on the dashboard.

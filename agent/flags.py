@@ -62,6 +62,24 @@ def search_discovery_enabled() -> bool:
     return _on("GRINDLY_SEARCH_DISCOVERY_ENABLED", False)
 
 
+def no_touch_only() -> bool:
+    """Keep ONLY the listings the agent can finish by itself.
+
+    On, discovery stops scraping the job boards and the run discards any match
+    whose destination the agent may not submit unattended — so nothing reaches
+    the dashboard that the user would have to finish by hand.
+
+    The trade is real and is the point: board listings are the bulk of the raw
+    volume, and every one of them ends at an account the user cannot afford to
+    lose (LinkedIn, Naukri, Indeed, Unstop) or behind a login and a captcha
+    (Internshala). A queue of work nobody can do is worse than a shorter queue,
+    because each of those rows still spends a daily slot and still asks for a
+    tap. Off (the default) keeps today's behaviour: find everything, submit what
+    is safe, hand the rest over.
+    """
+    return _on("GRINDLY_NO_TOUCH_ONLY", False)
+
+
 def source_enabled(source: str) -> bool:
     """Per-source kill switch: GRINDLY_SOURCE_<NAME>=0 drops one board from the
     rotation without touching the others. A failing adapter already degrades
@@ -90,4 +108,5 @@ def snapshot() -> dict:
         "browser_executor": browser_executor_enabled(),
         "search_discovery": search_discovery_enabled(),
         "daily_report": daily_report_enabled(),
+        "no_touch_only": no_touch_only(),
     }

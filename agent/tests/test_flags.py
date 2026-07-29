@@ -95,5 +95,17 @@ def test_snapshot_reports_every_switch(monkeypatch):
     assert snap["direct_submit"] is False           # master cascades into the view
     assert set(snap) == {
         "autopilot", "direct_submit", "browser_executor",
-        "search_discovery", "daily_report",
+        "search_discovery", "daily_report", "no_touch_only",
     }
+
+
+# ---- no-touch mode ----------------------------------------------------------
+
+def test_no_touch_mode_is_off_unless_asked_for():
+    """It removes listings from the product. That is never a default."""
+    assert flags.no_touch_only() is False
+
+
+def test_no_touch_mode_turns_on_from_one_env_var(monkeypatch):
+    monkeypatch.setenv("GRINDLY_NO_TOUCH_ONLY", "1")
+    assert flags.no_touch_only() is True
