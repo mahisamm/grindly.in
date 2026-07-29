@@ -7,6 +7,7 @@ import { Logo } from "@/components/Brand";
 import { CountUp } from "@/components/Motion";
 import SupportChat from "@/components/SupportChat";
 import { PROFF_FIELDS, CONTACT_FIELDS } from "@/lib/proffQuestions";
+import ChoiceField from "@/components/ChoiceField";
 import { normalizePlan } from "@/lib/plans";
 import { EMPLOYER_CHANNELS } from "@/lib/applyPolicy";
 
@@ -126,6 +127,32 @@ type RawProfile = {
   // null | generating | ready | no_gain | failed | error
   resumeVariantStatus: string | null;
   resumeVariantDetail: string | null;
+  // The facts screening forms ask for. Nullable to the last one: every single
+  // field here starts empty on purpose (see DEFAULTS in lib/proffQuestions) —
+  // a plausible default would be a fact invented on the user's behalf and then
+  // stated to an employer under their name.
+  degree: string | null;
+  college: string | null;
+  gradYear: number | null;
+  class12Percent: number | null;
+  class10Percent: number | null;
+  availability: string | null;
+  hoursPerWeek: number | null;
+  willingToRelocate: string | null;
+  workAuthorization: string | null;
+  needsSponsorship: string | null;
+  expectedStipend: number | null;
+  currentSalary: string | null;
+  previousInternship: string | null;
+  noticePeriod: string | null;
+  currentLocation: string | null;
+  dateOfBirth: string | null;
+  nationality: string | null;
+  gender: string | null;
+  differentlyAbled: string | null;
+  linkedinUrl: string | null;
+  githubUrl: string | null;
+  portfolioUrl: string | null;
 };
 
 // One AI-optimized, compiled, measured-higher-scoring version of the master resume.
@@ -215,6 +242,28 @@ type ProfileForm = {
   phone: string;
   gpa: string;
   reportChannel: string;
+  degree: string;
+  college: string;
+  gradYear: number;
+  class12Percent: number;
+  class10Percent: number;
+  availability: string;
+  hoursPerWeek: number;
+  willingToRelocate: string;
+  workAuthorization: string;
+  needsSponsorship: string;
+  expectedStipend: number;
+  currentSalary: string;
+  previousInternship: string;
+  noticePeriod: string;
+  currentLocation: string;
+  dateOfBirth: string;
+  nationality: string;
+  gender: string;
+  differentlyAbled: string;
+  linkedinUrl: string;
+  githubUrl: string;
+  portfolioUrl: string;
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -477,6 +526,31 @@ function profileToForm(p: RawProfile): ProfileForm {
     phone: p.phone || "",
     gpa: p.gpa != null ? String(p.gpa) : "8.0",
     reportChannel: p.reportChannel || "email",
+    // Empty, never defaulted. `|| ""` and `?? 0` here both mean "the user has
+    // not told us" — the same thing agent/questions.py reads as no-fact-held,
+    // which is what makes it refuse the question instead of guessing.
+    degree: p.degree || "",
+    college: p.college || "",
+    gradYear: p.gradYear ?? 0,
+    class12Percent: p.class12Percent ?? 0,
+    class10Percent: p.class10Percent ?? 0,
+    availability: p.availability || "",
+    hoursPerWeek: p.hoursPerWeek ?? 0,
+    willingToRelocate: p.willingToRelocate || "",
+    workAuthorization: p.workAuthorization || "",
+    needsSponsorship: p.needsSponsorship || "",
+    expectedStipend: p.expectedStipend ?? 0,
+    currentSalary: p.currentSalary || "",
+    previousInternship: p.previousInternship || "",
+    noticePeriod: p.noticePeriod || "",
+    currentLocation: p.currentLocation || "",
+    dateOfBirth: p.dateOfBirth || "",
+    nationality: p.nationality || "",
+    gender: p.gender || "",
+    differentlyAbled: p.differentlyAbled || "",
+    linkedinUrl: p.linkedinUrl || "",
+    githubUrl: p.githubUrl || "",
+    portfolioUrl: p.portfolioUrl || "",
   };
 }
 
@@ -2830,6 +2904,89 @@ export default function Dashboard() {
                 ))}
               </div>
             </div>
+
+            {/* The facts screening forms ask for. These were collectable only
+                during setup, so a user whose application stalled on "current
+                salary" had nowhere to go and fix it — the agent refuses to
+                invent one, so that application waits forever. Same fields, same
+                renderer as setup; blanks are named rather than left to be
+                discovered one stalled application at a time. */}
+            {(["About you", "Education"] as const).map((group) => (
+              <div key={group}>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-4">
+                  {group}
+                </h2>
+                {group === "About you" && (
+                  <p className="text-xs text-muted mb-4">
+                    Typed into application forms exactly as written here. Anything left
+                    blank is a question the agent will not answer for you — those
+                    applications wait instead of being sent with a guess.
+                  </p>
+                )}
+                <div className="space-y-4">
+                  {PROFF_FIELDS.filter((f) => f.group === group).map((f) => (
+                    <div key={f.key}>
+                      <label htmlFor={`field-${f.key}`} className="block text-sm font-medium mb-1">
+                        {f.label}
+                        {f.required && <span className="ml-1 text-danger">*</span>}
+                      </label>
+                      <p className="text-xs text-muted mb-1.5">{f.help}</p>
+                      {f.type === "choice" && (
+                        <ChoiceField
+                          field={f}
+                          value={String(profileForm[f.key as keyof ProfileForm] ?? "")}
+                          onChange={(v) =>
+                            patchForm(f.key as keyof ProfileForm, v as ProfileForm[keyof ProfileForm])
+                          }
+                        />
+                      )}
+                      {f.type === "select" && (
+                        <select
+                          id={`field-${f.key}`}
+                          value={String(profileForm[f.key as keyof ProfileForm] ?? "")}
+                          onChange={(e) =>
+                            patchForm(
+                              f.key as keyof ProfileForm,
+                              (f.numeric
+                                ? Number(e.target.value)
+                                : e.target.value) as ProfileForm[keyof ProfileForm],
+                            )
+                          }
+                          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none"
+                        >
+                          <option value="">Select…</option>
+                          {f.options?.map((o) => (
+                            <option key={o} value={o}>
+                              {o}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      {(f.type === "text" || f.type === "number") && (
+                        <div className="flex items-center gap-2">
+                          <input
+                            id={`field-${f.key}`}
+                            type={f.type}
+                            value={String(profileForm[f.key as keyof ProfileForm] ?? "")}
+                            placeholder={f.placeholder}
+                            onChange={(e) =>
+                              patchForm(
+                                f.key as keyof ProfileForm,
+                                (f.type === "number"
+                                  ? Number(e.target.value)
+                                  : e.target.value) as ProfileForm[keyof ProfileForm],
+                              )
+                            }
+                            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none"
+                          />
+                          {f.suffix && <span className="text-sm text-muted">{f.suffix}</span>}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
 
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-wide text-muted mb-4">Targeting</h2>
