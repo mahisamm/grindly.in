@@ -111,8 +111,21 @@ async function main() {
   });
   console.log(`\nallowlisted ${owner} — a fresh sign-in will be approved on sight`);
 
+  // Orphans first. Both of these carry a user_id with NO @relation declared, so
+  // Postgres cascades neither and a purge leaves rows pointing at accounts that
+  // no longer exist. daily_usage is the one that bites: it is keyed
+  // (user_id, local_date) and is what reserves a day's application slots, so a
+  // survivor is a quota record belonging to a deleted person.
   const tokens = await prisma.passwordResetToken.deleteMany({});
   console.log(`password reset tokens removed: ${tokens.count}`);
+  const usage = await prisma.dailyUsage.deleteMany({});
+  console.log(`daily usage rows removed: ${usage.count}`);
+
+  // Anonymous visit log — a first-party cookie id, never an account. Cleared
+  // anyway: "no record of users" is not honoured by keeping the record of every
+  // page they opened.
+  const views = await prisma.pageView.deleteMany({});
+  console.log(`page views removed: ${views.count}`);
 
   const deleted = await prisma.user.deleteMany({});
   console.log(`users removed: ${deleted.count} (profiles, applications, resumes, runs, reports and audit logs cascade)`);
