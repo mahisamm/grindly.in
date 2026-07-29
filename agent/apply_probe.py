@@ -167,19 +167,11 @@ def _dry_run_ats(url: str, job: dict, profile: dict, skills: list[str],
             out.update(outcome="challenge", detail="page showed a human-check")
             return out
 
-        embed = channel_ats._embedded_form_url(page)
-        if embed:
-            out["followed_embed"] = embed[:120]
-            try:
-                page.goto(embed, timeout=channel_ats._NAV_TIMEOUT_MS,
-                          wait_until="domcontentloaded")
-                page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:  # noqa: BLE001
-                pass
-
-        channel_ats._reveal_form(page)
-
-        uploads = channel_ats._file_inputs(page)
+        uploads = channel_ats.open_the_form(page, url)
+        try:
+            out["form_url"] = (page.url or "")[:140]
+        except Exception:  # noqa: BLE001
+            pass
         if not uploads:
             out.update(outcome="no_form", detail="no file input on the page")
             return out

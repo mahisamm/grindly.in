@@ -277,6 +277,7 @@ def _dismiss_consent(page) -> None:
 # module (and Playwright with it) — a posting that is gone should be dropped
 # before it is ever offered, not discovered at submit time.
 _looks_gone = resolver.looks_gone
+ats_vendor = resolver.ats_vendor
 
 
 # Employers embed the ATS form in their own careers page inside an iframe. The
@@ -284,32 +285,40 @@ _looks_gone = resolver.looks_gone
 # selector in this module (and in questions.read_fields) queries the top frame
 # only. Rather than teach the whole stack about frames, go to the frame's own
 # URL: it is a normal, standalone ATS application page.
-_EMBED_SELECTORS = (
-    "iframe#grnhse_iframe",
-    "iframe[src*='greenhouse.io']",
-    "iframe[src*='lever.co']",
-    "iframe[src*='ashbyhq.com']",
-    "iframe[src*='workable.com']",
-    "iframe[src*='smartrecruiters.com']",
-    "iframe[src*='zohorecruit']",
-)
-
-
+#
+# The iframe is identified by its HOST, never by a substring of its src. A
+# `src*='greenhouse.io'` selector looked reasonable and was wrong in the worst
+# way: Google's proxy iframe carries the parent origin in its query string
+# ("content.googleapis.com/static/proxy.html?...origin=job-boards.greenhouse.io"),
+# so it matched on every Greenhouse page, and the sender navigated off the real
+# application form to a Google proxy. Nine of fourteen dry runs went from
+# submit-ready to "could not find the form" the moment that shipped.
 def _embedded_form_url(page) -> str:
-    for sel in _EMBED_SELECTORS:
-        try:
-            el = page.query_selector(sel)
-        except Exception:  # noqa: BLE001
-            continue
-        if el is None:
-            continue
+    try:
+        frames = page.query_selector_all("iframe")
+    except Exception:  # noqa: BLE001
+        return ""
+    for el in frames or []:
         try:
             src = el.get_attribute("src") or ""
         except Exception:  # noqa: BLE001
             continue
-        if src.startswith("http"):
+        if src.startswith("http") and ats_vendor(src):
             return src
     return ""
+
+
+# Where a vendor keeps the form when the posting page is only a description.
+# Deterministic, and one navigation instead of hunting for a button whose label
+# changes per tenant.
+def _apply_url_for(url: str, vendor: str) -> str:
+    base = (url or "").split("#", 1)[0].split("?", 1)[0].rstrip("/")
+    suffix = {"lever": "/apply", "ashby": "/application", "workable": "/apply"}.get(
+        (vendor or "").lower()
+    )
+    if not suffix or base.endswith(suffix):
+        return ""
+    return base + suffix
 
 
 def _page_text(page) -> str:
@@ -380,6 +389,44 @@ def _reveal_form(page) -> None:
     except Exception:  # noqa: BLE001
         pass
     _pause(page, 600, 1400)
+
+
+def open_the_form(page, url: str) -> list:
+    """Get from wherever we landed to the page that actually holds the form.
+
+    Three ways a posting hides its form, tried cheapest first:
+
+      1. it is already here (Greenhouse renders the form under the description)
+      2. it is embedded from the ATS in an iframe on the employer's own page
+      3. it lives at the vendor's own /apply or /application address
+
+    Returns the file inputs found — empty means no form was reachable. Shared
+    with apply_probe so the probe measures the path the sender actually walks.
+    """
+    embed = _embedded_form_url(page)
+    if embed:
+        try:
+            page.goto(embed, timeout=_NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:  # noqa: BLE001
+            pass          # the wrapper page is still there to try
+
+    _reveal_form(page)
+    uploads = _file_inputs(page)
+    if uploads:
+        return uploads
+
+    direct = _apply_url_for(url, ats_vendor(url) or "")
+    if not direct:
+        return []
+    try:
+        page.goto(direct, timeout=_NAV_TIMEOUT_MS, wait_until="domcontentloaded")
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except Exception:  # noqa: BLE001
+        return []
+    _dismiss_consent(page)
+    _reveal_form(page)
+    return _file_inputs(page)
 
 
 def _apply_cover_letter(fields: list[dict], answers: list[dict], cover_letter: str) -> None:
@@ -489,18 +536,7 @@ def apply(
         if safety.detect_challenge(page) == safety.FAILURE_REASON.CAPTCHA:
             return "needs_review", "the application page shows a human-check — open it yourself"
 
-        # The employer's page may only be a wrapper around the real form.
-        embed = _embedded_form_url(page)
-        if embed:
-            try:
-                page.goto(embed, timeout=_NAV_TIMEOUT_MS, wait_until="domcontentloaded")
-                page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:  # noqa: BLE001
-                pass          # the wrapper page is still there to try
-
-        _reveal_form(page)
-
-        uploads = _file_inputs(page)
+        uploads = open_the_form(page, url)
         if not uploads:
             return "needs_review", "could not find the application form — open it yourself to send it"
         if not _attach_resume(page, uploads, resume_path):

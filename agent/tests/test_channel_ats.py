@@ -173,43 +173,70 @@ def test_open_listings_are_not_mistaken_for_closed(text):
 # ── Embedded forms ──────────────────────────────────────────────────────────
 
 class _FramePage:
-    """Minimal page stub: query_selector answers for one selector only."""
+    """Minimal page stub: query_selector_all("iframe") returns these srcs."""
 
-    def __init__(self, sel: str | None = None, src: str = ""):
-        self.sel, self.src = sel, src
+    def __init__(self, *srcs: str):
+        self.srcs = srcs
 
-    def query_selector(self, sel):
-        if sel != self.sel:
-            return None
-        src = self.src
-
+    def query_selector_all(self, _sel):
         class _El:
+            def __init__(self, src):
+                self.src = src
+
             def get_attribute(self, name):
-                return src if name == "src" else None
+                return self.src if name == "src" else None
 
-        return _El()
+        return [_El(s) for s in self.srcs]
 
 
-@pytest.mark.parametrize("sel,src", [
-    ("iframe#grnhse_iframe", "https://boards.greenhouse.io/embed/job_app?token=1"),
-    ("iframe[src*='lever.co']", "https://jobs.lever.co/acme/abc-123"),
-    ("iframe[src*='ashbyhq.com']", "https://jobs.ashbyhq.com/acme/abc-123/application"),
+@pytest.mark.parametrize("src", [
+    "https://boards.greenhouse.io/embed/job_app?token=1",
+    "https://jobs.lever.co/acme/abc-123",
+    "https://jobs.ashbyhq.com/acme/abc-123/application",
 ])
-def test_an_embedded_ats_form_is_found_by_its_frame_src(sel, src):
+def test_an_embedded_ats_form_is_found_by_its_frame_host(src):
     """Employers embed the ATS form in their own careers page. The form is
     perfectly fillable — it is just in another document, and every selector in
     this module queries the top frame only."""
-    assert channel_ats._embedded_form_url(_FramePage(sel, src)) == src
+    assert channel_ats._embedded_form_url(_FramePage(src)) == src
 
 
 def test_a_page_with_no_embedded_form_reports_none():
     assert channel_ats._embedded_form_url(_FramePage()) == ""
 
 
+def test_an_iframe_that_merely_mentions_the_vendor_is_not_the_form():
+    """The regression this exists for: Google's proxy iframe carries the parent
+    origin in its query string, so a `src*='greenhouse.io'` match navigated off
+    the real application form on every Greenhouse page. Nine of fourteen dry
+    runs went from submit-ready to "could not find the form"."""
+    page = _FramePage(
+        "https://content.googleapis.com/static/proxy.html?jsh=m%3B&"
+        "origin=https%3A%2F%2Fjob-boards.greenhouse.io"
+    )
+    assert channel_ats._embedded_form_url(page) == ""
+
+
 def test_a_relative_iframe_src_is_ignored():
     # Navigating to "/embed/form" would leave the site entirely.
-    assert channel_ats._embedded_form_url(
-        _FramePage("iframe#grnhse_iframe", "/embed/job_app")) == ""
+    assert channel_ats._embedded_form_url(_FramePage("/embed/job_app")) == ""
+
+
+@pytest.mark.parametrize("url,vendor,expected", [
+    ("https://jobs.lever.co/acme/abc-123", "lever",
+     "https://jobs.lever.co/acme/abc-123/apply"),
+    ("https://jobs.ashbyhq.com/acme/abc-123", "ashby",
+     "https://jobs.ashbyhq.com/acme/abc-123/application"),
+    ("https://apply.workable.com/acme/j/ABC123", "workable",
+     "https://apply.workable.com/acme/j/ABC123/apply"),
+    # Greenhouse renders the form under the description — there is nowhere else
+    # to go, and guessing a path would navigate off a working form.
+    ("https://job-boards.greenhouse.io/acme/jobs/1", "greenhouse", ""),
+    # Already there.
+    ("https://jobs.lever.co/acme/abc-123/apply", "lever", ""),
+])
+def test_the_vendors_own_apply_address(url, vendor, expected):
+    assert channel_ats._apply_url_for(url, vendor) == expected
 
 
 # ── Vendor confirmation signals ─────────────────────────────────────────────
