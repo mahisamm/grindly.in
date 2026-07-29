@@ -85,7 +85,32 @@ def inspect(url: str, profile: dict, skills: list[str], resume_path: str) -> dic
             email=profile.get("email") or "",
         )
         for f, a in zip(fields, answers):
+            # A field we could not read a question for is the one worth the most
+            # detail: it is required often enough to block a submit, and the
+            # stored record shows nothing but an empty string.
+            debug = ""
+            if questions.unreadable_label(f["label"]):
+                try:
+                    debug = f["el"].evaluate(
+                        """e => {
+                          const g = e.closest('div,fieldset,section') || e.parentElement;
+                          return JSON.stringify({
+                            name: e.getAttribute('name') || '',
+                            id: e.id || '',
+                            type: e.getAttribute('type') || '',
+                            cls: (e.className || '').slice(0, 80),
+                            placeholder: e.getAttribute('placeholder') || '',
+                            labelledby: e.getAttribute('aria-labelledby') || '',
+                            describedby: e.getAttribute('aria-describedby') || '',
+                            around: (g ? g.innerText : '').trim().replace(/\s+/g, ' ').slice(0, 160),
+                            html: (g ? g.outerHTML : '').replace(/\s+/g, ' ').slice(0, 300)
+                          });
+                        }"""
+                    )
+                except Exception:  # noqa: BLE001
+                    debug = ""
             out["fields"].append({
+                "debug": debug,
                 "label": f["label"],
                 "kind": f["kind"],
                 "required": f["required"],
@@ -168,6 +193,8 @@ def main() -> None:
         for f in rep.get("fields") or []:
             print(f"    FIELD  {f['label'][:40]!r:44} [{f['kind']}{'*' if f['required'] else ''}]"
                   f" <- {str(f['answer'])[:60]!r} ({f['source']})")
+            if f.get("debug"):
+                print(f"        UNREADABLE: {f['debug'][:420]}")
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(reports, fh, indent=2, ensure_ascii=False)
