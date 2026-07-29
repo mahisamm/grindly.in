@@ -126,3 +126,30 @@ describe("education, after setup split it into two boxes", () => {
     expect(r.checks.education).toBe(false);
   });
 });
+
+/**
+ * The daily limit is an OPTIONAL narrowing of the plan's allowance, not a fact
+ * the user must supply. It was a readiness gate for as long as it was also
+ * uneditable — so making it a real setting meant an unset column stopped being
+ * a reason to hold every application. worker._cap_for reads 0 the same way:
+ * "use whatever my plan allows".
+ */
+describe("daily limit is optional", () => {
+  it("stays ready when the user has never set one", () => {
+    const r = computeReadiness(readyUser({ maxPerDay: 0 }));
+    expect(r.ready).toBe(true);
+    expect(r.checks.dailyLimit).toBe(true);
+  });
+
+  it("stays ready when the column is absent entirely", () => {
+    const r = computeReadiness(readyUser({ maxPerDay: undefined }));
+    expect(r.ready).toBe(true);
+  });
+
+  it("still requires a timezone — it decides which day a slot is counted against", () => {
+    const r = computeReadiness(readyUser({ timezone: null }));
+    expect(r.ready).toBe(false);
+    expect(r.checks.dailyLimit).toBe(false);
+    expect(r.missing.join(" ")).toMatch(/timezone/i);
+  });
+});

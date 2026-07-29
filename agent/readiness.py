@@ -41,8 +41,10 @@ def check(user: dict) -> tuple[bool, list[str]]:
         missing.append("education")
     if not _has_domain(profile.get("preferred_domains")):
         missing.append("preferences")
-    if not (profile.get("max_per_day") or 0) >= 1:
-        missing.append("daily_limit")
+    # No max_per_day gate. It is an OPTIONAL narrowing of the plan's allowance
+    # (worker._cap_for), and 0 means "never set". Requiring >= 1 turned an unset
+    # column into a reason to hold every application for an account whose plan
+    # already supplies a limit. Keep in step with src/lib/readiness.ts.
     # Consent must be present, CURRENT, and still switched on. An old consent
     # does not cover new wording; a stamped consent with the toggle off means
     # "I agreed once, but stop now" — and stop wins.

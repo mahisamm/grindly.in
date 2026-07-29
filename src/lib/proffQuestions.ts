@@ -329,6 +329,16 @@ export const PROFF_FIELDS: ProffField[] = [
     group: "Limits & rules",
   },
   {
+    key: "maxPerDay",
+    label: "Applications a day",
+    help: "The most the agent will send in one day. Your plan's allowance is the ceiling — set this lower any time you want it to go slower.",
+    type: "select",
+    options: ["1", "2", "3", "4", "5", "10", "15"],
+    numeric: true,
+    suffix: "a day",
+    group: "Limits & rules",
+  },
+  {
     key: "minMatchScore",
     label: "Minimum match score",
     help: "The agent only surfaces a role when resume↔role fit is at least this (0–100). Higher = pickier: fewer but better-fit applications. Quality of match matters more than volume.",
@@ -390,6 +400,10 @@ export const DEFAULTS: Record<string, unknown> = {
   experienceLevel: "student",
   stipendMin: 0,
   minMatchScore: 65,
+  // 0 means "unset — use whatever my plan allows", the same reading
+  // worker._cap_for applies. A hard default here would quietly re-cap every
+  // account that has never opened the setting.
+  maxPerDay: 0,
   excludedCompanies: [],
   autoApply: true,
   // Same "start empty" rule as the eligibility facts above — the agent

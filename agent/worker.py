@@ -133,6 +133,30 @@ def _daily_cap_for_today(uid: str, plan_cap: int, today: str | None = None) -> i
     return min(cap, rng.randint(low, cap))
 
 
+def _cap_for(uid: str, profile: dict) -> int:
+    """The user's own daily limit, bounded by what their plan allows.
+
+    `profile.max_per_day` existed, was collected at signup, was accepted by
+    /api/profile and was read by NOTHING — every run took its ceiling straight
+    from the plan, so a user who wanted two applications a day got five and had
+    no way to say otherwise. A setting the product stores, shows and ignores is
+    worse than one it never offered.
+
+    Lower only. The plan is the ceiling (a Plus account cannot ask for fifteen),
+    and a missing or nonsense value falls back to the plan rather than to zero —
+    a stored 0 must never be read as "apply to nothing", because that is
+    indistinguishable from a column nobody has ever set.
+    """
+    plan_cap = db.get_plan_cap(uid)
+    try:
+        chosen = int(profile.get("max_per_day") or 0)
+    except (TypeError, ValueError):
+        chosen = 0
+    if chosen <= 0:
+        return plan_cap
+    return min(plan_cap, chosen)
+
+
 def _daily_apply_limit(uid: str, plan_cap: int, today: str | None = None) -> int:
     """The free/Plus promise is five slots every day, not a random 3â€“5.
 
@@ -1214,7 +1238,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     live = mode in ("live", "approved")
 
     user_plan = db.get_user_plan(uid)
-    plan_cap = db.get_plan_cap(uid)
+    plan_cap = _cap_for(uid, profile)
     # Free beta: free is a DAILY plan (5/day), same shape as paid — human-paced
     # and counted per day. No lifetime trial, so it resets each day like Plus/Pro.
     cap = _daily_apply_limit(uid, plan_cap)
@@ -1319,7 +1343,10 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # Don't re-scrape while the queue still holds real work. Going back to five job
     # boards for listings we have no free day to send anyway is pure noise — to them
     # and to us — and daily scraping is itself the pattern they watch for.
-    plan_cap = db.get_plan_cap(uid)
+    # The user's own limit, not the plan's: how deep the queue needs to be is a
+    # function of how fast it drains, and someone applying twice a day does not
+    # need a plan-sized backlog scraped for them.
+    plan_cap = _cap_for(uid, profile)
     pipeline = db.pipeline_depth(uid)
     refill_at = plan_cap * PIPELINE_REFILL_DAYS
     stocked = pipeline >= refill_at

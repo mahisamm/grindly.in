@@ -242,6 +242,7 @@ type ProfileForm = {
   phone: string;
   gpa: string;
   reportChannel: string;
+  maxPerDay: number;
   degree: string;
   college: string;
   gradYear: number;
@@ -542,6 +543,10 @@ function profileToForm(p: RawProfile): ProfileForm {
     phone: p.phone || "",
     gpa: p.gpa != null ? String(p.gpa) : "8.0",
     reportChannel: p.reportChannel || "email",
+    // 0 = never set = "use my plan's allowance" (worker._cap_for reads it the
+    // same way). Not defaulted to 5 here: that would re-cap every account that
+    // has never opened the setting.
+    maxPerDay: p.maxPerDay ?? 0,
     // Empty, never defaulted. `|| ""` and `?? 0` here both mean "the user has
     // not told us" — the same thing agent/questions.py reads as no-fact-held,
     // which is what makes it refuse the question instead of guessing.
@@ -3046,6 +3051,32 @@ export default function Dashboard() {
                         onChange={(v) => patchForm(f.key as keyof ProfileForm, v as ProfileForm[keyof ProfileForm])}
                         placeholder={f.placeholder}
                       />
+                    )}
+                    {f.type === "select" && (
+                      <div className="flex items-center gap-2">
+                        <select
+                          id={`field-${f.key}`}
+                          value={blankIfUnset(profileForm[f.key as keyof ProfileForm])}
+                          onChange={(e) =>
+                            patchForm(
+                              f.key as keyof ProfileForm,
+                              (f.numeric
+                                ? Number(e.target.value || 0)
+                                : e.target.value) as ProfileForm[keyof ProfileForm],
+                            )
+                          }
+                          className="rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none"
+                        >
+                          {/* Empty = "whatever my plan allows", the same reading
+                              worker._cap_for gives a stored 0. Offering it keeps
+                              the setting reversible without a magic number. */}
+                          <option value="">My plan&apos;s maximum</option>
+                          {f.options?.map((o) => (
+                            <option key={o} value={o}>{o}</option>
+                          ))}
+                        </select>
+                        {f.suffix && <span className="text-sm text-muted">{f.suffix}</span>}
+                      </div>
                     )}
                     {f.type === "number" && (
                       <div className="flex items-center gap-2">

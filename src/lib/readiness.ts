@@ -78,7 +78,13 @@ export function computeReadiness(user: ReadinessUser): Readiness {
         return false;
       }
     })(),
-    dailyLimit: (p?.maxPerDay ?? 0) >= 1 && !!p?.timezone,
+    // maxPerDay is optional: 0 means "never set it", which worker._cap_for reads
+    // as "use whatever my plan allows". Requiring >= 1 made an unset column a
+    // readiness FAILURE — so the moment the setting became genuinely optional,
+    // every account that had not opened it would have been held from applying
+    // over a limit the plan already supplies. Timezone still matters; it decides
+    // which day a slot is counted against.
+    dailyLimit: !!p?.timezone,
     // Current-version consent AND the toggle presently on. Either alone is not
     // enough: an old consent doesn't cover new wording, and consent with the
     // toggle off means "I agreed once, but stop for now".
@@ -103,7 +109,7 @@ export function computeReadiness(user: ReadinessUser): Readiness {
   }
   if (!checks.education) missing.push("Add your education and expected graduation year.");
   if (!checks.preferences) missing.push("Pick at least one target domain.");
-  if (!checks.dailyLimit) missing.push("Set a daily application limit and timezone.");
+  if (!checks.dailyLimit) missing.push("Set your timezone.");
   if (!checks.consent) missing.push("Review and accept the auto-apply consent.");
 
   return { ready: Object.values(checks).every(Boolean), checks, missing };
