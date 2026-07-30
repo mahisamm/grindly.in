@@ -327,10 +327,30 @@ _PLACEHOLDER_LABEL = re.compile(
 _TYPED_INPUTS = ("number", "date", "month", "week", "time", "search", "range", "color")
 
 
+# A label that is several questions stuck together, not one.
+#
+# When the ancestor walk finds no single question it eventually returns a whole
+# section: "First Name * Middle Name Last Name * Mobile Phone * Email *". That
+# blob was matched by the phone pattern, so a REQUIRED field on every Keka form
+# got the phone number handed to a dropdown — and when it was refused, blocked
+# the submit on all four of them.
+#
+# Two asterisks is the tell: a form marks one required field with one star, so a
+# label carrying several has swallowed several fields.
+_LABEL_IS_A_SECTION = re.compile(r"\*[^*]{0,80}\*")
+
+
 def unreadable_label(label: str) -> bool:
-    """True when what we scraped is a widget's placeholder, not its question."""
+    """True when what we scraped is not this field's question.
+
+    Either the widget's own placeholder, or a run of several questions the label
+    walk gave up and returned whole. Both mean the same thing: we do not know
+    what is being asked, so we must not answer it.
+    """
     text = (label or "").strip()
-    return not text or bool(_PLACEHOLDER_LABEL.match(text))
+    if not text or _PLACEHOLDER_LABEL.match(text):
+        return True
+    return bool(_LABEL_IS_A_SECTION.search(text))
 
 
 # --- answering --------------------------------------------------------------
@@ -444,10 +464,68 @@ _PREV_INTERNSHIP_Q = re.compile(
     r"\bhave\s+you\s+(ever\s+)?(done|completed|had|interned)\b[^?]{0,40}\bintern",
     re.I,
 )
+# How many DAYS until you can start. Keka asks "Available To Join (in days)" as a
+# required numeric box, and the answer we hold is a phrase — "Immediately",
+# "Within 2 weeks". Converting the candidate's own answer into the unit the form
+# demands is not inventing anything; refusing to, and blocking the application
+# over a unit, is just a worse way to be right.
+_JOIN_DAYS_Q = re.compile(
+    r"\b(available\s+to\s+join|joining|join)\b[^\n]{0,24}\bdays?\b|"
+    r"\bdays?\s+to\s+join\b|\bnotice\s+period\b[^\n]{0,16}\bdays?\b",
+    re.I,
+)
+_DAYS_FOR_PHRASE = (
+    ("immediate", "0"),
+    ("right away", "0"),
+    ("2 week", "14"), ("two week", "14"), ("15 day", "15"), ("fortnight", "14"),
+    ("1 month", "30"), ("one month", "30"), ("4 week", "30"),
+    ("2 month", "60"), ("two month", "60"),
+    ("3 month", "90"), ("three month", "90"),
+)
+
+
+def _join_in_days(profile: dict) -> str | None:
+    """The stored start-date answer, in days. None when we hold nothing usable —
+    "After my current semester" has no day count that would not be a guess."""
+    for key in ("availability", "notice_period"):
+        raw = str(profile.get(key) or "").strip().lower()
+        if not raw:
+            continue
+        digits = re.search(r"\b(\d{1,3})\s*days?\b", raw)
+        if digits:
+            return digits.group(1)
+        for phrase, days in _DAYS_FOR_PHRASE:
+            if phrase in raw:
+                return days
+    return None
+
+
 _NOTICE_Q = re.compile(
     r"\bnotice\s+period\b|\bhow\s+soon\s+can\s+you\s+join\b|\bjoining\s+time\b",
     re.I,
 )
+_PREFERRED_LOCATION_Q = re.compile(
+    r"\b(preferred|desired|willing\s+to\s+work\s+in)\s*(location|city|place)\b|"
+    r"\blocation\s+preference\b|\bpreferred\s+work\s+location\b",
+    re.I,
+)
+
+
+def _first_preferred_location(profile: dict) -> str:
+    """The top location the candidate chose. A form asks for one; the list is
+    theirs and its first entry is the one they put first."""
+    raw = profile.get("preferred_locations")
+    try:
+        items = raw if isinstance(raw, list) else json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return ""
+    for item in items:
+        text = str(item or "").strip()
+        if text:
+            return text
+    return ""
+
+
 _CURRENT_LOCATION_Q = re.compile(
     r"\b(current|present)\s+(location|city|residence|address)\b|"
     r"\bwhere\s+are\s+you\s+(currently\s+)?(based|located|living)\b|"
@@ -658,8 +736,17 @@ def _setup_candidates(label: str, profile: dict) -> list[tuple[bool, str, str]]:
         # "notice period" is its own box on forms that also ask when you start.
         (bool(_CURRENT_SALARY_Q.search(label)), "current_salary", _text("current_salary")),
         (bool(_PREV_INTERNSHIP_Q.search(label)), "previous_internship", _text("previous_internship")),
+        # Before _NOTICE_Q and _START_Q: both match this label too, and both
+        # would hand a phrase to a numeric box.
+        (bool(_JOIN_DAYS_Q.search(label)), "availability", _join_in_days(profile) or ""),
         (bool(_NOTICE_Q.search(label)), "notice_period", _text("notice_period")),
         (bool(_CURRENT_LOCATION_Q.search(label)), "current_location", _text("current_location")),
+        # Where they want to WORK, which is a different question from where they
+        # live and is asked as its own required box on Indian portals. Their
+        # preferred locations are a list; a form wants one, and the first is the
+        # one they ranked highest.
+        (bool(_PREFERRED_LOCATION_Q.search(label)), "preferred_locations",
+         _first_preferred_location(profile)),
         (bool(_GENDER_Q.search(label)), "gender", _text("gender")),
         (bool(_DOB_Q.search(label)), "date_of_birth", _text("date_of_birth")),
         (bool(_DISABILITY_Q.search(label)), "differently_abled", _text("differently_abled")),
