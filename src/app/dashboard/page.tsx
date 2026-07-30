@@ -2085,17 +2085,17 @@ export default function Dashboard() {
                 for something, so it sits above the history and says plainly
                 what happened. The agent stopped here on purpose: a CAPTCHA, a
                 login or a question it could not answer honestly. */}
-            {autopilot && false && autopilot.actionNeeded?.length > 0 && (
+            {autopilot && false && autopilot!.actionNeeded?.length > 0 && (
               <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
                 <div className="text-sm font-semibold text-foreground">
-                  Needs you ({autopilot.actionNeeded.length})
+                  Needs you ({autopilot!.actionNeeded.length})
                 </div>
                 <p className="mt-0.5 text-xs text-muted">
                   Grindly stopped rather than guess. Open each one, do the bit only
                   you can, and it carries on from there.
                 </p>
                 <ul className="mt-3 space-y-2">
-                  {autopilot.actionNeeded.map((t) => (
+                  {autopilot!.actionNeeded.map((t) => (
                     <li key={t.id} className="flex items-start justify-between gap-3 text-sm">
                       <span className="min-w-0 text-muted">
                         <span className="text-foreground">{t.host}</span> — {t.says}
@@ -2129,16 +2129,16 @@ export default function Dashboard() {
 
             {/* Browser health. An action-needed list with no paired browser is a
                 dead end, so say so instead of leaving the user to wonder. */}
-            {autopilot && false && autopilot.browser && (
+            {autopilot && false && autopilot!.browser && (
               <p className="mt-3 flex items-center gap-2 text-xs text-muted">
                 <span
                   className={`size-1.5 rounded-full ${
-                    autopilot.browser.connected ? "bg-accent" : "bg-border"
+                    autopilot!.browser.connected ? "bg-accent" : "bg-border"
                   }`}
                   aria-hidden
                 />
-                {autopilot.browser.connected
-                  ? `Browser connected${autopilot.browser.lastSeen ? ` · last seen ${new Date(autopilot.browser.lastSeen).toLocaleString()}` : ""}`
+                {autopilot!.browser.connected
+                  ? `Browser connected${autopilot!.browser.lastSeen ? ` · last seen ${new Date(autopilot!.browser.lastSeen).toLocaleString()}` : ""}`
                   : "No browser connected — board applications wait for you until one is."}
               </p>
             )}
