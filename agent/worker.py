@@ -1091,7 +1091,16 @@ def _analyze_if_changed(uid: str, profile: dict, text: str, skills: list[str],
     # (resume actually (re)analyzed), never overwrites a value the user set, and
     # never aborts analysis on failure.
     try:
-        contact = resume_ai.extract_contact(text, this_year=datetime.date.today().year)
+        # The PDF's link annotations too: a resume whose LinkedIn is behind an
+        # icon states it nowhere in its text, and four real forms asked for it.
+        links = []
+        try:
+            links = resume_parse.pdf_links(resume_parse.find_resume_file(uid) or "")
+        except Exception:  # noqa: BLE001
+            links = []
+        contact = resume_ai.extract_contact(
+            text, this_year=datetime.date.today().year, links=links
+        )
         # Everything the extractor found, forwarded verbatim. Listing the keys by
         # hand here is what silently dropped name, the school percentages and the
         # portfolio link on the floor after the extractor learned to read them —

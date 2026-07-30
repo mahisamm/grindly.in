@@ -89,3 +89,37 @@ def test_a_job_title_at_the_top_is_not_mistaken_for_a_name():
 def test_nothing_is_invented_from_an_empty_resume():
     c = resume_ai.extract_contact("", this_year=2026)
     assert set(v for v in c.values() if v is not None) == set()
+
+
+def test_a_degree_is_never_read_as_a_portfolio_site():
+    # ".tech" was in the TLD list and the host could be one character, so
+    # "B.Tech" off the education line was offered as the candidate's website —
+    # on its way into a real form's portfolio box.
+    for line in ("Anurag University - B.Tech in AI and ML, CGPA 7.45",
+                 "M.Tech (Data Science), 2027"):
+        assert resume_ai.extract_contact(line, this_year=2026)["portfolio_url"] is None
+
+
+def test_a_real_personal_site_is_still_read():
+    c = resume_ai.extract_contact("Asha Rao\nasha-builds.dev | asha@x.com", this_year=2026)
+    assert c["portfolio_url"] == "asha-builds.dev"
+
+
+def test_links_the_pdf_only_hyperlinks_are_still_found():
+    # A resume whose LinkedIn sits behind an icon states the address nowhere in
+    # its text. Four real forms asked the owner for a profile their own resume
+    # linked to and that no text extractor could ever see.
+    text = "Mahendhar Sammeta\nHyderabad | LinkedIn | GitHub\n"
+    links = ["https://www.linkedin.com/in/mahendhar-sammeta/",
+             "https://github.com/mahisamm"]
+    c = resume_ai.extract_contact(text, this_year=2026, links=links)
+    assert "linkedin.com/in/mahendhar-sammeta" in (c["linkedin_url"] or "")
+    assert "github.com/mahisamm" in (c["github_url"] or "")
+
+
+def test_the_text_still_wins_over_an_annotation():
+    # Annotations only fill what the text never said.
+    text = "Asha Rao\nlinkedin.com/in/asha-rao\n"
+    c = resume_ai.extract_contact(text, this_year=2026,
+                                  links=["https://linkedin.com/in/someone-else"])
+    assert "asha-rao" in (c["linkedin_url"] or "")

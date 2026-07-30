@@ -76,6 +76,42 @@ def _pdf_text(path: str) -> str:
     return pdfminer_text
 
 
+def pdf_links(path: str) -> list[str]:
+    """The URLs a PDF links to but does not spell out.
+
+    Modern resumes put their LinkedIn and GitHub behind an icon or the word
+    "LinkedIn": the address exists only in the page's link annotation, and no
+    text extractor will ever see it. Four real application forms asked the owner
+    for a LinkedIn profile that their own resume linked to and that we had no way
+    to read.
+
+    Best-effort and never raises — a resume with no annotations is the normal
+    case, not a failure.
+    """
+    if not path or os.path.splitext(path)[1].lower() != ".pdf":
+        return []
+    found: list[str] = []
+    try:
+        import pypdf
+
+        reader = pypdf.PdfReader(path)
+        for page in reader.pages:
+            for annot in (page.get("/Annots") or []):
+                try:
+                    obj = annot.get_object()
+                    action = obj.get("/A") or {}
+                    uri = action.get("/URI")
+                    if uri:
+                        uri = str(uri).strip()
+                        if uri and uri not in found:
+                            found.append(uri)
+                except Exception:  # noqa: BLE001
+                    continue
+    except Exception as e:  # noqa: BLE001
+        print(f"[resume] could not read link annotations: {e}")
+    return found
+
+
 def _docx_text(path: str) -> str:
     try:
         import docx  # python-docx

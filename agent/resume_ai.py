@@ -156,8 +156,13 @@ _COLLEGE_LINE = re.compile(
     r"\b((?:[A-Z][\w.&'-]+[^\S\n]+){0,4}(?:University|College|Institute)"
     r"(?:[^\S\n]+of[^\S\n]+[A-Z][\w.&'-]+(?:[^\S\n]+[A-Z][\w.&'-]+){0,2})?)"
 )
+# A personal site. Deliberately narrow: the first version accepted ".tech" and a
+# one-character host, so it read "B.Tech" straight out of the education line and
+# offered it as the candidate's portfolio — a degree, on its way into a real
+# form's website box. The host must be at least three characters, and ".tech" is
+# gone because "B.Tech" and "M.Tech" appear on nearly every Indian resume.
 _PORTFOLIO_URL = re.compile(
-    r"\b((?:https?://)?(?:www\.)?[\w-]+\.(?:dev|me|io|xyz|site|tech|portfolio)"
+    r"\b((?:https?://)?(?:www\.)?[\w-]{3,}\.(?:dev|me|io|xyz|site|page|app|portfolio)"
     r"(?:/[\w\-./%]*)?)", re.I,
 )
 # School results. Anchored on the level, because a bare percentage on a resume is
@@ -219,7 +224,8 @@ def _extract_name(t: str) -> str | None:
     return None
 
 
-def extract_contact(text: str, this_year: int | None = None) -> dict:
+def extract_contact(text: str, this_year: int | None = None,
+                    links: list[str] | None = None) -> dict:
     """Everything a screening form asks that we can read off the resume itself.
 
     The point is that the user is never typed at twice: whatever the resume
@@ -227,9 +233,18 @@ def extract_contact(text: str, this_year: int | None = None) -> dict:
     field is best-effort and conservative — None rather than a guess, because
     these become facts stated to employers (see agent/questions.py).
 
-    Returns {phone, gpa, degree, college, grad_year, linkedin_url, github_url}.
+    `links` are URLs the file LINKS to without spelling out — a resume whose
+    LinkedIn sits behind an icon states the address nowhere in its text, and no
+    extractor will ever find it there. See resume_parse.pdf_links.
+
+    Returns {name, phone, gpa, degree, college, grad_year, class10/12_percent,
+    linkedin_url, github_url, portfolio_url}.
     """
     t = text or ""
+    # Appended, not substituted: the text still wins for anything spelled out,
+    # and the annotations only fill what it never said.
+    if links:
+        t = t + chr(10) + chr(10).join(links)
     phone = None
     m = _PHONE_ANCHORED.search(t) or _PHONE_LOOSE.search(t)
     if m:
