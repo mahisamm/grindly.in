@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const root = process.cwd();
+const betaMode = process.argv.includes("--beta");
 let hard = 0;
 let soft = 0;
 const ok = (m) => console.log(`  \x1b[32m✓\x1b[0m ${m}`);
@@ -79,8 +80,8 @@ const smsKind = env.FAST2SMS_API_KEY ? "fast2sms"
 if (smsKind) ok(`SMS provider: ${smsKind}`);
 else warn("No SMS provider — fine for Google-only beta (phone OTP login disabled)");
 
-if (env.EMAIL_SMTP_HOST && env.EMAIL_SMTP_USER) ok("SMTP email configured");
-else warn("No SMTP — fine for Google-only beta (no password-reset emails)");
+if (env.EMAIL_SMTP_HOST && env.EMAIL_SMTP_USER && env.EMAIL_SMTP_PASS) ok("SMTP email configured");
+else warn("No complete SMTP configuration — dashboard notifications still work, but email reports cannot be delivered");
 
 const hasLlm = env.GROQ_API_KEY || env.GEMINI_API_KEY || env.CEREBRAS_API_KEY || env.MISTRAL_API_KEY;
 if (hasLlm) ok("LLM key present"); else warn("No LLM key — agent falls back to weak heuristic matching");
@@ -114,6 +115,27 @@ if (pyOk) {
     ok("Agent core modules import");
   } catch {
     warn("Agent modules failed to import — check agent/requirements.txt is installed");
+  }
+}
+
+if (betaMode) {
+  console.log("\nBeta release checks\n");
+  const betaRequirements = [
+    [env.GRINDLY_AUTO_APPLY_MODE === "live", "GRINDLY_AUTO_APPLY_MODE=live: verified Tier A sends are enabled"],
+    [env.GRINDLY_AUTOPILOT_ENABLED !== "0", "GRINDLY_AUTOPILOT_ENABLED=1: fleet-wide automation is enabled"],
+    [env.GRINDLY_DIRECT_SUBMIT_ENABLED !== "0", "GRINDLY_DIRECT_SUBMIT_ENABLED=1: approved direct destinations can run"],
+    [env.GRINDLY_BROWSER_EXECUTOR_ENABLED === "1", "GRINDLY_BROWSER_EXECUTOR_ENABLED=1: the paired-browser executor is enabled"],
+    [env.GRINDLY_SEARCH_DISCOVERY_ENABLED === "1", "GRINDLY_SEARCH_DISCOVERY_ENABLED=1: employer-web discovery is enabled"],
+    [env.GRINDLY_ATS_APPLY === "1", "GRINDLY_ATS_APPLY=1: approved ATS destinations can run"],
+    [env.GRINDLY_DAILY_REPORT_ENABLED !== "0", "GRINDLY_DAILY_REPORT_ENABLED=1: report delivery is enabled"],
+    [!!(env.EMAIL_SMTP_HOST && env.EMAIL_SMTP_USER && env.EMAIL_SMTP_PASS), "EMAIL_SMTP_HOST/USER/PASS: daily email reports can be delivered"],
+    [!!env.SENTRY_DSN, "SENTRY_DSN: production errors are captured and actionable"],
+    [!!env.APP_DOMAIN, "APP_DOMAIN: Caddy has a hostname for TLS certificates"],
+    [/^https:\/\//i.test(env.NEXT_PUBLIC_APP_URL || env.NEXT_PUBLIC_BASE_URL || ""), "NEXT_PUBLIC_APP_URL=https://<production-domain>: OAuth and extension pairing use HTTPS"],
+  ];
+  for (const [ready, message] of betaRequirements) {
+    if (ready) ok(message);
+    else bad(message);
   }
 }
 

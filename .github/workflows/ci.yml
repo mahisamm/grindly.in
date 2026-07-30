@@ -7,11 +7,25 @@ on:
 env:
   # dev-only key so crypto tests can run; never used for real data
   APP_ENCRYPTION_KEY: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
-  DATABASE_URL: "file:./dev.db"
+  DATABASE_URL: "postgresql://grindly:grindly@localhost:5432/grindly"
 
 jobs:
   web:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: grindly
+          POSTGRES_PASSWORD: grindly
+          POSTGRES_DB: grindly
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U grindly"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,6 +35,7 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: npx prisma db push --skip-generate
+      - run: npm run lint
       - run: npm run build
       - run: npm test
 

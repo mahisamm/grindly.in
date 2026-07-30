@@ -250,6 +250,9 @@ services:
       GRINDLY_DAILY_REPORT_ENABLED: ${GRINDLY_DAILY_REPORT_ENABLED:-1}
       # Web discovery of employer-hosted internships (the Tier A source).
       GRINDLY_SEARCH_DISCOVERY_ENABLED: ${GRINDLY_SEARCH_DISCOVERY_ENABLED:-0}
+      # Set to 1 only for a release candidate/beta host. The web process then
+      # refuses to boot if the advertised autonomous-beta contract is incomplete.
+      BETA_ENFORCE_READINESS: ${BETA_ENFORCE_READINESS:-0}
       GRINDLY_SEARCH_PROVIDER: ${GRINDLY_SEARCH_PROVIDER:-searxng}
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
       SEARCH_API_KEY: ${SEARCH_API_KEY:-}

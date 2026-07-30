@@ -5,6 +5,7 @@
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "preflight": "node scripts/preflight.mjs",
+    "beta:check": "node scripts/preflight.mjs --beta",
     "predev": "node scripts/preflight.mjs",
     "dev": "next dev",
     "build": "next build",
@@ -15,9 +16,9 @@
   "dependencies": {
     "@novnc/novnc": "^1.7.0",
     "@prisma/client": "^6.19.3",
-    "@sentry/nextjs": "^10.64.0",
+    "@sentry/nextjs": "10.69.0",
     "libphonenumber-js": "^1.13.7",
-    "next": "16.2.9",
+    "next": "16.2.12",
     "nodemailer": "^9.0.1",
     "prisma": "^6.19.3",
     "react": "19.2.4",
@@ -34,9 +35,13 @@
     "@types/react-dom": "^19",
     "@types/three": "^0.160.0",
     "eslint": "^9",
-    "eslint-config-next": "16.2.9",
+    "eslint-config-next": "16.2.12",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.9"
+  },
+  "overrides": {
+    "postcss": "8.5.25",
+    "sharp": "0.35.3"
   }
 }

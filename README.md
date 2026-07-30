@@ -120,13 +120,27 @@ hit **Run agent**. Real matches stream in; eligible safe destinations are submit
 
 ```bash
 cp .env.example .env
-# fill in POSTGRES_PASSWORD, APP_ENCRYPTION_KEY, GOOGLE_CLIENT_ID/SECRET, ADMIN_EMAIL
+# fill in POSTGRES_PASSWORD, APP_ENCRYPTION_KEY, GOOGLE_CLIENT_ID/SECRET,
+# GOOGLE_OAUTH_BRAND_VERIFIED, APP_DOMAIN, NEXT_PUBLIC_APP_URL, ADMIN_EMAIL,
+# EMAIL_SMTP_HOST/USER/PASS, and SENTRY_DSN. Then merge the beta switches:
+# copy .env.beta.example entries into .env (do not overwrite real secrets).
+npm run beta:check       # must pass before a public beta deploy
 docker compose up -d
 # verify
-curl http://localhost/api/health
+curl https://<your-domain>/api/health
 ```
 
 The compose stack starts: Postgres → migrate (schema + seed) → web + 2 workers + Caddy + daily backup.
+
+### Beta release gate
+
+`npm run beta:check` is intentionally stricter than local development. It
+requires the production HTTPS origin, email-report transport, error monitoring,
+web discovery, browser executor, and all approved sender flags. The compose
+beta override also sets `BETA_ENFORCE_READINESS=1`, so the web process refuses
+to boot if that public-beta contract is incomplete. Run the command against the
+exact production `.env` before deployment; do not treat a green local dev server
+as a release approval.
 
 ---
 

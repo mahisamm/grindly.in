@@ -15,7 +15,6 @@ import {
   DEFAULTS,
   missingRequired,
   blankOptional,
-  type ProffField,
 } from "@/lib/proffQuestions";
 import { PLANS, type Plan } from "@/lib/adapters/payment";
 

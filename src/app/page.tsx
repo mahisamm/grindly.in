@@ -8,9 +8,9 @@ import ParticleHero from "@/components/ParticleHero";
 const STEPS = [
   ["01", "Drop your resume", "Create an account and upload your resume. That's the only homework you do."],
   ["02", "Answer a few profile questions", "Domains, locations, stipend, daily limits. These become the agent's firewall — what it may and may not apply to."],
-  ["03", "Start free & choose updates", "Activate the free plan — 5 applications a day — then pick email or Slack reports. Connect Gmail to auto-detect interview calls."],
-  ["04", "It applies for you", "It reads listings and scores each against your resume. When the application goes to a company's own form or inbox, it fills it in and sends it. When it's behind a job-board account, it prepares everything and you tap submit."],
-  ["05", "Daily progress reports", "Every day you get a report: what it prepared for you, match scores, and what it skipped (and why). Mark what you submitted to track your interview rate."],
+  ["03", "Start free & see updates", "Activate the free plan — up to 5 prepared matches a day — and follow every result in your dashboard."],
+  ["04", "You stay in control", "It reads listings and scores each against your resume. It can send only to approved employer-owned forms after you explicitly opt in; job-board applications stay ready for your final submit."],
+  ["05", "Track your progress", "Your dashboard records what it prepared, match scores, and what it skipped (and why). Mark submitted applications and outcomes to track your interview rate."],
 ] as const;
 
 const FEATURES = [
@@ -18,7 +18,7 @@ const FEATURES = [
   ["You set the firewall", "Min match score, max/day, excluded companies, stipend floor — hard constraints the agent can't cross.", Bolt],
   ["Application-ready matches", "Opens supported listings and drafts each application — tailored resume, cover letter, screening answers — ready for you to submit, not just a list of links.", Doc],
   ["Your accounts stay safe", "With your consent, the agent sends eligible applications to a company's own form or inbox. LinkedIn, Naukri, Unstop and Indeed stay ready for your final submit; Internshala submission is a separately gated beta flow.", Clock],
-  ["Daily reports your way", "Get progress reports via Slack DM or email — whichever you prefer. Connect Gmail to auto-detect interview calls.", Slack],
+  ["Progress you can audit", "See every prepared match, skip reason, submission status, and outcome in one dashboard. Optional delivery integrations appear only when enabled for your beta cohort.", Slack],
   ["Private by design", "Resume analysis uses only the AI providers configured for this service and degrades safely if they're unavailable. Your data is never sold.", Sparkle],
 ] as const;
 
@@ -54,9 +54,9 @@ export default function Home() {
 
             <p className="mt-4 max-w-[44ch] text-[var(--ink-soft)] leading-relaxed">
               Grindly reads your resume, finds internships that actually match your
-              skills, and applies — every day, inside the limits you set. Where an
-              application would put your job-board account at risk, it prepares
-              everything and leaves the tap to you. Daily report by email or Slack.
+              skills, and prepares them inside the limits you set. It can send only
+              to approved employer-owned forms after your explicit consent; where a
+              job-board account is involved, it leaves the final tap to you.
             </p>
 
             <div className="mt-6 flex flex-wrap items-center gap-2.5">
@@ -106,7 +106,7 @@ export default function Home() {
         <div className="marquee-track-rev mt-2.5 text-[rgba(242,236,225,0.55)]">
           {[0, 1].map((k) => (
             <span key={k} className="flex items-center">
-              {["resume-aware matching", "you set the firewall", "daily slack reports", "you approve every submit"].map((t) => (
+              {["resume-aware matching", "you set the firewall", "auditable progress", "you control every send"].map((t) => (
                 <span key={t} className="px-[clamp(18px,2.6vw,34px)] font-display text-[clamp(1rem,1.8vw,1.35rem)] italic font-light">{t} ·</span>
               ))}
             </span>
@@ -219,9 +219,9 @@ export default function Home() {
               <h3 className="font-display text-[clamp(1.6rem,2.6vw,2.2rem)] text-[var(--paper)]">Free</h3>
               <span className="whitespace-nowrap font-display text-[clamp(1.4rem,2.2vw,1.9rem)] text-brand">₹0<small className="text-[0.8rem] font-normal text-[rgba(242,236,225,0.55)]"> /mo</small></span>
             </div>
-            <p className="text-[0.9rem] leading-relaxed text-[rgba(242,236,225,0.7)]">Up to 5 applications a day, every day.</p>
+            <p className="text-[0.9rem] leading-relaxed text-[rgba(242,236,225,0.7)]">Up to 5 prepared matches a day, every day.</p>
             <ul className="flex flex-col gap-2.5">
-              {["5 applications / day", "Resume-aware matching", "Daily email or Slack reports", "Community support"].map((f) => (
+              {["5 prepared matches / day", "Resume-aware matching", "Daily in-app progress reports", "Community support"].map((f) => (
                 <li key={f} className="relative pl-4.5 text-[0.82rem] text-[rgba(242,236,225,0.82)] before:absolute before:left-0 before:top-[0.5em] before:size-1.5 before:rounded-full before:bg-brand">{f}</li>
               ))}
             </ul>

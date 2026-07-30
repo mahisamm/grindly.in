@@ -8,7 +8,7 @@ const TOUCHED = [
   "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER",
   "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_OAUTH_BRAND_VERIFIED", "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET",
   "DATABASE_URL", "APP_ENCRYPTION_KEY", "NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_BASE_URL",
-  "EMAIL_SMTP_HOST", "EMAIL_SMTP_USER",
+  "EMAIL_SMTP_HOST", "EMAIL_SMTP_USER", "EMAIL_SMTP_PASS", "GRINDLY_DAILY_REPORT_ENABLED", "SENTRY_DSN", "APP_DOMAIN",
   "GRINDLY_AUTO_APPLY_MODE", "GRINDLY_AUTOPILOT_ENABLED", "GRINDLY_DIRECT_SUBMIT_ENABLED",
   "GRINDLY_BROWSER_EXECUTOR_ENABLED", "GRINDLY_SEARCH_DISCOVERY_ENABLED", "GRINDLY_ATS_APPLY",
 ];
@@ -124,7 +124,28 @@ describe("missingBetaAutomationConfig", () => {
     process.env.GRINDLY_ATS_APPLY = "1";
     process.env.EMAIL_SMTP_HOST = "smtp.example.com";
     process.env.EMAIL_SMTP_USER = "beta";
+    process.env.EMAIL_SMTP_PASS = "secret";
+    process.env.GRINDLY_DAILY_REPORT_ENABLED = "1";
+    process.env.SENTRY_DSN = "https://example@sentry.invalid/1";
+    process.env.APP_DOMAIN = "beta.example.com";
     process.env.NEXT_PUBLIC_APP_URL = "https://beta.example.com";
     expect(missingBetaAutomationConfig()).toEqual([]);
+  });
+
+  it("requires the SMTP password and enabled report delivery", () => {
+    process.env.GRINDLY_AUTO_APPLY_MODE = "live";
+    process.env.GRINDLY_AUTOPILOT_ENABLED = "1";
+    process.env.GRINDLY_DIRECT_SUBMIT_ENABLED = "1";
+    process.env.GRINDLY_BROWSER_EXECUTOR_ENABLED = "1";
+    process.env.GRINDLY_SEARCH_DISCOVERY_ENABLED = "1";
+    process.env.GRINDLY_ATS_APPLY = "1";
+    process.env.EMAIL_SMTP_HOST = "smtp.example.com";
+    process.env.EMAIL_SMTP_USER = "beta";
+    process.env.NEXT_PUBLIC_APP_URL = "https://beta.example.com";
+
+    expect(missingBetaAutomationConfig().join(" | ")).toMatch(/EMAIL_SMTP/);
+    process.env.EMAIL_SMTP_PASS = "secret";
+    process.env.GRINDLY_DAILY_REPORT_ENABLED = "0";
+    expect(missingBetaAutomationConfig().join(" | ")).toMatch(/DAILY_REPORT/);
   });
 });

@@ -17,7 +17,11 @@ export function smsProvider(): SmsProvider {
 }
 
 export function emailConfigured(): boolean {
-  return !!(process.env.EMAIL_SMTP_HOST && process.env.EMAIL_SMTP_USER);
+  return !!(
+    process.env.EMAIL_SMTP_HOST &&
+    process.env.EMAIL_SMTP_USER &&
+    process.env.EMAIL_SMTP_PASS
+  );
 }
 
 export function llmConfigured(): boolean {
@@ -71,6 +75,10 @@ export function baseUrlConfigured(): boolean {
   return !!(process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_BASE_URL);
 }
 
+export function sentryConfigured(): boolean {
+  return !!(process.env.SENTRY_DSN || "").trim();
+}
+
 /** The checked-in Prisma schema is PostgreSQL-only. */
 export function databaseUrlConfigured(): boolean {
   return /^postgres(?:ql)?:\/\//i.test(process.env.DATABASE_URL || "");
@@ -103,6 +111,7 @@ export function serviceStatus() {
       process.env.GRINDLY_TIER_B_APPLY === "1",
     searchDiscovery: process.env.GRINDLY_SEARCH_DISCOVERY_ENABLED === "1",
     payment: paymentMode(),             // "razorpay" | "unconfigured"
+    sentry: sentryConfigured(),
     encryptionKey: encryptionKeyValid(),
     baseUrl: baseUrlConfigured(),
   };
@@ -158,8 +167,17 @@ export function missingBetaAutomationConfig(): string[] {
   if (process.env.GRINDLY_ATS_APPLY !== "1") {
     miss.push("GRINDLY_ATS_APPLY=1");
   }
+  if (process.env.GRINDLY_DAILY_REPORT_ENABLED === "0") {
+    miss.push("GRINDLY_DAILY_REPORT_ENABLED=1");
+  }
   if (!emailConfigured()) {
-    miss.push("EMAIL_SMTP_HOST and EMAIL_SMTP_USER (daily beta email)");
+    miss.push("EMAIL_SMTP_HOST/USER/PASS (daily beta email)");
+  }
+  if (!sentryConfigured()) {
+    miss.push("SENTRY_DSN (production error monitoring)");
+  }
+  if (!(process.env.APP_DOMAIN || "").trim()) {
+    miss.push("APP_DOMAIN (Caddy TLS hostname)");
   }
   const base = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_BASE_URL || "";
   if (!/^https:\/\//i.test(base)) {

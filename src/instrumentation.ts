@@ -7,7 +7,7 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     await import("../sentry.server.config");
 
-    const { serviceStatus, missingProdConfig, encryptionKeyValid, googleOAuthConfigured, baseUrlConfigured } = await import("@/lib/serverConfig");
+    const { serviceStatus, missingProdConfig, missingBetaAutomationConfig, encryptionKeyValid, googleOAuthConfigured, baseUrlConfigured } = await import("@/lib/serverConfig");
     console.log("[startup] service config:", JSON.stringify(serviceStatus()));
 
     if (process.env.NODE_ENV === "production") {
@@ -48,6 +48,17 @@ export async function register() {
         for (const m of missing) console.warn(`   - ${m}`);
       } else {
         console.log("[startup] ✓ all required production services configured");
+      }
+
+      const betaMissing = missingBetaAutomationConfig();
+      if (betaMissing.length) {
+        const detail = betaMissing.join(", ");
+        if (process.env.BETA_ENFORCE_READINESS === "1") {
+          throw new Error(`[startup] FATAL: beta readiness is enforced but missing: ${detail}`);
+        }
+        console.warn(`[startup] beta automation is degraded: ${detail}`);
+      } else {
+        console.log("[startup] ✓ full beta automation contract configured");
       }
 
       const { startWorkerWatchdog } = await import("@/lib/workerWatchdog");
