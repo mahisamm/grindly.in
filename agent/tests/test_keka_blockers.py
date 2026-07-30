@@ -139,3 +139,24 @@ def test_the_month_and_year_question_beats_the_bare_year_question():
                {"grad_year": 2027, "grad_month": 5})
     assert rec["answer"] == "May 2027"
     assert rec["source"] == "profile"
+
+
+def test_keka_calls_its_submit_button_apply_now():
+    # The only button on Keka's application form reads "Apply Now". Looking for
+    # the word "submit" found nothing, so every Keka application reported
+    # "could not find the submit button" after filling the form perfectly.
+    import channel_ats
+
+    joined = " ".join(channel_ats._SUBMIT_CANDIDATES).lower()
+    assert "apply now" in joined
+
+
+def test_the_apply_now_candidate_comes_after_the_explicit_submits():
+    # A vendor that ships both must be given its real submit first; "Apply" is
+    # also the word on the button that merely OPENS a form.
+    import channel_ats
+
+    cands = channel_ats._SUBMIT_CANDIDATES
+    first_apply = next(i for i, c in enumerate(cands) if "Apply" in c)
+    explicit = [i for i, c in enumerate(cands) if "submit" in c.lower()]
+    assert min(explicit) < first_apply

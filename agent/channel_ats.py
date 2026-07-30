@@ -134,6 +134,17 @@ _SUBMIT_CANDIDATES = [
     "button:has-text('Submit my application')",
     "input[type='submit']",
     "button[type='submit']",
+    # Keka calls the submit button on its own application form "Apply Now" — it
+    # is the ONLY button on that page, and looking for the word "submit" found
+    # nothing, so every Keka application reported "could not find the submit
+    # button" after filling the form perfectly.
+    #
+    # Safe to have last: this list is consulted only once the form has been
+    # located and answered, so an "Apply" that merely opens a form has already
+    # been clicked by `_APPLY_CANDIDATES` long before we get here.
+    "button:has-text('Apply Now')",
+    "button:has-text('Apply now')",
+    "button:has-text('Submit')",
 ]
 
 _SUCCESS_SELECTORS = [
