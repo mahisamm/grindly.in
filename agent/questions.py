@@ -401,6 +401,33 @@ _SCHOOL_LEVEL = re.compile(
 # (channel_ats._unanswered_required, channel_google_form.blocking_reason) and the
 # application waits for the candidate — the trade this module already makes
 # everywhere else.
+# An open question about the candidate's own work, which the model MAY answer.
+#
+# _FACTUAL_CLAIM below exists to stop a model asserting a credential — "Do you
+# have 2+ years of Django?" answered "Yes" is a fabricated qualification. But it
+# also caught "What ML algorithms have you used?" and "How did you evaluate your
+# model?", which are not claims to be granted or denied: they are asking the
+# candidate to describe work their resume already describes, and refusing them
+# cost a whole application over three boxes the resume answers on its own.
+#
+# The line is the grammar. "Do you / have you / are you" invites a verdict on a
+# fact; "what / how / which / describe / explain" invites an account of it, and
+# rule 2 of this module is that the model may phrase what the candidate already
+# claims. Only ever applied to free text — a yes/no box has no room for an
+# account, and a numeric one has none either.
+_OPEN_QUESTION = re.compile(
+    r"^\s*(what|how|which|why|where|describe|explain|tell\s+us|walk\s+us|share|list|give\s+(us|an)|elaborate)\b",
+    re.I,
+)
+
+
+def model_may_describe(label: str, kind: str) -> bool:
+    """Is this an open question about their own work, in a box with room for one?"""
+    if kind not in ("textarea", "text"):
+        return False
+    return bool(_OPEN_QUESTION.match((label or "").strip()))
+
+
 _FACTUAL_CLAIM = re.compile(
     # `are you (?:an?|currently)\b` needs that trailing boundary: without it the
     # bare `a` matched the first letter of "Are you AVAILABLE to start
@@ -427,6 +454,41 @@ _EMAIL = re.compile(r"\b(e-?mail)\b", re.I)
 # stalled once setup started collecting them. The facts were being stored and
 # never read. Answering from the profile is not a relaxation of the no-invention
 # rule: it is the rule working as designed, with the user as the source.
+# "Graduation Month & Year (Completed / Expected)" — one box, two facts. Keka
+# asks it as required, and answering it with the year alone leaves a form
+# reading "2027" where it asked for a month too. Both or neither.
+_GRAD_MONTH_YEAR_Q = re.compile(
+    r"\bgraduat\w*\s+month\s*(&|and|/)?\s*year\b|"
+    r"\bmonth\s*(&|and|/)\s*year\s+of\s+(graduation|passing)\b",
+    re.I,
+)
+_MONTH_NAMES = (
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+
+def _grad_month_year(profile: dict) -> str:
+    """"May 2027" — the month and the year, or nothing.
+
+    A form asking for both and given only the year has been answered wrongly,
+    not partially, so a missing month refuses the whole box and setup asks for
+    it once."""
+    year = str(profile.get("grad_year") or "").strip()
+    if not year or year in ("0", "None"):
+        return ""
+    raw = str(profile.get("grad_month") or "").strip()
+    if not raw:
+        return ""
+    name = raw
+    if raw.isdigit():
+        n = int(raw)
+        if not 1 <= n <= 12:
+            return ""
+        name = _MONTH_NAMES[n - 1]
+    return f"{name} {year}"
+
+
 _GRAD_YEAR_Q = re.compile(
     r"\b(graduation\s+year|year\s+of\s+(graduation|passing)|passing\s*(-|\s)?out\s+year|"
     r"passing\s+year|batch\s+year|when\s+do\s+you\s+graduate|expected\s+graduation|"
@@ -778,6 +840,9 @@ def _setup_candidates(label: str, profile: dict) -> list[tuple[bool, str, str]]:
         (bool(_LINKEDIN_Q.search(label)), "linkedin_url", _text("linkedin_url")),
         (bool(_GITHUB_Q.search(label)), "github_url", _text("github_url")),
         (bool(_PORTFOLIO_Q.search(label)), "portfolio_url", _text("portfolio_url")),
+        # Before _GRAD_YEAR_Q, which matches this label too and would answer
+        # a "month & year" box with a bare year.
+        (bool(_GRAD_MONTH_YEAR_Q.search(label)), "grad_month", _grad_month_year(profile)),
         (bool(_GRAD_YEAR_Q.search(label)), "grad_year", _num("grad_year")),
         (bool(_HOURS_Q.search(label)), "hours_per_week", _num("hours_per_week")),
         (bool(_STIPEND_Q.search(label)), "expected_stipend", _num("expected_stipend")),
@@ -1018,7 +1083,15 @@ def answer_fields(
         # The cost is real and accepted: more applications stop for the
         # candidate to finish. An application that waits is recoverable; a
         # misstatement sent to an employer is not.
-        if _WANTS_A_DATUM.search(f["label"] or "") or _FACTUAL_CLAIM.search(f["label"] or ""):
+        if (
+            _WANTS_A_DATUM.search(f["label"] or "")
+            or (
+                _FACTUAL_CLAIM.search(f["label"] or "")
+                # ...unless it is an open question about their own work, which
+                # the model may describe from the resume. See model_may_describe.
+                and not model_may_describe(f["label"], f["kind"])
+            )
+        ):
             out.append({
                 "question": f["label"], "answer": "",
                 "source": "unanswerable", "kind": f["kind"], "_i": i,
@@ -1085,7 +1158,9 @@ def answer_fields(
         # is both nonsense to the recruiter and an implied claim; leaving it
         # blank blocks the submit instead, and the candidate answers it.
         label_l = f["label"] or ""
-        if _FACTUAL_CLAIM.search(label_l) or _WANTS_A_DATUM.search(label_l):
+        if _WANTS_A_DATUM.search(label_l) or (
+            _FACTUAL_CLAIM.search(label_l) and not model_may_describe(label_l, rec["kind"])
+        ):
             continue
         # Same exclusion as the answering pass above, and for the same reason:
         # a box whose question we could not read is not a box we may put a

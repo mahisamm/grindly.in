@@ -88,3 +88,54 @@ def test_preferred_location_is_not_where_they_currently_live():
 
 def test_no_locations_chosen_means_no_answer_invented():
     assert _ask("Preferred Location", "text", {"preferred_locations": "[]"})["answer"] == ""
+
+
+def test_an_open_question_about_their_own_work_reaches_the_model():
+    # "What ML algorithms have you used?" is not a claim to be granted or denied,
+    # it asks the candidate to describe work their resume already describes.
+    # Refusing all three of these cost a whole application.
+    for label in ("What ML algorithms have you used? *",
+                  "How did you evaluate your model? *",
+                  "Describe a project you are proud of"):
+        assert questions.model_may_describe(label, "textarea"), label
+
+
+def test_a_credential_claim_is_still_refused():
+    # "Do you have 2+ years of Django?" answered "Yes" is a fabricated
+    # qualification. The grammar is the line: a verdict, not an account.
+    for label in ("Do you have 2+ years of experience with Django?",
+                  "Do you have a B.Tech degree?",
+                  "Have you worked on any of the following? (Yes/No + explain):"):
+        assert not questions.model_may_describe(label, "textarea"), label
+        assert _ask(label, "textarea")["answer"] == ""
+
+
+def test_an_open_question_in_a_numeric_box_is_still_refused():
+    # A number box has no room for an account of anything.
+    assert not questions.model_may_describe("How many years of Python?", "number")
+
+
+def test_month_and_year_is_answered_only_when_both_are_known():
+    # One box, two facts. Given only the year, that box has been answered
+    # wrongly rather than partially.
+    both = {"grad_year": 2027, "grad_month": 5}
+    assert questions._grad_month_year(both) == "May 2027"
+    assert questions._grad_month_year({"grad_year": 2027}) == ""
+    assert questions._grad_month_year({"grad_month": 5}) == ""
+
+
+def test_a_month_name_already_stored_is_used_as_written():
+    assert questions._grad_month_year({"grad_year": 2027, "grad_month": "June"}) == "June 2027"
+
+
+def test_a_nonsense_month_is_refused_rather_than_guessed():
+    assert questions._grad_month_year({"grad_year": 2027, "grad_month": 13}) == ""
+
+
+def test_the_month_and_year_question_beats_the_bare_year_question():
+    # _GRAD_YEAR_Q matches this label too, and would answer a "month & year" box
+    # with "2027" alone.
+    rec = _ask("Graduation Month & Year (Completed / Expected) *", "text",
+               {"grad_year": 2027, "grad_month": 5})
+    assert rec["answer"] == "May 2027"
+    assert rec["source"] == "profile"

@@ -118,6 +118,26 @@ export const PROFF_FIELDS: ProffField[] = [
     required: true,
   },
   {
+    key: "gradMonth",
+    label: "Graduation month",
+    help: "Asked together with the year as one box on several Indian portals — given only the year, that box has been answered wrongly rather than partially.",
+    type: "select",
+    // The column is an Int, so the VALUE is the month number and the label is
+    // the month. Storing "May" would be coerced to 0 by the numeric field
+    // handling in /api/profile and the answer would silently disappear.
+    numeric: true,
+    choices: [
+      { value: "1", label: "January" }, { value: "2", label: "February" },
+      { value: "3", label: "March" }, { value: "4", label: "April" },
+      { value: "5", label: "May" }, { value: "6", label: "June" },
+      { value: "7", label: "July" }, { value: "8", label: "August" },
+      { value: "9", label: "September" }, { value: "10", label: "October" },
+      { value: "11", label: "November" }, { value: "12", label: "December" },
+    ],
+    advanced: true,
+    group: "Education",
+  },
+  {
     key: "class12Percent",
     label: "Class 12 percentage",
     help: "Asked on most Indian internship forms. Read off your resume where possible — your college CGPA is a different number and is never used here.",
@@ -427,6 +447,7 @@ export const DEFAULTS: Record<string, unknown> = {
   degree: "",
   college: "",
   gradYear: 0,
+  gradMonth: 0,
   class10Percent: 0,
   class12Percent: 0,
   availability: "",
