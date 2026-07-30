@@ -2138,7 +2138,7 @@ export default function Dashboard() {
                   aria-hidden
                 />
                 {autopilot!.browser.connected
-                  ? `Browser connected${autopilot!.browser.lastSeen ? ` · last seen ${new Date(autopilot!.browser.lastSeen).toLocaleString()}` : ""}`
+                  ? `Browser connected${autopilot!.browser.lastSeen ? ` · last seen ${new Date(autopilot!.browser.lastSeen!).toLocaleString()}` : ""}`
                   : "No browser connected — board applications wait for you until one is."}
               </p>
             )}
