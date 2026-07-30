@@ -48,3 +48,49 @@ def test_a_genuine_stop_is_still_counted():
     assert detail["graded"] == 1
     assert detail["submit_ready"] == 0
     assert score == 0.0
+
+
+class FakePage:
+    """A page that reports whatever error nodes the test wants."""
+
+    def __init__(self, said="", has_error=True):
+        self.said = said
+        self.has_error = has_error
+
+    def query_selector(self, sel):
+        # No success selector ever matches; the error hints all do.
+        return object() if self.has_error and "confirm" not in sel.lower() else None
+
+    def evaluate(self, script, *args):
+        return self.said
+
+
+def test_a_rejection_quotes_the_form_rather_than_ourselves():
+    # "page shows a validation/error message" was the entire reason recorded for
+    # six real rejected applications. It cannot tell an unfilled dropdown from a
+    # refused upload, so every one needed a live re-enactment to diagnose.
+    import safety
+
+    status, why = safety.classify_submit(
+        FakePage("Country This field is required | Resume Please attach a file"), []
+    )
+    assert status == safety.APPLY_STATUS.FAILED
+    assert "This field is required" in why
+
+
+def test_a_rejection_we_cannot_read_still_says_so_plainly():
+    import safety
+
+    status, why = safety.classify_submit(FakePage(""), [])
+    assert status == safety.APPLY_STATUS.FAILED
+    assert "validation" in why
+
+
+def test_validation_text_survives_a_page_that_throws():
+    import safety
+
+    class Broken:
+        def evaluate(self, *a, **k):
+            raise RuntimeError("page is gone")
+
+    assert safety.validation_text(Broken()) == ""

@@ -368,10 +368,58 @@ def classify_submit(page, success_selectors: list[str]) -> tuple[str, str]:
     for sel in _ERROR_HINTS_DEFAULT:
         try:
             if page.query_selector(sel):
-                return APPLY_STATUS.FAILED, "submit click registered but page shows a validation/error message"
+                # Quote the FORM, not ourselves. "page shows a
+                # validation/error message" was the whole reason recorded for
+                # six real rejected applications, and it names nothing: it
+                # cannot tell an unfilled dropdown from a rejected file upload
+                # from a bot check, so every one of them needed a live
+                # re-enactment to diagnose. The page already says which field
+                # it is unhappy about; read it.
+                said = validation_text(page)
+                return APPLY_STATUS.FAILED, (
+                    f"the form rejected it: {said}" if said
+                    else "submit click registered but page shows a validation/error message"
+                )
         except Exception:  # noqa: BLE001
             pass
     return APPLY_STATUS.NEEDS_REVIEW, "submitted — confirmation not detected, verify manually"
+
+
+def validation_text(page) -> str:
+    """What the form itself says is wrong, in its own words.
+
+    Reads the vendor's error nodes and any aria-invalid field's message, keeping
+    the field names alongside them — "This field is required" tells you nothing
+    without knowing which field. Deliberately capped: this is stored on the
+    application row and read by a person, not parsed.
+    """
+    try:
+        return (page.evaluate(
+            """() => {
+              const out = [];
+              const seen = new Set();
+              const push = t => {
+                t = (t || '').trim().replace(/\\s+/g, ' ');
+                if (t && t.length < 160 && !seen.has(t)) { seen.add(t); out.push(t); }
+              };
+              document.querySelectorAll(
+                '[role="alert"],[aria-invalid="true"],[class*="error" i],' +
+                '[class*="invalid" i],[id*="error" i]'
+              ).forEach(n => {
+                // An invalid INPUT carries no message of its own; its question
+                // and its error node sit around it.
+                if (n.tagName === 'INPUT' || n.tagName === 'SELECT' || n.tagName === 'TEXTAREA') {
+                  const box = n.closest('div,fieldset') || n.parentElement;
+                  if (box) push(box.innerText);
+                } else {
+                  push(n.innerText);
+                }
+              });
+              return out.slice(0, 6).join(' | ');
+            }"""
+        ) or "")[:400]
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def skills_claimed(tailored_text: str, master_skills: list[str]) -> list[str]:

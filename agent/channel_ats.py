@@ -636,6 +636,21 @@ def apply(
         if status == safety.APPLY_STATUS.NEEDS_REVIEW and _confirmed_by_url(page, vendor):
             status, why = safety.APPLY_STATUS.APPLIED, f"submitted — {vendor} confirmation page"
 
+        # A rejection is the one outcome worth a picture. Six real applications
+        # were refused by a form and every one of them had to be diagnosed by
+        # re-enacting the whole submit live, because all we kept was our own
+        # sentence about it. The page said which field it was unhappy about, on
+        # screen, and nobody was looking.
+        if status == safety.APPLY_STATUS.FAILED:
+            try:
+                shot = safety.screenshot(
+                    page, uid, f"ats_rejected_{job.get('external_id', '')}"
+                )
+                if shot:
+                    record["screenshot_path"] = shot
+            except Exception:  # noqa: BLE001
+                pass
+
         # Proof for the states the user most needs it for: the success they are
         # being asked to believe, and the ambiguous one they may have to check.
         if status in (safety.APPLY_STATUS.APPLIED, safety.APPLY_STATUS.NEEDS_REVIEW):
