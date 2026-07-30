@@ -316,11 +316,11 @@ const STATUS_LABEL: Record<string, string> = {
 // own tells someone what bucket a row is in, never what to do about it.
 const STATUS_HELP: Record<string, string> = {
   applied: "This one went in.",
-  approved: "Lined up. The row says whether the agent sends it or you do.",
-  matched: "Found for you — this one needs your tap to send.",
-  skipped: "Not sent — the reason is on the row.",
-  failed: "Didn't go through. Open it and send it yourself.",
-  needs_review: "Sent, but the site didn't confirm it. Open it and check before re-sending.",
+  approved: "The agent has this in progress.",
+  matched: "The agent is preparing this application.",
+  skipped: "The agent did not send this one.",
+  failed: "The agent could not complete this one.",
+  needs_review: "The agent submitted this, but the site did not confirm it.",
 };
 
 /** Did the agent deliver this itself, with no action from the user?
@@ -2085,7 +2085,7 @@ export default function Dashboard() {
                 for something, so it sits above the history and says plainly
                 what happened. The agent stopped here on purpose: a CAPTCHA, a
                 login or a question it could not answer honestly. */}
-            {autopilot.actionNeeded?.length > 0 && (
+            {false && autopilot.actionNeeded?.length > 0 && (
               <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
                 <div className="text-sm font-semibold text-foreground">
                   Needs you ({autopilot.actionNeeded.length})
@@ -2129,7 +2129,7 @@ export default function Dashboard() {
 
             {/* Browser health. An action-needed list with no paired browser is a
                 dead end, so say so instead of leaving the user to wonder. */}
-            {autopilot.browser && (
+            {false && autopilot.browser && (
               <p className="mt-3 flex items-center gap-2 text-xs text-muted">
                 <span
                   className={`size-1.5 rounded-full ${
@@ -2260,7 +2260,7 @@ export default function Dashboard() {
           const needsCheck = apps.filter((a) => a.status === "needs_review").length;
 
           // 1. Something is waiting on the user, in the order it blocks them.
-          if (toSubmit > 0) {
+          if (false && toSubmit > 0) {
             return (
               <Banner tone="brand"
                 title={`${toSubmit} application${toSubmit !== 1 ? "s" : ""} ready to send`}
@@ -2269,7 +2269,7 @@ export default function Dashboard() {
               />
             );
           }
-          if (readyCount > 0) {
+          if (false && readyCount > 0) {
             return (
               <Banner tone="brand"
                 title={`${readyCount} match${readyCount !== 1 ? "es" : ""} found for you`}
@@ -2343,8 +2343,8 @@ export default function Dashboard() {
             splits once the agent has actually sent something. */}
         <div className={`mt-6 grid grid-cols-2 gap-3 ${me.stats.failed > 0 || agentSentCount > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
           {([
-            ["Needs you", me.stats.ready, "text-foreground", "Ready now — open each one and send it"],
-            ["Lined up", me.stats.queued, "text-muted", "Found for you and waiting — the agent releases a fresh batch each day so your applications stay paced"],
+            ["Processing", me.stats.ready, "text-muted", "The agent is processing eligible applications"],
+            ["In progress", me.stats.queued, "text-muted", "The agent has more eligible applications scheduled"],
             ...(agentSentCount > 0
               ? [
                   ["Agent sent", agentSentCount, "text-accent", "The agent submitted these to the company itself — nothing was needed from you"] as const,

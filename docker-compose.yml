@@ -252,6 +252,9 @@ services:
       GRINDLY_DIRECT_SUBMIT_ENABLED: ${GRINDLY_DIRECT_SUBMIT_ENABLED:-1}
       GRINDLY_BROWSER_EXECUTOR_ENABLED: ${GRINDLY_BROWSER_EXECUTOR_ENABLED:-0}
       GRINDLY_DAILY_REPORT_ENABLED: ${GRINDLY_DAILY_REPORT_ENABLED:-1}
+      # Product mode: retain only applications the hosted agent can finish.
+      # Board jobs that would require a user click are discarded, not surfaced.
+      GRINDLY_NO_TOUCH_ONLY: ${GRINDLY_NO_TOUCH_ONLY:-1}
       # Web discovery of employer-hosted internships (the Tier A source).
       GRINDLY_SEARCH_DISCOVERY_ENABLED: ${GRINDLY_SEARCH_DISCOVERY_ENABLED:-0}
       # Set to 1 only for a release candidate/beta host. The web process then
