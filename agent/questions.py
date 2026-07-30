@@ -522,6 +522,7 @@ _NAME_SELF = re.compile(
 )
 _FIRST_NAME = re.compile(r"\b(first|given)\s+name\b", re.I)
 _LAST_NAME = re.compile(r"\b(last|sur|family)\s*name\b", re.I)
+_MIDDLE_NAME = re.compile(r"\bmiddle\s*name\b", re.I)
 
 # Options that mean "yes" on a choice question. A choice question is only
 # auto-answered when one of its own options matches this — see _pick_option.
@@ -556,8 +557,16 @@ def _name_answer(label: str, name: str) -> str | None:
     parts = name.split()
     if _FIRST_NAME.search(label):
         return parts[0] if parts else None
+    if _MIDDLE_NAME.search(label):
+        # Three names means the middle one is the middle name; two means there
+        # is no middle name and the box stays empty. A model asked this produced
+        # "Sakthi" off the resume — correct, and still an identity fact arriving
+        # from an LLM, which is the one thing this module exists to prevent.
+        return parts[1] if len(parts) >= 3 else None
     if _LAST_NAME.search(label):
-        return " ".join(parts[1:]) if len(parts) > 1 else None
+        # With a middle name present, the surname is the LAST word, not
+        # everything after the first — "Sakthi Mahendhar" is not a surname.
+        return parts[-1] if len(parts) > 1 else None
     if _NAME_SELF.search(label):
         return name
     return None
@@ -720,6 +729,41 @@ def missing_fact_for(label: str, profile: dict) -> str:
     return ""
 
 
+def _shaped_for(field: dict, answer: str | None) -> str | None:
+    """Drop an answer the field cannot physically accept.
+
+    The deterministic pass answers by matching the QUESTION, which says nothing
+    about the shape of the box. Two ways that went wrong on real forms:
+
+      * "Available To Join (in days)" is a `number` input, and _CONFIRM read
+        "available to join" as a yes/no — so the literal string "Yes" was typed
+        into a numeric box. That is the same fault that got the first real
+        application this system sent rejected, arriving by a different route.
+      * A `select` for a phone country code sits under the label "Mobile Phone",
+        so the phone number itself was handed to select_option(), which throws
+        because no option reads "8096267553".
+
+    A dropped answer leaves the field empty, which the required-field check then
+    reports honestly. Anything is better than a value the form will reject after
+    the point of no return.
+    """
+    if answer is None or answer == "__check__":
+        return answer
+    kind = field.get("kind")
+    if kind in ("number", "range"):
+        # A number box takes a number. Nothing else, however true.
+        cleaned = str(answer).strip().replace(",", "")
+        try:
+            float(cleaned)
+        except ValueError:
+            return None
+        return cleaned
+    if kind in ("select", "combobox"):
+        # Must be one of the field's OWN options, or it cannot be chosen at all.
+        return _fit_option(field, str(answer))
+    return answer
+
+
 def _deterministic(field: dict, profile: dict, name: str, email: str) -> str | None:
     """Answers that must come from the profile, never from a model.
 
@@ -831,7 +875,7 @@ def answer_fields(
     open_questions: list[tuple[int, str]] = []
 
     for i, f in enumerate(fields):
-        det = _deterministic(f, profile, name, email)
+        det = _shaped_for(f, _deterministic(f, profile, name, email))
         if det is not None:
             out.append({
                 "question": f["label"], "answer": det,
@@ -903,6 +947,13 @@ def answer_fields(
             unreadable_label(f["label"])
             or f["kind"] in _TYPED_INPUTS
             or missing_fact_for(f["label"] or "", profile)
+            # Any name box. The deterministic pass above answers the ones we can
+            # split out of the stored name; whatever is left is still the
+            # candidate's identity and is not a model's to compose.
+            or _FIRST_NAME.search(f["label"] or "")
+            or _MIDDLE_NAME.search(f["label"] or "")
+            or _LAST_NAME.search(f["label"] or "")
+            or _NAME_SELF.search(f["label"] or "")
         ):
             out.append({
                 "question": f["label"], "answer": "",

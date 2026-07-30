@@ -152,3 +152,68 @@ def test_a_named_input_is_never_a_ghost_however_it_is_wrapped():
     keka = FakeEl({"type": "text", "name": "currentSalary.salaryPeriod"},
                   {"requiredInput": False})
     assert questions._select_shell_ghost(keka) is False
+
+
+def test_yes_never_goes_into_a_number_box():
+    # Keka asks "Available To Join (in days)" as a `number` input, and _CONFIRM
+    # read "available to join" as a yes/no — so the literal string "Yes" was
+    # about to be typed into a numeric box. Same fault that got the first real
+    # application rejected, arriving by a different route.
+    rec = _answer({
+        "label": "Available To Join (in days)", "kind": "number",
+        "required": False, "options": [],
+    })
+    assert rec["answer"] == ""
+
+
+def test_a_phone_number_is_not_handed_to_a_country_code_dropdown():
+    # The country-code <select> sits under the label "Mobile Phone", so the
+    # phone number itself reached select_option(), which throws — no option
+    # reads "8096267553".
+    rec = _answer(
+        {"label": "Mobile Phone", "kind": "select", "required": True,
+         "options": ["+91", "+1", "+44"]},
+        profile={"phone": "8096267553"},
+    )
+    assert rec["answer"] != "8096267553"
+
+
+def test_a_real_number_still_reaches_a_number_box():
+    rec = _answer(
+        {"label": "Graduation year", "kind": "number", "required": True, "options": []},
+        profile={"grad_year": 2027},
+    )
+    assert rec["answer"] == "2027"
+
+
+def test_a_middle_name_comes_from_the_stored_name_not_a_model():
+    # A model answered this "Sakthi" off the résumé — correct, and still an
+    # identity fact composed by an LLM.
+    out = questions.answer_fields(
+        [{"label": "Middle Name", "kind": "text", "required": False, "options": []}],
+        profile={}, resume_text="Sammeta Sakthi Mahendhar, AI intern.",
+        skills=["python"], job={"title": "Intern", "company": "X"},
+        name="Sammeta Sakthi Mahendhar", email="a@b.com",
+    )[0]
+    assert out["answer"] == "Sakthi"
+    assert out["source"] == "profile"
+
+
+def test_two_names_means_there_is_no_middle_name():
+    out = questions.answer_fields(
+        [{"label": "Middle Name", "kind": "text", "required": False, "options": []}],
+        profile={}, resume_text="Asha Rao", skills=["python"],
+        job={"title": "Intern", "company": "X"}, name="Asha Rao", email="a@b.com",
+    )[0]
+    assert out["answer"] == ""
+    assert out["source"] != "ai"
+
+
+def test_the_surname_is_the_last_word_when_a_middle_name_exists():
+    # "Sakthi Mahendhar" is not a surname.
+    out = questions.answer_fields(
+        [{"label": "Last Name", "kind": "text", "required": True, "options": []}],
+        profile={}, resume_text="", skills=[], job={"title": "I", "company": "X"},
+        name="Sammeta Sakthi Mahendhar", email="a@b.com",
+    )[0]
+    assert out["answer"] == "Mahendhar"
