@@ -20,6 +20,7 @@ Failure is always an empty list, never an exception: discovery must degrade to
 from __future__ import annotations
 import json
 import os
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -221,9 +222,12 @@ def _load_cache() -> None:
 
 def _save_cache() -> None:
     try:
-        os.makedirs(os.path.dirname(_CACHE_FILE), exist_ok=True)
-        tmp = _CACHE_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        cache_dir = os.path.dirname(_CACHE_FILE)
+        os.makedirs(cache_dir, exist_ok=True)
+        # Worker and sweep share this volume. A fixed `.tmp` name lets one
+        # process replace the other's file before its own atomic replacement.
+        fd, tmp = tempfile.mkstemp(prefix=".search_cache-", suffix=".tmp", dir=cache_dir)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump({k: [ts, r] for k, (ts, r) in _CACHE.items()}, f)
         # Atomic: a half-written cache read by the next process would be a
         # corrupt file that costs a run's discovery.

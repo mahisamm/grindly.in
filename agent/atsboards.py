@@ -29,6 +29,7 @@ import html
 import json
 import os
 import re
+import tempfile
 import time
 import urllib.request
 
@@ -186,9 +187,12 @@ def _load_cache() -> None:
 
 def _save_cache() -> None:
     try:
-        os.makedirs(os.path.dirname(_CACHE_FILE), exist_ok=True)
-        tmp = _CACHE_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        cache_dir = os.path.dirname(_CACHE_FILE)
+        os.makedirs(cache_dir, exist_ok=True)
+        # Worker and sweep can save concurrently on shared appdata; a unique
+        # temporary file keeps either atomic replacement from losing the other.
+        fd, tmp = tempfile.mkstemp(prefix=".ats_boards-", suffix=".tmp", dir=cache_dir)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump({k: [ts, p] for k, (ts, p) in _CACHE.items()}, f)
         os.replace(tmp, _CACHE_FILE)  # atomic: a half-written cache is a corrupt one
     except Exception as e:  # noqa: BLE001
