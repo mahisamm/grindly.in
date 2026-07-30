@@ -141,6 +141,8 @@ services:
       NODE_ENV: production
       TRUST_PROXY: "1"              # behind Caddy — trust x-forwarded-for for rate limiting
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+      # Used by the strict beta release gate as well as Caddy's TLS configuration.
+      APP_DOMAIN: ${APP_DOMAIN}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       GOOGLE_OAUTH_BRAND_VERIFIED: ${GOOGLE_OAUTH_BRAND_VERIFIED:-}
