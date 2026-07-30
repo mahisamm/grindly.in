@@ -2085,7 +2085,7 @@ export default function Dashboard() {
                 for something, so it sits above the history and says plainly
                 what happened. The agent stopped here on purpose: a CAPTCHA, a
                 login or a question it could not answer honestly. */}
-            {false && autopilot.actionNeeded?.length > 0 && (
+            {autopilot && false && autopilot.actionNeeded?.length > 0 && (
               <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
                 <div className="text-sm font-semibold text-foreground">
                   Needs you ({autopilot.actionNeeded.length})
@@ -2129,7 +2129,7 @@ export default function Dashboard() {
 
             {/* Browser health. An action-needed list with no paired browser is a
                 dead end, so say so instead of leaving the user to wonder. */}
-            {false && autopilot.browser && (
+            {autopilot && false && autopilot.browser && (
               <p className="mt-3 flex items-center gap-2 text-xs text-muted">
                 <span
                   className={`size-1.5 rounded-full ${
