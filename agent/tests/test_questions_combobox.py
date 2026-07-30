@@ -141,3 +141,14 @@ def test_the_combobox_itself_is_never_treated_as_a_ghost():
 def test_an_ordinary_text_input_is_not_a_ghost():
     plain = FakeEl({"type": "text", "name": "first_name"}, {"requiredInput": False})
     assert questions._select_shell_ghost(plain) is False
+
+
+def test_a_named_input_is_never_a_ghost_however_it_is_wrapped():
+    # The first version of this test matched on the WRAPPER's class alone, and
+    # '-container' turns up on ordinary layout divs. On Keka one dropdown inside
+    # a wide wrapper made every real field invisible and the whole apply form
+    # read as having no questions at all. A ghost has no name and no id — that
+    # is what makes it a ghost.
+    keka = FakeEl({"type": "text", "name": "currentSalary.salaryPeriod"},
+                  {"requiredInput": False})
+    assert questions._select_shell_ghost(keka) is False

@@ -145,10 +145,23 @@ def _select_shell_ghost(el) -> bool:
             """e => {
               if ((e.getAttribute('role') || '') === 'combobox') return false;
               if (/requiredInput/i.test(e.className || '')) return true;
-              const shell = e.closest(
-                '[class*="select-shell" i],[class*="-container" i],[class*="select__" i]'
-              );
-              return !!(shell && shell.querySelector('[role="combobox"]'));
+              // A ghost has no name and no id — that is what makes it a ghost.
+              // Matching on the wrapper alone was far too broad: '-container'
+              // appears on ordinary layout divs, so on Keka a single dropdown
+              // inside a wide wrapper made every real field in it invisible and
+              // the form read as having no questions at all.
+              if (e.getAttribute('name') || e.id) return false;
+              // And only a CLOSE ancestor counts. Walking to any ancestor lets
+              // one combobox anywhere on the page disqualify the whole form.
+              let n = e.parentElement, hops = 0;
+              while (n && hops < 3) {
+                const cls = n.className || '';
+                if (typeof cls === 'string'
+                    && /select-shell|select__|css-.*-container/i.test(cls)
+                    && n.querySelector('[role="combobox"]')) return true;
+                n = n.parentElement; hops++;
+              }
+              return false;
             }"""
         ))
     except Exception:  # noqa: BLE001
