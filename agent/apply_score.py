@@ -125,7 +125,14 @@ def _deliverability(rep: dict) -> tuple[float, dict]:
 #            stating an invented fact on a real application under their name.
 #            Reported loudly instead (see `_setup_gap`), because unlike every
 #            other stop it is fixed once and never recurs.
-_NOT_THE_AGENTS_FAULT = ("closed", "waiting_on_a_fact_you_have_not_given")
+#   sign_in_required
+#            the employer restricted their Google Form to signed-in accounts.
+#            Nobody applying anonymously can complete it — not us, not a script,
+#            not the candidate in an incognito window. Counting it against
+#            fillability grades the agent on somebody else's access policy.
+_NOT_THE_AGENTS_FAULT = (
+    "closed", "waiting_on_a_fact_you_have_not_given", "sign_in_required",
+)
 
 
 def _fillability(rep: dict) -> tuple[float, dict]:

@@ -2480,6 +2480,32 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 destination=dest,
             )
             db.add_audit("apply_failed", user_id=uid, target=job.get("url"), detail=why[:120])
+            # A submit that was CLICKED and then rejected is a different event
+            # from a sender that never got that far, and until now the difference
+            # was unrecorded: `failed` releases the idempotency claim, and the
+            # claim row IS the receipt, so deleting it erased the only durable
+            # trace that anything had been sent at all. Two real applications
+            # went out that way and existed afterwards only as a sentence in a
+            # `reason` column.
+            #
+            # The claim still goes — the form rejected us, so nothing reached the
+            # employer and a retry after a fix must stay possible. The timeline
+            # is append-only and is the right place for "this happened".
+            if rec.get("submit_attempted"):
+                try:
+                    db.add_application_event(
+                        _last_application_id(uid, job.get("url")),
+                        "submit_rejected", actor="worker",
+                        meta={
+                            "channel": dest.get("channel"),
+                            "tier": dest.get("tier"),
+                            "vendor": resolver.ats_vendor(dest.get("target") or "") or "",
+                            "why": why[:200],
+                            "failure_reason": fr,
+                        },
+                    )
+                except Exception as e:  # noqa: BLE001
+                    log.warning("could not record the rejected submit: %s", e)
 
         if live:
             time.sleep(random.uniform(*_BASE_PACE_SEC))

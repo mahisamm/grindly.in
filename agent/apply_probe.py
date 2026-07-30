@@ -307,6 +307,13 @@ def _dry_run_google_form(url: str, job: dict, profile: dict, skills: list[str]) 
         out.update(outcome="submit_ready", detail="every required question answered — not posted")
         return out
     except Exception as e:  # noqa: BLE001
+        # A 401 or 403 is the form telling us it is for signed-in people only.
+        # That is the employer's choice, not a fault in the agent, and it was
+        # being counted as a crash — inflating a failure nobody could avoid.
+        if any(code in str(e) for code in ("401", "403")):
+            out.update(outcome="sign_in_required",
+                       detail="form refuses anonymous access (HTTP 401/403)")
+            return out
         out.update(outcome="error", detail=f"{type(e).__name__}: {e}"[:160])
         return out
     finally:
