@@ -265,6 +265,22 @@ def read_fields(page) -> list[dict]:
                 continue
             if tag != "select" and (el.input_value() or "").strip():
                 continue  # already answered (cover letter, prefilled profile data)
+            # A <select> the FORM has already answered. Keka defaults its phone
+            # country code to +91 and labels it with the whole contact section,
+            # so we could neither read the question nor improve on the answer —
+            # and reporting it as an unanswered required field blocked the submit
+            # on every Keka application. A vendor's own default IS an answer; a
+            # placeholder ("Select...") is not.
+            if tag == "select":
+                try:
+                    chosen = (el.evaluate(
+                        "e => e.selectedIndex >= 0"
+                        " ? (e.options[e.selectedIndex].text || '') : ''"
+                    ) or "").strip()
+                except Exception:  # noqa: BLE001
+                    chosen = ""
+                if chosen and not _PLACEHOLDER_LABEL.match(chosen):
+                    continue
 
             options: list[str] = []
             combobox = _is_combobox(el)
