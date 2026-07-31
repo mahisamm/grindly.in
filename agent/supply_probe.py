@@ -401,6 +401,18 @@ def run(pairs: list[tuple[str, str]], skills: list[str], domains: list[str],
               "location": j["location"], "url": j["url"]} for j in matchable),
             key=lambda j: j["score"], reverse=True,
         )[:25],
+        # EVERY internship found, matchable or not, with its score and the
+        # matcher's own reason. The rejects are the interesting half: a
+        # "Marketing Intern" scoring 20 means the matcher is working and the
+        # supply is genuinely non-technical, while a "Backend Intern" scoring
+        # 40 means the matcher is the bottleneck. Those are opposite fixes and
+        # a bare matchable-count cannot tell them apart.
+        "all_internships": sorted(
+            ({"title": j["title"], "company": j["company"],
+              "score": j.get("score", -1), "location": j["location"],
+              "reason": (j.get("reason") or "")[:110]} for j in internships),
+            key=lambda j: j["score"], reverse=True,
+        ),
         "new_boards": sorted(
             {(j["company"]) for j in internships}
         )[:50],
@@ -478,10 +490,11 @@ def main() -> int:
     print("\nper 1000 boards TESTED:")
     for k, v in result["per_1000_tested"].items():
         print(f"  {k:<16}: {v}")
-    if result["sample"]:
-        print("\ntop matchable:")
-        for j in result["sample"][:10]:
-            print(f"  {j['score']:>3}  {j['title'][:48]:<48} {j['company'][:22]}")
+    if result["all_internships"]:
+        print("\nevery India internship found (score, title, company):")
+        for j in result["all_internships"]:
+            flag = "OK " if j["score"] >= result["threshold"] else "   "
+            print(f"  {flag}{j['score']:>3}  {j['title'][:46]:<46} {j['company'][:24]}")
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
