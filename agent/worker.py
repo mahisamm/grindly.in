@@ -112,6 +112,11 @@ def _no_touch_boards(sources: list[str], connected: list[str]) -> list[str]:
 def _classify_failure(why: str) -> str:
     """Map a freeform apply failure message to an enumerated FAILURE_REASON."""
     w = (why or "").lower()
+    # Before the "closed" check: Playwright's launch error reads "browser has
+    # been closed", which landed these in LISTING_CLOSED — a bucket drift.py
+    # treats as transient site noise, so a dead Xvfb never raised an alert.
+    if "could not start a browser" in w or "browser has been closed" in w:
+        return safety.FAILURE_REASON.EXCEPTION
     if "login" in w or "session" in w or "logged out" in w:
         return safety.FAILURE_REASON.SESSION_EXPIRED
     if "captcha" in w or "human" in w:

@@ -94,6 +94,15 @@ def _run_session(
     xvfb = x11vnc = None
     connected = False
     try:
+        # A previous session on this slot that ended in kill() (timeout path)
+        # leaves Xvfb's lock behind, and Xvfb refuses to start over it — the
+        # next user on this slot would get a black VNC screen. Same story
+        # after a `docker restart`, which keeps /tmp.
+        for stale in (f"/tmp/.X{display_num}-lock", f"/tmp/.X11-unix/X{display_num}"):
+            try:
+                os.unlink(stale)
+            except OSError:
+                pass
         xvfb = subprocess.Popen(
             [
                 "Xvfb",

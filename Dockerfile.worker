@@ -49,4 +49,10 @@ ENV HOME=/home/worker
 USER worker
 # Start Xvfb on :99, set DISPLAY, then run the worker (headed mode).
 # INTERNPILOT_HEADLESS is intentionally NOT set here — default is "0" (headed).
-CMD ["sh", "-c", "Xvfb :99 -screen 0 1366x768x24 -ac +extension GLX +render -noreset & sleep 1 && DISPLAY=:99 python agent/worker.py --serve"]
+#
+# The stale-lock rm is load-bearing: `docker restart` keeps /tmp, and Xvfb
+# refuses to start over a leftover /tmp/.X99-lock — the worker then runs with
+# no display and every browser launch fails. Same reason we wait for the
+# socket and exit 1 if it never appears: a restart loop in `docker ps` is
+# diagnosable, a worker silently failing every apply is not.
+CMD ["sh", "-c", "rm -f /tmp/.X99-lock /tmp/.X11-unix/X99; Xvfb :99 -screen 0 1366x768x24 -ac +extension GLX +render -noreset & i=0; until [ -S /tmp/.X11-unix/X99 ] || [ $i -ge 20 ]; do i=$((i+1)); sleep 0.5; done; if [ ! -S /tmp/.X11-unix/X99 ]; then echo 'FATAL: Xvfb never came up on :99' >&2; exit 1; fi; DISPLAY=:99 python agent/worker.py --serve"]

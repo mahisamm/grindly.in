@@ -23,6 +23,21 @@ def test_classify_failure_listing_closed():
         safety.FAILURE_REASON.LISTING_CLOSED
 
 
+def test_classify_failure_browser_launch_is_not_listing_closed():
+    # Playwright's launch error contains the word "closed"; it must not land
+    # in LISTING_CLOSED, which drift.py excludes from the drift signal — a
+    # 2026-07-31 dead-Xvfb incident failed every apply without one alert.
+    assert worker._classify_failure(
+        "could not start a browser: BrowserType.launch: Target page, context "
+        "or browser has been closed"
+    ) == safety.FAILURE_REASON.EXCEPTION
+
+
+def test_classify_failure_browser_closed_mid_run():
+    assert worker._classify_failure("Page.goto: Target page, context or browser has been closed") == \
+        safety.FAILURE_REASON.EXCEPTION
+
+
 def test_classify_failure_upload_failed():
     assert worker._classify_failure("resume upload fail: rejected format") == \
         safety.FAILURE_REASON.UPLOAD_FAILED
