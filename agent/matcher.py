@@ -75,17 +75,82 @@ def _tokens(s: str) -> set[str]:
 RELEVANCE_SATURATION = 3
 
 
+# What a listing may call a domain instead of the name the user picked in
+# onboarding. Every entry is a WHOLE PHRASE, never a bare token: the loose
+# "any token overlaps" test this replaced fired on the word "development"
+# alone, so every "<Anything> Development Internship" collected the bonus.
+#
+# The measured cost of not having this: a real "Data Science Intern" scored
+# **0** for a candidate whose domains include Machine Learning and whose
+# skills list names machine learning, deep learning and computer vision —
+# because no employer writes "Machine Learning Intern" when they mean a data
+# scientist. Nothing here is a guess about the candidate; it is only a
+# vocabulary for the field they already chose.
+_DOMAIN_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "machine learning": (
+        "data science", "data scientist", "ml engineer", "ml intern",
+        "deep learning", "artificial intelligence", "nlp",
+        "natural language processing", "computer vision", "generative ai",
+    ),
+    "artificial intelligence": (
+        "machine learning", "data science", "deep learning", "ai engineer",
+        "ai intern", "generative ai", "llm", "nlp", "computer vision",
+    ),
+    "data science": (
+        "machine learning", "data analyst", "data analytics", "analytics",
+        "business intelligence", "deep learning",
+    ),
+    "web development": (
+        "full stack", "fullstack", "frontend", "front end", "backend",
+        "back end", "web developer", "mern", "mean stack",
+    ),
+    "frontend development": (
+        "front end", "frontend", "ui developer", "react developer",
+        "web developer", "full stack", "fullstack",
+    ),
+    "backend development": (
+        "back end", "backend", "api developer", "server side",
+        "full stack", "fullstack",
+    ),
+    "mobile development": (
+        "android", "ios", "flutter", "react native", "mobile app",
+        "app developer",
+    ),
+    "ui/ux design": (
+        "ui ux", "uiux", "product design", "user experience",
+        "user interface", "figma",
+    ),
+    "devops": (
+        "site reliability", "sre", "platform engineer", "infrastructure",
+        "cloud engineer",
+    ),
+    "cyber security": (
+        "cybersecurity", "security engineer", "infosec",
+        "information security", "application security", "soc analyst",
+    ),
+}
+
+
 def _domain_hit(domains: list[str], haystack: str, hay_tokens: set[str]) -> bool:
     """True only if a whole domain phrase is present — every token of it, not
     just one. A loose `any token overlaps` test fired on the word "development"
     alone, so every "<Anything> Development Internship" collected the domain
-    bonus regardless of field."""
+    bonus regardless of field.
+
+    A listing also counts when it uses one of the field's own synonyms (see
+    _DOMAIN_SYNONYMS) — employers name the job, not the taxonomy.
+    """
     for d in domains:
         dt = _tokens(d)
         if not dt:
             continue
         if _norm(d).strip() in haystack or dt <= hay_tokens:
             return True
+        for phrase in _DOMAIN_SYNONYMS.get(_norm(d).strip(), ()):
+            # Substring on the normalised haystack, same test as the domain
+            # itself, so a multi-word synonym cannot fire on one of its words.
+            if phrase in haystack:
+                return True
     return False
 
 
