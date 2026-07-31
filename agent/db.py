@@ -319,11 +319,15 @@ def repair_misclassified_launch_failures() -> int:
     channel senders put on a launch error — prose parsing is banned for
     live decisions, but this targets a fixed historical string.
     """
+    # substr, not LIKE: the wrapper hands psycopg2 an (empty) params tuple on
+    # every execute, so a literal % in the SQL is read as interpolation and
+    # raises "tuple index out of range".
+    prefix = "could not start a browser"
     with conn() as c:
         cur = c.execute(
             "UPDATE applications SET failure_reason='browser_launch' "
             "WHERE status='failed' "
-            "AND reason LIKE 'could not start a browser%' "
+            f"AND substr(reason, 1, {len(prefix)}) = '{prefix}' "
             "AND (failure_reason IS NULL OR failure_reason <> 'browser_launch')"
         )
         return cur.rowcount or 0
