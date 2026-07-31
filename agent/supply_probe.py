@@ -268,27 +268,47 @@ def harvest_by_search(limit: int) -> list[tuple[str, str]]:
         return []
 
     known = _known_pairs()
+    # Weighted by measured yield, not by vendor prestige. A 35-board search
+    # sweep returned 7 India internships from Keka and ZERO from Greenhouse's
+    # 563 postings — the global ATSs host foreign companies whose India
+    # offices rarely post interns publicly, while Keka is where an Indian
+    # company posts. So Keka gets the city grid and the rest get the short list.
     hosts_by_vendor = {
+        "keka": "keka.com/careers",
+        "workable": "apply.workable.com",
         "greenhouse": "boards.greenhouse.io",
         "lever": "jobs.lever.co",
         "ashby": "jobs.ashbyhq.com",
-        "workable": "apply.workable.com",
-        "keka": "keka.com/careers",
         "smartrecruiters": "jobs.smartrecruiters.com",
     }
-    roles = ["intern", "internship", "trainee", "graduate engineer"]
-    urls: list[str] = []
+    roles = ["intern", "internship", "trainee", "graduate engineer",
+             "software intern", "data intern"]
+    cities = ["india", "bangalore", "hyderabad", "pune", "chennai", "mumbai",
+              "delhi", "noida", "gurgaon", "remote india"]
+    queries: list[str] = []
     for vendor, host in hosts_by_vendor.items():
+        grid = cities if vendor in ("keka", "workable") else cities[:3]
         for role in roles:
-            query = f"site:{host} {role} india"
-            try:
-                for hit in websearch.search(query, limit=10) or []:
-                    url = hit.get("url") or hit.get("link") or ""
-                    if url:
-                        urls.append(url)
-            except Exception as e:  # noqa: BLE001
-                print(f"[probe] search failed for {vendor}/{role}: {type(e).__name__}")
-            time.sleep(1)
+            for city in grid:
+                queries.append(f"site:{host} {role} {city}")
+
+    urls: list[str] = []
+    # Concurrent, but modestly: SearXNG fronts real engines and a burst gets
+    # this IP throttled on the one discovery path that works.
+    def _one(query: str) -> list[str]:
+        try:
+            return [h.get("url") or h.get("link") or ""
+                    for h in (websearch.search(query, limit=10) or [])]
+        except Exception as e:  # noqa: BLE001
+            print(f"[probe] search failed: {query[:50]} {type(e).__name__}")
+            return []
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+        for i, found in enumerate(ex.map(_one, queries), start=1):
+            urls.extend(u for u in found if u)
+            if i % 50 == 0:
+                print(f"[probe] {i}/{len(queries)} queries, {len(urls)} urls")
+    print(f"[probe] {len(queries)} queries returned {len(urls)} url(s)")
 
     pairs: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
