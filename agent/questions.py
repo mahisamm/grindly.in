@@ -236,7 +236,18 @@ def read_fields(page) -> list[dict]:
     """
     fields: list[dict] = []
     try:
-        els = page.query_selector_all("textarea, input, select")
+        # contenteditable is here for a reason that native validation cannot
+        # cover for us. Modern ATSs render long-answer boxes ("Why this role?",
+        # cover letters) as a rich-text editor — a <div contenteditable> with a
+        # toolbar, not a <textarea>. Such a box is invisible to a
+        # `textarea, input, select` query, AND the browser's own constraint
+        # validation never reports it, because it is not a form control at all.
+        # So an unanswered required rich-text question passed both of our
+        # checks and was discovered only by the employer's own JS rejecting the
+        # submit, after the click had been spent.
+        els = page.query_selector_all(
+            "textarea, input, select, [contenteditable='true'], [contenteditable='']"
+        )
     except Exception as e:  # noqa: BLE001
         print(f"[questions] could not read the form: {e}")
         return []
@@ -246,11 +257,24 @@ def read_fields(page) -> list[dict]:
             tag = (el.evaluate("e => e.tagName") or "").lower()
             itype = (el.get_attribute("type") or "text").lower()
             name = el.get_attribute("name") or ""
+            editable = _is_rich_text(el)
 
-            if itype in ("hidden", "file", "submit", "button", "image", "reset"):
+            # Answerable means a native form control or a live editor, and
+            # nothing else. The selector above already implies this, but it is
+            # the one assumption everything below rests on — every remaining
+            # branch calls input_value() or reads .value — so state it rather
+            # than inherit it from a string two hundred lines away.
+            if tag not in ("input", "textarea", "select") and not editable:
                 continue
-            if _SKIP_NAMES.search(name):
-                continue
+
+            # A rich-text editor is a <div>, so the input-shaped guards below
+            # (type, input_value, select defaults) do not apply to it and would
+            # misread it if they ran.
+            if not editable:
+                if itype in ("hidden", "file", "submit", "button", "image", "reset"):
+                    continue
+                if _SKIP_NAMES.search(name):
+                    continue
             # Off-screen inputs are not questions. react-select keeps a hidden
             # twin of every dropdown to carry its value, and Playwright will
             # patiently retry a click on one for a full minute before giving up
@@ -263,7 +287,13 @@ def read_fields(page) -> list[dict]:
                 continue
             if _select_shell_ghost(el):
                 continue
-            if tag != "select" and (el.input_value() or "").strip():
+            if editable:
+                # Same "already answered" rule, read the only way a div can be
+                # read. Skipping this would clobber a cover letter the caller
+                # had already written into the editor.
+                if (el.evaluate("e => (e.innerText || '').trim()") or "").strip():
+                    continue
+            elif tag != "select" and (el.input_value() or "").strip():
                 continue  # already answered (cover letter, prefilled profile data)
             # A <select> the FORM has already answered. Keka defaults its phone
             # country code to +91 and labels it with the whole contact section,
@@ -297,6 +327,12 @@ def read_fields(page) -> list[dict]:
                 "el": el,
                 "kind": (
                     "select" if tag == "select"
+                    # A rich-text editor takes prose exactly like a textarea
+                    # does, and every downstream rule that keys on "textarea"
+                    # — the required-free-text fallback, the typed-input
+                    # refusal — is the rule we want for it too. Calling it
+                    # anything else would mean restating all of them.
+                    else "textarea" if editable
                     else "combobox" if combobox
                     else "textarea" if tag == "textarea"
                     else itype
@@ -316,6 +352,24 @@ def read_fields(page) -> list[dict]:
         except Exception:  # noqa: BLE001
             continue
     return fields
+
+
+def _is_rich_text(el) -> bool:
+    """Is this a contenteditable editor rather than a real form control?
+
+    Checks the live `isContentEditable` property, not the attribute: editors
+    commonly set it from JS after mount, and an inner node inherits editability
+    from an ancestor without carrying the attribute itself. A <textarea> also
+    reports true for `isContentEditable` in some engines, so native form
+    controls are excluded explicitly — they already have a better path.
+    """
+    try:
+        return bool(el.evaluate(
+            "e => e.isContentEditable === true"
+            " && !['INPUT','TEXTAREA','SELECT'].includes(e.tagName)"
+        ))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 # A "label" that is really a widget's placeholder. Greenhouse, Ashby and Lever
@@ -1333,6 +1387,10 @@ e => {
   if (tag === 'select') {
     return e.selectedIndex >= 0 ? clean(e.options[e.selectedIndex].text) : '';
   }
+  // A rich-text editor holds its answer as text, not as .value. Without this
+  // branch every filled contenteditable reads back empty, and the pre-submit
+  // gate would refuse an application that is in fact complete.
+  if (e.isContentEditable === true) return clean(e.innerText);
   const type = (e.getAttribute('type') || 'text').toLowerCase();
   if (type === 'checkbox' || type === 'radio') return e.checked ? 'on' : '';
   if (type === 'file') return (e.files && e.files.length) ? e.files[0].name : '';
