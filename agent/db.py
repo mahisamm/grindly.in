@@ -297,7 +297,36 @@ def active_users() -> list[dict]:
 # run_for_user, which passes failure_reason only when record["submit_attempted"]
 # is unset. Same signal that decides whether the daily slot and the idempotency
 # claim are refunded, so all three answers agree by construction.
-_PROVABLY_NOT_SENT = "(status = 'needs_review' AND failure_reason IS NOT NULL)"
+_PROVABLY_NOT_SENT = (
+    "(status = 'needs_review' AND failure_reason IS NOT NULL"
+    # A browser that never launched sent nothing, by definition — the 2026-07-31
+    # dead-Xvfb run marked 7 listings 'failed' and burned their URLs and
+    # (company, title) pairs forever, though no employer ever saw a byte.
+    # Only this reason: other failed rows can be post-click ambiguity (a
+    # timeout can fire AFTER the submit landed) and must stay locked.
+    # COALESCE, not a bare =: a NULL failure_reason makes the comparison NULL,
+    # and `AND NOT <NULL>` silently drops the row from every caller's result.
+    " OR (status = 'failed' AND COALESCE(failure_reason, '') = 'browser_launch'))"
+)
+
+
+def repair_misclassified_launch_failures() -> int:
+    """One-time, idempotent: rows written before BROWSER_LAUNCH existed.
+
+    The 2026-07-31 dead-Xvfb run classified its launch failures as
+    listing_closed ("browser has been **closed**"), so those rows miss the
+    _PROVABLY_NOT_SENT unlock above. Keyed on the exact prefix
+    channel senders put on a launch error — prose parsing is banned for
+    live decisions, but this targets a fixed historical string.
+    """
+    with conn() as c:
+        cur = c.execute(
+            "UPDATE applications SET failure_reason='browser_launch' "
+            "WHERE status='failed' "
+            "AND reason LIKE 'could not start a browser%' "
+            "AND (failure_reason IS NULL OR failure_reason <> 'browser_launch')"
+        )
+        return cur.rowcount or 0
 
 
 def applied_external_ids(uid: str) -> set[str]:
@@ -407,7 +436,11 @@ def committed_role_keys(uid: str) -> set[tuple[str, str]]:
         # live run, not just this lookup.
         rows = c.execute(
             "SELECT company, job_title FROM applications "
-            "WHERE user_id=? AND status <> 'skipped'",
+            "WHERE user_id=? AND status <> 'skipped' "
+            # Same exclusion as applied_external_ids, or it is meaningless
+            # there: a provably-unsent row re-admitted by URL was still
+            # skipped here as "duplicate: applied to same role".
+            f"AND NOT {_PROVABLY_NOT_SENT}",
             (uid,),
         ).fetchall()
         return {

@@ -41,6 +41,9 @@ class FAILURE_REASON:
     CUSTOM_QUESTIONS = "custom_questions"
     TIMEOUT = "timeout"
     EXCEPTION = "exception"
+    # The browser never started, so provably nothing reached the employer —
+    # db._PROVABLY_NOT_SENT keys on this to let the listing be retried.
+    BROWSER_LAUNCH = "browser_launch"
 
 
 _LOGIN_URL_HINTS = ("login", "signin", "sign-in", "/account/login", "authwall")

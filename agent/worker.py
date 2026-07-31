@@ -115,7 +115,13 @@ def _classify_failure(why: str) -> str:
     # Before the "closed" check: Playwright's launch error reads "browser has
     # been closed", which landed these in LISTING_CLOSED — a bucket drift.py
     # treats as transient site noise, so a dead Xvfb never raised an alert.
-    if "could not start a browser" in w or "browser has been closed" in w:
+    # A launch failure is provably pre-submit (no browser ever existed), so it
+    # gets its own reason and db._PROVABLY_NOT_SENT lets the listing retry; a
+    # browser that died MID-run proves nothing about the click and stays a
+    # plain exception, locked like any other ambiguous failure.
+    if "could not start a browser" in w:
+        return safety.FAILURE_REASON.BROWSER_LAUNCH
+    if "browser has been closed" in w:
         return safety.FAILURE_REASON.EXCEPTION
     if "login" in w or "session" in w or "logged out" in w:
         return safety.FAILURE_REASON.SESSION_EXPIRED
@@ -3045,6 +3051,13 @@ def main():
     args = ap.parse_args()
 
     worker_id = run_queue.default_worker_id()
+
+    try:
+        n = db.repair_misclassified_launch_failures()
+        if n:
+            log.info("unlocked %d listing(s) failed on browser launch", n)
+    except Exception as e:  # noqa: BLE001
+        log.warning("launch-failure repair skipped: %s", e)
 
     if args.drain:
         n = run_queue.drain(worker_id, run_job)

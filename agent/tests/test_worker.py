@@ -30,7 +30,7 @@ def test_classify_failure_browser_launch_is_not_listing_closed():
     assert worker._classify_failure(
         "could not start a browser: BrowserType.launch: Target page, context "
         "or browser has been closed"
-    ) == safety.FAILURE_REASON.EXCEPTION
+    ) == safety.FAILURE_REASON.BROWSER_LAUNCH
 
 
 def test_classify_failure_browser_closed_mid_run():
