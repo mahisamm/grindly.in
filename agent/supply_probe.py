@@ -183,7 +183,8 @@ def _probe_board(vendor: str, slug: str) -> dict:
     """
     result = {
         "vendor": vendor, "slug": slug, "live": False,
-        "postings": 0, "india_internships": 0, "listings": [],
+        "postings": 0, "india_postings": 0, "intern_postings": 0,
+        "india_internships": 0, "listings": [],
     }
     try:
         if vendor == "keka":
@@ -203,6 +204,20 @@ def _probe_board(vendor: str, slug: str) -> dict:
     result["live"] = True
     result["postings"] = len(postings)
     for p in postings:
+        # Which gate each posting dies at, counted separately. "3 internships
+        # from 400 boards" is useless on its own: an empty board, a board with
+        # no interns, and a board whose interns are all in Berlin need three
+        # completely different fixes, and only the counts tell them apart.
+        try:
+            in_india = bool(atsboards._INDIA.search(p.get("location") or ""))
+            is_intern = websource._looks_like_an_internship(
+                p.get("title") or "", (p.get("jd") or "")[:600])
+        except Exception:  # noqa: BLE001
+            continue
+        if in_india:
+            result["india_postings"] += 1
+        if is_intern:
+            result["intern_postings"] += 1
         try:
             if not atsboards._wanted(p):
                 continue
@@ -294,8 +309,9 @@ def run(pairs: list[tuple[str, str]], skills: list[str], domains: list[str],
         threshold: int, workers: int = 12) -> dict:
     """Poll every candidate board and score everything found."""
     tested = len(pairs)
-    live = 0
-    boards_with_supply = 0
+    live = boards_with_jobs = boards_with_supply = 0
+    postings = india_postings = intern_postings = 0
+    per_vendor: dict[str, dict[str, int]] = {}
     internships: list[dict] = []
 
     started = time.time()
@@ -306,10 +322,21 @@ def run(pairs: list[tuple[str, str]], skills: list[str], domains: list[str],
                 r = fut.result()
             except Exception:  # noqa: BLE001
                 continue
+            v = per_vendor.setdefault(
+                r["vendor"], {"tested": 0, "live": 0, "postings": 0, "internships": 0})
+            v["tested"] += 1
             if r["live"]:
                 live += 1
+                v["live"] += 1
+            if r["postings"]:
+                boards_with_jobs += 1
+            postings += r["postings"]
+            v["postings"] += r["postings"]
+            india_postings += r["india_postings"]
+            intern_postings += r["intern_postings"]
             if r["india_internships"]:
                 boards_with_supply += 1
+                v["internships"] += r["india_internships"]
                 internships.extend(r["listings"])
             if i % 50 == 0:
                 print(f"[probe] {i}/{tested} boards tested, "
@@ -334,11 +361,16 @@ def run(pairs: list[tuple[str, str]], skills: list[str], domains: list[str],
     return {
         "tested": tested,
         "live_boards": live,
+        "boards_with_jobs": boards_with_jobs,
         "boards_with_supply": boards_with_supply,
+        "postings": postings,
+        "india_postings": india_postings,
+        "intern_postings": intern_postings,
         "internships": len(internships),
         "matchable": len(matchable),
         "threshold": threshold,
         "elapsed_sec": elapsed,
+        "per_vendor": per_vendor,
         "per_1000_tested": {
             "live_boards": per_1000(live),
             "internships": per_1000(len(internships)),
@@ -411,10 +443,18 @@ def main() -> int:
     print("\n=== SUPPLY PROBE ===")
     print(f"boards tested        : {result['tested']}")
     print(f"live boards          : {result['live_boards']}")
+    print(f"boards with any job  : {result['boards_with_jobs']}")
     print(f"boards with supply   : {result['boards_with_supply']}")
+    print(f"total postings       : {result['postings']}")
+    print(f"  ...located India   : {result['india_postings']}")
+    print(f"  ...an internship   : {result['intern_postings']}")
     print(f"India internships    : {result['internships']}")
     print(f"matchable (>= {result['threshold']})  : {result['matchable']}")
     print(f"elapsed              : {result['elapsed_sec']}s")
+    print("\nper vendor (tested/live/postings/internships):")
+    for vendor, v in sorted(result["per_vendor"].items()):
+        print(f"  {vendor:<16}: {v['tested']:>4} / {v['live']:>4} / "
+              f"{v['postings']:>5} / {v['internships']:>3}")
     print("\nper 1000 boards TESTED:")
     for k, v in result["per_1000_tested"].items():
         print(f"  {k:<16}: {v}")
