@@ -444,6 +444,7 @@ def run(pairs: list[tuple[str, str]], skills: list[str], domains: list[str],
         "all_internships": sorted(
             ({"title": j["title"], "company": j["company"],
               "score": j.get("score", -1), "location": j["location"],
+              "url": j["url"], "jd_chars": len(j.get("jd_text") or ""),
               "reason": (j.get("reason") or "")[:110]} for j in internships),
             key=lambda j: j["score"], reverse=True,
         ),
@@ -531,10 +532,13 @@ def main() -> int:
     for k, v in result["per_1000_tested"].items():
         print(f"  {k:<16}: {v}")
     if result["all_internships"]:
-        print("\nevery India internship found (score, title, company):")
+        print("\nevery India internship found (score, jd chars, title, company):")
         for j in result["all_internships"]:
             flag = "OK " if j["score"] >= result["threshold"] else "   "
-            print(f"  {flag}{j['score']:>3}  {j['title'][:46]:<46} {j['company'][:24]}")
+            print(f"  {flag}{j['score']:>3} {j['jd_chars']:>6}c  "
+                  f"{j['title'][:42]:<42} {j['company'][:22]}")
+            if j["score"] < result["threshold"]:
+                print(f"        {j['url'][:100]}")
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
