@@ -70,6 +70,11 @@ def _context(uid: str = ""):
     profile = _profile_dir(uid)
     os.makedirs(profile, exist_ok=True)
     stealth.clear_stale_lock(profile)
+    # The identity this profile was logged in under, not a fresh one. See
+    # stealth.profile_identity: Internshala binds a session to the device that
+    # created it, so re-opening a saved login as a different browser is how a
+    # connected account started reporting "not signed in" the same morning.
+    ident = stealth.profile_identity(profile)
     pw = sync_playwright().start()
     try:
         ctx = pw.chromium.launch_persistent_context(
@@ -81,8 +86,8 @@ def _context(uid: str = ""):
                 "--no-first-run",
                 "--disable-dev-shm-usage",
             ],
-            viewport=stealth.random_viewport(),
-            user_agent=stealth.random_ua(),
+            viewport=ident["viewport"],
+            user_agent=ident["user_agent"],
         )
         stealth.apply_stealth(ctx)
     except Exception:
@@ -552,12 +557,49 @@ def _listing_closed(page) -> bool:
         return False
 
 
+# The things only a signed-in Internshala account renders. Positive evidence,
+# deliberately: the old test asked whether the words "login" and "register"
+# appeared anywhere in the HTML and "logout" did not, which is a question about
+# analytics payloads and script URLs as much as about the account — a listing
+# page says "login" 27 times while signed out and says "logout" zero times while
+# the account menu is right there.
+#
+# This list is also what `session_probe.py` prints, so when Internshala next
+# redesigns its header the drift is one command away from being visible.
+LOGGED_IN_MARKERS = (
+    "a[href*='/logout']",
+    "a[href*='sign_out']",
+    "#name_box",
+    "#name_container",
+    ".profile_container",
+    "#profile_container",
+    ".training_user_dropdown",
+    "a[href*='/student/dashboard']",
+    "a[href*='/my-applications']",
+    "a[href*='/application/detail']",
+)
+
+
+def is_logged_in(page) -> bool:
+    """True only when the page shows an account. Shared by the apply driver and
+    the connect flow so the two can never disagree — a connect that reports
+    success while every apply reports "not signed in" is the single most
+    confusing state this product has, and it is what happens when each side
+    answers the question its own way."""
+    for sel in LOGGED_IN_MARKERS:
+        try:
+            if page.query_selector(sel):
+                return True
+        except Exception:  # noqa: BLE001
+            continue
+    return False
+
+
 def _is_logged_out(page) -> bool:
-    html = page.content().lower()
-    return (
-        ("login" in html and "register" in html and "logout" not in html)
-        or bool(page.query_selector("a[href*='login']:visible"))
-    )
+    """Fail closed: no account marker means we do not apply. The cost of being
+    wrong here is a login prompt; the cost of being wrong the other way is an
+    application silently dropped on the floor."""
+    return not is_logged_in(page)
 
 
 def _text(scope, selectors):

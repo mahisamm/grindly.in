@@ -101,6 +101,26 @@ def _logged_in(page) -> bool:
     return bool(page.query_selector("#name_box, .profile_container, .training_user_dropdown"))
 
 
+def _survives_reload(page) -> bool:
+    """Does the apply driver agree the account is signed in?
+
+    `_logged_in` reads the page we happen to be standing on right after a submit.
+    What matters is the page apply() opens, asked with apply()'s own test — the
+    two answered differently in production, and the dashboard believed the
+    optimistic one for three days.
+    """
+    import internshala as _internshala
+
+    try:
+        page.goto("https://internshala.com/internships/",
+                  wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(2500)
+        return _internshala.is_logged_in(page)
+    except Exception as e:  # noqa: BLE001
+        print(f"[connect_login] could not verify the session: {e}")
+        return False
+
+
 def _otp_gate(page) -> bool:
     """True when the page is asking for an emailed/SMS one-time code."""
     try:
@@ -210,6 +230,10 @@ def login(uid: str, platform: str = "internshala", timeout: int = 90) -> dict:
     profile = internshala_mod._profile_dir(uid)
     os.makedirs(profile, exist_ok=True)
     stealth.clear_stale_lock(profile)
+    # The identity every later apply run will present on this profile. Logging in
+    # as one browser and applying as another is how a completed login came back
+    # as "not signed in" — see stealth.profile_identity.
+    ident = stealth.profile_identity(profile)
     headless = os.environ.get("INTERNPILOT_HEADLESS", "0") == "1"
 
     print(f"[connect_login] logging into {platform} for {uid} (headless={headless})")
@@ -226,8 +250,8 @@ def login(uid: str, platform: str = "internshala", timeout: int = 90) -> dict:
                 "--no-first-run",
                 "--disable-dev-shm-usage",
             ],
-            viewport=stealth.random_viewport(),
-            user_agent=stealth.random_ua(),
+            viewport=ident["viewport"],
+            user_agent=ident["user_agent"],
         )
         try:
             stealth.apply_stealth(ctx)
@@ -284,8 +308,14 @@ def login(uid: str, platform: str = "internshala", timeout: int = 90) -> dict:
                 break
 
         if _logged_in(page):
-            db.set_integration_status(uid, platform, "connected")
-            final = {"status": "connected", "detail": "logged in"}
+            if _survives_reload(page):
+                db.set_integration_status(uid, platform, "connected")
+                final = {"status": "connected", "detail": "logged in"}
+            else:
+                db.set_integration_status(
+                    uid, platform, "needs_login",
+                    error="The login didn't stick — please try again.")
+                final = {"status": "failed", "detail": "session did not survive a reload"}
         elif _bad_credentials(page):
             msg = _bad_credentials(page)
             db.set_integration_status(uid, platform, "needs_login", error=msg)
@@ -296,7 +326,12 @@ def login(uid: str, platform: str = "internshala", timeout: int = 90) -> dict:
             final = {"status": "failed", "detail": "captcha after submit"}
         elif _otp_gate(page):
             status = _wait_for_otp(uid, platform, page)
-            if status == "connected":
+            if status == "connected" and not _survives_reload(page):
+                db.set_integration_status(
+                    uid, platform, "needs_login",
+                    error="The login didn't stick — please try again.")
+                final = {"status": "failed", "detail": "session did not survive a reload"}
+            elif status == "connected":
                 db.set_integration_status(uid, platform, "connected")
                 final = {"status": "connected", "detail": "logged in via OTP"}
             else:

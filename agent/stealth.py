@@ -5,6 +5,7 @@ that LinkedIn, Indeed, Naukri, and Internshala probe before showing content.
 All platforms call this instead of maintaining their own inline scripts.
 """
 from __future__ import annotations
+import json
 import os
 import random
 
@@ -191,6 +192,67 @@ def random_viewport() -> dict:
 
 def random_ua() -> str:
     return random.choice(_USER_AGENTS)
+
+
+# One browser identity per saved login, chosen once and then never changed.
+#
+# Randomising the user agent per launch is right for an ephemeral context (see
+# channel_ats, which holds no account) and wrong — actively destructive — for a
+# PERSISTENT profile. Internshala's session is bound to the device that created
+# it, so a login saved as "Windows / Chrome 124" and reused an hour later as
+# "macOS / Chrome 125" is a session presented from a different machine: the
+# server drops it, and the agent reports "not signed in" on a session the user
+# completed minutes ago. Four of five launches drew a different UA than the one
+# the connect flow logged in with, and the daily public fetch runs on the same
+# profile, so the session was being re-rolled several times a day.
+#
+# It is also the opposite of stealth. A real browser does not change operating
+# system between visits while carrying the same cookies; a stable identity is
+# the quiet one.
+_IDENTITY_FILE = "grindly_identity.json"
+
+
+def _read_identity(path: str) -> dict | None:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:  # noqa: BLE001
+        return None
+    ua = data.get("user_agent")
+    vp = data.get("viewport")
+    if not isinstance(ua, str) or not ua.startswith("Mozilla/"):
+        return None
+    if not isinstance(vp, dict) or not vp.get("width") or not vp.get("height"):
+        return None
+    return {"user_agent": ua, "viewport": {"width": vp["width"], "height": vp["height"]}}
+
+
+def profile_identity(profile_dir: str) -> dict:
+    """The user agent and viewport this profile has always presented.
+
+    Written once, on first launch, and read by every process that opens the
+    profile afterwards — the connect flow that creates the session and every
+    worker replica that reuses it. Returns {"user_agent", "viewport"}.
+    """
+    path = os.path.join(profile_dir, _IDENTITY_FILE)
+    existing = _read_identity(path)
+    if existing:
+        return existing
+
+    ident = {"user_agent": random_ua(), "viewport": random_viewport()}
+    try:
+        os.makedirs(profile_dir, exist_ok=True)
+        # Exclusive create: two launches racing on a fresh profile must not each
+        # write their own identity, or the loser spends the rest of its life
+        # presenting a UA the cookies were not issued to.
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(ident, fh)
+    except FileExistsError:
+        return _read_identity(path) or ident
+    except OSError as e:
+        print(f"[stealth] could not save the profile identity: {e}")
+    return ident
 
 
 def random_delay_ms(min_ms: int = 1500, max_ms: int = 4000) -> int:

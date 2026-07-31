@@ -44,14 +44,18 @@ def _context(uid: str = ""):
     profile = _profile_dir(uid)
     os.makedirs(profile, exist_ok=True)
     stealth.clear_stale_lock(profile)
+    # Same identity every time this profile is opened — see
+    # stealth.profile_identity. A saved session presented from a browser
+    # that is not the one it was created in gets dropped by the platform.
+    ident = stealth.profile_identity(profile)
     pw = sync_playwright().start()
     try:
         ctx = pw.chromium.launch_persistent_context(
             profile,
             headless=os.environ.get("INTERNPILOT_HEADLESS", "0") == "1",
             args=["--disable-blink-features=AutomationControlled"],
-            user_agent=stealth.random_ua(),
-            viewport=stealth.random_viewport(),
+            user_agent=ident["user_agent"],
+            viewport=ident["viewport"],
             locale="en-IN",
         )
         stealth.apply_stealth(ctx)

@@ -28,15 +28,28 @@ except Exception:  # noqa: BLE001
 import db
 import stealth
 
+
+def _internshala_logged_in(page) -> bool:
+    # Imported lazily: connect_platform is also run on a dev box where importing
+    # the whole apply driver (and its Playwright-heavy module graph) at startup
+    # is a cost this file does not otherwise pay.
+    import internshala
+
+    return internshala.is_logged_in(page)
+
+
 # Per-platform login entry URL and a logged-in predicate.
 # The predicate returns True when the user is detected as authenticated.
 _PLATFORMS: dict[str, dict] = {
     "internshala": {
         "login_url": "https://internshala.com/login/student",
-        "check": lambda page: (
-            "logout" in (page.content().lower())
-            or bool(page.query_selector("#name_box, .profile_container, .training_user_dropdown"))
-        ),
+        # The apply driver's own test, imported rather than reimplemented. Two
+        # copies of "is this account signed in?" is how connect came to report a
+        # saved session while every application reported none.
+        "check": lambda page: _internshala_logged_in(page),
+        # Where to re-ask the question once the browser is closed: a normal
+        # listing page, which is what apply() actually opens.
+        "verify_url": "https://internshala.com/internships/",
         "label": "Internshala",
     },
     "naukri": {
@@ -113,6 +126,13 @@ def connect(uid: str, platform: str, timeout: int = 300, display: str | None = N
     profile = _profile_dir(uid, platform)
     os.makedirs(profile, exist_ok=True)
     stealth.clear_stale_lock(profile)
+    # The identity this profile will keep for the rest of its life — the SAME one
+    # every apply run presents afterwards. This used to be a hardcoded
+    # "Chrome/124 on Windows" while the apply side drew a fresh user agent per
+    # launch, so four logins in five were saved under a browser that never opened
+    # them again and the platform dropped the session. See
+    # stealth.profile_identity.
+    ident = stealth.profile_identity(profile)
 
     print(
         f"[connect] launching browser for {uid} on {cfg['label']} — "
@@ -133,12 +153,8 @@ def connect(uid: str, platform: str, timeout: int = 300, display: str | None = N
                 "--no-first-run",
                 "--disable-dev-shm-usage",
             ],
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            viewport={"width": 1280, "height": 860},
+            user_agent=ident["user_agent"],
+            viewport=ident["viewport"],
         )
         # Same bot-detection mitigations the apply-side drivers use. Without
         # this the login page sees navigator.webdriver etc. and is more likely
@@ -185,24 +201,67 @@ def connect(uid: str, platform: str, timeout: int = 300, display: str | None = N
             time.sleep(2)
 
         if connected:
-            db.set_integration_status(uid, platform, "connected")
-            # legacy Internshala column
-            if platform == "internshala":
-                db.set_internshala_connected(uid, True)
             print(
-                f"[connect] {cfg['label']} login detected — session saved. "
-                f"You can close the browser window."
+                f"[connect] {cfg['label']} login detected — checking that the "
+                f"session survives a reload."
             )
-            time.sleep(2)
-        else:
-            print(f"[connect] timed out waiting for {cfg['label']} login.")
+            # A login the agent cannot reuse is not a connection.
+            #
+            # The old code wrote `connected` the instant the page looked signed
+            # in and closed the browser. Everything that can go wrong AFTER that
+            # moment — cookies that never flush, a session the platform binds to
+            # a device and then drops, a "remember me" the user left unticked —
+            # went unnoticed here and surfaced hours later as every application
+            # failing with "not signed in", on an account the dashboard showed
+            # as connected. Reload the page the apply driver actually opens and
+            # ask again.
+            connected = _survives_reload(page, cfg)
+            if not connected:
+                print(
+                    f"[connect] {cfg['label']} session did not survive — "
+                    f"not marking the account connected."
+                )
 
         try:
             ctx.close()
         except Exception:  # noqa: BLE001
             pass
 
+    if connected:
+        db.set_integration_status(uid, platform, "connected")
+        # legacy Internshala column
+        if platform == "internshala":
+            db.set_internshala_connected(uid, True)
+        print(
+            f"[connect] {cfg['label']} login confirmed — session saved. "
+            f"You can close the browser window."
+        )
+    else:
+        db.set_integration_status(
+            uid, platform, "needs_login",
+            error=f"The {cfg['label']} login didn't stick — please try again.",
+        )
+        print(f"[connect] {cfg['label']} not connected.")
+
     return connected
+
+
+def _survives_reload(page, cfg: dict) -> bool:
+    """Re-ask the logged-in question on the page the apply driver opens.
+
+    Not a formality: the platform decides whether a session is real, and it
+    decides on the request AFTER the login, not during it.
+    """
+    url = cfg.get("verify_url")
+    if not url:
+        return True
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_timeout(2500)
+        return bool(cfg["check"](page))
+    except Exception as e:  # noqa: BLE001
+        print(f"[connect] could not verify the session: {e}")
+        return False
 
 
 def main():
