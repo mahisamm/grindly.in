@@ -860,8 +860,20 @@ _SLUG_PATTERNS = (
 )
 
 # Path segments that are part of the ATS's own URL structure, never a company.
+#
+# The second group is the VENDOR'S OWN subdomains. Searching `site:keka.com`
+# for internships returns Keka's marketing and content pages —
+# www.keka.com/glossary/intern, www.keka.com/hr-intern-job-description,
+# academy.keka.com — and the subdomain pattern happily read "www" and
+# "academy" as company names. Both were learned as boards and then polled on
+# every run, costing a guaranteed miss each time and reporting
+# "keka/www: no org id" in the logs. A vendor never hosts its own board on its
+# own marketing hostname.
 _NOT_A_SLUG = {"embed", "jobs", "job", "v1", "companies", "apply", "boards",
-               "posting-api", "job-board", "postings", "api", "widget"}
+               "posting-api", "job-board", "postings", "api", "widget",
+               "www", "academy", "blog", "help", "support", "docs", "app",
+               "careers", "about", "resources", "partners", "status", "learn",
+               "community", "developers", "developer", "product", "pricing"}
 
 
 def slugs_from_urls(urls) -> set[tuple[str, str]]:
