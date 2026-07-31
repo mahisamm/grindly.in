@@ -149,6 +149,48 @@ def _in_human_hours(hour: int) -> bool:
     return HUMAN_HOURS_START <= hour < HUMAN_HOURS_END
 
 
+def _rescore_order(scored: list, budget: int) -> list[int]:
+    """Which listings to spend a deep JD read on, as indexes into `scored`.
+
+    Ranking purely by score is circular. A board that publishes no description
+    leaves the listing scored on its title alone, and a title carries none of
+    the candidate's literal skill words — "Data Science Intern" mentions
+    neither `python` nor `machine learning`, so it scores 0 for exactly the
+    candidate it was written for. Measured live during the supply probe: a real
+    Data Science internship at Zypp Electric scored **0** against an ML profile
+    because its Keka board shipped no JD. Ranked by score, that listing sits at
+    the bottom of the very list whose purpose is to correct it, and no amount
+    of extra budget ever reaches it — the deep read is spent re-confirming
+    listings that already had a description and already scored well.
+
+    So the budget is split: half to the top scorers (confirm or deny what the
+    card claimed) and half to description-less listings, best-titled first.
+    Both halves stay in score order within themselves, and anything left over
+    when one half runs dry goes to the other so no budget is wasted.
+    """
+    if budget <= 0 or not scored:
+        return []
+
+    def _has_jd(row) -> bool:
+        return bool((row[2].get("jd_text") or "").strip())
+
+    with_jd = [i for i, row in enumerate(scored) if _has_jd(row)]
+    without_jd = [i for i, row in enumerate(scored) if not _has_jd(row)]
+
+    half = budget // 2
+    picked = without_jd[:half] + with_jd[: budget - min(half, len(without_jd))]
+    if len(picked) < budget:
+        # One side ran dry — refill from whatever the other side still has.
+        taken = set(picked)
+        for i in without_jd + with_jd:
+            if len(picked) >= budget:
+                break
+            if i not in taken:
+                picked.append(i)
+                taken.add(i)
+    return picked[:budget]
+
+
 def _daily_cap_for_today(uid: str, plan_cap: int, today: str | None = None) -> int:
     """Human-pace ceiling: a person applying manually sends roughly 5-10
     applications a day, never more than the plan allowance. Seeded by
@@ -2065,6 +2107,9 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # already won. Reading the JD of the few most promising listings before
     # deciding is also just what a person does.
     #
+    # Which listings get a read is decided by _rescore_order, NOT by score alone
+    # — see there for why ranking by score is circular.
+    #
     # Bounded page loads, paced like the rest of the run. The bound scales with
     # the plan: a flat 12 was fine for a 5/day cap but arithmetically starves a
     # Pro run — 12 deep reads cannot yield 15 sends after routing and dedup
@@ -2072,7 +2117,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # Roughly 3 evaluated per send needed, floored at the old flat limit.
     rescore_n = max(JD_RESCORE_LIMIT, cap * 3) if JD_RESCORE_LIMIT > 0 else 0
     if live and scored and rescore_n > 0:
-        for i in range(min(rescore_n, len(scored))):
+        for i in _rescore_order(scored, rescore_n):
             _, _, job = scored[i]
             src = job.get("source", "")
             mod = source_modules.get(src)
@@ -2088,7 +2133,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             time.sleep(random.uniform(*_BASE_PACE_SEC))
         scored.sort(key=lambda x: x[0], reverse=True)
         rescored_done = min(rescore_n, len(scored))
-        log.info("re-scored top %d listing(s) against their job descriptions",
+        log.info("re-scored %d listing(s) against their job descriptions",
                  rescored_done)
 
     for score, reason, job in scored:

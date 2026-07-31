@@ -325,8 +325,34 @@ def harvest_by_search(limit: int) -> list[tuple[str, str]]:
     return pairs
 
 
+def _deep_read(internships: list[dict], workers: int = 6) -> int:
+    """Fetch the real description for every listing whose board published none.
+
+    This is what `worker._rescore_order` now spends half its budget on, so the
+    probe has to do it too or it measures a funnel production no longer has.
+    Returns how many descriptions were recovered.
+    """
+    bare = [j for j in internships if not (j.get("jd_text") or "").strip()]
+    if not bare:
+        return 0
+
+    def _one(job: dict) -> bool:
+        try:
+            jd = websource.scrape_jd(job.get("url") or "")
+        except Exception:  # noqa: BLE001
+            return False
+        if not jd:
+            return False
+        job["jd_text"] = jd
+        job["skills"] = websource._infer_skills(f"{job['title']} {jd}")
+        return True
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        return sum(1 for ok in ex.map(_one, bare) if ok)
+
+
 def run(pairs: list[tuple[str, str]], skills: list[str], domains: list[str],
-        threshold: int, workers: int = 12) -> dict:
+        threshold: int, workers: int = 12, deep: bool = False) -> dict:
     """Poll every candidate board and score everything found."""
     tested = len(pairs)
     live = boards_with_jobs = boards_with_supply = 0
@@ -362,6 +388,12 @@ def run(pairs: list[tuple[str, str]], skills: list[str], domains: list[str],
                 print(f"[probe] {i}/{tested} boards tested, "
                       f"{live} live, {len(internships)} internships so far")
 
+    recovered = 0
+    bare_before = sum(1 for j in internships if not (j.get("jd_text") or "").strip())
+    if deep and internships:
+        print(f"[probe] deep-reading {bare_before} description-less listing(s)")
+        recovered = _deep_read(internships)
+
     matchable = []
     for job in internships:
         try:
@@ -391,6 +423,8 @@ def run(pairs: list[tuple[str, str]], skills: list[str], domains: list[str],
         "threshold": threshold,
         "elapsed_sec": elapsed,
         "per_vendor": per_vendor,
+        "no_description_on_board": bare_before,
+        "descriptions_recovered": recovered,
         "per_1000_tested": {
             "live_boards": per_1000(live),
             "internships": per_1000(len(internships)),
@@ -449,6 +483,9 @@ def main() -> int:
     ap.add_argument("--email", default="", help="score against this user's profile")
     ap.add_argument("--threshold", type=int, default=DEFAULT_THRESHOLD)
     ap.add_argument("--workers", type=int, default=12)
+    ap.add_argument("--deep", action="store_true",
+                    help="fetch the real description for listings whose board "
+                         "published none, as worker._rescore_order now does")
     ap.add_argument("--json", default="", help="write the full result here")
     args = ap.parse_args()
 
@@ -470,7 +507,8 @@ def main() -> int:
         print("[probe] no candidates to test")
         return 1
 
-    result = run(pairs, skills, domains, args.threshold, workers=args.workers)
+    result = run(pairs, skills, domains, args.threshold,
+                 workers=args.workers, deep=args.deep)
 
     print("\n=== SUPPLY PROBE ===")
     print(f"boards tested        : {result['tested']}")
@@ -481,6 +519,8 @@ def main() -> int:
     print(f"  ...located India   : {result['india_postings']}")
     print(f"  ...an internship   : {result['intern_postings']}")
     print(f"India internships    : {result['internships']}")
+    print(f"  ...no JD on board  : {result['no_description_on_board']}")
+    print(f"  ...JD recovered    : {result['descriptions_recovered']}")
     print(f"matchable (>= {result['threshold']})  : {result['matchable']}")
     print(f"elapsed              : {result['elapsed_sec']}s")
     print("\nper vendor (tested/live/postings/internships):")
