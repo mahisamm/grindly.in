@@ -260,3 +260,40 @@ def test_a_vendor_confirmation_url_only_counts_for_that_vendor():
 
     assert channel_ats._confirmed_by_url(_P(), "lever")
     assert not channel_ats._confirmed_by_url(_P(), "workable")
+
+
+# ── Whose problem is it? ────────────────────────────────────────────────────
+# A live run refused three real employer forms in a row — on "Date of Birth *",
+# "Expected Salary *" and "Graduation Month & Year *". Every one is a fact only
+# the user can state, and the reason on their dashboard quoted the employer's
+# asterisks back at them, which reads as a broken agent rather than as one edit
+# they could make once and never again.
+
+def test_a_blocking_question_is_named_as_the_setup_field():
+    gaps = channel_ats._blocking_facts(["Date of Birth *", "Expected Salary *"], {})
+    assert gaps == ["your date of birth", "the stipend you expect"]
+
+
+def test_a_fact_the_user_has_given_does_not_block():
+    gaps = channel_ats._blocking_facts(
+        ["Date of Birth *"], {"date_of_birth": "14/03/2005"}
+    )
+    assert gaps == []
+
+
+def test_a_question_setup_never_asked_is_not_blamed_on_the_user():
+    """That one is the agent's own to fix — a form it could not read. Reporting
+    it as a setup gap would send someone hunting for a box that does not
+    exist."""
+    assert channel_ats._blocking_facts(["Describe a time you shipped something"], {}) == []
+
+
+def test_the_same_fact_is_named_once_however_many_forms_ask():
+    gaps = channel_ats._blocking_facts(["Date of birth", "D.O.B *"], {})
+    assert gaps == ["your date of birth"]
+
+
+def test_every_named_fact_reads_as_something_a_person_would_fill():
+    for key, said in channel_ats._FACT_LABELS.items():
+        assert said and said == said.lower() or said.startswith("your"), key
+        assert "_" not in said, key

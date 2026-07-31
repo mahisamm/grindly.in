@@ -144,13 +144,17 @@ describe("required setup questions", () => {
     const typedByHand = ["college", "class12Percent"];
     for (const f of PROFF_FIELDS.filter((x) => x.required && !typedByHand.includes(x.key))) {
       expect(["select", "choice"], `${f.key} is free text`).toContain(f.type);
-      expect(f.options!.length, `${f.key} has no options`).toBeGreaterThan(0);
+      // A dropdown whose stored value differs from its label carries `choices`
+      // instead of `options` — gradMonth keeps month NUMBERS against month
+      // names. Still one tap; reading only `options` said it had none at all.
+      const picks = f.options ?? f.choices?.map((c) => c.value);
+      expect(picks!.length, `${f.key} has no options`).toBeGreaterThan(0);
       // A "select" is the whole world of answers, so one option is a question
       // with no answer. A "choice" always offers "Something else…", so a single
       // listed option ("Country: India") is still a one-tap answer for almost
       // everyone and never traps the person it does not fit.
       if (f.type === "select") {
-        expect(f.options!.length, `${f.key} offers no real choice`).toBeGreaterThan(1);
+        expect(picks!.length, `${f.key} offers no real choice`).toBeGreaterThan(1);
       }
     }
   });
@@ -167,7 +171,11 @@ describe("how much setup asks for", () => {
   );
 
   it("keeps the questions asked up front down to something answerable", () => {
-    expect(asked.length).toBeLessThanOrEqual(12);
+    // The number moves only for a question a real application was MEASURED to
+    // stop on — two of these were added after a live run refused three
+    // employer forms for facts that were sitting hidden under "More answers".
+    // It is a ceiling on drift, not a target: the wall this replaced was 26.
+    expect(asked.length).toBeLessThanOrEqual(13);
   });
 
   it("only blocks on questions the agent is genuinely stuck without", () => {
@@ -177,7 +185,15 @@ describe("how much setup asks for", () => {
     expect(required).toContain("currentSalary");
     expect(required).toContain("previousInternship");
     expect(required).toContain("availability");
+    // Added on the same evidence, from a live run: "Expected Salary *" and
+    // "Graduation Month & Year *" each stopped a real application dead, and
+    // both are a single tap from a list.
+    expect(required).toContain("expectedStipend");
+    expect(required).toContain("gradMonth");
     expect(required).not.toContain("gender");
+    // A date is typed, not tapped. It blocks real forms and is therefore
+    // visible, but demanding it before anyone has seen an application go out is
+    // the wall this setup was cut down to avoid.
     expect(required).not.toContain("dateOfBirth");
     // Grindly only applies to internships in India. Asking every user to
     // confirm the country they are in, and that they may work there, is asking
@@ -208,11 +224,14 @@ describe("how much setup asks for", () => {
   it("makes every visible question answerable in one tap where it can be", () => {
     // College and the percentages are genuinely free text or numeric; the rest
     // of what we ask for up front is a list to pick from.
+    // A date of birth and a portfolio URL cannot be a list either, and both
+    // were measured stopping real applications while hidden — so they are shown
+    // and left optional rather than folded away and silently costing sends.
     const typed = asked.filter(
       (f) => !["select", "choice"].includes(f.type) && !f.choices,
     );
     expect(typed.map((f) => f.key).sort()).toEqual(
-      ["class12Percent", "college"].sort(),
+      ["class12Percent", "college", "dateOfBirth", "portfolioUrl"].sort(),
     );
   });
 

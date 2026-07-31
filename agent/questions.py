@@ -839,7 +839,14 @@ def _setup_candidates(label: str, profile: dict) -> list[tuple[bool, str, str]]:
          "class12_percent", _num("class12_percent")),
         (bool(_LINKEDIN_Q.search(label)), "linkedin_url", _text("linkedin_url")),
         (bool(_GITHUB_Q.search(label)), "github_url", _text("github_url")),
-        (bool(_PORTFOLIO_Q.search(label)), "portfolio_url", _text("portfolio_url")),
+        # A required "Portfolio Link *" stopped a real application for a student
+        # who has no personal site — most don't. The question a recruiter is
+        # asking is "where can I see your work", and for that student the honest
+        # answer is their GitHub. It is their own stored URL, not an invention,
+        # so this stays inside the never-guess rule. Their own site still wins
+        # when they have one, and someone with neither still stops the form.
+        (bool(_PORTFOLIO_Q.search(label)), "portfolio_url",
+         _text("portfolio_url") or _text("github_url")),
         # Before _GRAD_YEAR_Q, which matches this label too and would answer
         # a "month & year" box with a bare year.
         (bool(_GRAD_MONTH_YEAR_Q.search(label)), "grad_month", _grad_month_year(profile)),

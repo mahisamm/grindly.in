@@ -480,6 +480,61 @@ def _unanswered_required(fields: list[dict], answers: list[dict]) -> list[str]:
     ]
 
 
+# The stored facts, in the words setup uses for them. A refusal that says
+# "could not answer: Graduation Month & Year (Completed / Expected) *" quotes
+# the employer's form at a user who has never seen it; the same refusal saying
+# "your graduation month" points at the box they can go and fill, once, for
+# every future application.
+_FACT_LABELS = {
+    "grad_month": "your graduation month",
+    "grad_year": "your graduation year",
+    "date_of_birth": "your date of birth",
+    "expected_stipend": "the stipend you expect",
+    "current_salary": "whether you're earning right now",
+    "previous_internship": "whether you've interned before",
+    "portfolio_url": "your portfolio or GitHub link",
+    "linkedin_url": "your LinkedIn link",
+    "github_url": "your GitHub link",
+    "notice_period": "your notice period",
+    "current_location": "the city you're in",
+    "preferred_locations": "where you want to work",
+    "gender": "your gender",
+    "nationality": "your nationality",
+    "country": "the country you're in",
+    "differently_abled": "the disability question",
+    "college": "your college name",
+    "degree": "your degree",
+    "class10_percent": "your class 10 percentage",
+    "class12_percent": "your class 12 percentage",
+    "hours_per_week": "the hours a week you can commit",
+    "availability": "when you can start",
+    "willing_to_relocate": "whether you'd relocate",
+    "work_authorization": "your work authorization",
+    "gpa": "your CGPA",
+    "phone": "your phone number",
+}
+
+
+def _blocking_facts(labels: list[str], profile: dict) -> list[str]:
+    """Which of these unanswered questions setup could have answered, named as
+    the thing the user would go and fill.
+
+    Splitting them out is the whole point. "The agent could not answer a
+    required question" reads as a broken agent; it is two different situations
+    with opposite fixes, and only one of them is ours (see
+    questions.missing_fact_for).
+    """
+    out: list[str] = []
+    for label in labels:
+        key = questions.missing_fact_for(label, profile)
+        if not key:
+            continue
+        said = _FACT_LABELS.get(key, key.replace("_", " "))
+        if said not in out:
+            out.append(said)
+    return out
+
+
 def apply(
     job: dict,
     cover_letter: str,
@@ -600,6 +655,20 @@ def apply(
             missing = _unanswered_required(fields, answers)
             if missing:
                 record["answers"] = questions.to_record(answers)
+                # Say whose problem it is. A live run refused three real
+                # employer forms in a row on "Date of Birth *", "Expected
+                # Salary *" and "Graduation Month & Year *" — every one a fact
+                # only the user can state, every one a box they had never been
+                # shown, and the reason on their dashboard quoted the
+                # employer's asterisks back at them. One sentence naming the
+                # setup field turns three stalled applications into one edit.
+                gaps = _blocking_facts(missing, profile)
+                if gaps:
+                    return "needs_review", (
+                        "waiting on facts only you can give: "
+                        + ", ".join(gaps[:3])
+                        + " — add them once in Setup and this sends itself"
+                    )
                 return "needs_review", (
                     "could not answer required question(s): " + "; ".join(missing[:3])
                 )

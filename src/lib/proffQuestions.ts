@@ -134,7 +134,10 @@ export const PROFF_FIELDS: ProffField[] = [
       { value: "9", label: "September" }, { value: "10", label: "October" },
       { value: "11", label: "November" }, { value: "12", label: "December" },
     ],
-    advanced: true,
+    // Measured on a live run: "Graduation Month & Year (Completed / Expected) *"
+    // stopped a real Keka application dead. Hidden behind "More answers" it was
+    // blank on every account, so the agent refused every form that asked.
+    required: true,
     group: "Education",
   },
   {
@@ -219,7 +222,11 @@ export const PROFF_FIELDS: ProffField[] = [
     numeric: true,
     suffix: "₹/mo",
     group: "About you",
-    advanced: true,
+    // Measured: "Expected Salary *" stopped a real application on a live run,
+    // and the same fact was the top setup gap across a twelve-form dry run.
+    // Nobody but the user can state it, so hiding the question behind "More
+    // answers" just moved the stall from setup to their application queue.
+    required: true,
   },
   // Measured, not guessed. A dry run of fourteen real application pages stalled
   // three times: twice on "What's your current salary?" and once on "Do you have
@@ -272,7 +279,12 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "text",
     placeholder: "e.g. 14/03/2005",
     group: "About you",
-    advanced: true,
+    // Measured: "Date of Birth *" stopped a real application on a live run —
+    // so it is no longer folded away under "More answers", where it was blank
+    // on every account. Still not REQUIRED: a date is typed, not tapped, and
+    // demanding it before anyone has seen an application go out is the wall
+    // this setup was cut down to avoid. `blankOptional` names it instead, and
+    // the application that stops says which fact it is waiting for.
   },
   {
     key: "nationality",
@@ -334,11 +346,13 @@ export const PROFF_FIELDS: ProffField[] = [
   {
     key: "portfolioUrl",
     label: "Portfolio or personal site",
-    help: "Optional. Left blank if you don't have one.",
+    help: "Left blank if you don't have one — a form that asks for it gets your GitHub instead, which answers the same question truthfully.",
     type: "text",
     placeholder: "yourname.dev",
     group: "About you",
-    advanced: true,
+    // Not required — plenty of students genuinely have none — but no longer
+    // hidden. A real form asked for it and the application stopped; the person
+    // it stopped had never been shown the box.
   },
   {
     key: "preferredDomains",
