@@ -55,4 +55,10 @@ USER worker
 # no display and every browser launch fails. Same reason we wait for the
 # socket and exit 1 if it never appears: a restart loop in `docker ps` is
 # diagnosable, a worker silently failing every apply is not.
-CMD ["sh", "-c", "rm -f /tmp/.X99-lock /tmp/.X11-unix/X99; Xvfb :99 -screen 0 1366x768x24 -ac +extension GLX +render -noreset & i=0; until [ -S /tmp/.X11-unix/X99 ] || [ $i -ge 20 ]; do i=$((i+1)); sleep 0.5; done; if [ ! -S /tmp/.X11-unix/X99 ]; then echo 'FATAL: Xvfb never came up on :99' >&2; exit 1; fi; DISPLAY=:99 python agent/worker.py --serve"]
+# `exec` makes python PID 1: docker stop's SIGTERM used to hit the sh wrapper,
+# which forwards nothing, so the worker was SIGKILLed mid-run and its queue
+# lock sat for the full 30-minute stale window on every deploy. With exec the
+# worker receives the SIGTERM itself and hands the run back (see
+# run_queue.install_shutdown_handler). Xvfb stays alive across the exec — it
+# is already running as a child by then.
+CMD ["sh", "-c", "rm -f /tmp/.X99-lock /tmp/.X11-unix/X99; Xvfb :99 -screen 0 1366x768x24 -ac +extension GLX +render -noreset & i=0; until [ -S /tmp/.X11-unix/X99 ] || [ $i -ge 20 ]; do i=$((i+1)); sleep 0.5; done; if [ ! -S /tmp/.X11-unix/X99 ]; then echo 'FATAL: Xvfb never came up on :99' >&2; exit 1; fi; export DISPLAY=:99; exec python agent/worker.py --serve"]

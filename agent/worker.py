@@ -1430,6 +1430,11 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     if active_sources:
         log.info("platform rotation today: %s (connected: %s)", active_sources, connected_platforms)
 
+    # Funnel counters for the one-line readout at the end of the run — the
+    # question "where did a slow day die" needs the stages side by side, not
+    # scattered across five log lines.
+    discovered_n = rescored_done = 0
+
     if discover:
         kw_sets = _expand_search_keywords(plan["domains"], skills)
         per_kw = max(8, (cap + 5) // max(1, len(active_sources) * len(kw_sets)))
@@ -1487,6 +1492,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                         fetch_errors[src_key] = str(e)[:180]
 
         log.info("total fetched: %d listings across all sources", len(all_jobs))
+        discovered_n = len(all_jobs)
 
         # Per-source yield. The total-zero alarm below only fires when EVERY
         # source is dead; one adapter quietly returning nothing (markup drift,
@@ -2059,9 +2065,14 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # already won. Reading the JD of the few most promising listings before
     # deciding is also just what a person does.
     #
-    # Bounded to JD_RESCORE_LIMIT page loads, paced like the rest of the run.
-    if live and scored and JD_RESCORE_LIMIT > 0:
-        for i in range(min(JD_RESCORE_LIMIT, len(scored))):
+    # Bounded page loads, paced like the rest of the run. The bound scales with
+    # the plan: a flat 12 was fine for a 5/day cap but arithmetically starves a
+    # Pro run — 12 deep reads cannot yield 15 sends after routing and dedup
+    # take their cut, so Pro's larger allowance bought nothing on supply.
+    # Roughly 3 evaluated per send needed, floored at the old flat limit.
+    rescore_n = max(JD_RESCORE_LIMIT, cap * 3) if JD_RESCORE_LIMIT > 0 else 0
+    if live and scored and rescore_n > 0:
+        for i in range(min(rescore_n, len(scored))):
             _, _, job = scored[i]
             src = job.get("source", "")
             mod = source_modules.get(src)
@@ -2076,8 +2087,9 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             ) + (job,)
             time.sleep(random.uniform(*_BASE_PACE_SEC))
         scored.sort(key=lambda x: x[0], reverse=True)
+        rescored_done = min(rescore_n, len(scored))
         log.info("re-scored top %d listing(s) against their job descriptions",
-                 min(JD_RESCORE_LIMIT, len(scored)))
+                 rescored_done)
 
     for score, reason, job in scored:
         dedup_key = (job["company"].lower(), job["title"].lower()[:40])
@@ -2702,6 +2714,16 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     if submit_only:
         log.info("done (safe-apply holds): prepared=%d", len(approved_apps))
         return {"applied": applied, "matched": 0, "failed": failed, "mode": "approved"}
+
+    # The whole day's story in one greppable line. Each stage is upstream of
+    # the next, so whichever number collapses first is where a slow day died:
+    # discovered (all sources) → rescored (deep JD reads) → matched (cleared
+    # threshold) → sent (agent submitted) / banked (waiting on the user's tap).
+    log.info(
+        "funnel: discovered=%d rescored=%d matched=%d sent=%d failed=%d "
+        "banked_for_user=%d cap_left=%d",
+        discovered_n, rescored_done, matched, applied, failed, queued, remaining,
+    )
 
     # 5. report + 6. notify
     #

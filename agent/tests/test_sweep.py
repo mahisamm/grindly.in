@@ -46,7 +46,8 @@ def test_a_users_hour_moves_between_days():
 def test_a_user_is_not_due_before_their_hour():
     hour = sweep.sweep_hour("u1", "2026-07-14")
     with patch.object(sweep.db, "active_users", return_value=["u1"]), \
-         patch.object(sweep.db, "has_live_run_today", return_value=False):
+         patch.object(sweep.db, "get_user_plan", return_value="free"), \
+         patch.object(sweep.db, "live_runs_today", return_value=0):
         assert sweep.due_users(_ist(hour - 1)) == []
         assert sweep.due_users(_ist(hour)) == ["u1"]
 
@@ -54,14 +55,47 @@ def test_a_user_is_not_due_before_their_hour():
 def test_a_user_who_already_ran_today_is_skipped():
     """Otherwise a container restart re-enqueues the entire fleet."""
     with patch.object(sweep.db, "active_users", return_value=["u1"]), \
-         patch.object(sweep.db, "has_live_run_today", return_value=True):
+         patch.object(sweep.db, "get_user_plan", return_value="free"), \
+         patch.object(sweep.db, "live_runs_today", return_value=1):
         assert sweep.due_users(_ist(23)) == []
 
 
 def test_only_active_users_are_swept():
     with patch.object(sweep.db, "active_users", return_value=[]), \
-         patch.object(sweep.db, "has_live_run_today", return_value=False):
+         patch.object(sweep.db, "live_runs_today", return_value=0):
         assert sweep.due_users(_ist(23)) == []
+
+
+# --- pro gets two passes a day ------------------------------------------------
+
+def test_pro_gets_two_slot_hours_and_others_get_one():
+    hours = sweep.sweep_hours("u1", "2026-07-14", "pro")
+    assert len(hours) == 2
+    assert hours[0] < hours[1]
+    assert all(sweep.SWEEP_HOUR_START <= h <= sweep.SWEEP_HOUR_END for h in hours)
+    assert len(sweep.sweep_hours("u1", "2026-07-14", "free")) == 1
+    assert len(sweep.sweep_hours("u1", "2026-07-14", "plus")) == 1
+
+
+def test_pro_afternoon_slot_fires_exactly_once():
+    """After the morning run, a pro user is due again at the second hour — and
+    once that second run exists, they are done for the day. The count contract
+    is what a restart cannot double-fire."""
+    h1, h2 = sweep.sweep_hours("u1", "2026-07-14", "pro")
+    with patch.object(sweep.db, "active_users", return_value=["u1"]), \
+         patch.object(sweep.db, "get_user_plan", return_value="pro"):
+        with patch.object(sweep.db, "live_runs_today", return_value=0):
+            assert sweep.due_users(_ist(h1)) == ["u1"]
+        with patch.object(sweep.db, "live_runs_today", return_value=1):
+            assert sweep.due_users(_ist(h1)) == []
+            assert sweep.due_users(_ist(h2)) == ["u1"]
+        with patch.object(sweep.db, "live_runs_today", return_value=2):
+            assert sweep.due_users(_ist(23)) == []
+
+
+def test_pro_slot_hours_are_stable_within_the_day():
+    assert sweep.sweep_hours("u1", "2026-07-14", "pro") == \
+        sweep.sweep_hours("u1", "2026-07-14", "pro")
 
 
 # --- enqueueing --------------------------------------------------------------

@@ -77,15 +77,38 @@ def sweep_hour(uid: str, today: str) -> int:
     return rng.randint(SWEEP_HOUR_START, SWEEP_HOUR_END)
 
 
+def sweep_hours(uid: str, today: str, plan: str = "free") -> list[int]:
+    """Every slot hour this user gets today. One for free/plus; two for pro.
+
+    Pro's 15/day cannot come out of a single discovery pass — one pass surfaces
+    a morning's worth of fresh sendable listings, and the cap math needs
+    roughly three evaluated listings per send. A second pass in the afternoon
+    doubles supply without making any single run longer, and both hours stay
+    seeded per-user so the fleet never converges on one minute.
+    """
+    if plan != "pro":
+        return [sweep_hour(uid, today)]
+    rng = random.Random(f"{uid}:{today}:sweep2")
+    midpoint = (SWEEP_HOUR_START + SWEEP_HOUR_END) // 2
+    return [
+        rng.randint(SWEEP_HOUR_START, midpoint),
+        rng.randint(midpoint + 1, SWEEP_HOUR_END),
+    ]
+
+
 def due_users(now: datetime.datetime | None = None) -> list[str]:
-    """Active users whose sweep hour has arrived and who have no live run today."""
+    """Active users owed a sweep: more slot hours have passed than runs have
+    happened. The count comparison is what lets Pro's afternoon slot fire
+    exactly once — and keeps a container restart from re-enqueueing anyone."""
     now = now or _ist_now()
     today = now.date().isoformat()
     out: list[str] = []
     for uid in db.active_users():
-        if now.hour < sweep_hour(uid, today):
+        hours = sweep_hours(uid, today, db.get_user_plan(uid))
+        passed = sum(1 for h in hours if now.hour >= h)
+        if passed <= 0:
             continue
-        if db.has_live_run_today(uid):
+        if db.live_runs_today(uid) >= passed:
             continue
         out.append(uid)
     return out

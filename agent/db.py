@@ -1257,6 +1257,21 @@ def has_live_run_today(uid: str) -> bool:
     return row is not None
 
 
+def live_runs_today(uid: str) -> int:
+    """How many live runs this user has had today (same non-'failed' rule as
+    has_live_run_today, for the same reason). The sweep compares this against
+    how many of the user's slot hours have passed — Pro gets two discovery
+    passes a day, and a count is what makes the second one fire exactly once."""
+    start = _start_of_today_db()
+    with conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) n FROM agent_runs WHERE user_id=? AND mode='live' "
+            "AND status <> 'failed' AND created_at >= ?",
+            (uid, start),
+        ).fetchone()
+    return int(row["n"] or 0)
+
+
 def _start_of_today_db():
     """Midnight today, in the type this backend's DateTime columns use."""
     midnight = datetime.datetime.combine(

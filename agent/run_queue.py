@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import socket
 import threading
 import time
@@ -19,6 +20,11 @@ import admin_settings
 import db
 
 log = logging.getLogger("grindly.queue")
+
+# The job THIS process is executing right now, for the shutdown handler.
+# drain() sets it before run_fn and clears it after; a deploy's SIGTERM lands
+# between any two bytecodes, so the handler reads whatever is current.
+_ACTIVE: dict = {"run_id": None, "worker_id": None}
 
 STALE_LOCK_MS = 30 * 60 * 1000  # a job locked longer than this is presumed crashed
 # Absolute wall-clock cap on a single ATTEMPT. The heartbeat renews locked_at every
@@ -415,6 +421,7 @@ def drain(worker_id: str, run_fn) -> int:
         if not job:
             break
         processed += 1
+        _ACTIVE["run_id"], _ACTIVE["worker_id"] = job["id"], worker_id
         stop_heartbeat = threading.Event()
         heartbeat_thread = threading.Thread(
             target=_heartbeat_loop,
@@ -457,13 +464,43 @@ def drain(worker_id: str, run_fn) -> int:
                 # reclaim_stale gets to it. Nothing to do but say so.
                 log.exception("could not record the failure of job %s", job["id"])
         finally:
+            _ACTIVE["run_id"] = _ACTIVE["worker_id"] = None
             stop_heartbeat.set()
             heartbeat_thread.join(timeout=1)
     return processed
 
 
+def install_shutdown_handler(worker_id: str) -> None:
+    """Hand the in-flight run back to the queue when the container is stopped.
+
+    Every deploy sends SIGTERM. Without this the run kept its lock and the
+    user's agent sat idle for the full STALE_LOCK_MS (30 min) before
+    reclaim_stale noticed the worker was gone. reschedule(), not mark_failed():
+    a deploy is not the run's fault, so it must not spend one of its three
+    attempts — and reschedule's attempts-decrement is exactly that contract.
+
+    os._exit, not sys.exit: the run is mid-Playwright in this same thread, and
+    unwinding it cleanly inside a 10-second docker-stop grace window is a bet
+    we lose — the browser dies with the container either way, and any submit
+    already in flight keeps its idempotency claim, so the requeued run skips
+    it rather than double-sending.
+    """
+    def _handoff(signum, frame):  # noqa: ARG001
+        rid, wid = _ACTIVE.get("run_id"), _ACTIVE.get("worker_id")
+        if rid and wid:
+            try:
+                if reschedule(rid, wid, delay_seconds=15):
+                    log.info("SIGTERM: run %s handed back to the queue", rid)
+            except Exception:  # noqa: BLE001
+                log.exception("SIGTERM: could not requeue %s; stale reclaim will", rid)
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, _handoff)
+
+
 def serve(worker_id: str, run_fn, interval: int = 10):
     """Drain in a loop forever (simple service mode)."""
+    install_shutdown_handler(worker_id)
     log.info("serve loop as %s, poll %ds", worker_id, interval)
     while True:
         try:
