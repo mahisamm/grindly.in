@@ -1195,6 +1195,15 @@ def answer_fields(
             unreadable_label(label_l)
             or rec["kind"] in _TYPED_INPUTS
             or missing_fact_for(label_l, profile)
+            # Name boxes too, same reason: the answering pass refuses to let a
+            # model compose the candidate's identity, and this loop was undoing
+            # that refusal — a live Greenhouse application went out with the
+            # generic paragraph as the candidate's "Last Name*" (the stored
+            # name was one word, so the deterministic split had no surname).
+            or _FIRST_NAME.search(label_l)
+            or _MIDDLE_NAME.search(label_l)
+            or _LAST_NAME.search(label_l)
+            or _NAME_SELF.search(label_l)
         ):
             continue
         if not rec["answer"] and f["required"] and rec["kind"] in ("textarea", "text"):

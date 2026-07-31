@@ -1454,11 +1454,11 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         # start before there was anything to hand it.
         def run_always_on() -> list[tuple[str, list[dict]]]:
             out = []
-            for name in ALWAYS_ON_SOURCES:
-                mod_on = loaded.get(name)
+            for src_key in ALWAYS_ON_SOURCES:
+                mod_on = loaded.get(src_key)
                 if mod_on is not None:
                     out.append(_fetch_source_all_kw(
-                        name, mod_on, kw_sets, per_kw, uid, fetch_errors))
+                        src_key, mod_on, kw_sets, per_kw, uid, fetch_errors))
             return out
 
         board_srcs = {s: m for s, m in loaded.items() if s not in ALWAYS_ON_SOURCES}
@@ -1469,17 +1469,22 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             }
             if any(s in loaded for s in ALWAYS_ON_SOURCES):
                 futs[ex.submit(run_always_on)] = "|".join(ALWAYS_ON_SOURCES)
+            # src_key, never `name`: that variable is the CANDIDATE'S name from
+            # the top of run_for_user, and a for-loop target leaks past its
+            # loop. Reusing it here renamed the candidate after the last source
+            # to finish — a live Greenhouse application went out with
+            # First Name "internshala".
             for fut in concurrent.futures.as_completed(futs):
                 src_done = futs[fut]
                 try:
                     result = fut.result()
-                    for name, src_jobs in (result if isinstance(result, list) else [result]):
+                    for src_key, src_jobs in (result if isinstance(result, list) else [result]):
                         all_jobs.extend(src_jobs)
-                        source_modules[name] = loaded[name]
+                        source_modules[src_key] = loaded[src_key]
                 except Exception as e:  # noqa: BLE001
                     log.error("%s parallel fetch error: %s", src_done, e)
-                    for name in src_done.split("|"):
-                        fetch_errors[name] = str(e)[:180]
+                    for src_key in src_done.split("|"):
+                        fetch_errors[src_key] = str(e)[:180]
 
         log.info("total fetched: %d listings across all sources", len(all_jobs))
 

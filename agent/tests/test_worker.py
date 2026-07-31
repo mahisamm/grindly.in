@@ -38,6 +38,18 @@ def test_classify_failure_browser_closed_mid_run():
         safety.FAILURE_REASON.EXCEPTION
 
 
+def test_the_candidates_name_is_never_a_loop_variable():
+    # `name` at the top of run_for_user IS the candidate. A discovery loop that
+    # reuses it as its target leaks (for-loop targets survive the loop), and a
+    # live Greenhouse application went out with First Name "internshala" —
+    # whichever source finished fetching last.
+    import inspect
+    src = inspect.getsource(worker)
+    assert not re.search(r"\bfor\s+name\b", src)
+    assert not re.search(r"\bfor\s+\w+\s*,\s*name\b", src)
+    assert not re.search(r"\bfor\s+name\s*,", src)
+
+
 def test_classify_failure_upload_failed():
     assert worker._classify_failure("resume upload fail: rejected format") == \
         safety.FAILURE_REASON.UPLOAD_FAILED

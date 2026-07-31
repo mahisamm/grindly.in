@@ -259,6 +259,21 @@ def test_the_college_cgpa_is_still_answered(label):
 # --- the generic paragraph never lands in a number box ----------------------
 
 @pytest.mark.parametrize("label", [
+    "First Name*", "Last Name*", "Middle name", "Full Name*",
+])
+def test_the_fallback_paragraph_stays_out_of_name_boxes(label):
+    """A live Greenhouse application went out with the generic paragraph as the
+    candidate's "Last Name*": their stored name was a single word, so the
+    deterministic split had no surname to give, the answering pass correctly
+    refused to let a model compose identity — and the required-field fallback
+    then undid that refusal one loop later."""
+    with patch.object(questions.llm_mod, "chat_json_ensemble", return_value={}):
+        out = _answer([_field(label, kind="text", required=True)], name="internshala")
+    assert out[0]["answer"] in ("", "internshala")
+    assert "background" not in (out[0]["answer"] or "")
+
+
+@pytest.mark.parametrize("label", [
     "Expected stipend", "Hours per week", "Year of graduation?", "Class 12 percentage (%)",
 ])
 def test_the_fallback_paragraph_stays_out_of_datum_fields(label):
