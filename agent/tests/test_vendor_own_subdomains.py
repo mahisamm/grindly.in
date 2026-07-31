@@ -54,3 +54,31 @@ def test_the_existing_structural_words_still_hold():
     """Regression guard for the original _NOT_A_SLUG entries."""
     for word in ("embed", "jobs", "api", "widget", "posting-api"):
         assert word in atsboards._NOT_A_SLUG
+
+
+# --- and the same pages are never fetched as postings -----------------------
+
+def test_vendor_marketing_pages_are_not_treated_as_postings():
+    """Excluding them from the board list stopped them being POLLED; they were
+    still being fetched as candidate listings, one wasted page load each per
+    run. These are real URLs the live run pulled."""
+    import websource
+
+    for url in [
+        "https://www.keka.com/glossary/intern",
+        "https://www.keka.com/hr-intern-job-description",
+        "https://www.keka.com/internship-offer-letter-email-template",
+        "https://www.keka.com/interns-onboarding-checklist",
+        "https://academy.keka.com/careers/",
+        "https://resources.workable.com/internship-job-description",
+    ]:
+        assert not websource._is_a_single_posting("Intern Job Description", url), url
+
+
+def test_a_real_tenant_posting_is_still_a_posting():
+    import websource
+
+    assert websource._is_a_single_posting(
+        "Backend Intern", "https://vyaparapp.keka.com/careers/jobdetails/123")
+    assert websource._is_a_single_posting(
+        "SDE Intern", "https://boards.greenhouse.io/cloudsek/jobs/5177352004")

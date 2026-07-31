@@ -336,6 +336,20 @@ _INDEX_PATH = re.compile(
 _MAX_ROLE_MENTIONS = int(os.environ.get("GRINDLY_INDEX_ROLE_LIMIT", "6"))
 
 
+# An ATS vendor's own marketing and content site, which lives on the same
+# domain as its customers' boards. Searching `site:keka.com` for internships
+# (Keka being the highest-yield vendor) returns Keka's SEO content —
+# /glossary/intern, /hr-intern-job-description, /internship-offer-letter-email-
+# template, /interns-onboarding-checklist — none of which is a job anyone can
+# apply to. Each one cost a page fetch per run before this.
+_VENDOR_MARKETING_HOST = re.compile(
+    r"//(?:www|academy|blog|help|support|docs|learn|resources|community|"
+    r"developers?|partners|status)\."
+    r"(?:keka|workable|greenhouse|lever|ashbyhq|smartrecruiters)\.(?:com|io|co)\b",
+    re.I,
+)
+
+
 def _is_a_single_posting(title: str, url: str) -> bool:
     """Is this one applyable role, or a company's list of roles?
 
@@ -346,6 +360,10 @@ def _is_a_single_posting(title: str, url: str) -> bool:
     is in hand, which is the one that catches a listicle whose title says
     nothing.
     """
+    # The vendor's own content site is never a posting, whatever the path
+    # happens to look like.
+    if _VENDOR_MARKETING_HOST.search(url or ""):
+        return False
     if _ATS_HOST.search(url):
         return bool(_ATS_POSTING.search(url))
     title = (title or "").strip()
