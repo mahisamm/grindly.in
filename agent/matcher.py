@@ -14,15 +14,33 @@ except Exception:  # noqa: BLE001 — matcher is importable standalone in tests
     _KNOWN_FOR_GAP: list[str] = []
 
 
+# How much of a job description the semantic pass may read. Matches the window
+# score_job uses for keyword matching, and it is the whole point: at 1200 the
+# comparison saw a posting's masthead, cookie notice and "about us" — the very
+# boilerplate the keyword window was widened to 6000 to get past — while the
+# requirements section naming the stack sat below the cut. The semantic signal
+# was therefore computed against the least informative part of every page.
+_JD_WINDOW = 6000
+
+
 def _tfidf_score(text_a: str, text_b: str) -> float:
-    """TF-IDF cosine similarity between two text blobs. 0.0-1.0. Requires scikit-learn."""
+    """TF-IDF cosine similarity between two text blobs. 0.0-1.0.
+
+    Fit on these two documents alone, so the IDF term carries little
+    information — with a corpus of two, a word is in half the corpus or all of
+    it. What survives is a length-normalised weighted overlap, which is a
+    reasonable similarity and is used accordingly: a small ADDITIVE bonus in
+    score_job, never a multiplier on the score. Returns 0.0 rather than raising
+    if scikit-learn is unavailable, so scoring degrades to keywords instead of
+    failing a run.
+    """
     if not text_a or not text_b:
         return 0.0
     try:
         from sklearn.feature_extraction.text import TfidfVectorizer
         from sklearn.metrics.pairwise import cosine_similarity as _cos
-        vect = TfidfVectorizer(stop_words="english", max_features=500)
-        mat = vect.fit_transform([text_a[:1200], text_b[:1200]])
+        vect = TfidfVectorizer(stop_words="english", max_features=2000)
+        mat = vect.fit_transform([text_a[:_JD_WINDOW], text_b[:_JD_WINDOW]])
         return float(_cos(mat[0:1], mat[1:2])[0][0])
     except Exception:  # noqa: BLE001
         return 0.0
@@ -207,8 +225,9 @@ def score_job(
         # well below it. Employer-hosted internships (DevRev, CloudSEK, Thena,
         # Enterpret) therefore scored 5-17 against a threshold of 65 with the
         # candidate's own skills printed further down the same page. Bounded so
-        # a pathological page cannot make scoring quadratic.
-        haystack += " " + _norm(jd_text[:6000])
+        # a pathological page cannot make scoring quadratic. Shared with the
+        # semantic pass so both halves of scoring read the same posting.
+        haystack += " " + _norm(jd_text[:_JD_WINDOW])
     hay_tokens = _tokens(haystack)
 
     if not skills:
