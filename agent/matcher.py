@@ -74,6 +74,19 @@ def _tokens(s: str) -> set[str]:
 # scoring around 21.
 RELEVANCE_SATURATION = 3
 
+# What a title naming the candidate's own field is worth, counted in the same
+# units as RELEVANCE_SATURATION (so 2 of 3 = strong, but never a full match).
+#
+# Measured: Zypp Electric published a "Data Science Intern" role with a
+# 119-character description. There is nothing in that page for keyword overlap
+# to find, so an ML candidate scored 12 on a role written for them. Meanwhile a
+# 6000-character "B2B Sales intern" scored 0 correctly — length is not quality.
+# An employer who names the field in the TITLE has stated the role's subject
+# more directly than any keyword buried in prose, so that deserves to count as
+# evidence rather than a 0.12 garnish. Deliberately below saturation: a listing
+# that actually names the candidate's stack must always outrank a bare title.
+TITLE_DOMAIN_RELEVANCE = 2
+
 
 # What a listing may call a domain instead of the name the user picked in
 # onboarding. Every entry is a WHOLE PHRASE, never a bare token: the loose
@@ -208,6 +221,15 @@ def score_job(
     hits = [sk for sk in skills if sk in haystack or hay_tokens & _tokens(sk)]
     relevance = min(1.0, len(hits) / RELEVANCE_SATURATION)
 
+    #    A title that names the candidate's own field is evidence in itself —
+    #    see TITLE_DOMAIN_RELEVANCE. Applied as a FLOOR, never an addition, so
+    #    a listing that genuinely names their stack is unaffected and always
+    #    ranks higher than one carrying only a well-aimed title.
+    title_hay = _norm(job.get("title", ""))
+    title_domain = bool(domains) and _domain_hit(domains, title_hay, _tokens(title_hay))
+    if title_domain:
+        relevance = max(relevance, TITLE_DOMAIN_RELEVANCE / RELEVANCE_SATURATION)
+
     # 2) coverage — of what the ROLE asks for, how much does the candidate have.
     #    None (not 0.0) when the listing declares no skills at all, so "we don't
     #    know what this role wants" doesn't read as "the candidate has none of it".
@@ -241,6 +263,13 @@ def score_job(
 
     if hits:
         reason = "matches " + ", ".join(hits[:4])
+    elif title_domain:
+        # Never "weak skill overlap" for a listing that scored on its title:
+        # the user reads this line to decide whether to trust the match, and
+        # naming the real evidence is the difference between a reason and an
+        # excuse. An under-described posting is exactly where they most need
+        # to know the score came from the title alone.
+        reason = "the role itself is in your field, though the posting says little"
     else:
         reason = "weak skill overlap"
 
