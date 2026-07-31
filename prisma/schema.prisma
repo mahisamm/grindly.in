@@ -39,6 +39,9 @@ enum FailureReason {
   custom_questions
   timeout
   exception
+  // The browser never started — provably pre-submit, so the agent may
+  // retry the listing (agent/db.py _PROVABLY_NOT_SENT keys on this).
+  browser_launch
 }
 
 enum Outcome {
