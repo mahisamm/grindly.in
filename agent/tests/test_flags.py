@@ -109,3 +109,52 @@ def test_no_touch_mode_is_off_unless_asked_for():
 def test_no_touch_mode_turns_on_from_one_env_var(monkeypatch):
     monkeypatch.setenv("GRINDLY_NO_TOUCH_ONLY", "1")
     assert flags.no_touch_only() is True
+
+
+# ---- no-touch mode keeps what the agent CAN finish alone --------------------
+# "No touch" is a promise about the user's effort, not a synonym for "Tier A".
+# Dropping every board unconditionally meant a user could finish the Internshala
+# connect flow, see the dashboard say "connected", and never be shown another
+# Internshala listing — because none was ever scraped again.
+
+def test_no_touch_drops_a_board_the_user_has_not_connected(monkeypatch):
+    import worker
+
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
+    assert worker._no_touch_boards(["internshala"], []) == []
+
+
+def test_no_touch_keeps_a_connected_board_the_agent_may_submit_to(monkeypatch):
+    import worker
+
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
+    assert worker._no_touch_boards(["internshala"], ["internshala"]) == ["internshala"]
+
+
+def test_no_touch_still_drops_tier_c_even_when_connected(monkeypatch):
+    """LinkedIn/Naukri/Indeed/Unstop are never submitted from our servers, so a
+    session on one buys the user nothing but a queue of taps."""
+    import worker
+
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
+    boards = ["linkedin", "naukri", "indeed", "unstop"]
+    assert worker._no_touch_boards(boards, boards) == []
+
+
+def test_no_touch_drops_a_connected_board_while_tier_b_is_switched_off(monkeypatch):
+    import worker
+
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    monkeypatch.delenv("GRINDLY_TIER_B_APPLY", raising=False)
+    assert worker._no_touch_boards(["internshala"], ["internshala"]) == []
+
+
+def test_connected_platform_names_match_case_insensitively(monkeypatch):
+    import worker
+
+    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
+    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
+    assert worker._no_touch_boards(["internshala"], ["Internshala"]) == ["internshala"]

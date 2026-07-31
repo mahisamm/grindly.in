@@ -86,6 +86,29 @@ if _SENTRY_DSN:
 _OPS_CHANNEL = os.environ.get("OPS_SLACK_CHANNEL", "ops-alerts")
 
 
+def _no_touch_boards(sources: list[str], connected: list[str]) -> list[str]:
+    """Of these boards, the ones this user's agent can finish without them.
+
+    Two conditions, both required: the user has a live session on it (nothing to
+    scrape usefully otherwise, since the apply would stop at a login), and the
+    tier policy permits an unattended final submit. `requires_manual_final_submit`
+    is the same function the apply path consults, so discovery and delivery
+    cannot form two different opinions about the same board.
+    """
+    live = {(s or "").lower() for s in connected or []}
+    keep = []
+    for src in sources:
+        if (src or "").lower() not in live:
+            continue
+        try:
+            manual, _ = safety.requires_manual_final_submit(src)
+        except Exception:  # noqa: BLE001
+            manual = True
+        if not manual:
+            keep.append(src)
+    return keep
+
+
 def _classify_failure(why: str) -> str:
     """Map a freeform apply failure message to an enumerated FAILURE_REASON."""
     w = (why or "").lower()
@@ -1370,12 +1393,19 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
 
     # A submit-only run does no discovery: the rotation exists to decide which
     # boards to *scrape* today, and there is nothing to scrape.
-    active_sources = (
-        _platforms_for_today(
-            uid, [s for s in DISCOVERY_PLATFORMS if flags.source_enabled(s)]
-        )
-        if discover and not flags.no_touch_only() else []
-    )
+    board_pool = [s for s in DISCOVERY_PLATFORMS if flags.source_enabled(s)]
+    if flags.no_touch_only():
+        # No-touch means "keep what the agent can finish alone" — and for a user
+        # who has connected Internshala, Internshala IS something it can finish
+        # alone (Tier B, hosted consent, unattended submit allowed). Dropping
+        # every board unconditionally read the mode as "Tier A only", which is a
+        # different rule: it meant a user could complete the connect flow, watch
+        # the dashboard say "connected", and never be shown a single Internshala
+        # listing again, because none was ever scraped.
+        #
+        # Users who have connected nothing see no boards, exactly as before.
+        board_pool = _no_touch_boards(board_pool, connected_platforms)
+    active_sources = _platforms_for_today(uid, board_pool) if discover else []
     if discover:
         # Appended after the rotation, never subject to it.
         active_sources = active_sources + [
