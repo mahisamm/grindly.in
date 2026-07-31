@@ -227,6 +227,39 @@ def _read_identity(path: str) -> dict | None:
     return {"user_agent": ua, "viewport": {"width": vp["width"], "height": vp["height"]}}
 
 
+# What a job application never needs to download. Blocking these is the single
+# biggest resource win available on a one-core box: an ATS careers page ships
+# hero photography, an icon font, a video loop and a tracker bundle, none of
+# which affect whether a form can be read, filled or submitted.
+#
+# Deliberately NOT blocked: stylesheets. Playwright's `is_visible()` — which
+# read_fields leans on to skip react-select's hidden twin inputs — is decided
+# by computed style, so blocking CSS makes every control look visible and the
+# form unreadable. Scripts stay too: these forms ARE the script.
+_BLOCKED_RESOURCE_TYPES = frozenset({"image", "media", "font"})
+
+
+def block_heavy_resources(page_or_context) -> bool:
+    """Refuse images, media and fonts for the rest of this page's life.
+
+    Returns whether the route was installed; a failure here is never worth
+    losing an application over, so the caller carries on with a heavier page.
+    """
+    try:
+        page_or_context.route(
+            "**/*",
+            lambda route: (
+                route.abort()
+                if route.request.resource_type in _BLOCKED_RESOURCE_TYPES
+                else route.continue_()
+            ),
+        )
+        return True
+    except Exception as e:  # noqa: BLE001
+        print(f"[stealth] could not block heavy resources: {type(e).__name__}: {e}")
+        return False
+
+
 def profile_identity(profile_dir: str) -> dict:
     """The user agent and viewport this profile has always presented.
 

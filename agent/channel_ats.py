@@ -642,6 +642,10 @@ def apply(
             accept_downloads=False,
         )
         stealth.apply_stealth(ctx)
+        # Before the first navigation, so nothing heavy is in flight already.
+        # One vCPU shared with everything else on the box; decoding a careers
+        # page's hero imagery and icon font is pure cost to a form-filler.
+        stealth.block_heavy_resources(ctx)
         page = ctx.new_page()
 
         try:

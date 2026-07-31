@@ -343,7 +343,14 @@ services:
       replicas: 1
       resources:
         limits:
-          memory: 256M
+          # 384M, not 256M. Measured on the live box: this container idles at
+          # 213M — the scheduler itself is tiny, but importing the discovery
+          # stack (atsboards -> websource -> websearch) costs most of that
+          # before a single line of work runs. It was sitting at 83% of the old
+          # limit, and the daily board harvest allocates on top of it, so the
+          # first harvest on a busy day would have been an OOM kill of the one
+          # process that enqueues everybody's agent.
+          memory: 384M
           cpus: "0.25"
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f 'sweep.py' || exit 1"]

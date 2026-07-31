@@ -80,7 +80,14 @@ _NARROW_CITIES = 3
 # smaller harvest.
 MAX_QUERIES = int(os.environ.get("GRINDLY_HARVEST_MAX_QUERIES", "240"))
 SEARCH_WORKERS = int(os.environ.get("GRINDLY_HARVEST_SEARCH_WORKERS", "4"))
-VALIDATE_WORKERS = int(os.environ.get("GRINDLY_HARVEST_VALIDATE_WORKERS", "8"))
+# 3, not 8. A board's payload is the company's entire careers site — measured,
+# 20 of them exceed 2 MB apiece — and validation holds one per worker in
+# memory at once. This runs in the sweep container, which idles at 213 MB
+# because of its imports alone, on a 1 vCPU / 3.8 GB box shared with a headed
+# Chromium. Eight concurrent multi-megabyte payloads is how the scheduler that
+# enqueues everybody's agent gets OOM-killed. Validation is a once-a-day job
+# with no user waiting on it, so trading wall-clock for headroom is free.
+VALIDATE_WORKERS = int(os.environ.get("GRINDLY_HARVEST_VALIDATE_WORKERS", "3"))
 
 
 def queries() -> list[str]:
@@ -151,15 +158,22 @@ def validate(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """
     def _one(pair: tuple[str, str]):
         vendor, slug = pair
+        payload = postings = None
         try:
             payload = (atsboards._keka_board(slug) if vendor == "keka"
                        else atsboards._get_json(atsboards._API[vendor].format(slug=slug)))
             if not payload:
                 return None
             postings = atsboards._postings(vendor, payload, slug)
+            return pair if postings else None
         except Exception:  # noqa: BLE001
             return None
-        return pair if postings else None
+        finally:
+            # Drop both references before this worker picks up the next board.
+            # Without it a thread keeps its last (possibly multi-megabyte)
+            # payload alive for the whole map, so peak memory is
+            # workers x largest-board rather than workers x current-board.
+            del payload, postings
 
     if not pairs:
         return []
