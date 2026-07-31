@@ -713,12 +713,20 @@ def _enrich(vendor: str, slug: str, posting: dict) -> str:
 
 def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     """Internships posted on employers' own ATS boards. Never raises."""
+    # The hardcoded list is never subject to backoff. Each of those slugs was
+    # verified by hand against its API, and they are the spine of the source —
+    # a quiet fortnight is not evidence that Razorpay stopped hiring interns.
     targets = [(v, s) for v, slugs in BOARDS.items() for s in sorted(set(slugs))]
-    learned = 0
+    pinned = set(targets)
+    learned = skipped = 0
     for vendor, slug in _slugs_seen_before():
-        if (vendor, slug) not in targets:
-            targets.append((vendor, slug))
-            learned += 1
+        if (vendor, slug) in pinned:
+            continue
+        if not _poll_due(vendor, slug):
+            skipped += 1
+            continue
+        targets.append((vendor, slug))
+        learned += 1
 
     found: list[tuple[int, dict]] = []
     # Keyed by canonical identity, not URL: Greenhouse publishes the same job on
@@ -742,10 +750,12 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
             except Exception as e:  # noqa: BLE001 — a board that changed shape
                 print(f"[atsboards] unreadable payload from {slug}: {type(e).__name__}")
                 continue
+            board_yield = 0
             for p in postings:
                 key = canonical_key(p["url"], vendor, slug, p.get("job_id", ""))
                 if key in seen or not _wanted(p):
                     continue
+                board_yield += 1
                 seen.add(key)
                 jd = p["jd"]
                 job = {
@@ -771,6 +781,10 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                 found.append((_relevance(p, keywords or []), job))
                 if not jd:
                     needs_enrichment.append((vendor, slug, p, job))
+            # Recorded for every board polled, including the pinned ones —
+            # their stats are never used to skip them, but a board that has
+            # gone quiet for months is worth being able to see.
+            note_board_result(vendor, slug, board_yield)
 
     # Descriptions, only for what survived. Parallel because each is one GET and
     # the matcher cannot score what it cannot read.
@@ -788,6 +802,7 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
                     job["skills"] = websource._infer_skills(
                         f"{job['title']} {jd}") or job["skills"]
     _save_cache()
+    _save_stats()
 
     # Freshest first among equally relevant postings: an unknown date sorts as
     # if it were at the age limit, so a dated posting always wins the tie.
@@ -800,7 +815,8 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     )
     print(f"[atsboards] {len(jobs)} employer-hosted internship(s) from "
           f"{len(targets)} board(s) across {len(BOARDS)} vendor(s); "
-          f"{learned} board(s) learned from earlier discovery")
+          f"{learned} board(s) learned from earlier discovery, "
+          f"{skipped} cold board(s) skipped this run")
     return jobs
 
 
@@ -855,7 +871,15 @@ _LEARNED_FILE = os.path.join(
 )
 _LEARNED: set[tuple[str, str]] = set()
 _learned_loaded = False
-LEARNED_MAX = int(os.environ.get("GRINDLY_ATS_LEARNED_MAX", "1200"))
+# Raised from 1200 when the deliberate harvester landed: one measured sweep
+# validated 69 brand-new live boards, so the old ceiling was under two weeks
+# away and would have silently capped the index — the trim is sorted, so it
+# would have started dropping boards alphabetically, which is not a policy.
+#
+# Bigger is affordable because most of these boards are cold: see
+# `_poll_due`, which spends the per-run request budget on boards that have
+# actually produced an internship and backs off the ones that never have.
+LEARNED_MAX = int(os.environ.get("GRINDLY_ATS_LEARNED_MAX", "4000"))
 
 
 def _load_learned() -> None:
@@ -906,6 +930,99 @@ def remember_slugs(urls) -> int:
     print(f"[atsboards] learned {len(fresh)} new board(s) from discovery "
           f"({len(_LEARNED)} known)")
     return len(fresh)
+
+
+# ---- how often a cold board is worth asking again ---------------------------
+#
+# Every board on the list costs one request per cache window, forever. That is
+# fine at 400 boards and wasteful at 4000, because the two are not alike: a
+# measured sweep found ten India internships across 391 Keka postings and none
+# at all across Greenhouse's 563, and most boards have never produced a single
+# internship in their lives.
+#
+# So boards earn their polling. One that has ever yielded an India internship
+# is asked every run — those are the companies that hire interns, and missing a
+# new posting there is the whole cost of being wrong. One that never has is
+# asked with exponential backoff, capped, so it is still checked regularly
+# enough to notice when it starts hiring.
+#
+# Never a permanent drop: a company that hires interns in September has none in
+# July, and a board written off in July is one that never comes back.
+_STATS_FILE = os.path.join(
+    os.environ.get("GRINDLY_DATA_DIR")
+    or os.path.join(os.path.dirname(__file__), "..", "data"),
+    "ats_board_stats.json",
+)
+_STATS: dict[str, dict] = {}
+_stats_loaded = False
+COLD_BACKOFF_MAX = int(os.environ.get("GRINDLY_ATS_COLD_BACKOFF_MAX", "8"))
+
+
+def _load_stats() -> None:
+    global _stats_loaded
+    if _stats_loaded:
+        return
+    _stats_loaded = True  # first: a corrupt file must not be reread per board
+    try:
+        with open(_STATS_FILE, encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            _STATS.update({k: v for k, v in loaded.items() if isinstance(v, dict)})
+    except FileNotFoundError:
+        pass
+    except Exception as e:  # noqa: BLE001
+        print(f"[atsboards] board stats load skipped: {type(e).__name__}")
+
+
+def _save_stats() -> None:
+    try:
+        os.makedirs(os.path.dirname(_STATS_FILE), exist_ok=True)
+        # Bounded the same way the board list is, and for the same reason.
+        keep = dict(sorted(_STATS.items())[: LEARNED_MAX * 2])
+        fd, tmp = tempfile.mkstemp(prefix=".ats_stats-", suffix=".tmp",
+                                   dir=os.path.dirname(_STATS_FILE))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(keep, f)
+        os.replace(tmp, _STATS_FILE)
+    except Exception as e:  # noqa: BLE001
+        print(f"[atsboards] board stats save skipped: {type(e).__name__}")
+
+
+def note_board_result(vendor: str, slug: str, internships: int) -> None:
+    """Record what a board gave us, so the next run can spend its budget well."""
+    _load_stats()
+    key = f"{vendor}::{slug}"
+    row = _STATS.setdefault(key, {"yields": 0, "skips": 0, "cold_streak": 0})
+    if internships > 0:
+        row["yields"] = row.get("yields", 0) + 1
+        row["cold_streak"] = 0
+    else:
+        row["cold_streak"] = row.get("cold_streak", 0) + 1
+
+
+def _poll_due(vendor: str, slug: str) -> bool:
+    """Is this board worth a request on this run?
+
+    Always true for a board that has ever produced an India internship, and for
+    one we have never polled at all — an unknown board is not a cold board, and
+    treating it as one would mean a freshly harvested company waited days for
+    its first look.
+    """
+    _load_stats()
+    row = _STATS.get(f"{vendor}::{slug}")
+    if not row or row.get("yields"):
+        return True
+    streak = int(row.get("cold_streak") or 0)
+    if streak <= 1:
+        return True
+    # Poll every 2nd, 4th, 8th... run, capped. `skips` counts down to the next
+    # look so the decision needs no clock and survives a restart.
+    period = min(COLD_BACKOFF_MAX, 2 ** min(streak - 1, 10))
+    row["skips"] = int(row.get("skips") or 0) + 1
+    if row["skips"] >= period:
+        row["skips"] = 0
+        return True
+    return False
 
 
 def _slugs_seen_before() -> list[tuple[str, str]]:
