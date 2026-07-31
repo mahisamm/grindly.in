@@ -1395,13 +1395,17 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # independent of pacing within the run. Mock mode is unaffected (no
     # platform is actually touched).
     #
-    # `manual` runs bypass it: the user tapped "Run agent" and is sitting on the
-    # dashboard right now. Deferring their explicit click looked identical to a
-    # broken agent ("0 ready, 0 sent" with no reason). It is also safe — Safe
-    # Apply Mode means a live run only DISCOVERS and banks matches for the user
-    # to submit themselves (see _requires_approval); nothing is auto-submitted at
-    # any hour, so odd-hour discovery carries none of the risk this gate guards.
-    # The scheduled/background sweep (manual=False) stays gated.
+    # `manual` runs bypass the DEFER: the user tapped "Run agent" and is sitting
+    # on the dashboard right now, and deferring their explicit click looked
+    # identical to a broken agent ("0 ready, 0 sent" with no reason).
+    #
+    # Bypassing the defer is not the same as permission to SUBMIT at 2am — see
+    # `may_submit` below, which is enforced separately and for everyone. The old
+    # comment here argued odd-hour runs were harmless because Safe Apply Mode
+    # meant nothing was ever auto-submitted; autopilot ended that, and every
+    # queued job runs with manual=True (see run_job), so in practice the gate
+    # had stopped applying to anything at all. Measured: a scheduled run
+    # submitted an application at 01:13 IST.
     if live and not manual and not _in_human_hours(ist_h):
         msg = (
             f"It's outside normal hours right now (IST {ist_h}h) — I only search and apply "
@@ -1633,6 +1637,31 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     )
     if remaining < quota_remaining:
         log.info("per-run safety cap active: %d (quota allows %d)", remaining, quota_remaining)
+
+    # Nothing is SUBMITTED outside human hours, however the run was started.
+    #
+    # The defer above only catches `manual=False`, and run_job hands every
+    # queued job manual=True — so the daily sweep, the "Run agent" tap and the
+    # spread-mode requeue all sailed past it. Measured: a scheduled run
+    # submitted an application to a real employer at 01:13 IST, which is the
+    # precise round-the-clock pattern the hours rule exists to avoid, and it
+    # costs the user's own account on a board that holds their login.
+    #
+    # Discovery is deliberately still allowed at any hour: finding and banking
+    # matches at 2am carries none of that risk, and a user who taps "Run agent"
+    # late at night gets fresh results rather than a blank screen. Only the
+    # sending waits for morning, and the pipeline it fills is already scheduled
+    # to release then.
+    if live and not _in_human_hours(ist_h):
+        if remaining:
+            log.info(
+                "outside human hours (IST %dh) — discovering only, %d send(s) held for %d:00",
+                ist_h, remaining, HUMAN_HOURS_START,
+            )
+        remaining = 0
+        submit_paused_for_hours = True
+    else:
+        submit_paused_for_hours = False
 
     matched = applied = failed = 0
     queued = 0   # matches banked into the pipeline THIS run (drives the due-date)
@@ -2350,7 +2379,17 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
-                reason=f"{reason} — daily cap reached", applied=False,
+                # Say which limit actually stopped it. "Daily cap reached" on a
+                # 1am run is simply untrue — the cap is untouched, the clock is
+                # the reason — and a user reading it would go looking for a
+                # quota problem that does not exist.
+                reason=(
+                    f"{reason} — found overnight, goes out after "
+                    f"{HUMAN_HOURS_START}:00 IST"
+                    if submit_paused_for_hours
+                    else f"{reason} — daily cap reached"
+                ),
+                applied=False,
                 scheduled_for=_release_at(slot, plan_cap),
                 missing_skills=matcher.missing_skills(
                     job, skills, jd_text=job.get("jd_text", "")
