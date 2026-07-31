@@ -36,8 +36,19 @@ def _user(email: str) -> dict:
     return db.get_user(dict(row)["id"])
 
 
-def inspect(url: str, profile: dict, skills: list[str], resume_path: str) -> dict:
-    """Open the form the way channel_ats does and report what it sees."""
+def inspect(url: str, profile: dict, skills: list[str], resume_path: str,
+            do_fill: bool = False) -> dict:
+    """Open the form the way channel_ats does and report what it sees.
+
+    With `do_fill`, it also TYPES the answers in and then asks the browser which
+    controls still fail validation — the same question `channel_ats` now asks
+    before it clicks. That is the only way to see a rejection coming without
+    filing a real application to find out: reading the form tells you what was
+    intended, filling it tells you what actually landed, and the two came apart
+    on every submit that was refused.
+
+    It still never clicks submit.
+    """
     import channel_ats
     from playwright.sync_api import sync_playwright
 
@@ -120,6 +131,26 @@ def inspect(url: str, profile: dict, skills: list[str], resume_path: str) -> dic
                 "paired_question": a["question"],
             })
         out["prefilled_by_vendor"] = _prefilled(page)
+
+        if do_fill:
+            out["filled_count"] = questions.fill(
+                page, fields, answers, channel_ats._human_type
+            )
+            page.wait_for_timeout(1200)
+            for f, rec in zip(out["fields"], fields):
+                f["value_after_fill"] = questions.live_value(rec["el"])
+            submit = None
+            for sel in channel_ats._SUBMIT_CANDIDATES:
+                try:
+                    el = page.query_selector(sel)
+                except Exception:  # noqa: BLE001
+                    continue
+                if el:
+                    submit = el
+                    break
+            out["submit_found"] = submit is not None
+            out["blockers"] = questions.form_blockers(page, submit)
+            out["unfilled_required"] = questions.unfilled_required(fields)
     except Exception as e:  # noqa: BLE001
         out["error"] = f"{type(e).__name__}: {e}"[:300]
     finally:
@@ -162,6 +193,12 @@ def main() -> None:
     ap.add_argument("--email", required=True)
     ap.add_argument("--url", action="append", required=True)
     ap.add_argument("--json")
+    ap.add_argument(
+        "--fill",
+        action="store_true",
+        help="also type the answers in and report what the form would refuse "
+             "(still never clicks submit)",
+    )
     args = ap.parse_args()
 
     user = _user(args.email)
@@ -183,7 +220,7 @@ def main() -> None:
 
     reports = []
     for url in args.url:
-        rep = inspect(url, profile, skills, resume_path)
+        rep = inspect(url, profile, skills, resume_path, do_fill=args.fill)
         reports.append(rep)
         print(f"\n=== {url}")
         print(f"    landed on: {rep.get('form_url')}")
@@ -193,8 +230,18 @@ def main() -> None:
         for f in rep.get("fields") or []:
             print(f"    FIELD  {f['label'][:40]!r:44} [{f['kind']}{'*' if f['required'] else ''}]"
                   f" <- {str(f['answer'])[:60]!r} ({f['source']})")
+            if args.fill:
+                print(f"        AFTER FILL: {str(f.get('value_after_fill'))[:70]!r}")
             if f.get("debug"):
                 print(f"        UNREADABLE: {f['debug'][:420]}")
+        if args.fill:
+            print(f"    filled: {rep.get('filled_count')}  submit button found: {rep.get('submit_found')}")
+            for b in rep.get("blockers") or []:
+                print(f"    BLOCKER  {b}")
+            for u in rep.get("unfilled_required") or []:
+                print(f"    STILL EMPTY (required)  {u}")
+            if not rep.get("blockers") and not rep.get("unfilled_required"):
+                print("    -> form is submit-ready")
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(reports, fh, indent=2, ensure_ascii=False)

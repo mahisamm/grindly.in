@@ -617,6 +617,33 @@ def apply(
 
         record["destination"] = url
 
+        # Ask the form whether it will take this BEFORE spending the click.
+        #
+        # Five real applications were clicked through and rejected with "page
+        # shows a validation/error message" — each one burning a daily slot and
+        # an idempotency claim on a submit that never had a chance. The check
+        # above (`_unanswered_required`) tests the answers we meant to write;
+        # this tests what the form is actually holding, which is a different
+        # thing every time `fill` gives up on a control. A react-select whose
+        # option never matched leaves the box empty and returns quietly, and
+        # that empty box is what the vendor refused.
+        #
+        # Refusing here returns needs_review WITHOUT `submit_attempted`, so the
+        # worker refunds the slot and leaves the row re-scorable: nothing
+        # reached the employer.
+        blocked = questions.form_blockers(page, submit)
+        if fields:
+            blocked += [
+                f"{lab} — still empty"
+                for lab in questions.unfilled_required(fields)
+                if not any(lab[:40] in b for b in blocked)
+            ]
+        if blocked:
+            safety.screenshot(page, uid, f"ats_blocked_{job.get('external_id', '')}")
+            return "needs_review", (
+                "the form will not accept it yet: " + "; ".join(blocked[:3])
+            )
+
         # Point of no return. The worker refunds the daily slot and the
         # idempotency claim for a needs_review WITHOUT this flag (nothing was
         # sent); WITH it, both stay spent — the click may have landed.

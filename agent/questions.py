@@ -1287,6 +1287,153 @@ def fill(page, fields: list[dict], answers: list[dict], typer) -> int:
     return filled
 
 
+# --- checking it before we send it ------------------------------------------
+
+# What a control is actually holding right now, read off the live DOM.
+#
+# `input_value()` is not enough for a react-select: once an option is chosen the
+# combobox input is CLEARED and the chosen label is rendered as a div inside the
+# control. Reading the input alone reports every answered dropdown as empty.
+_LIVE_VALUE_JS = """
+e => {
+  const clean = s => (s || '').trim().replace(/\\s+/g, ' ');
+  const tag = e.tagName.toLowerCase();
+  if (tag === 'select') {
+    return e.selectedIndex >= 0 ? clean(e.options[e.selectedIndex].text) : '';
+  }
+  const type = (e.getAttribute('type') || 'text').toLowerCase();
+  if (type === 'checkbox' || type === 'radio') return e.checked ? 'on' : '';
+  if (type === 'file') return (e.files && e.files.length) ? e.files[0].name : '';
+  const v = clean(e.value);
+  if (v) return v;
+  const box = e.closest('[class*="control" i]')
+           || e.closest('[class*="container" i]')
+           || e.parentElement;
+  if (box) {
+    const c = box.cloneNode(true);
+    c.querySelectorAll(
+      '[class*="placeholder" i],[class*="indicator" i],[role="listbox"],[role="option"]'
+    ).forEach(x => x.remove());
+    const shown = clean(c.innerText);
+    if (shown && !/^(select\\.{0,3}|select…|search|choose|--+)$/i.test(shown)) return shown;
+  }
+  return '';
+}
+"""
+
+
+def live_value(el) -> str:
+    """What this field is holding after we filled it. '' when still empty."""
+    try:
+        return (el.evaluate(_LIVE_VALUE_JS) or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+# Every control the browser's own constraint validation would refuse, with the
+# question it belongs to. This is precisely the check that fires when a submit
+# button is pressed, so asking it BEFORE the press tells us the outcome without
+# spending the click.
+#
+# Scoped to the form the submit button lives in when we have one: an ATS page
+# carries other forms (search boxes, newsletter sign-ups) whose required fields
+# have nothing to do with this application.
+_BLOCKERS_JS = """
+(anchor) => {
+  const clean = s => (s || '').trim().replace(/\\s+/g, ' ');
+  const root = (anchor && anchor.closest('form')) || document;
+  const labelFor = e => {
+    const by = e.getAttribute('aria-labelledby');
+    if (by) {
+      const t = by.split(/\\s+/).map(id => document.getElementById(id))
+        .filter(Boolean).map(n => clean(n.innerText)).filter(Boolean).join(' ');
+      if (t) return t;
+    }
+    if (e.id) {
+      const l = document.querySelector('label[for="' + CSS.escape(e.id) + '"]');
+      if (l && clean(l.innerText)) return clean(l.innerText);
+    }
+    const wrap = e.closest('label');
+    if (wrap && clean(wrap.innerText)) return clean(wrap.innerText);
+    let n = e.parentElement, hops = 0;
+    while (n && hops < 3) {
+      const l = n.querySelector('label');
+      if (l && clean(l.innerText)) return clean(l.innerText);
+      n = n.parentElement; hops++;
+    }
+    return clean(e.getAttribute('aria-label'))
+        || clean(e.getAttribute('placeholder'))
+        || clean(e.getAttribute('name'))
+        || e.id || '(unlabelled field)';
+  };
+  const out = [], seen = new Set();
+  root.querySelectorAll('input,select,textarea').forEach(e => {
+    if (e.disabled) return;
+    const t = (e.getAttribute('type') || '').toLowerCase();
+    if (t === 'submit' || t === 'button' || t === 'reset' || t === 'image') return;
+    let bad = false, why = '';
+    try {
+      // Hidden inputs are barred from constraint validation by the spec, so this
+      // never fires on plumbing. It DOES fire on react-select's opacity:0
+      // requiredInput, which is exactly the blocker we most need to see.
+      if (typeof e.checkValidity === 'function' && !e.checkValidity()) {
+        bad = true;
+        why = clean(e.validationMessage) || 'required';
+      }
+    } catch (err) { return; }
+    if (!bad) return;
+    const lab = labelFor(e).slice(0, 70);
+    const key = lab + '|' + why;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(lab + ' — ' + why);
+  });
+  return out.slice(0, 8);
+}
+"""
+
+
+def form_blockers(page, submit_el=None) -> list[str]:
+    """What would stop this submit, asked before the click instead of after.
+
+    Six real applications were clicked through and rejected with "page shows a
+    validation/error message". Every one of them had spent the user's daily slot
+    and burned the idempotency claim, and none said which field was wrong. The
+    page knew the whole time: the browser can be asked which controls fail
+    validation, and it answers with the vendor's own message.
+
+    Returns human-readable "<question> — <what is wrong>" strings, empty when the
+    form is ready to go.
+    """
+    try:
+        if submit_el is not None:
+            return list(submit_el.evaluate(_BLOCKERS_JS) or [])
+        return list(page.evaluate(_BLOCKERS_JS, None) or [])
+    except Exception as e:  # noqa: BLE001
+        print(f"[questions] could not read the form's validation state: {e}")
+        return []
+
+
+def unfilled_required(fields: list[dict]) -> list[str]:
+    """Required fields we read that are STILL empty after filling.
+
+    The pre-fill check in each channel tests the answers we *intended* to write;
+    this tests what the form is actually holding. They come apart whenever
+    `fill` gives up on a control — a react-select whose option never matched
+    returns False and moves on, so a form that looked fully answered goes to
+    submit with a required dropdown empty. That gap is the difference between a
+    refusal the candidate can act on and a rejected application they cannot.
+    """
+    still: list[str] = []
+    for f in fields:
+        if not f.get("required"):
+            continue
+        if live_value(f["el"]):
+            continue
+        still.append((f.get("label") or "(unlabelled)")[:70])
+    return still
+
+
 def to_record(answers: list[dict]) -> str:
     """JSON for the applications table — what was asked, what we said, and whether
     a human fact or a model produced it. Stripped of element handles."""
