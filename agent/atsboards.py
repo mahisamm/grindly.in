@@ -166,6 +166,23 @@ _CACHE_FILE = os.path.join(
 _CACHE: dict[str, tuple[float, object]] = {}
 _loaded = False
 
+# Hard ceiling on the cache file, and on any single board inside it.
+#
+# Measured in production: this file reached **425 MB** on a 49 GB VPS. The TTL
+# governs READS — _load_cache drops expired entries — but _save_cache wrote
+# whatever was in memory, and nothing ever bounded the payloads themselves. A
+# board's raw JSON is the whole company's careers site: one Workable account
+# alone returned 2,802 postings in a live probe, and the board list grows on
+# its own (380 -> 451 in two days), so the file grows without limit by design.
+#
+# Two independent bounds, because they fail differently: a single enormous
+# board is refused outright (caching it helps nobody and costs everyone), and
+# the file as a whole is trimmed oldest-first until it fits. Both are generous
+# — the point is a ceiling, not thrift.
+CACHE_MAX_BYTES = int(os.environ.get("GRINDLY_ATS_CACHE_MAX_BYTES", str(64 * 1024 * 1024)))
+CACHE_MAX_BOARD_BYTES = int(
+    os.environ.get("GRINDLY_ATS_CACHE_MAX_BOARD_BYTES", str(2 * 1024 * 1024)))
+
 
 def _load_cache() -> None:
     global _loaded
@@ -185,6 +202,43 @@ def _load_cache() -> None:
         print(f"[atsboards] cache load skipped: {type(e).__name__}")
 
 
+def _cache_for_disk() -> dict[str, list]:
+    """What actually belongs in the file: fresh, individually sane, bounded.
+
+    Dropping expired entries here as well as on load is the half that was
+    missing — the TTL only ever governed reads, so a board polled once stayed
+    in the file forever, and the file only grew.
+    """
+    now = time.time()
+    fresh = [(ts, key, payload) for key, (ts, payload) in _CACHE.items()
+             if now - ts <= CACHE_TTL and payload]
+
+    out: dict[str, list] = {}
+    total = 0
+    oversized = 0
+    # Newest first, so the trim below keeps what a run is most likely to reuse.
+    for ts, key, payload in sorted(fresh, key=lambda r: r[0], reverse=True):
+        try:
+            blob = json.dumps([ts, payload])
+        except (TypeError, ValueError):
+            continue  # unserialisable payload: never worth failing a save over
+        size = len(blob)
+        if size > CACHE_MAX_BOARD_BYTES:
+            oversized += 1
+            continue
+        if total + size > CACHE_MAX_BYTES:
+            break
+        out[key] = [ts, payload]
+        total += size
+    if oversized:
+        print(f"[atsboards] {oversized} board(s) too large to cache "
+              f"(over {CACHE_MAX_BOARD_BYTES // 1024}KB each)")
+    if len(out) < len(fresh):
+        print(f"[atsboards] cache trimmed to {len(out)}/{len(fresh)} board(s), "
+              f"{total // 1024}KB")
+    return out
+
+
 def _save_cache() -> None:
     try:
         cache_dir = os.path.dirname(_CACHE_FILE)
@@ -193,7 +247,7 @@ def _save_cache() -> None:
         # temporary file keeps either atomic replacement from losing the other.
         fd, tmp = tempfile.mkstemp(prefix=".ats_boards-", suffix=".tmp", dir=cache_dir)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({k: [ts, p] for k, (ts, p) in _CACHE.items()}, f)
+            json.dump(_cache_for_disk(), f)
         os.replace(tmp, _CACHE_FILE)  # atomic: a half-written cache is a corrupt one
     except Exception as e:  # noqa: BLE001
         print(f"[atsboards] cache save skipped: {type(e).__name__}")
