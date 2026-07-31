@@ -103,7 +103,10 @@ def inspect(url: str, profile: dict, skills: list[str], resume_path: str,
             if questions.unreadable_label(f["label"]):
                 try:
                     debug = f["el"].evaluate(
-                        """e => {
+                        # Raw: this is JavaScript, and \s is a regex escape, not
+                        # a Python one. Python 3.12 warns on it and a future
+                        # version makes it an error.
+                        r"""e => {
                           const g = e.closest('div,fieldset,section') || e.parentElement;
                           return JSON.stringify({
                             name: e.getAttribute('name') || '',

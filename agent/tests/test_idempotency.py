@@ -6,7 +6,7 @@ Without a ledger the second attempt sends the SAME application to a real
 employer under the user's name. That cannot be undone and reads to a recruiter
 as spam, so every property here is about refusing the second send.
 """
-import os
+
 import sqlite3
 import threading
 import time

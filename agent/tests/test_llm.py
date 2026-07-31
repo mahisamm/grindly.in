@@ -5,7 +5,6 @@ import os
 import sys
 import time
 import urllib.error
-from unittest.mock import patch
 
 import pytest
 

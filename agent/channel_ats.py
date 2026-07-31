@@ -38,7 +38,6 @@ from __future__ import annotations
 import os
 import random
 import re
-from urllib.parse import urlparse
 
 import questions
 import resolver

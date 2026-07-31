@@ -15,7 +15,6 @@ Read-only. Loads a public careers page, submits nothing, stores nothing.
 """
 from __future__ import annotations
 
-import json
 import sys
 
 # Noise every page makes: analytics, fonts, session pings. None of them carry

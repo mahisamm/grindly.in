@@ -376,10 +376,12 @@ def _resolve_destination(job: dict, jd_text: str, *, allow_fetch: bool) -> tuple
     # Only spend a page load when the JD says the application lives elsewhere.
     # Fetching every listing's outbound links to find out would be a crawl.
     if allow_fetch and resolver.looks_like_external_apply(jd_text):
-        def fetch(url: str) -> str:  # noqa: E306 — small local, deliberate
+        def _counting_fetch(url: str) -> str:
             nonlocal loads
             loads += 1
             return _fetch_public_html(url)
+
+        fetch = _counting_fetch
     try:
         return resolver.resolve(job, jd_text, fetch=fetch), loads
     except Exception as e:  # noqa: BLE001
@@ -1322,7 +1324,6 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     submit_only = mode == "approved"
     live = mode in ("live", "approved")
 
-    user_plan = db.get_user_plan(uid)
     plan_cap = _cap_for(uid, profile)
     # Free beta: free is a DAILY plan (5/day), same shape as paid — human-paced
     # and counted per day. No lifetime trial, so it resets each day like Plus/Pro.

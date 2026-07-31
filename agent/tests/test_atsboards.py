@@ -10,7 +10,7 @@ So these tests care about the two things that make it worth having: that a board
 API failing degrades to "found nothing" instead of taking a run down, and that
 what it does return is genuinely an internship a student in India could take.
 """
-import json
+
 
 import pytest
 
