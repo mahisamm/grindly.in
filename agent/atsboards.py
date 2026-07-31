@@ -104,6 +104,28 @@ BOARDS: dict[str, list[str]] = {
     ],
 }
 
+# Also deliberately NOT here: Darwinbox, Zoho Recruit and Freshteam. They are
+# the obvious next India-native vendors after Keka, and all three were probed
+# live before being written off:
+#
+#   * Darwinbox serves an Angular shell. Its real API is
+#     `{slug}.darwinbox.in/ms/candidateapi/*` (found with agent/api_sniff.py),
+#     and every one of those endpoints answers **403 with a WAF challenge page**
+#     to a plain request. Nothing here can read it; it needs a real browser.
+#   * Zoho Recruit portals (`{slug}.zohorecruit.in|com/jobs/Careers`) return
+#     200 text/html with the job list rendered entirely client-side — measured
+#     400 KB of markup containing zero job links and zero occurrences of
+#     "intern", on two separate tenants. Sniffing the page caught only chat-bot
+#     and telemetry calls.
+#   * Freshteam's `/api/job_postings` 404s and the careers host itself 404s for
+#     the tenants tested.
+#
+# The postings are real — Zoho alone had a live "Software Engineering Intern"
+# on a tenant we found — so this is not a supply judgement, it is a transport
+# one. All three belong to the browser path, not to this module: adding a
+# half-working JSON adapter for them would cost a request per board per run and
+# return nothing. Revisit only with a browser-backed fetch.
+
 # Deliberately NOT here: Workday. Measured before adding it — its job search is
 # a fuzzy full-text match, so `searchText: "intern"` returns "Senior Platform
 # Software Engineer", "Manager, Product Management" and "Analyst, Tax" (all real

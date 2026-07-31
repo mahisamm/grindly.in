@@ -53,8 +53,25 @@ _TEMPLATES = [
     # the jobs table becomes a board atsboards asks directly from then on.
     "site:jobs.smartrecruiters.com {role} intern india",
     "site:apply.workable.com {role} intern india",
-    # Employer-owned forms and careers pages outside any ATS.
+    # Keka, and it belongs at the TOP of this list by measured yield rather
+    # than at the bottom by recency. A live sweep returned ten India
+    # internships from Keka's 391 postings and **zero** from Greenhouse's 563:
+    # the global ATSs host foreign companies whose India offices do not post
+    # interns publicly, and Keka is where an Indian company posts. It was
+    # missing here entirely — atsboards polled the Keka boards it already knew
+    # while the search half of discovery never went looking for new ones.
+    "site:keka.com {role} intern india",
+    # Employer-owned forms and careers pages outside any ATS. Both Google Form
+    # hosts: docs.google.com/forms is the long address, forms.gle the share
+    # link, and Indian startups and NGOs hand out the short one — searching
+    # only the long form missed every listing that was shared rather than
+    # published. channel_google_form already knows how to submit these.
     "{role} internship india apply site:docs.google.com/forms",
+    "{role} internship india apply site:forms.gle",
+    # The email long tail: small employers who never bought an ATS and simply
+    # ask for a resume in the inbox. channel_email already sends these; nothing
+    # was ever looking for them.
+    "{role} internship india send resume to email apply",
     "{role} internship india careers apply {year}",
 ]
 
@@ -77,7 +94,9 @@ QUERY_WORKERS = int(os.environ.get("GRINDLY_SEARCH_WORKERS", "5"))
 # polls directly, in this same run, for roles no search engine ever indexed.
 # Role-independent on purpose, so they cost the same regardless of who is asking.
 _HARVEST_HOSTS = [
-    "boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com",
+    # keka.com first, by measured yield: ten India internships from 391 Keka
+    # postings against zero from Greenhouse's 563 in the same sweep.
+    "keka.com", "boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com",
     "jobs.smartrecruiters.com", "apply.workable.com",
 ]
 _HARVEST_TERMS = [
