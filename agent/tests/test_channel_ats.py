@@ -297,3 +297,35 @@ def test_every_named_fact_reads_as_something_a_person_would_fill():
     for key, said in channel_ats._FACT_LABELS.items():
         assert said and said == said.lower() or said.startswith("your"), key
         assert "_" not in said, key
+
+
+# ── Machine-readable, so the dashboard can point at one box ─────────────────
+# The prose reason is for reading. The keys are what let the product say "two
+# applications are waiting on your date of birth" and take the user straight
+# there — parsing our own sentence back out would break the first time anyone
+# reworded it.
+
+def test_blocking_keys_use_the_setup_questions_own_names():
+    keys = channel_ats.blocking_fact_keys(
+        ["Date of Birth *", "Expected Salary *", "Graduation Month & Year *"], {}
+    )
+    assert keys == ["dateOfBirth", "expectedStipend", "gradMonth"]
+
+
+def test_a_fact_already_on_file_produces_no_key():
+    assert channel_ats.blocking_fact_keys(["Date of Birth *"], {"date_of_birth": "14/03/2005"}) == []
+
+
+def test_a_question_setup_never_asked_produces_no_key():
+    assert channel_ats.blocking_fact_keys(["Describe a time you shipped something"], {}) == []
+
+
+def test_each_key_appears_once():
+    assert channel_ats.blocking_fact_keys(["Date of birth", "D.O.B *"], {}) == ["dateOfBirth"]
+
+
+def test_every_label_we_can_name_has_a_setup_key():
+    # The two maps are read together — one for the sentence, one for the link.
+    # A fact in one and not the other is a prompt that names a box it cannot
+    # open.
+    assert set(channel_ats._FACT_LABELS) == set(channel_ats._SETUP_KEYS)

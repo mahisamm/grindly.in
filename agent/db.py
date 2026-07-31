@@ -1002,6 +1002,7 @@ _PG_APP_COLUMNS = (
     ("apply_channel", "TEXT"),
     ("apply_tier", "TEXT"),
     ("apply_target", "TEXT"),
+    ("blocking_facts", "TEXT"),
 )
 _pg_app_columns_checked = False
 
@@ -1066,6 +1067,8 @@ def _ensure_app_columns(c):
         c.execute("ALTER TABLE applications ADD COLUMN screenshot_path TEXT")
     if "resume_version_id" not in cols:
         c.execute("ALTER TABLE applications ADD COLUMN resume_version_id TEXT")
+    if "blocking_facts" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN blocking_facts TEXT")
     if "outcome" not in cols:
         c.execute("ALTER TABLE applications ADD COLUMN outcome TEXT")
     if "outcome_at" not in cols:
@@ -1096,7 +1099,8 @@ def add_application(uid: str, *, job_id: str | None, title: str, company: str,
                     failure_reason: str | None = None, screenshot_path: str | None = None,
                     scheduled_for=None, answers_json: str | None = None,
                     missing_skills: list[str] | None = None,
-                    destination: dict | None = None):
+                    destination: dict | None = None,
+                    blocking_facts: list[str] | None = None):
     """Record one application row.
 
     `destination` is the resolver's verdict for this listing (channel/tier/
@@ -1110,14 +1114,15 @@ def add_application(uid: str, *, job_id: str | None, title: str, company: str,
             "INSERT INTO applications (id, user_id, job_id, job_title, company, url, "
             "match_score, status, reason, failure_reason, screenshot_path, "
             "resume_version_id, scheduled_for, answers_json, missing_skills, "
-            "apply_channel, apply_tier, apply_target, "
+            "apply_channel, apply_tier, apply_target, blocking_facts, "
             "applied_at, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 cuid(), uid, job_id, title, company, url, int(score), status, reason,
                 failure_reason, screenshot_path, resume_version_id, scheduled_for,
                 answers_json, json.dumps(missing_skills) if missing_skills else None,
                 dest.get("channel"), dest.get("tier"), dest.get("target"),
+                json.dumps(blocking_facts) if blocking_facts else None,
                 now_db() if applied else None, now_db(),
             ),
         )
@@ -1509,21 +1514,30 @@ def update_application_status(app_id: str, status: str, reason: str,
                               resume_version_id: str | None = None,
                               failure_reason: str | None = None,
                               screenshot_path: str | None = None,
-                              answers_json: str | None = None):
+                              answers_json: str | None = None,
+                              blocking_facts: list[str] | None = None):
     with conn() as c:
         _ensure_app_columns(c)
         applied_at = now_db() if status == "applied" else None
         # COALESCE on the evidence columns: a later status change must never blank
         # out the proof screenshot or the screening answers already recorded for
         # this application.
+        #
+        # blocking_facts is the exception and is written straight through: it is
+        # the CURRENT answer to "what is this waiting on", and the whole point is
+        # that it clears the moment the user fills the box. COALESCEing it would
+        # leave the dashboard asking for a date of birth that has been on file
+        # for a week.
         c.execute(
             "UPDATE applications SET status=?, reason=?, failure_reason=?, "
             "screenshot_path=COALESCE(?, screenshot_path), "
             "resume_version_id=COALESCE(?, resume_version_id), "
             "answers_json=COALESCE(?, answers_json), "
+            "blocking_facts=?, "
             "applied_at=? WHERE id=?",
             (status, reason, failure_reason, screenshot_path, resume_version_id,
-             answers_json, applied_at, app_id),
+             answers_json, json.dumps(blocking_facts) if blocking_facts else None,
+             applied_at, app_id),
         )
 
 

@@ -419,6 +419,19 @@ model Application {
   // can act on; "this role wants Docker and you don't show it" tells them what to
   // learn, and what they will be asked about if they get the call.
   missingSkills   String?            @map("missing_skills")
+  // Setup answers this application stopped for, as a JSON array of proff-question
+  // keys ("dateOfBirth", "expectedStipend", "gradMonth" — src/lib/proffQuestions).
+  //
+  // The agent refuses to invent a fact, which is right, and for three real
+  // applications in a row that refusal reached the user as the employer's own
+  // asterisks ("Graduation Month & Year (Completed / Expected) *") next to a
+  // form they had never seen. The prose reason is for reading; this is for the
+  // product to act on — it is what lets the dashboard say "two applications are
+  // waiting on your date of birth" and take them straight to that box.
+  //
+  // Machine-readable on purpose: parsing our own sentence back out would break
+  // the first time anyone rewrote it.
+  blockingFacts   String?            @map("blocking_facts")
   // Apply Kit: the per-job cover letter, drafted before the user ever opens the
   // form (worker.py backfills this for every due match — see due_matches_missing_kit
   // / set_application_kit in agent/db.py). Null until generated or if generation

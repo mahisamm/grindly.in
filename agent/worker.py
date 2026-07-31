@@ -1958,6 +1958,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 app_row["id"], status, why, resume_version_id=vid, failure_reason=fr,
                 screenshot_path=rec.get("screenshot_path"),
                 answers_json=rec.get("answers"),
+                blocking_facts=rec.get("blocking_facts"),
             )
             # Same refused-at-the-door fallback as the discovery loop: the user
             # tapped Approve, our server was shown a human-check — their own
@@ -2476,6 +2477,10 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                 screenshot_path=rec.get("screenshot_path"),
                 answers_json=rec.get("answers"),
                 destination=dest,
+                # What the user could fill to make this send itself. Written
+                # here rather than parsed back out of `reason`, which is prose
+                # and would break the first time anyone reworded it.
+                blocking_facts=rec.get("blocking_facts"),
             )
             # Refused at the door — hand it to the one browser that CAN pass.
             # The page demanded a human (a check, a question); the user's own

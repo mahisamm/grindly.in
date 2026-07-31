@@ -5,6 +5,7 @@ import {
   GRAD_YEARS,
   missingRequired,
   blankOptional,
+  unfilledFacts,
 } from "@/lib/proffQuestions";
 
 /**
@@ -141,7 +142,9 @@ describe("required setup questions", () => {
     // the two the resume normally fills in for you — a college name and a board
     // percentage cannot come from a list, and arrive pre-filled when the read
     // works.
-    const typedByHand = ["college", "class12Percent"];
+    // Date of birth joins them: it stopped a real application, so it is asked
+    // up front, and there is no list of every date a person could be born on.
+    const typedByHand = ["college", "class12Percent", "dateOfBirth"];
     for (const f of PROFF_FIELDS.filter((x) => x.required && !typedByHand.includes(x.key))) {
       expect(["select", "choice"], `${f.key} is free text`).toContain(f.type);
       // A dropdown whose stored value differs from its label carries `choices`
@@ -191,10 +194,9 @@ describe("how much setup asks for", () => {
     expect(required).toContain("expectedStipend");
     expect(required).toContain("gradMonth");
     expect(required).not.toContain("gender");
-    // A date is typed, not tapped. It blocks real forms and is therefore
-    // visible, but demanding it before anyone has seen an application go out is
-    // the wall this setup was cut down to avoid.
-    expect(required).not.toContain("dateOfBirth");
+    // Asked up front too: a form stopped on it, and one typed line at signup
+    // beats an application that silently waits for it afterwards.
+    expect(required).toContain("dateOfBirth");
     // Grindly only applies to internships in India. Asking every user to
     // confirm the country they are in, and that they may work there, is asking
     // them to restate the product's own premise — so both are preset and
@@ -269,5 +271,46 @@ describe("a stipend of zero", () => {
   it("does not loosen the rule for any other numeric question", () => {
     const blanks = blankOptional({ ...DEFAULTS, class10Percent: 0 }).map((f) => f.key);
     expect(blanks).toContain("class10Percent");
+  });
+});
+
+/**
+ * The dashboard prompt that names what the agent is stuck on reads this. It is
+ * fed by keys the agent wrote onto the application row at the moment it
+ * refused — a SNAPSHOT — so re-asking the live profile is what makes the prompt
+ * disappear when the box is filled rather than when the agent next runs.
+ */
+describe("what the agent is still waiting on", () => {
+  it("keeps a fact that is still blank", () => {
+    const gaps = unfilledFacts(["dateOfBirth"], { ...DEFAULTS });
+    expect(gaps.map((f) => f.key)).toEqual(["dateOfBirth"]);
+  });
+
+  it("drops a fact as soon as it is answered", () => {
+    const gaps = unfilledFacts(["dateOfBirth"], { ...DEFAULTS, dateOfBirth: "14/03/2005" });
+    expect(gaps).toEqual([]);
+  });
+
+  it("drops a stipend the user answered with zero", () => {
+    // Same rule as everywhere else, and the one that would otherwise leave the
+    // prompt demanding an answer already given.
+    expect(unfilledFacts(["expectedStipend"], { ...DEFAULTS, expectedStipend: 0 })).toEqual([]);
+  });
+
+  it("names each fact once however many applications are waiting on it", () => {
+    const gaps = unfilledFacts(["gradMonth", "gradMonth", "gradMonth"], { ...DEFAULTS });
+    expect(gaps.map((f) => f.key)).toEqual(["gradMonth"]);
+  });
+
+  it("ignores a key that is not a setup question", () => {
+    // A form the agent could not read is ours to fix. Sending someone hunting
+    // for a box that does not exist is worse than saying nothing.
+    expect(unfilledFacts(["somethingWeCannotAsk"], { ...DEFAULTS })).toEqual([]);
+  });
+
+  it("carries the label and help text the prompt shows", () => {
+    const [gap] = unfilledFacts(["expectedStipend"], { ...DEFAULTS, expectedStipend: null });
+    expect(gap.label).toBeTruthy();
+    expect(gap.help).toBeTruthy();
   });
 });

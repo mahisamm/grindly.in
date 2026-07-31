@@ -8,6 +8,7 @@ import { getQuota } from "@/lib/quota";
 import { hasAppAccess } from "@/lib/access";
 import { autoApplyMode, agentWillSend } from "@/lib/applyPolicy";
 import { notifyChannels } from "@/lib/notifyChannels";
+import { PROFF_FIELDS, unfilledFacts } from "@/lib/proffQuestions";
 
 const PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"] as const;
 
@@ -105,6 +106,56 @@ export async function GET() {
           "That build stopped before it finished — press Generate to try again.",
       };
     }
+  }
+
+  // What the agent is stuck on that only this user can answer.
+  //
+  // It refuses to invent a fact, which is right — but for three real
+  // applications in a row that refusal was invisible: the boxes it needed
+  // (date of birth, expected stipend, graduation month) were folded away in
+  // setup, so they were blank on every account, and the user's dashboard just
+  // showed applications that never sent. The agent records the setup keys it
+  // stopped for; this turns them into one prompt naming the boxes.
+  //
+  // Deliberately NOT read off `applications` above: that list is capped and
+  // visibility-filtered, and a stalled application the user has not been shown
+  // yet is exactly the one worth asking about.
+  let setupGaps: { key: string; label: string; help: string; waiting: number }[] = [];
+  // No profile row means setup was never started, so every fact reads as blank
+  // and this would name all of them at someone who has not seen an application
+  // yet. Onboarding is the right place to meet that person.
+  if (profile) try {
+    const stalled = await prisma.application.findMany({
+      where: { userId: uid, blockingFacts: { not: null }, status: { in: ["needs_review", "matched", "approved"] } },
+      select: { blockingFacts: true },
+      take: 200,
+    });
+    const waiting = new Map<string, number>();
+    for (const row of stalled) {
+      let keys: unknown;
+      try {
+        keys = JSON.parse(row.blockingFacts || "[]");
+      } catch {
+        continue; // a malformed row must never break the dashboard
+      }
+      if (!Array.isArray(keys)) continue;
+      // Re-ask the LIVE profile, because the row is a snapshot of the moment the
+      // agent refused. Without this the prompt would keep asking for a date of
+      // birth that has been on file for a week, and only clear when the agent
+      // next happened to run.
+      const answers = profile as unknown as Record<string, unknown>;
+      for (const f of unfilledFacts(keys.filter((k): k is string => typeof k === "string"), answers)) {
+        waiting.set(f.key, (waiting.get(f.key) ?? 0) + 1);
+      }
+    }
+    setupGaps = [...waiting.entries()]
+      .map(([key, n]) => {
+        const f = PROFF_FIELDS.find((x) => x.key === key)!;
+        return { key, label: f.label, help: f.help, waiting: n };
+      })
+      .sort((a, b) => b.waiting - a.waiting || a.label.localeCompare(b.label));
+  } catch {
+    // Ignore — prisma db push not yet run for blocking_facts.
   }
 
   // In-app notifications feed — folded into /api/me (already polled) so the
@@ -289,6 +340,7 @@ export async function GET() {
       paymentsEnabled: process.env.PAYMENTS_ENABLED === "true",
     },
     profile,
+    setupGaps,
     applications: slimApps,
     reports: user.reports,
     stats,

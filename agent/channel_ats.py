@@ -485,6 +485,10 @@ def _unanswered_required(fields: list[dict], answers: list[dict]) -> list[str]:
 # the employer's form at a user who has never seen it; the same refusal saying
 # "your graduation month" points at the box they can go and fill, once, for
 # every future application.
+#
+# The key on the right is the SETUP question's own key (src/lib/proffQuestions),
+# so the dashboard can take the user to the exact box instead of to a page of
+# thirty. Stored on the application row as `blocking_facts`.
 _FACT_LABELS = {
     "grad_month": "your graduation month",
     "grad_year": "your graduation year",
@@ -513,6 +517,55 @@ _FACT_LABELS = {
     "gpa": "your CGPA",
     "phone": "your phone number",
 }
+
+
+# The same facts, keyed the way SETUP names them, so the dashboard can point at
+# one box. Only the ones a real application has been measured to stop on need an
+# entry; anything absent falls back to the profile column name, which is still a
+# truthful thing to say and simply does not deep-link.
+_SETUP_KEYS = {
+    "grad_month": "gradMonth",
+    "grad_year": "gradYear",
+    "date_of_birth": "dateOfBirth",
+    "expected_stipend": "expectedStipend",
+    "current_salary": "currentSalary",
+    "previous_internship": "previousInternship",
+    "portfolio_url": "portfolioUrl",
+    "linkedin_url": "linkedinUrl",
+    "github_url": "githubUrl",
+    "notice_period": "noticePeriod",
+    "current_location": "currentLocation",
+    "preferred_locations": "preferredLocations",
+    "gender": "gender",
+    "nationality": "nationality",
+    "country": "country",
+    "differently_abled": "differentlyAbled",
+    "college": "college",
+    "degree": "degree",
+    "class10_percent": "class10Percent",
+    "class12_percent": "class12Percent",
+    "hours_per_week": "hoursPerWeek",
+    "availability": "availability",
+    "willing_to_relocate": "willingToRelocate",
+    "work_authorization": "workAuthorization",
+    "gpa": "gpa",
+    "phone": "phone",
+}
+
+
+def blocking_fact_keys(labels: list[str], profile: dict) -> list[str]:
+    """Which stored facts these unanswered questions were waiting on, in setup's
+    own keys. Order-stable and de-duplicated; [] when none of them is a fact
+    setup collects."""
+    out: list[str] = []
+    for label in labels:
+        key = questions.missing_fact_for(label, profile)
+        if not key:
+            continue
+        setup_key = _SETUP_KEYS.get(key, key)
+        if setup_key not in out:
+            out.append(setup_key)
+    return out
 
 
 def _blocking_facts(labels: list[str], profile: dict) -> list[str]:
@@ -663,6 +716,10 @@ def apply(
                 # employer's asterisks back at them. One sentence naming the
                 # setup field turns three stalled applications into one edit.
                 gaps = _blocking_facts(missing, profile)
+                # The same answer in the form the product can act on: the
+                # dashboard reads this to say "two applications are waiting on
+                # your date of birth" and take them to that box.
+                record["blocking_facts"] = blocking_fact_keys(missing, profile)
                 if gaps:
                     return "needs_review", (
                         "waiting on facts only you can give: "

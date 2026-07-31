@@ -187,6 +187,11 @@ type Me = {
     internshalaLoginEnabled: boolean;
   };
   profile: RawProfile | null;
+  // Setup answers the agent is currently stuck on, with how many applications
+  // each one is holding up. Computed server-side against the LIVE profile, so a
+  // box clears from this list the moment it is filled — not when the agent next
+  // happens to run. See /api/me and agent/channel_ats.blocking_fact_keys.
+  setupGaps?: { key: string; label: string; help: string; waiting: number }[];
   applications: App[];
   reports: Report[];
   stats: {
@@ -792,6 +797,11 @@ export default function Dashboard() {
   const [skillsDraft, setSkillsDraft] = useState<string[]>([]);
   const [skillsSaving, setSkillsSaving] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  // The "your agent is stuck on these answers" prompt, and the fields it sent
+  // the user to. `gapKeys` outlives the prompt on purpose: the highlight has to
+  // still be there when they arrive on the settings page.
+  const [gapPromptOpen, setGapPromptOpen] = useState(false);
+  const [gapKeys, setGapKeys] = useState<string[]>([]);
   const [surveyRating, setSurveyRating] = useState<number | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "err" | "info"; text: string } | null>(null);
   // Account-deletion modal: open state, the typed-confirmation text, and an
@@ -1539,8 +1549,58 @@ export default function Dashboard() {
     setShowOnboarding(false);
   }
 
+  // Take the user to the exact boxes the agent is waiting on, and mark them so
+  // they are findable on a settings page of thirty fields. "Go fill in your
+  // profile" is how a blocker stays blocked.
+  function fillSetupGaps() {
+    const keys = (me?.setupGaps ?? []).map((g) => g.key);
+    setGapKeys(keys);
+    setGapPromptOpen(false);
+    setTab("profile");
+    // After the tab renders. The profile tab also scrolls itself to the top on
+    // entry, so this has to land after that, not race it.
+    setTimeout(() => {
+      document.getElementById(`field-${keys[0]}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }, 350);
+  }
 
 
+
+
+  // Ask for the answers the agent is actually stuck on, once per set of them.
+  //
+  // /api/me is polled, so "show it whenever the list is non-empty" would reopen
+  // the prompt every few seconds after it was dismissed. Keyed on the gaps
+  // themselves instead: dismissing settles THESE answers, and a genuinely new
+  // blocker later asks again — which it should, because a new one means another
+  // application is sitting still.
+  const gapSignature = (me?.setupGaps ?? []).map((g) => g.key).sort().join(",");
+  useEffect(() => {
+    if (!gapSignature) return;
+    let dismissed = "";
+    try { dismissed = localStorage.getItem("grindly_setup_gaps_seen") || ""; } catch {}
+    if (dismissed === gapSignature) return;
+    setGapPromptOpen(true);
+  }, [gapSignature]);
+
+  function dismissGapPrompt() {
+    try { localStorage.setItem("grindly_setup_gaps_seen", gapSignature); } catch {}
+    setGapPromptOpen(false);
+  }
+
+  // Stop highlighting a box the moment it has an answer — a field still ringed
+  // in amber after the user filled it reads as "that didn't save".
+  useEffect(() => {
+    if (!gapKeys.length) return;
+    const stillOpen = new Set((me?.setupGaps ?? []).map((g) => g.key));
+    setGapKeys((prev) => {
+      const next = prev.filter((k) => stillOpen.has(k));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [gapSignature, gapKeys.length, me?.setupGaps]);
 
   // Opening "Profile & settings" from the account menu should feel like landing on
   // a fresh page — jump to the top so the user isn't dropped mid-scroll into a
@@ -1666,6 +1726,54 @@ export default function Dashboard() {
             <p className="mt-4 text-xs text-muted">Tip: <span className="text-foreground">Run now</span> searches every day for you — connecting a platform is optional (for auto-fill).</p>
             <button onClick={dismissOnboarding} className="mt-5 w-full press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition">
               Got it — let&apos;s go
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* The agent is stuck on an answer only this person can give.
+
+          It refuses to invent a fact — right, and for three real applications in
+          a row that refusal was invisible: the boxes it needed were folded away
+          under "More answers" in setup, so they were blank on every account, and
+          all the user saw was applications that never sent. Naming them, with
+          the count they are holding up, is the difference between a one-minute
+          edit and a product that looks broken. */}
+      {gapPromptOpen && (me.setupGaps?.length ?? 0) > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={dismissGapPrompt}>
+          <div className="glass rounded-2xl p-6 max-w-md w-full glow" onClick={(e) => e.stopPropagation()}>
+            <h2 className="font-display text-xl font-semibold">
+              Your agent needs {me.setupGaps!.length === 1 ? "one answer" : `${me.setupGaps!.length} answers`} from you
+            </h2>
+            <p className="text-sm text-muted mt-2">
+              {me.setupGaps!.length === 1 ? "An application form asked for this" : "Application forms asked for these"} and
+              Grindly will never make {me.setupGaps!.length === 1 ? "it" : "them"} up for you. Fill{" "}
+              {me.setupGaps!.length === 1 ? "it" : "them"} in once and every application after this sends itself.
+            </p>
+            <ul className="mt-4 space-y-3">
+              {me.setupGaps!.map((g) => (
+                <li key={g.key} className="rounded-xl border border-warn/40 bg-warn/10 px-3 py-2.5">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-sm font-medium">{g.label}</span>
+                    <span className="shrink-0 text-xs text-muted">
+                      {g.waiting} {g.waiting === 1 ? "application" : "applications"} waiting
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted">{g.help}</p>
+                </li>
+              ))}
+            </ul>
+            <button
+              onClick={fillSetupGaps}
+              className="mt-5 w-full press rounded-lg brand-gradient px-4 py-2.5 text-sm font-medium text-white hover:opacity-90 transition"
+            >
+              Fill {me.setupGaps!.length === 1 ? "it" : "them"} in now
+            </button>
+            <button
+              onClick={dismissGapPrompt}
+              className="mt-2 w-full rounded-lg px-4 py-2 text-xs text-muted hover:text-foreground transition"
+            >
+              Later — leave {me.setupGaps!.length === 1 ? "that application" : "those applications"} waiting
             </button>
           </div>
         </div>
@@ -2323,6 +2431,26 @@ export default function Dashboard() {
           return null;
         })()}
 
+        {/* Standing version of the prompt above. The modal can be dismissed in
+            one tap — by someone in a hurry, or by a stray click on the backdrop
+            — and a blocker that vanishes on a stray click is a blocker nobody
+            fixes. This one stays until the boxes are filled. */}
+        {(me.setupGaps?.length ?? 0) > 0 && (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warn/40 bg-warn/10 px-4 py-2.5 text-sm text-warn">
+            <span>
+              {me.setupGaps!.reduce((n, g) => Math.max(n, g.waiting), 0)}{" "}
+              {me.setupGaps!.reduce((n, g) => Math.max(n, g.waiting), 0) === 1 ? "application is" : "applications are"} waiting on{" "}
+              {me.setupGaps!.map((g) => g.label.toLowerCase()).join(", ")} — the agent won&apos;t make these up for you.
+            </span>
+            <button
+              onClick={fillSetupGaps}
+              className="shrink-0 rounded-lg border border-warn/60 px-3 py-1 text-xs hover:bg-warn/20 transition"
+            >
+              Fill in now
+            </button>
+          </div>
+        )}
+
         {/* reconnect warnings */}
         {integrations.filter((i) => i.status === "needs_login").map((i) => (
           <div key={i.platform} className="mt-3 flex items-center justify-between rounded-xl border border-warn/40 bg-warn/10 px-4 py-2.5 text-sm text-warn">
@@ -2949,10 +3077,26 @@ export default function Dashboard() {
                 )}
                 <div className="space-y-4">
                   {PROFF_FIELDS.filter((f) => f.group === group).map((f) => (
-                    <div key={f.key}>
+                    // Ringed when the agent is waiting on it. This page is
+                    // thirty boxes long; "go and fill in your profile" is how a
+                    // blocker stays blocked. The ring clears itself as soon as
+                    // the answer lands, so it never lingers as a false alarm.
+                    <div
+                      key={f.key}
+                      className={
+                        gapKeys.includes(f.key)
+                          ? "-mx-3 rounded-xl border border-warn/50 bg-warn/10 px-3 py-3"
+                          : undefined
+                      }
+                    >
                       <label htmlFor={`field-${f.key}`} className="block text-sm font-medium mb-1">
                         {f.label}
                         {f.required && <span className="ml-1 text-danger">*</span>}
+                        {gapKeys.includes(f.key) && (
+                          <span className="ml-2 rounded-full bg-warn/20 px-2 py-0.5 text-[10px] font-normal text-warn align-middle">
+                            your agent is waiting on this
+                          </span>
+                        )}
                       </label>
                       <p className="text-xs text-muted mb-1.5">{f.help}</p>
                       {f.type === "choice" && (

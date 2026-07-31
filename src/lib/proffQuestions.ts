@@ -293,12 +293,12 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "text",
     placeholder: "e.g. 14/03/2005",
     group: "About you",
-    // Measured: "Date of Birth *" stopped a real application on a live run —
-    // so it is no longer folded away under "More answers", where it was blank
-    // on every account. Still not REQUIRED: a date is typed, not tapped, and
-    // demanding it before anyone has seen an application go out is the wall
-    // this setup was cut down to avoid. `blankOptional` names it instead, and
-    // the application that stops says which fact it is waiting for.
+    // Measured: "Date of Birth *" stopped a real application on a live run, and
+    // it was folded away under "More answers", so it was blank on every account.
+    // Asked up front and required — one typed line at signup beats an
+    // application that silently waits for it. It is the one required question
+    // with no list to pick from, and it cannot have one.
+    required: true,
   },
   {
     key: "nationality",
@@ -546,6 +546,36 @@ function answered(value: unknown, field?: ProffField): boolean {
  */
 export function missingRequired(form: Record<string, unknown>): ProffField[] {
   return PROFF_FIELDS.filter((f) => f.required && !answered(form[f.key], f));
+}
+
+/**
+ * Of the setup answers an application stopped for, the ones STILL missing.
+ *
+ * `agent/channel_ats.py` writes the keys onto the application row the moment it
+ * refuses (`blocking_facts`), which makes the row a snapshot of that moment.
+ * The user then fills the box — and the row still says it is waiting. Re-asking
+ * the live profile here is what makes the prompt disappear when it is answered
+ * instead of when the agent next happens to run.
+ *
+ * Keys that are not setup questions (a form the agent could not read) return no
+ * field and are dropped: those are ours to fix, and sending someone hunting for
+ * a box that does not exist is worse than saying nothing.
+ */
+export function unfilledFacts(
+  keys: string[],
+  form: Record<string, unknown>,
+): ProffField[] {
+  const seen = new Set<string>();
+  const out: ProffField[] = [];
+  for (const key of keys) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const field = PROFF_FIELDS.find((f) => f.key === key);
+    if (!field) continue;
+    if (answered(form[key], field)) continue;
+    out.push(field);
+  }
+  return out;
 }
 
 /**
