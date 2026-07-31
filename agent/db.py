@@ -1152,20 +1152,40 @@ def destination_coverage(uid: str | None = None, since_ms: int | None = None) ->
     ]
 
 
-def pipeline_depth(uid: str) -> int:
+def pipeline_depth(uid: str, deliverable_only: bool = False) -> int:
     """Every match banked for this user — today's and every future day's.
 
     Discovery fills a month of work in one sweep, so a run should not re-scrape
     the boards when there is already a queue — that is just extra traffic to a
     site that is watching for exactly that.
+
+    `deliverable_only` narrows it to work the AGENT can still finish, which is
+    the only question worth asking in no-touch mode. This is not a refinement;
+    it is the difference between a working agent and a dead one.
+
+    A queue of rows nobody will ever send still counts as a queue, so discovery
+    is suppressed for being "stocked" — and in no-touch mode discovery is the
+    only thing that sends, because a match it can deliver is dispatched inline
+    the moment it is found and never banked. One account reached 43 banked
+    rows — 25 behind a dead Internshala session, 17 on boards that are never
+    submitted server-side — sat permanently above the refill threshold, and
+    therefore searched nothing and sent nothing, every day, while every switch
+    in the system read "on".
+
+    Two exclusions, both about whether the row can still move:
+      * tier C is never submitted from our servers at any setting;
+      * a row carrying a failure_reason has already come back from an attempt —
+        it is a blockage, not a backlog.
     """
+    sql = "SELECT COUNT(*) AS n FROM applications WHERE user_id=? AND status='matched'"
+    if deliverable_only:
+        sql += (
+            " AND COALESCE(apply_tier, '') <> 'C'"
+            " AND failure_reason IS NULL"
+        )
     with conn() as c:
         _ensure_app_columns(c)
-        row = c.execute(
-            "SELECT COUNT(*) AS n FROM applications "
-            "WHERE user_id=? AND status='matched'",
-            (uid,),
-        ).fetchone()
+        row = c.execute(sql, (uid,)).fetchone()
     return int(row["n"] if row else 0)
 
 

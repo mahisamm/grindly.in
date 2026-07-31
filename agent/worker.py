@@ -1379,13 +1379,18 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # function of how fast it drains, and someone applying twice a day does not
     # need a plan-sized backlog scraped for them.
     plan_cap = _cap_for(uid, profile)
-    pipeline = db.pipeline_depth(uid)
+    # In no-touch mode the throttle must count work the AGENT can finish, not
+    # rows on the table. Nothing here waits for a user's tap by design, so a
+    # backlog of rows that will never move is not a stocked pipeline — it is the
+    # reason the agent stops. Counting it suppressed discovery, and discovery is
+    # the only thing that sends in this mode.
+    pipeline = db.pipeline_depth(uid, deliverable_only=flags.no_touch_only())
     refill_at = plan_cap * PIPELINE_REFILL_DAYS
     stocked = pipeline >= refill_at
     if stocked and not submit_only:
         log.info(
-            "pipeline holds %d match(es) (~%d days of work, refill under %d) — "
-            "skipping discovery this run",
+            "pipeline holds %d deliverable match(es) (~%d days of work, refill "
+            "under %d) — skipping discovery this run",
             pipeline, pipeline // max(1, plan_cap), refill_at,
         )
 
