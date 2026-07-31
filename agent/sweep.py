@@ -57,6 +57,18 @@ log = logging.getLogger("grindly.sweep")
 SWEEP_HOUR_START = int(os.environ.get("GRINDLY_SWEEP_HOUR_START", "9"))
 SWEEP_HOUR_END = int(os.environ.get("GRINDLY_SWEEP_HOUR_END", "18"))
 
+# When the fleet-wide board harvest runs (IST). Before the earliest user sweep
+# on purpose: a board learned at 07:00 is polled by everyone's run that same
+# day, whereas one learned at noon helps nobody until tomorrow.
+#
+# Once a day for the WHOLE FLEET, not once per user. A board is not personal —
+# a thousand users searching out the same Bangalore startups is a thousand
+# times the traffic for one answer, from one IP, which is the pattern that gets
+# that IP blocked.
+HARVEST_HOUR = int(os.environ.get("GRINDLY_HARVEST_HOUR", "7"))
+HARVEST_ENABLED = os.environ.get("GRINDLY_HARVEST_ENABLED", "1") == "1"
+_last_harvest_date: str | None = None
+
 # How often to check whether anyone is due. Ten minutes is far finer than the
 # once-a-day decision it is making; it just needs to not miss an hour boundary.
 POLL_SEC = int(os.environ.get("GRINDLY_SWEEP_POLL_SEC", "600"))
@@ -121,6 +133,45 @@ def _gmail_scan_on() -> bool:
     return os.environ.get("GMAIL_SCAN_ENABLED") == "1"
 
 
+def harvest_due(now: datetime.datetime | None = None) -> bool:
+    """True once per day, from HARVEST_HOUR onwards.
+
+    Guarded by an in-process date rather than a database row because the
+    harvest is idempotent and cheap to skip: the worst case of forgetting
+    across a restart is one extra sweep, while a row would need a schema and a
+    migration to protect against nothing.
+    """
+    if not HARVEST_ENABLED:
+        return False
+    now = now or _ist_now()
+    return now.hour >= HARVEST_HOUR and _last_harvest_date != now.date().isoformat()
+
+
+def run_harvest(now: datetime.datetime | None = None) -> dict | None:
+    """One fleet-wide board harvest, if today's has not happened yet."""
+    global _last_harvest_date
+    if not harvest_due(now):
+        return None
+    now = now or _ist_now()
+    # Marked BEFORE the sweep, not after: a harvest that throws halfway has
+    # still spent its search budget, and retrying it every ten minutes for the
+    # rest of the day is how one bad afternoon becomes a rate-limited IP.
+    _last_harvest_date = now.date().isoformat()
+    try:
+        import harvester
+
+        result = harvester.sweep()
+        db.add_audit(
+            "board_harvest", user_id=None,
+            target=f"{result['learned']}/{result['candidates']}",
+            detail=f"{result['known_after']} boards known",
+        )
+        return result
+    except Exception as e:  # noqa: BLE001 — the fleet's runs matter more
+        log.error("board harvest failed: %s", e)
+        return None
+
+
 def tick(now: datetime.datetime | None = None) -> int:
     """Enqueue daily discovery and due final-link delivery work."""
     n = 0
@@ -155,6 +206,14 @@ def tick(now: datetime.datetime | None = None) -> int:
                 n += 1
         except Exception as e:  # noqa: BLE001
             log.error("could not enqueue delivery for %s: %s", uid, e)
+
+    # LAST, deliberately. The harvest issues a few hundred searches and takes
+    # minutes; the enqueues above take milliseconds and are what a user is
+    # actually waiting on. Ordering costs nothing — the harvest hour is before
+    # the first user sweep hour, so there is nobody due on the tick that
+    # triggers it — and it means a slow or wedged search backend can never
+    # delay somebody's agent starting.
+    run_harvest(now)
     return n
 
 

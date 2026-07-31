@@ -5,11 +5,29 @@ can hide)."""
 import datetime
 from unittest.mock import patch
 
+import pytest
+
 import sweep
 
 
 def _ist(hour: int, day: int = 14) -> datetime.datetime:
     return datetime.datetime(2026, 7, day, hour, 0, tzinfo=datetime.timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_harvest():
+    """tick() ends with the fleet-wide board harvest, which issues a few
+    hundred real searches. Without this the existing tick tests quietly went to
+    the network — one took 137 seconds and would fail on a plane, or hammer the
+    production search backend from anyone's laptop.
+
+    Every test starts from "today's harvest has not run", so ordering between
+    tests cannot decide whether one fires.
+    """
+    sweep._last_harvest_date = None
+    with patch.object(sweep, "HARVEST_ENABLED", False):
+        yield
+    sweep._last_harvest_date = None
 
 
 # --- the hour is spread across the fleet -------------------------------------
@@ -96,6 +114,70 @@ def test_pro_afternoon_slot_fires_exactly_once():
 def test_pro_slot_hours_are_stable_within_the_day():
     assert sweep.sweep_hours("u1", "2026-07-14", "pro") == \
         sweep.sweep_hours("u1", "2026-07-14", "pro")
+
+
+# --- the fleet-wide board harvest --------------------------------------------
+
+def test_the_harvest_does_not_run_before_its_hour():
+    with patch.object(sweep, "HARVEST_ENABLED", True):
+        assert not sweep.harvest_due(_ist(sweep.HARVEST_HOUR - 1))
+        assert sweep.harvest_due(_ist(sweep.HARVEST_HOUR))
+
+
+def test_the_harvest_runs_once_a_day_not_once_per_tick():
+    """The sweep loop ticks every ten minutes. A harvest per tick would issue
+    its whole search budget 100+ times a day from one IP."""
+    with patch.object(sweep, "HARVEST_ENABLED", True), \
+         patch.object(sweep.db, "add_audit"), \
+         patch("harvester.sweep", return_value={
+             "learned": 2, "candidates": 5, "known_after": 500}) as h:
+        assert sweep.run_harvest(_ist(sweep.HARVEST_HOUR)) is not None
+        assert sweep.run_harvest(_ist(sweep.HARVEST_HOUR + 1)) is None
+        assert sweep.run_harvest(_ist(sweep.HARVEST_HOUR + 5)) is None
+    assert h.call_count == 1
+
+
+def test_a_failed_harvest_is_not_retried_all_day():
+    """It has already spent its search budget. Retrying every ten minutes is
+    how one bad afternoon becomes a rate-limited IP."""
+    with patch.object(sweep, "HARVEST_ENABLED", True), \
+         patch("harvester.sweep", side_effect=RuntimeError("engines down")) as h:
+        assert sweep.run_harvest(_ist(sweep.HARVEST_HOUR)) is None
+        assert sweep.run_harvest(_ist(sweep.HARVEST_HOUR + 1)) is None
+    assert h.call_count == 1
+
+
+def test_a_failed_harvest_never_stops_the_users_runs():
+    """The fleet's runs matter more than the index growing today."""
+    with patch.object(sweep, "HARVEST_ENABLED", True), \
+         patch.object(sweep, "due_users", return_value=["u1"]), \
+         patch.object(sweep.run_queue, "enqueue"), \
+         patch.object(sweep.db, "add_audit"), \
+         patch.object(sweep.db, "active_users", return_value=[]), \
+         patch("harvester.sweep", side_effect=RuntimeError("boom")):
+        assert sweep.tick(_ist(sweep.HARVEST_HOUR)) == 1
+
+
+def test_users_are_enqueued_before_the_slow_harvest_starts():
+    """The harvest takes minutes; an enqueue takes milliseconds. A wedged
+    search backend must never delay somebody's agent starting."""
+    order = []
+    with patch.object(sweep, "HARVEST_ENABLED", True), \
+         patch.object(sweep, "due_users", return_value=["u1"]), \
+         patch.object(sweep.run_queue, "enqueue",
+                      side_effect=lambda *a, **k: order.append("enqueue")), \
+         patch.object(sweep.db, "add_audit"), \
+         patch.object(sweep.db, "active_users", return_value=[]), \
+         patch("harvester.sweep",
+               side_effect=lambda *a, **k: order.append("harvest") or {
+                   "learned": 0, "candidates": 0, "known_after": 1}):
+        sweep.tick(_ist(sweep.HARVEST_HOUR))
+    assert order == ["enqueue", "harvest"]
+
+
+def test_the_harvest_can_be_switched_off():
+    with patch.object(sweep, "HARVEST_ENABLED", False):
+        assert not sweep.harvest_due(_ist(23))
 
 
 # --- enqueueing --------------------------------------------------------------
