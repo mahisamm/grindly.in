@@ -304,9 +304,13 @@ _PROVABLY_NOT_SENT = (
     # (company, title) pairs forever, though no employer ever saw a byte.
     # Only this reason: other failed rows can be post-click ambiguity (a
     # timeout can fire AFTER the submit landed) and must stay locked.
-    # COALESCE, not a bare =: a NULL failure_reason makes the comparison NULL,
-    # and `AND NOT <NULL>` silently drops the row from every caller's result.
-    " OR (status = 'failed' AND COALESCE(failure_reason, '') = 'browser_launch'))"
+    # The IS NOT NULL guard is load-bearing, not redundant: a bare = against a
+    # NULL failure_reason yields NULL, and `AND NOT <NULL>` silently drops the
+    # row from every caller's result — while FALSE from the guard short-
+    # circuits the AND to FALSE. COALESCE(failure_reason, '') is not an option
+    # either; on Postgres the column is an enum and '' is not a value of it.
+    " OR (status = 'failed' AND failure_reason IS NOT NULL"
+    " AND failure_reason = 'browser_launch'))"
 )
 
 
