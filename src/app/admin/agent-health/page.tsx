@@ -10,7 +10,20 @@ type HealthData = {
     runningCount: number;
     staleCount: number;
     recentFailed: { userId: string; error: string | null; updatedAt: string }[];
-  }; checks: Check[]; allOk: boolean; checkedAt: string };
+  };
+  funnel?: FunnelDay[];
+  lastHarvest?: { target: string | null; detail: string | null; createdAt: string } | null;
+  checks: Check[]; allOk: boolean; checkedAt: string };
+
+type FunnelDay = {
+  day: string;
+  scored: number;
+  matched: number;
+  sent: number;
+  failed: number;
+  needsReview: number;
+  sendable: number;
+};
 
 const ICONS: Record<string, string> = {
   db: "🗄️",
@@ -200,6 +213,56 @@ export default function AgentHealthPage() {
             ))}
           </div>
         )}
+      </div>
+    )}
+
+    {data?.funnel && data.funnel.length > 0 && (
+      <div className="mt-6 rounded-lg border border-border/40 bg-surface-2/30 p-4">
+        <div className="mb-1 font-sans text-sm font-bold text-muted">
+          Pipeline, last 7 days
+        </div>
+        {/* Each stage feeds the next, so whichever column collapses first is
+            where a slow day died. "Sendable" excludes tier C deliberately —
+            counting boards that hold the user's account as pipeline is how
+            "43 in queue" once meant "43 things the agent cannot send". */}
+        <div className="mb-3 font-sans text-[11px] text-muted">
+          Scored → matched → sendable (tier A/B only) → sent.
+          {data.lastHarvest && (
+            <> Board index: {data.lastHarvest.detail ?? "—"} (last harvest{" "}
+              {new Date(data.lastHarvest.createdAt).toLocaleDateString()},
+              learned {data.lastHarvest.target ?? "—"}).</>
+          )}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[34rem] font-sans text-xs">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted">
+                <th className="pb-1 pr-3 font-normal">Day</th>
+                <th className="pb-1 pr-3 font-normal">Scored</th>
+                <th className="pb-1 pr-3 font-normal">Matched</th>
+                <th className="pb-1 pr-3 font-normal">Sendable</th>
+                <th className="pb-1 pr-3 font-normal">Sent</th>
+                <th className="pb-1 pr-3 font-normal">Needs you</th>
+                <th className="pb-1 font-normal">Failed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.funnel.map((d) => (
+                <tr key={d.day} className="border-t border-border/30">
+                  <td className="py-1 pr-3 text-muted">{d.day.slice(5)}</td>
+                  <td className="py-1 pr-3">{d.scored}</td>
+                  <td className="py-1 pr-3">{d.matched}</td>
+                  <td className="py-1 pr-3">{d.sendable}</td>
+                  <td className={`py-1 pr-3 font-bold ${d.sent > 0 ? "text-accent" : "text-muted"}`}>
+                    {d.sent}
+                  </td>
+                  <td className="py-1 pr-3">{d.needsReview}</td>
+                  <td className={`py-1 ${d.failed > 0 ? "text-brand" : ""}`}>{d.failed}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     )}
 

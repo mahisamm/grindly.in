@@ -113,6 +113,49 @@ async function checkLastRun(): Promise<CheckResult> {
   }
 }
 
+/**
+ * The last seven days of the pipeline, by day.
+ *
+ * The worker logs a one-line `funnel:` per run, which is the right thing while
+ * you are watching a run and useless the next morning — container logs rotate
+ * and nobody greps them until a user complains. The applications table is the
+ * durable record of the same story, so the question "where did a slow day die"
+ * survives a redeploy.
+ *
+ * Aggregated in JS rather than SQL on purpose: a week of one fleet's rows is
+ * hundreds, not millions, and date bucketing in raw SQL would tie this route
+ * to Postgres while the agent's own tests run on SQLite.
+ */
+async function weeklyFunnel() {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const rows = await prisma.application.findMany({
+    where: { createdAt: { gte: since } },
+    select: { createdAt: true, status: true, applyTier: true, applyChannel: true },
+  });
+
+  const byDay = new Map<
+    string,
+    { day: string; scored: number; matched: number; sent: number; failed: number; needsReview: number; sendable: number }
+  >();
+  for (const r of rows) {
+    const day = r.createdAt.toISOString().slice(0, 10);
+    const d =
+      byDay.get(day) ??
+      { day, scored: 0, matched: 0, sent: 0, failed: 0, needsReview: 0, sendable: 0 };
+    d.scored += 1;
+    if (r.status === "matched" || r.status === "approved") d.matched += 1;
+    if (r.status === "applied") d.sent += 1;
+    if (r.status === "failed") d.failed += 1;
+    if (r.status === "needs_review") d.needsReview += 1;
+    // Tier C is never submitted from our servers, so counting it as pipeline
+    // is how "43 in queue" came to mean "43 things the agent cannot send".
+    if (r.status !== "skipped" && r.applyTier && r.applyTier !== "C") d.sendable += 1;
+    byDay.set(day, d);
+  }
+
+  return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+}
+
 export async function GET() {
   const g = await requireAdmin();
   if ("error" in g) return g.error;
@@ -150,22 +193,31 @@ export async function GET() {
 
   // Queue depth stats
   const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
-  const [queueDepth, runningCount, staleCount, recentFailed] = await Promise.all([
-    prisma.agentRun.count({ where: { status: "queued" } }),
-    prisma.agentRun.count({ where: { status: "running" } }),
-    prisma.agentRun.count({ where: { status: "running", lockedAt: { lt: thirtyMinAgo } } }),
-    prisma.agentRun.findMany({
-      where: { status: "failed" },
-      orderBy: { updatedAt: "desc" },
-      take: 5,
-      select: { userId: true, error: true, updatedAt: true },
-    }),
-  ]);
+  const [queueDepth, runningCount, staleCount, recentFailed, funnel, lastHarvest] =
+    await Promise.all([
+      prisma.agentRun.count({ where: { status: "queued" } }),
+      prisma.agentRun.count({ where: { status: "running" } }),
+      prisma.agentRun.count({ where: { status: "running", lockedAt: { lt: thirtyMinAgo } } }),
+      prisma.agentRun.findMany({
+        where: { status: "failed" },
+        orderBy: { updatedAt: "desc" },
+        take: 5,
+        select: { userId: true, error: true, updatedAt: true },
+      }),
+      weeklyFunnel(),
+      prisma.auditLog.findFirst({
+        where: { action: "board_harvest" },
+        orderBy: { createdAt: "desc" },
+        select: { target: true, detail: true, createdAt: true },
+      }),
+    ]);
 
   return NextResponse.json({
     checks,
     allOk,
     checkedAt: new Date().toISOString(),
     queue: { queueDepth, runningCount, staleCount, recentFailed },
+    funnel,
+    lastHarvest,
   });
 }
