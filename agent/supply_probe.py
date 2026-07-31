@@ -352,7 +352,8 @@ def _deep_read(internships: list[dict], workers: int = 6) -> int:
 
 
 def run(pairs: list[tuple[str, str]], skills: list[str], domains: list[str],
-        threshold: int, workers: int = 12, deep: bool = False) -> dict:
+        threshold: int, workers: int = 12, deep: bool = False,
+        exp_level: str | None = "student") -> dict:
     """Poll every candidate board and score everything found."""
     tested = len(pairs)
     live = boards_with_jobs = boards_with_supply = 0
@@ -398,7 +399,7 @@ def run(pairs: list[tuple[str, str]], skills: list[str], domains: list[str],
     for job in internships:
         try:
             score, reason = matcher.score_job(
-                job, skills, domains, exp_level="intern",
+                job, skills, domains, exp_level=exp_level,
                 jd_text=job.get("jd_text") or "",
             )
         except Exception:  # noqa: BLE001
@@ -454,27 +455,35 @@ def run(pairs: list[tuple[str, str]], skills: list[str], domains: list[str],
     }
 
 
-def _profile_for(email: str) -> tuple[list[str], list[str]]:
-    """A real user's skills+domains when one is named, else the default stack."""
+def _profile_for(email: str) -> tuple[list[str], list[str], str | None]:
+    """A real user's skills, domains and experience level.
+
+    experience_level is read rather than assumed: worker.run_for_user passes
+    `profile.experience_level` straight into the matcher, and "student" earns a
+    +0.05 level-fit adjustment that a hardcoded "intern" does not. A probe that
+    guesses it measures a funnel production does not have — it under-reported a
+    real Data Science internship by exactly that 5 points.
+    """
     if not email:
-        return DEFAULT_SKILLS, DEFAULT_DOMAINS
+        return DEFAULT_SKILLS, DEFAULT_DOMAINS, "student"
     try:
         with db.conn() as c:
             row = c.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
         if not row:
             print(f"[probe] no user {email}; using the default profile")
-            return DEFAULT_SKILLS, DEFAULT_DOMAINS
+            return DEFAULT_SKILLS, DEFAULT_DOMAINS, "student"
         user = db.get_user(row["id"]) or {}
         profile = user.get("profile") or {}
         skills = json.loads(profile.get("skills") or "[]")
         domains = json.loads(profile.get("preferred_domains") or "[]")
+        exp = profile.get("experience_level")
         if not skills:
             print(f"[probe] {email} has no skills on file; using the default stack")
-            return DEFAULT_SKILLS, domains or DEFAULT_DOMAINS
-        return skills, domains or DEFAULT_DOMAINS
+            return DEFAULT_SKILLS, domains or DEFAULT_DOMAINS, exp
+        return skills, domains or DEFAULT_DOMAINS, exp
     except Exception as e:  # noqa: BLE001
         print(f"[probe] could not read {email} ({type(e).__name__}); using defaults")
-        return DEFAULT_SKILLS, DEFAULT_DOMAINS
+        return DEFAULT_SKILLS, DEFAULT_DOMAINS, "student"
 
 
 def main() -> int:
@@ -490,9 +499,9 @@ def main() -> int:
     ap.add_argument("--json", default="", help="write the full result here")
     args = ap.parse_args()
 
-    skills, domains = _profile_for(args.email)
+    skills, domains, exp_level = _profile_for(args.email)
     print(f"[probe] scoring against {len(skills)} skill(s), domains={domains}, "
-          f"threshold={args.threshold}")
+          f"exp_level={exp_level}, threshold={args.threshold}")
 
     pairs: list[tuple[str, str]] = []
     if args.mode in ("guess", "both"):
@@ -509,7 +518,7 @@ def main() -> int:
         return 1
 
     result = run(pairs, skills, domains, args.threshold,
-                 workers=args.workers, deep=args.deep)
+                 workers=args.workers, deep=args.deep, exp_level=exp_level)
 
     print("\n=== SUPPLY PROBE ===")
     print(f"boards tested        : {result['tested']}")
