@@ -359,6 +359,15 @@ services:
       retries: 3
       start_period: 20s
     logging: *default-logging
+    volumes:
+      # The board index lives here (data/ats_slugs.json, ats_board_stats.json,
+      # ats_boards.json) and this container is what grows it: sweep runs the
+      # daily fleet-wide harvest. Without the mount the harvest wrote every
+      # board it learned into the container's own filesystem, where the worker
+      # could never read it and a restart threw it away — the whole job would
+      # have been an expensive no-op. Caught because a harvest here reported
+      # "0 known" while the worker knew 483.
+      - appdata:/app/data
     depends_on:
       postgres:
         condition: service_healthy
