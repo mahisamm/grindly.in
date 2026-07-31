@@ -244,3 +244,30 @@ describe("how much setup asks for", () => {
     expect(stipend.choices!.some((c) => /unpaid/i.test(c.label))).toBe(true);
   });
 });
+
+/**
+ * Zero is an answer to exactly one question, and it is now a REQUIRED one — so
+ * getting this wrong would leave setup demanding a stipend the user had already
+ * picked, forever, with no way past.
+ */
+describe("a stipend of zero", () => {
+  it("counts as answered once picked", () => {
+    const form = { ...DEFAULTS, expectedStipend: 0 };
+    expect(missingRequired(form).map((f) => f.key)).not.toContain("expectedStipend");
+  });
+
+  it("survives the round trip through the Int column", () => {
+    // The select hands back the string "0"; /api/profile coerces it to the
+    // number 0; the form reloads holding 0. All three have to read as answered
+    // or setup blocks on reload.
+    for (const value of ["0", 0]) {
+      const form = { ...DEFAULTS, expectedStipend: value };
+      expect(missingRequired(form).map((f) => f.key)).not.toContain("expectedStipend");
+    }
+  });
+
+  it("does not loosen the rule for any other numeric question", () => {
+    const blanks = blankOptional({ ...DEFAULTS, class10Percent: 0 }).map((f) => f.key);
+    expect(blanks).toContain("class10Percent");
+  });
+});

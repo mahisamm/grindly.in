@@ -27,6 +27,17 @@ export type ProffField = {
   suggestions?: string[];
   /** A "select" whose options are numbers but whose column is an Int. */
   numeric?: boolean;
+  /**
+   * Zero is a real answer to THIS question, not the empty marker.
+   *
+   * Every numeric field starts at 0 to mean "blank" — nobody scored 0% in class
+   * 12 and nobody commits 0 hours a week, so `answered()` reads 0 as unfilled.
+   * "What stipend do you expect?" breaks that rule: 0 is a student saying they
+   * will take an unpaid internship, it is the first option in the list, and
+   * without this flag picking it would leave the question demanding an answer
+   * forever and the agent still refusing every form that asks.
+   */
+  zeroIsAnAnswer?: boolean;
   placeholder?: string;
   suffix?: string;
   /**
@@ -220,6 +231,9 @@ export const PROFF_FIELDS: ProffField[] = [
     type: "select",
     options: ["0", "5000", "10000", "15000", "20000", "25000", "30000", "40000"],
     numeric: true,
+    // "0" here means "I'll take an unpaid internship" — an answer, and the
+    // first option offered.
+    zeroIsAnAnswer: true,
     suffix: "₹/mo",
     group: "About you",
     // Measured: "Expected Salary *" stopped a real application on a live run,
@@ -517,9 +531,9 @@ export const DEFAULTS: Record<string, unknown> = {
  * from a dropdown, which is exactly how a student states a current salary of
  * zero.
  */
-function answered(value: unknown): boolean {
+function answered(value: unknown, field?: ProffField): boolean {
   if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === "number") return value !== 0;
+  if (typeof value === "number") return field?.zeroIsAnAnswer ? true : value !== 0;
   return String(value ?? "").trim() !== "";
 }
 
@@ -531,7 +545,7 @@ function answered(value: unknown): boolean {
  * form; what it cannot do is put anything in a box the user never filled.
  */
 export function missingRequired(form: Record<string, unknown>): ProffField[] {
-  return PROFF_FIELDS.filter((f) => f.required && !answered(form[f.key]));
+  return PROFF_FIELDS.filter((f) => f.required && !answered(form[f.key], f));
 }
 
 /**
@@ -547,6 +561,6 @@ export function blankOptional(form: Record<string, unknown>): ProffField[] {
     (f) =>
       !f.required &&
       (f.group === "About you" || f.group === "Education") &&
-      !answered(form[f.key]),
+      !answered(form[f.key], f),
   );
 }

@@ -803,6 +803,15 @@ def _setup_candidates(label: str, profile: dict) -> list[tuple[bool, str, str]]:
             return str(int(value))
         return str(value)
 
+    def _num_or_zero(key: str) -> str:
+        """Same, for the one numeric column where 0 is a real answer."""
+        value = profile.get(key)
+        if value in (None, ""):
+            return ""
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+
     # Order matters throughout: "Which college/university?" also matches
     # _DEGREE_Q on "course", and the college is the more specific answer. The
     # school-level percentages come before the grade/percentage catch-alls for
@@ -852,7 +861,14 @@ def _setup_candidates(label: str, profile: dict) -> list[tuple[bool, str, str]]:
         (bool(_GRAD_MONTH_YEAR_Q.search(label)), "grad_month", _grad_month_year(profile)),
         (bool(_GRAD_YEAR_Q.search(label)), "grad_year", _num("grad_year")),
         (bool(_HOURS_Q.search(label)), "hours_per_week", _num("hours_per_week")),
-        (bool(_STIPEND_Q.search(label)), "expected_stipend", _num("expected_stipend")),
+        # Zero is an ANSWER here, not the empty marker every other numeric column
+        # uses. Nobody scored 0% in class 12, but "0" is the first option in the
+        # stipend list and it is a student saying they will take an unpaid
+        # internship. Read through `_num`, that answer vanished: setup accepted
+        # the pick, the column held 0, and every form asking "Expected Salary *"
+        # was still refused for a fact the user had already given.
+        (bool(_STIPEND_Q.search(label)), "expected_stipend",
+         _num_or_zero("expected_stipend")),
         (bool(_START_Q.search(label)), "availability", _text("availability")),
         (bool(_RELOCATE_Q.search(label)), "willing_to_relocate", _text("willing_to_relocate")),
         (bool(_WORK_AUTH_Q.search(label)), "work_authorization", _text("work_authorization")),

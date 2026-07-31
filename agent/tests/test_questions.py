@@ -525,3 +525,32 @@ def test_a_whitespace_only_answer_is_not_an_answer():
     profile = {"work_authorization": "   "}
     box = {"label": "Work authorization", "type": "text", "options": []}
     assert questions._from_setup("Work authorization", box, profile) is None
+
+
+# --- zero is an answer to exactly one question ------------------------------
+# Every other numeric column uses 0 as its empty marker — nobody scored 0% in
+# class 12. "What stipend do you expect?" breaks that rule: 0 is the first
+# option in the list and it means "I'll take an unpaid internship". Read as
+# blank, setup accepted the pick, the column held 0, and every form asking
+# "Expected Salary *" was still refused for a fact the user had already given.
+
+def test_a_stated_stipend_of_zero_is_used():
+    f = _field("Expected Salary *", kind="text")
+    assert questions._deterministic(
+        f, {"expected_stipend": 0}, "Mahendhar", "m@example.com"
+    ) == "0"
+
+
+def test_a_stated_stipend_of_zero_is_not_a_setup_gap():
+    assert questions.missing_fact_for("Expected Salary *", {"expected_stipend": 0}) == ""
+
+
+def test_an_unanswered_stipend_is_still_a_setup_gap():
+    assert questions.missing_fact_for("Expected Salary *", {}) == "expected_stipend"
+
+
+def test_zero_stays_the_empty_marker_everywhere_else():
+    # A class 12 percentage of 0 is the column's "never filled in", not a score.
+    assert questions.missing_fact_for(
+        "Class 12 percentage", {"class12_percent": 0}
+    ) == "class12_percent"
