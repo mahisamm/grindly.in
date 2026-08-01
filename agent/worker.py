@@ -149,6 +149,25 @@ def _in_human_hours(hour: int) -> bool:
     return HUMAN_HOURS_START <= hour < HUMAN_HOURS_END
 
 
+def _seconds_until_send_window(ist_hour: int, ist_minute: int | None = None) -> int:
+    """How long until sending is allowed again, from an IST hour.
+
+    Deliberately lands a few minutes INSIDE the window rather than exactly on
+    the boundary: a run that wakes at 09:00:00 races the clock check that let
+    it sleep, and losing that race means sleeping another whole day.
+    """
+    if ist_minute is None:
+        ist_minute = (datetime.datetime.now(datetime.timezone.utc)
+                      + datetime.timedelta(hours=5, minutes=30)).minute
+    now_min = ist_hour * 60 + ist_minute
+    open_min = HUMAN_HOURS_START * 60 + 2
+    if now_min >= HUMAN_HOURS_END * 60:
+        open_min += 24 * 60          # tonight: wait for tomorrow morning
+    elif now_min >= open_min:
+        return 0                     # already inside the window
+    return max(60, (open_min - now_min) * 60)
+
+
 def _rescore_order(scored: list, budget: int) -> list[int]:
     """Which listings to spend a deep JD read on, as indexes into `scored`.
 
@@ -1647,21 +1666,36 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # precise round-the-clock pattern the hours rule exists to avoid, and it
     # costs the user's own account on a board that holds their login.
     #
-    # Discovery is deliberately still allowed at any hour: finding and banking
-    # matches at 2am carries none of that risk, and a user who taps "Run agent"
-    # late at night gets fresh results rather than a blank screen. Only the
-    # sending waits for morning, and the pipeline it fills is already scheduled
-    # to release then.
+    # Discovery has already happened by this point and is kept — finding
+    # listings at 2am carries none of that risk and the index is warmer for it.
+    # What we must NOT do is walk the apply loop with a zero budget: every
+    # deliverable match would be banked with a pipeline release date days out,
+    # and a banked match is never auto-sent later (only freshly discovered ones
+    # are dispatched inline). That is exactly what happened on the first night
+    # this gate ran — four sendable Internshala matches were filed for
+    # 2026-08-02 under the reason "goes out after 9:00 IST", a promise nothing
+    # in the system kept.
+    #
+    # So the run yields instead, and comes back when sending is allowed. The
+    # queue already knows how to do this: the same reschedule() that paces
+    # applies apart, with a longer delay.
     if live and not _in_human_hours(ist_h):
-        if remaining:
-            log.info(
-                "outside human hours (IST %dh) — discovering only, %d send(s) held for %d:00",
-                ist_h, remaining, HUMAN_HOURS_START,
-            )
-        remaining = 0
-        submit_paused_for_hours = True
-    else:
-        submit_paused_for_hours = False
+        wait_s = _seconds_until_send_window(ist_h)
+        log.info(
+            "outside human hours (IST %dh) — discovered %d listing(s), "
+            "yielding until %d:00 IST (%dm) before sending anything",
+            ist_h, len(all_jobs), HUMAN_HOURS_START, wait_s // 60,
+        )
+        for _src, _mod in source_modules.items():
+            try:
+                _mod.close(uid)
+            except Exception:  # noqa: BLE001
+                pass
+        return {
+            "applied": 0, "matched": 0, "failed": 0, "mode": mode,
+            "held_until_human_hours": HUMAN_HOURS_START,
+            "_requeue_after_seconds": wait_s,
+        }
 
     matched = applied = failed = 0
     queued = 0   # matches banked into the pipeline THIS run (drives the due-date)
@@ -2379,16 +2413,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             db.add_application(
                 uid, job_id=job_id, title=job["title"], company=job["company"],
                 url=job["url"], score=score, status="matched",
-                # Say which limit actually stopped it. "Daily cap reached" on a
-                # 1am run is simply untrue — the cap is untouched, the clock is
-                # the reason — and a user reading it would go looking for a
-                # quota problem that does not exist.
-                reason=(
-                    f"{reason} — found overnight, goes out after "
-                    f"{HUMAN_HOURS_START}:00 IST"
-                    if submit_paused_for_hours
-                    else f"{reason} — daily cap reached"
-                ),
+                reason=f"{reason} — daily cap reached",
                 applied=False,
                 scheduled_for=_release_at(slot, plan_cap),
                 missing_skills=matcher.missing_skills(

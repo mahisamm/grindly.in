@@ -48,22 +48,52 @@ def test_the_submit_gate_does_not_depend_on_manual():
     assert submit_hold, "every human-hours check still keys on `manual`"
 
 
-def test_discovery_is_not_gated_by_the_hour():
-    """Only sending waits for morning. A run that refused to discover at 2am
-    would hand a late-night user a blank dashboard."""
+def test_the_hold_yields_rather_than_banking_with_a_zero_budget():
+    """The regression this replaced. Walking the apply loop with remaining=0
+    banked every deliverable match with a pipeline release date DAYS out, and a
+    banked match is never auto-sent later — only freshly discovered ones are
+    dispatched inline. Four sendable Internshala matches were filed for
+    2026-08-02 under "goes out after 9:00 IST", a promise nothing kept."""
     import inspect
 
     src = inspect.getsource(worker.run_for_user)
-    hold = src.split("if live and not _in_human_hours(ist_h):", 1)[1][:400]
-    assert "remaining = 0" in hold, "the hold must zero the send budget"
-    assert "return" not in hold.split("submit_paused_for_hours")[0], \
-        "the hold must not abandon the run — discovery continues"
+    hold = src.split("if live and not _in_human_hours(ist_h):", 1)[1][:900]
+    assert "_requeue_after_seconds" in hold, "the hold must yield, not bank"
+    assert "remaining = 0" not in hold, "zero-budget banking is the bug"
 
 
-def test_a_held_match_is_not_labelled_a_cap_problem():
-    """"Daily cap reached" on a 1am run is untrue: the cap is untouched, the
-    clock is the reason, and the user would go hunting a quota bug."""
+def test_the_false_overnight_promise_is_gone():
     import inspect
 
-    src = inspect.getsource(worker.run_for_user)
-    assert "found overnight, goes out after" in src
+    assert "found overnight, goes out after" not in inspect.getsource(worker)
+
+
+# --- when the run wakes back up ---------------------------------------------
+
+def test_the_wait_lands_inside_the_window_not_on_its_edge():
+    """Waking at exactly 09:00:00 races the very check that put it to sleep,
+    and losing that race costs another whole day."""
+    wait = worker._seconds_until_send_window(1, 0)
+    woke_at = 1 * 60 + wait // 60
+    assert woke_at > worker.HUMAN_HOURS_START * 60
+
+
+def test_a_late_night_run_waits_until_the_morning():
+    wait = worker._seconds_until_send_window(1, 0)
+    assert 7 * 3600 < wait < 9 * 3600, wait
+
+
+def test_an_evening_run_waits_for_tomorrow_not_today():
+    """22:00 is past the close; the next window is tomorrow morning."""
+    wait = worker._seconds_until_send_window(22, 0)
+    assert wait > 10 * 3600, wait
+
+
+def test_inside_the_window_there_is_no_wait():
+    assert worker._seconds_until_send_window(worker.HUMAN_HOURS_START + 1, 0) == 0
+    assert worker._seconds_until_send_window(worker.HUMAN_HOURS_END - 1, 0) == 0
+
+
+def test_the_wait_is_never_zero_just_before_opening():
+    """A zero wait one minute before the window reopens the race."""
+    assert worker._seconds_until_send_window(worker.HUMAN_HOURS_START, 0) >= 60
