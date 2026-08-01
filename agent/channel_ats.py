@@ -797,6 +797,22 @@ def apply(
             ]
         if blocked:
             safety.screenshot(page, uid, f"ats_blocked_{job.get('external_id', '')}")
+            # A blocker the USER could clear must be asked for, not just
+            # reported. These come from the browser's own validation, which
+            # names the control ("Gender * — Please select an item in the
+            # list."), and several of those names are facts setup already knows
+            # how to collect. Without this the row said only "the form will not
+            # accept it yet" and nothing ever prompted for the missing answer —
+            # so a single blank field blocked that employer's form, and every
+            # other form asking the same thing, permanently.
+            labels = [b.split(" — ")[0].strip() for b in blocked]
+            record["blocking_facts"] = blocking_fact_keys(labels, profile)
+            gaps = _blocking_facts(labels, profile)
+            if gaps:
+                return "needs_review", (
+                    "waiting on facts only you can give: " + ", ".join(gaps[:3])
+                    + " — add them once in Setup and this sends itself"
+                )
             return "needs_review", (
                 "the form will not accept it yet: " + "; ".join(blocked[:3])
             )
