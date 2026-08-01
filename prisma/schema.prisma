@@ -366,6 +366,24 @@ model ResumeVariant {
   @@map("resume_variants")
 }
 
+// A listing, held ONCE for the whole fleet.
+//
+// Nothing here is per-user, and that is the point. Discovery, description
+// fetching and apply-route resolution used to happen inside each user's run, so
+// the same posting was crawled, read and resolved again for every user it
+// matched. At one user that is invisible; at a thousand it is a thousand
+// identical HTTP requests to the same employer, which is both wasteful and the
+// fastest way to get the crawler blocked.
+//
+// So the columns below are the shared work, done once and reused:
+//   jdText / jdFetchedAt        the description, fetched once
+//   apply*                      the apply route, resolved once at ingest
+//   lastSeenAt / deadAt         is this posting still real
+//   allocCount                  how many users have been handed this listing
+//
+// See agent/db.upsert_job, which now refreshes an existing row instead of
+// returning early on a hit — without that, none of these ever get filled in for
+// a listing after the first time it was seen.
 model Job {
   id         String   @id @default(cuid())
   source     String   @default("internshala")
@@ -379,9 +397,46 @@ model Job {
   url        String
   scrapedAt  DateTime @default(now()) @map("scraped_at")
 
+  // ── Shared description ────────────────────────────────────────────────
+  // The matcher reads this instead of re-fetching the page per user. Capped
+  // when written (see agent/db) because a handful of ATS pages inline their
+  // whole marketing site and would otherwise put ~1MB per row in the index.
+  jdText      String?   @map("jd_text")
+  jdFetchedAt DateTime? @map("jd_fetched_at")
+
+  // ── Shared apply route ────────────────────────────────────────────────
+  // resolver.resolve() answers "how would an application reach this employer",
+  // which depends only on the listing. Stored so it is computed at ingest, not
+  // once per user per run.
+  applyChannel String?   @map("apply_channel")
+  applyTarget  String?   @map("apply_target")
+  applyTier    String?   @map("apply_tier")
+  applyVendor  String?   @map("apply_vendor")
+  resolvedAt   DateTime? @map("resolved_at")
+
+  // ── Liveness ──────────────────────────────────────────────────────────
+  // A pool with no expiry silently fills with closed postings, and the agent
+  // spends its daily quota applying to roles that no longer exist. lastSeenAt
+  // is refreshed every time a crawl finds the listing again; deadAt is set when
+  // one is confirmed gone (404 / "no longer accepting").
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at")
+  deadAt     DateTime? @map("dead_at")
+
+  // ── Allocation ────────────────────────────────────────────────────────
+  // One shared pool means every matching user could be handed the same listing
+  // on the same day — which is spam from the employer's side, and burns the
+  // listing for all of them at once. The allocator hands each posting to at
+  // most K users; this is the running count it checks.
+  allocCount Int @default(0) @map("alloc_count")
+
   applications Application[]
 
   @@unique([source, externalId])
+  // "live listings, freshest first" is the pool query the allocator runs every
+  // time; without this it is a full scan that grows with the archive.
+  @@index([deadAt, lastSeenAt])
+  // "which live listings can actually be sent, and to how many more users"
+  @@index([applyTier, deadAt, allocCount])
   @@map("jobs")
 }
 

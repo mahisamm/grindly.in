@@ -982,18 +982,41 @@ def set_resume_text(uid: str, text: str):
 
 
 def upsert_job(job: dict) -> str:
-    """job: {source, external_id, title, company, location, stipend, duration, skills(list), url}"""
+    """job: {source, external_id, title, company, location, stipend, duration, skills(list), url}
+
+    A repeat sighting REFRESHES the row rather than returning early.
+
+    This used to be insert-or-return-existing, which quietly broke two things
+    the shared index depends on. `last_seen_at` never moved, so every listing
+    looked equally stale and there was no way to tell a posting that is still up
+    from one that closed in April. And a listing whose title, stipend or URL was
+    edited by the employer kept the version we happened to see first.
+
+    Deliberately does NOT touch jd_text, the apply_* columns or alloc_count:
+    those are filled in by later, more expensive passes, and a re-sighting must
+    not throw that work away. scraped_at also stays put — it means "first seen",
+    and `last_seen_at` is the one that moves.
+    """
+    now = now_db()
     with conn() as c:
+        _ensure_job_columns(c)
         if PG:
-            # Single round-trip, race-safe: insert-or-ignore then read back the id.
+            # Single round-trip, race-safe: insert-or-refresh then read back the id.
             c.execute(
                 "INSERT INTO jobs (id, source, external_id, title, company, location, "
-                "stipend, duration, skills, url, scraped_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT (source, external_id) DO NOTHING",
+                "stipend, duration, skills, url, scraped_at, last_seen_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT (source, external_id) DO UPDATE SET "
+                "title=excluded.title, company=excluded.company, "
+                "location=excluded.location, stipend=excluded.stipend, "
+                "duration=excluded.duration, skills=excluded.skills, "
+                "url=excluded.url, last_seen_at=excluded.last_seen_at, "
+                # Seeing it again is evidence it is not dead after all.
+                "dead_at=NULL",
                 (
                     cuid(), job["source"], job["external_id"], job["title"], job["company"],
                     job.get("location"), job.get("stipend"), job.get("duration"),
-                    json.dumps(job.get("skills", [])), job["url"], now_db(),
+                    json.dumps(job.get("skills", [])), job["url"], now, now,
                 ),
             )
             row = c.execute(
@@ -1007,12 +1030,22 @@ def upsert_job(job: dict) -> str:
             (job["source"], job["external_id"]),
         ).fetchone()
         if existing:
+            c.execute(
+                "UPDATE jobs SET title=?, company=?, location=?, stipend=?, duration=?, "
+                "skills=?, url=?, last_seen_at=?, dead_at=NULL WHERE id=?",
+                (
+                    job["title"], job["company"], job.get("location"), job.get("stipend"),
+                    job.get("duration"), json.dumps(job.get("skills", [])), job["url"],
+                    now, existing["id"],
+                ),
+            )
             return existing["id"]
         jid = cuid()
         try:
             c.execute(
                 "INSERT INTO jobs (id, source, external_id, title, company, location, "
-                "stipend, duration, skills, url, scraped_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "stipend, duration, skills, url, scraped_at, last_seen_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     jid,
                     job["source"],
@@ -1024,7 +1057,8 @@ def upsert_job(job: dict) -> str:
                     job.get("duration"),
                     json.dumps(job.get("skills", [])),
                     job["url"],
-                    now_db(),
+                    now,
+                    now,
                 ),
             )
         except sqlite3.IntegrityError:
@@ -1035,6 +1069,247 @@ def upsert_job(job: dict) -> str:
             ).fetchone()
             return row["id"] if row else jid
         return jid
+
+
+# Columns the shared index needs that a lagging `prisma db push` may not have
+# created yet. Same rationale and the same savepoint discipline as
+# _PG_APP_COLUMNS below: without this, a deploy that lands the worker before the
+# schema push turns every single discovery write into an error, which is a
+# fleet-wide outage rather than a slow start.
+_PG_JOB_COLUMNS = (
+    ("jd_text", "TEXT"),
+    ("jd_fetched_at", "TIMESTAMP(3)"),
+    ("apply_channel", "TEXT"),
+    ("apply_target", "TEXT"),
+    ("apply_tier", "TEXT"),
+    ("apply_vendor", "TEXT"),
+    ("resolved_at", "TIMESTAMP(3)"),
+    ("last_seen_at", "TIMESTAMP(3)"),
+    ("dead_at", "TIMESTAMP(3)"),
+    ("alloc_count", "INTEGER DEFAULT 0"),
+)
+_pg_job_columns_checked = False
+
+
+def _ensure_job_columns(c):
+    """Add shared-index columns Prisma may not have migrated yet."""
+    global _pg_job_columns_checked
+    if PG:
+        if _pg_job_columns_checked:
+            return
+        # Read the catalogue first so the common path issues ZERO DDL — ALTER
+        # TABLE takes an ACCESS EXCLUSIVE lock on a live table even when
+        # IF NOT EXISTS makes it a no-op.
+        try:
+            existing = {
+                r["column_name"]
+                for r in c.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = 'jobs'"
+                ).fetchall()
+            }
+        except Exception as e:  # noqa: BLE001
+            print(f"[db] could not read jobs columns: {e}")
+            _pg_job_columns_checked = True
+            return
+
+        for name, coltype in _PG_JOB_COLUMNS:
+            if name in existing:
+                continue
+            try:
+                c.execute("SAVEPOINT ensure_job_col")
+                c.execute(f"ALTER TABLE jobs ADD COLUMN {name} {coltype}")
+                c.execute("RELEASE SAVEPOINT ensure_job_col")
+            except Exception as e:  # noqa: BLE001
+                print(f"[db] could not ensure jobs.{name}: {e}")
+                try:
+                    c.execute("ROLLBACK TO SAVEPOINT ensure_job_col")
+                    c.execute("RELEASE SAVEPOINT ensure_job_col")
+                except Exception:  # noqa: BLE001
+                    pass
+        # last_seen_at is added nullable (an ALTER with a non-constant default
+        # rewrites the whole table). Backfill it from scraped_at so an existing
+        # pool is not read as "never seen" the moment this ships.
+        if "last_seen_at" not in existing:
+            try:
+                c.execute("SAVEPOINT backfill_last_seen")
+                c.execute("UPDATE jobs SET last_seen_at=scraped_at WHERE last_seen_at IS NULL")
+                c.execute("RELEASE SAVEPOINT backfill_last_seen")
+            except Exception as e:  # noqa: BLE001
+                print(f"[db] could not backfill jobs.last_seen_at: {e}")
+                try:
+                    c.execute("ROLLBACK TO SAVEPOINT backfill_last_seen")
+                    c.execute("RELEASE SAVEPOINT backfill_last_seen")
+                except Exception:  # noqa: BLE001
+                    pass
+        _pg_job_columns_checked = True
+        return
+
+    cols = {row[1] for row in c.execute("PRAGMA table_info(jobs)").fetchall()}
+    for name, coltype in _PG_JOB_COLUMNS:
+        if name not in cols:
+            c.execute(f"ALTER TABLE jobs ADD COLUMN {name} {coltype}")
+    if "last_seen_at" not in cols:
+        c.execute("UPDATE jobs SET last_seen_at=scraped_at WHERE last_seen_at IS NULL")
+
+
+# ---------- the shared index ----------
+#
+# Everything below writes work that is TRUE OF THE LISTING and therefore has to
+# happen exactly once, no matter how many users match it. The alternative — what
+# this replaces — is every user's run re-fetching the same description and
+# re-deciding the same apply route, which at a thousand users is a thousand
+# identical requests to one employer.
+
+# A handful of ATS pages inline their entire marketing site into the posting
+# body. Unbounded, those rows put megabytes into a table that is read on every
+# match; the cap is far above any real job description.
+_JD_MAX = 24000
+
+
+def set_job_jd(job_id: str, text: str) -> None:
+    """Store the fetched description on the listing, for the whole fleet."""
+    with conn() as c:
+        _ensure_job_columns(c)
+        c.execute(
+            "UPDATE jobs SET jd_text=?, jd_fetched_at=? WHERE id=?",
+            ((text or "")[:_JD_MAX], now_db(), job_id),
+        )
+
+
+def set_job_route(job_id: str, channel: str | None, target: str | None,
+                  tier: str | None, vendor: str | None = None) -> None:
+    """Store how an application reaches this employer, resolved once at ingest."""
+    with conn() as c:
+        _ensure_job_columns(c)
+        c.execute(
+            "UPDATE jobs SET apply_channel=?, apply_target=?, apply_tier=?, "
+            "apply_vendor=?, resolved_at=? WHERE id=?",
+            (channel, target, tier, vendor, now_db(), job_id),
+        )
+
+
+def mark_job_dead(job_id: str) -> None:
+    """This posting is confirmed gone — 404, or the page says it closed.
+
+    Kept as a row rather than deleted: applications already sent against it
+    reference it, and re-finding it later is meaningful information (upsert_job
+    clears dead_at on a fresh sighting).
+    """
+    with conn() as c:
+        _ensure_job_columns(c)
+        c.execute("UPDATE jobs SET dead_at=? WHERE id=? AND dead_at IS NULL",
+                  (now_db(), job_id))
+
+
+def expire_unseen_jobs(days: int = 21) -> int:
+    """Retire listings no crawl has seen for `days`. Returns how many.
+
+    Without this the pool only ever grows, and the agent spends a user's daily
+    quota applying to roles that closed months ago — which looks identical, from
+    the dashboard, to an agent that is working fine. Postings are not usually
+    deleted when they close; they just stop being returned by search, so
+    "nobody has seen it in three weeks" is the strongest available signal.
+    """
+    cutoff = time_ago_db(days * 86400 * 1000)
+    with conn() as c:
+        _ensure_job_columns(c)
+        cur = c.execute(
+            "UPDATE jobs SET dead_at=? WHERE dead_at IS NULL AND last_seen_at < ?",
+            (now_db(), cutoff),
+        )
+        return cur.rowcount or 0
+
+
+def claim_job_allocation(job_id: str, k: int) -> bool:
+    """Reserve one of this listing's K slots. True if a slot was taken.
+
+    The allocator primitive. A shared pool without one means every matching user
+    is handed the same listing on the same day: the employer gets fifty
+    near-identical applications, and one listing burns the whole fleet's day
+    instead of one user's slot.
+
+    The read and the increment are ONE statement on purpose. Checking the count
+    and then updating it is a lost-update race — with per-user workers running
+    concurrently, two of them read alloc_count=2 against a cap of 3 and both
+    proceed, so K is silently exceeded under exactly the load it exists for.
+    """
+    if k <= 0:
+        return False
+    with conn() as c:
+        _ensure_job_columns(c)
+        cur = c.execute(
+            "UPDATE jobs SET alloc_count = COALESCE(alloc_count, 0) + 1 "
+            "WHERE id=? AND COALESCE(alloc_count, 0) < ? AND dead_at IS NULL",
+            (job_id, int(k)),
+        )
+        return (cur.rowcount or 0) == 1
+
+
+def release_job_allocation(job_id: str) -> None:
+    """Give a slot back, for a listing that was claimed but never sent.
+
+    Matters because a claim is taken BEFORE the send is attempted (the count has
+    to be reserved to be safe under concurrency), so every path that abandons an
+    application after claiming — blocked on a missing fact, dead page, user out
+    of quota — has to return the slot or the listing is permanently a slot short
+    for everyone else.
+    """
+    with conn() as c:
+        _ensure_job_columns(c)
+        c.execute(
+            "UPDATE jobs SET alloc_count = COALESCE(alloc_count, 0) - 1 "
+            "WHERE id=? AND COALESCE(alloc_count, 0) > 0",
+            (job_id,),
+        )
+
+
+def get_job(job_id: str) -> dict | None:
+    with conn() as c:
+        _ensure_job_columns(c)
+        row = c.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def live_jobs(limit: int = 500, tier: str | None = None) -> list[dict]:
+    """The pool an allocator can actually hand out: alive, freshest first."""
+    sql = "SELECT * FROM jobs WHERE dead_at IS NULL"
+    params: list = []
+    if tier:
+        sql += " AND apply_tier=?"
+        params.append(tier)
+    sql += " ORDER BY last_seen_at DESC LIMIT ?"
+    params.append(int(limit))
+    with conn() as c:
+        _ensure_job_columns(c)
+        rows = c.execute(sql, tuple(params)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def index_stats() -> dict:
+    """One honest readout of the shared index — what the capacity maths needs.
+
+    Every number here answers a question that was previously guessed at:
+    how big is the pool really, how much of it is still alive, how much has a
+    description, and how much has a route we could actually send through.
+    """
+    with conn() as c:
+        _ensure_job_columns(c)
+        row = c.execute(
+            "SELECT COUNT(*) AS total, "
+            "COUNT(*) FILTER (WHERE dead_at IS NULL) AS live, "
+            "COUNT(*) FILTER (WHERE jd_text IS NOT NULL AND jd_text <> '') AS with_jd, "
+            "COUNT(*) FILTER (WHERE apply_channel IS NOT NULL) AS routed "
+            "FROM jobs"
+        ).fetchone() if PG else c.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN dead_at IS NULL THEN 1 ELSE 0 END) AS live, "
+            "SUM(CASE WHEN jd_text IS NOT NULL AND jd_text <> '' THEN 1 ELSE 0 END) AS with_jd, "
+            "SUM(CASE WHEN apply_channel IS NOT NULL THEN 1 ELSE 0 END) AS routed "
+            "FROM jobs"
+        ).fetchone()
+    d = dict(row or {})
+    return {k: int(d.get(k) or 0) for k in ("total", "live", "with_jd", "routed")}
 
 
 # Postgres columns this module writes that a lagging `prisma db push` may not
