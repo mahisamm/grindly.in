@@ -127,7 +127,19 @@ def captcha_check(urls: list[str]) -> dict:
             vendor = hosts.vendor_of(url) or "other"
             try:
                 page.goto(url, timeout=45000, wait_until="domcontentloaded")
-                page.wait_for_timeout(3500)   # widgets mount after load
+                # Scroll to the bottom before looking, and wait properly.
+                #
+                # A first version checked 3.5s after load without scrolling and
+                # reported 16/16 pages clear — including a Workable page we hold
+                # a SCREENSHOT of, showing a Cloudflare "Verify you are human"
+                # box. These widgets mount lazily: they sit next to the submit
+                # button far below the fold, and the script that injects them
+                # runs on approach. Measuring before they exist reports the
+                # answer we would like rather than the one that is true.
+                for _ in range(6):
+                    page.mouse.wheel(0, 1600)
+                    page.wait_for_timeout(700)
+                page.wait_for_timeout(4000)
                 found = questions.unsolved_captcha(page)
             except Exception:  # noqa: BLE001
                 out["unreadable"] += 1
