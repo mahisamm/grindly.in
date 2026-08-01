@@ -73,6 +73,12 @@ HARVEST_ENABLED = os.environ.get("GRINDLY_HARVEST_ENABLED", "1") == "1"
 # of search runs is not retired for it, short enough that the pool is not mostly
 # ghosts. Reversible — a later sighting brings the listing straight back.
 LISTING_TTL_DAYS = int(os.environ.get("GRINDLY_LISTING_TTL_DAYS", "21"))
+
+# How many unrouted listings one daily pass tries to work out an apply route
+# for. Each one can cost a page fetch from a real employer, so this is a
+# politeness budget as much as a performance one: the backlog drains over days,
+# and a listing only ever needs resolving once.
+ROUTE_PASS_LIMIT = int(os.environ.get("GRINDLY_ROUTE_PASS_LIMIT", "150"))
 _last_harvest_date: str | None = None
 
 # How often to check whether anyone is due. Ten minutes is far finer than the
@@ -177,6 +183,10 @@ def run_harvest(now: datetime.datetime | None = None) -> dict | None:
             target=f"{result['learned']}/{result['candidates']}",
             detail=f"{result['known_after']} boards known",
         )
+        # AFTER the harvest: it has just added today's listings, and those are
+        # exactly the ones with no route yet. Running the pass first would work
+        # through yesterday's backlog and leave the new arrivals for tomorrow.
+        result["routes"] = resolve_routes()
         return result
     except Exception as e:  # noqa: BLE001 — the fleet's runs matter more
         log.error("board harvest failed: %s", e)
@@ -209,6 +219,79 @@ def retire_stale_listings(now: datetime.datetime | None = None) -> int:
         db.add_audit("listings_retired", user_id=None, target=str(n),
                      detail=f"unseen for {LISTING_TTL_DAYS} days")
     return n
+
+
+def resolve_routes(limit: int = ROUTE_PASS_LIMIT) -> dict:
+    """Work out how to apply to listings nobody has looked at yet.
+
+    Deciding a listing's apply route is fleet work: it depends only on the
+    posting, and its answer is the same for every user. It was being done
+    lazily, on the first user to match — which is correct but has two costs that
+    only show up at scale.
+
+    The first is measurable and was: `capacity.py` reported ZERO sendable
+    listings against a live pool of 298, because no route had ever been
+    resolved. A pool the agent does not know how to apply to is not capacity,
+    however large it looks, and quoting it as such is the exact optimism the
+    capacity readout exists to remove.
+
+    The second is that the first user to match any listing paid for the fetch,
+    inside their own run, against their own page budget. Doing it here moves
+    that cost off every user's critical path onto a fleet job nobody is waiting
+    for.
+
+    Bounded per pass, because this issues real requests to real employers. The
+    backlog drains across days; the pool it is draining only has to be resolved
+    once.
+    """
+    import resolver
+    import websource
+
+    out = {"looked_at": 0, "routed": 0, "no_route": 0, "failed": 0}
+    try:
+        pool = [j for j in db.live_jobs(limit=limit * 4) if not j.get("apply_channel")]
+    except Exception as e:  # noqa: BLE001
+        log.error("route pass could not read the pool: %s", e)
+        return out
+
+    for job in pool[:limit]:
+        out["looked_at"] += 1
+        jd = job.get("jd_text") or ""
+        try:
+            if not jd:
+                jd = websource.scrape_jd(job.get("url") or "") or ""
+                if jd:
+                    db.set_job_jd(job["id"], jd)
+        except Exception as e:  # noqa: BLE001
+            log.debug("route pass could not read %s: %s", job.get("url"), e)
+            out["failed"] += 1
+            continue
+
+        try:
+            dest = resolver.resolve(job, jd)
+        except Exception as e:  # noqa: BLE001
+            log.debug("route pass could not resolve %s: %s", job.get("url"), e)
+            out["failed"] += 1
+            continue
+
+        # A CHANNEL_PLATFORM verdict is deliberately not stored, for the same
+        # reason worker.shared_destination refuses to cache one: it means "we
+        # looked and found nothing better", which is often a product of the
+        # moment rather than a fact about the listing.
+        if dest.get("channel") and dest["channel"] != resolver.CHANNEL_PLATFORM:
+            db.set_job_route(job["id"], dest["channel"], dest.get("target"),
+                             dest.get("tier"), dest.get("vendor"))
+            out["routed"] += 1
+        else:
+            out["no_route"] += 1
+
+    if out["looked_at"]:
+        log.info("route pass: %d looked at, %d routed, %d no route, %d failed",
+                 out["looked_at"], out["routed"], out["no_route"], out["failed"])
+        db.add_audit("route_pass", user_id=None,
+                     target=f"{out['routed']}/{out['looked_at']}",
+                     detail=f"{out['no_route']} without an employer-side route")
+    return out
 
 
 def tick(now: datetime.datetime | None = None) -> int:
