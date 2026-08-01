@@ -741,14 +741,34 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     targets = [(v, s) for v, slugs in BOARDS.items() for s in sorted(set(slugs))]
     pinned = set(targets)
     learned = skipped = 0
+    # A board nobody has polled yet is exempt from cold backoff, by design: an
+    # unknown board is not a cold one, and a freshly harvested company should not
+    # wait days for its first look. That is right at a trickle and wrong at a
+    # flood — the tenant enumerator adds thousands of boards in one go, and every
+    # one of them would demand its first poll on the very next run. Measured
+    # supply: 7,575 tenants from six vendors, against 574 previously known.
+    #
+    # So first looks are rationed. The backlog drains over days instead of
+    # arriving as one burst that a 1 vCPU box cannot absorb, and the boards that
+    # turn out to produce nothing settle into backoff as they always did.
+    fresh_budget = NEW_BOARDS_PER_RUN
+    deferred = 0
     for vendor, slug in _slugs_seen_before():
         if (vendor, slug) in pinned:
             continue
-        if not _poll_due(vendor, slug):
+        if _never_polled(vendor, slug):
+            if fresh_budget <= 0:
+                deferred += 1
+                continue
+            fresh_budget -= 1
+        elif not _poll_due(vendor, slug):
             skipped += 1
             continue
         targets.append((vendor, slug))
         learned += 1
+    if deferred:
+        print(f"[atsboards] {deferred} newly-enumerated board(s) held for a "
+              f"later run ({NEW_BOARDS_PER_RUN} first looks per run)")
 
     found: list[tuple[int, dict]] = []
     # Keyed by canonical identity, not URL: Greenhouse publishes the same job on
@@ -913,7 +933,17 @@ _learned_loaded = False
 # Bigger is affordable because most of these boards are cold: see
 # `_poll_due`, which spends the per-run request budget on boards that have
 # actually produced an internship and backs off the ones that never have.
-LEARNED_MAX = int(os.environ.get("GRINDLY_ATS_LEARNED_MAX", "4000"))
+LEARNED_MAX = int(os.environ.get("GRINDLY_ATS_LEARNED_MAX", "12000"))
+
+# How many boards may get their FIRST poll in one run.
+#
+# Rations the enumerator's output. Common Crawl hands over thousands of tenants
+# in a single sweep and every one of them is exempt from cold backoff (an
+# unknown board is not a cold board), so without this the next run would open
+# 7,000 connections at once — on a 1 vCPU box, with the sweep container capped
+# at 384 MB. The backlog drains over days instead, and boards that produce
+# nothing settle into backoff exactly as they always did.
+NEW_BOARDS_PER_RUN = int(os.environ.get("GRINDLY_NEW_BOARDS_PER_RUN", "120"))
 
 
 def _load_learned() -> None:
@@ -948,11 +978,32 @@ def remember_slugs(urls) -> int:
     if not fresh:
         return 0
     _LEARNED.update(fresh)
-    # Bounded so a bad day of results cannot grow the poll list without limit;
-    # sorted so the trim is deterministic rather than whichever set order won.
-    trimmed = sorted(_LEARNED)[:LEARNED_MAX]
-    _LEARNED.clear()
-    _LEARNED.update(trimmed)
+    # Bounded so a bad day of results cannot grow the poll list without limit.
+    #
+    # Ordered by what a board has actually PRODUCED, not by its name. The old
+    # trim was a plain alphabetical sort, which its own comment admitted was
+    # "deterministic rather than a policy" — and it is a bad one: the moment the
+    # cap binds it starts discarding boards from the end of the alphabet
+    # regardless of whether they are the ones finding internships. With the
+    # enumerator now able to add thousands at once, the cap will bind.
+    #
+    # A board that has yielded an internship outranks one that has been polled
+    # and found nothing, which outranks one never polled. Name breaks ties, so
+    # the result is still deterministic.
+    if len(_LEARNED) > LEARNED_MAX:
+        _load_stats()
+
+        def keep_rank(pair):
+            row = _STATS.get(f"{pair[0]}::{pair[1]}") or {}
+            if row.get("yields"):
+                return (0, pair)
+            if row:
+                return (1, pair)
+            return (2, pair)
+
+        trimmed = sorted(_LEARNED, key=keep_rank)[:LEARNED_MAX]
+        _LEARNED.clear()
+        _LEARNED.update(trimmed)
     try:
         os.makedirs(os.path.dirname(_LEARNED_FILE), exist_ok=True)
         tmp = _LEARNED_FILE + ".tmp"
@@ -1034,13 +1085,26 @@ def note_board_result(vendor: str, slug: str, internships: int) -> None:
         row["cold_streak"] = row.get("cold_streak", 0) + 1
 
 
+def _never_polled(vendor: str, slug: str) -> bool:
+    """Has this board never been asked anything at all?
+
+    Separate from _poll_due because the two answers deserve different budgets: a
+    board that has been polled and went cold is being *re-*asked, which is cheap
+    and self-limiting, while a board that has never been polled is a first look,
+    and the enumerator can produce thousands of those at once.
+    """
+    _load_stats()
+    return f"{vendor}::{slug}" not in _STATS
+
+
 def _poll_due(vendor: str, slug: str) -> bool:
     """Is this board worth a request on this run?
 
     Always true for a board that has ever produced an India internship, and for
     one we have never polled at all — an unknown board is not a cold board, and
     treating it as one would mean a freshly harvested company waited days for
-    its first look.
+    its first look. How MANY of those first looks happen in one run is rationed
+    separately, by the caller: see NEW_BOARDS_PER_RUN.
     """
     _load_stats()
     row = _STATS.get(f"{vendor}::{slug}")
