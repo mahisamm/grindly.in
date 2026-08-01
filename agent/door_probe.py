@@ -46,7 +46,6 @@ except Exception:  # noqa: BLE001
 
 import db
 import hosts
-import resolver
 import websource
 
 # A mailbox that is plausibly "send your application here". Deliberately narrow:
