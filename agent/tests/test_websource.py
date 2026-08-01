@@ -127,7 +127,18 @@ def test_a_careers_subdomain_names_the_company_not_the_subdomain():
         ("https://careers.zeta.com/1", "Zeta"),
         ("https://careers.docusign.com/event-22319/talentcommunity/form", "Docusign"),
         ("https://careers.criteo.com/en/jobs/r20878/data-analyst-intern/", "Criteo"),
-        ("https://jobs.antler.co/companies/volopay/jobs/1", "Antler"),
+    ]:
+        assert websource._company_from("Intern", url) == expected, url
+
+
+def test_a_multi_employer_board_names_the_employer_not_the_platform():
+    """careers.antler.co/companies/volopay/jobs/123 is Volopay's vacancy, not
+    Antler's. Three live listings were filed under the platform's name, and
+    that is the name that would have gone into the cover letter."""
+    for url, expected in [
+        ("https://careers.antler.co/companies/volopay-2-b88dec5e-1a91-4f39/jobs/65206274-frontend", "Volopay"),
+        ("https://careers.antler.co/companies/stance-health/jobs/82118588-fullstack", "Stance Health"),
+        ("https://careers.antler.co/companies/konstruksi-ai/jobs/66425782-ml", "Konstruksi Ai"),
     ]:
         assert websource._company_from("Intern", url) == expected, url
 

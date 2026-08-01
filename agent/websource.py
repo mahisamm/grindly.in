@@ -443,6 +443,25 @@ def _company_from(title: str, url: str) -> str:
     )
     if m and m.group(1).lower() not in _NOT_A_COMPANY:
         return _tidy_company(m.group(1))
+    # A board that hosts many employers names the employer in the path:
+    # careers.antler.co/companies/volopay/jobs/123 is Volopay's vacancy, not
+    # Antler's. Falling through to the hostname here filed three live listings
+    # under the platform's name, which is the name that would have gone into
+    # the cover letter.
+    m = re.search(r"/(?:companies|company|employers|orgs)/([^/?#]+)", url, re.I)
+    if m:
+        # These slugs carry a uuid, and a uuid's hyphens split it into several
+        # segments — "volopay-2-b88dec5e-1a91-4f39". Stripping only the last one
+        # left a company called "Volopay 2 B88Dec5E 1A91 4F", so peel every
+        # trailing segment that is hex or digits. Guarded by keeping at least
+        # the first segment, or a company legitimately named "4D" would vanish.
+        parts = m.group(1).split("-")
+        while len(parts) > 1 and re.fullmatch(r"(?:[0-9a-f]{4,}|\d+)", parts[-1], re.I):
+            parts.pop()
+        slug = "-".join(parts)
+        if slug.lower() not in _NOT_A_COMPANY:
+            return _tidy_company(slug)
+
     m = re.search(r"\bat\s+([A-Z][\w&.\- ]{2,40})", title)
     if m and not _READS_LIKE_A_ROLE.search(m.group(1)):
         return m.group(1).strip()[:60]
