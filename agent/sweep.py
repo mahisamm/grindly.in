@@ -79,6 +79,20 @@ LISTING_TTL_DAYS = int(os.environ.get("GRINDLY_LISTING_TTL_DAYS", "21"))
 # politeness budget as much as a performance one: the backlog drains over days,
 # and a listing only ever needs resolving once.
 ROUTE_PASS_LIMIT = int(os.environ.get("GRINDLY_ROUTE_PASS_LIMIT", "150"))
+
+# Keywords the fleet-wide listing harvest ranks by. Deliberately broad: the
+# India-internship decision is made by atsboards._wanted(), and these only order
+# what it kept. A narrow list here would quietly bias the SHARED pool toward
+# whichever domains the author happened to think of, for every user at once.
+FLEET_KEYWORDS = [
+    "intern", "internship", "trainee", "software", "developer", "engineer",
+    "data", "analyst", "machine learning", "design", "marketing", "product",
+    "business", "finance", "operations", "content", "research", "sales",
+]
+
+# How many listings one fleet harvest keeps. The pool is shared, so this is a
+# fleet-wide number rather than a per-user one.
+FLEET_HARVEST_LIMIT = int(os.environ.get("GRINDLY_FLEET_HARVEST_LIMIT", "400"))
 _last_harvest_date: str | None = None
 
 # How often to check whether anyone is due. Ten minutes is far finer than the
@@ -183,9 +197,14 @@ def run_harvest(now: datetime.datetime | None = None) -> dict | None:
             target=f"{result['learned']}/{result['candidates']}",
             detail=f"{result['known_after']} boards known",
         )
-        # AFTER the harvest: it has just added today's listings, and those are
-        # exactly the ones with no route yet. Running the pass first would work
-        # through yesterday's backlog and leave the new arrivals for tomorrow.
+        # Board harvest found the BOARDS. This asks those boards what they are
+        # actually advertising and puts it in the shared pool — the step that
+        # used to happen only inside a user's run, so the index could not grow
+        # unless somebody was already being served by it.
+        result["listings"] = harvest_listings()
+        # Last: the two steps above have just added today's listings, and those
+        # are exactly the ones with no route yet. Running this first would work
+        # through yesterday's backlog and leave every new arrival for tomorrow.
         result["routes"] = resolve_routes()
         return result
     except Exception as e:  # noqa: BLE001 — the fleet's runs matter more
@@ -219,6 +238,64 @@ def retire_stale_listings(now: datetime.datetime | None = None) -> int:
         db.add_audit("listings_retired", user_id=None, target=str(n),
                      detail=f"unseen for {LISTING_TTL_DAYS} days")
     return n
+
+
+def harvest_listings() -> dict:
+    """Poll the board index into the shared pool, for nobody in particular.
+
+    The gap this closes is structural and was invisible until the index got
+    big: board polling only ever happened inside a USER's run. So the pool could
+    not grow unless somebody was already being served by it — and the 8,469
+    boards the tenant enumerator just found would have sat unpolled, because
+    production currently has no active user at all.
+
+    That is backwards for a shared index. Which employers are hiring is not a
+    fact about any user, the listings land in one table everyone reads, and the
+    work should therefore happen once, on a schedule, whether or not anyone is
+    logged in. A new user should arrive to a full pool rather than spend their
+    first week filling it.
+
+    Broad keywords on purpose. atsboards._wanted() is what actually decides
+    whether a posting is an India internship; the keywords only rank what it
+    kept, and a narrow set here would bias the shared pool toward whatever the
+    author happened to type.
+    """
+    try:
+        import atsboards
+    except Exception as e:  # noqa: BLE001
+        log.error("listing harvest could not import atsboards: %s", e)
+        return {"found": 0, "stored": 0}
+
+    out = {"found": 0, "stored": 0}
+    try:
+        jobs = atsboards.fetch(FLEET_KEYWORDS, limit=FLEET_HARVEST_LIMIT)
+    except Exception as e:  # noqa: BLE001
+        log.error("listing harvest failed: %s", e)
+        return out
+
+    out["found"] = len(jobs)
+    for job in jobs:
+        try:
+            db.upsert_job({
+                "source": "atsboards",
+                "external_id": job.get("external_id") or "",
+                "title": job.get("title") or "",
+                "company": job.get("company") or "",
+                "location": job.get("location"),
+                "stipend": job.get("stipend"),
+                "duration": job.get("duration"),
+                "skills": job.get("skills") or [],
+                "url": job.get("url") or "",
+            })
+            out["stored"] += 1
+        except Exception as e:  # noqa: BLE001
+            # One malformed posting must not cost the rest of the harvest.
+            log.debug("could not store %s: %s", job.get("url"), e)
+
+    log.info("listing harvest: %d found, %d stored", out["found"], out["stored"])
+    db.add_audit("listing_harvest", user_id=None,
+                 target=str(out["stored"]), detail=f"{out['found']} returned")
+    return out
 
 
 def resolve_routes(limit: int = ROUTE_PASS_LIMIT) -> dict:

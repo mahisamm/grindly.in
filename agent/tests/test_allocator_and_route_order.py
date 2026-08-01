@@ -123,6 +123,65 @@ def test_a_retired_listing_is_not_allocated(testdb):
     assert db.claim_job_allocation(job_id, worker.ALLOC_PER_LISTING) is False
 
 
+def test_no_path_leaves_the_loop_holding_a_slot_it_never_used(testdb):
+    """The leak this whole design is one careless `continue` away from.
+
+    A slot is claimed before anything is attempted. Every way out of the apply
+    loop after that point must therefore do ONE of two things: write an
+    application row (the slot was genuinely used), or release the slot. A new
+    early exit that does neither costs the fleet one allocation of that listing
+    permanently, and nothing anywhere would report it — the listing just
+    silently becomes available to fewer people, forever.
+
+    Checked structurally, because that is the only way to catch the exit
+    somebody adds next year.
+    """
+    import inspect
+    lines = inspect.getsource(worker).splitlines()
+
+    # Start AFTER the claim block, not at it. The `continue` inside that block
+    # is the refusal — the slot was never granted, so there is nothing to give
+    # back. `matched += 1` is the first line past which a slot is definitely
+    # held.
+    claim = next(i for i, ln in enumerate(lines) if "claim_job_allocation" in ln)
+    start = next(i for i, ln in enumerate(lines[claim:], claim)
+                 if ln.strip() == "matched += 1")
+
+    # Bounded by INDENTATION, not by the next `def`. The apply loop sits inside
+    # run_for_user, so the next `def` is hundreds of lines past the end of it —
+    # and the first version of this test walked straight on into the per-source
+    # drift loop that follows and reported its `continue` as a leak.
+    body_indent = len(lines[start]) - len(lines[start].lstrip())
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if len(lines[i]) - len(lines[i].lstrip()) < body_indent:
+            end = i
+            break
+
+    checked = 0
+    for i in range(start + 1, end):
+        if lines[i].strip() != "continue":
+            continue
+        checked += 1
+        window = "\n".join(lines[max(start, i - 25):i])
+        assert ("add_application" in window
+                or "release_job_allocation" in window), (
+            f"worker.py:{i + 1} leaves the apply loop after claiming an "
+            "allocation without writing an application row or releasing the "
+            "slot — that listing is now permanently one slot short for the "
+            "whole fleet")
+
+    # A scan that found no exits proves nothing. If the loop is ever
+    # restructured so this walks an empty range, the test must fail loudly
+    # rather than pass by vacuum.
+    assert checked >= 3, (
+        f"only {checked} loop exit(s) found after the allocation claim — this "
+        "test is no longer looking at the apply loop")
+
+
 # ── the route order ───────────────────────────────────────────────────────
 
 def _dest(jd="", url="https://acme.test/listing", links=None):

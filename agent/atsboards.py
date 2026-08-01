@@ -943,7 +943,13 @@ LEARNED_MAX = int(os.environ.get("GRINDLY_ATS_LEARNED_MAX", "12000"))
 # 7,000 connections at once — on a 1 vCPU box, with the sweep container capped
 # at 384 MB. The backlog drains over days instead, and boards that produce
 # nothing settle into backoff exactly as they always did.
-NEW_BOARDS_PER_RUN = int(os.environ.get("GRINDLY_NEW_BOARDS_PER_RUN", "120"))
+#
+# 120 -> 300, on measurement rather than nerves. A 300-board pass on the live
+# box takes 28 seconds and peaks at 542 MB RSS, which the worker (1.5 G) and the
+# sweep (896 M, raised for exactly this) both absorb. At 120 the 8,469-board
+# index was a 70-day backlog; at 300 it is four weeks, and faster still once
+# real users are running, because each run gets its own budget.
+NEW_BOARDS_PER_RUN = int(os.environ.get("GRINDLY_NEW_BOARDS_PER_RUN", "300"))
 
 
 def _load_learned() -> None:

@@ -343,14 +343,21 @@ services:
       replicas: 1
       resources:
         limits:
-          # 384M, not 256M. Measured on the live box: this container idles at
-          # 213M — the scheduler itself is tiny, but importing the discovery
-          # stack (atsboards -> websource -> websearch) costs most of that
-          # before a single line of work runs. It was sitting at 83% of the old
-          # limit, and the daily board harvest allocates on top of it, so the
-          # first harvest on a busy day would have been an OOM kill of the one
+          # 896M, and every step of that was measured rather than guessed.
+          #
+          # 256M -> 384M: the container idles at 213M, because importing the
+          # discovery stack (atsboards -> websource -> websearch) costs most of
+          # that before a line of work runs. At 83% of the old limit, the daily
+          # harvest allocating on top would have been an OOM kill of the one
           # process that enqueues everybody's agent.
-          memory: 384M
+          #
+          # 384M -> 896M: the sweep now polls the board index into the shared
+          # pool itself, instead of that only happening inside a user's run. A
+          # 300-board pass measured on this box peaks at 542M RSS and takes 28
+          # seconds. 384M would have OOM-killed the scheduler on its first
+          # harvest after the tenant enumerator landed — 8,469 boards, up from
+          # 574. The host has 3.9G with ~2.2G free, so this is affordable.
+          memory: 896M
           cpus: "0.25"
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f 'sweep.py' || exit 1"]
