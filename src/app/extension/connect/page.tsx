@@ -133,7 +133,7 @@ export default function ExtensionConnectPage() {
           <>
             <h1 className="text-xl font-semibold text-accent">Connected ✓</h1>
             <p className="mt-2 text-sm text-muted">
-              You’re all set. Open a job on Internshala, LinkedIn, Naukri, Unstop or Indeed and click
+              You’re all set. Open a job on Internshala or a company’s own application page and click
               <span className="text-foreground"> “Fill with Grindly.”</span>
             </p>
             <Link href="/dashboard" className="mt-5 inline-block rounded-lg border border-border px-5 py-2.5 text-sm hover:border-brand/40 transition">

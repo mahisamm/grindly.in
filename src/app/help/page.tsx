@@ -6,11 +6,11 @@ export const metadata = { title: "Help & Support – Grindly" };
 const FAQ: { q: string; a: string }[] = [
   {
     q: "Does Grindly apply to jobs automatically?",
-    a: "For some, yes — and it depends entirely on where the application goes. The agent can send eligible applications to an employer's own form or hiring inbox after you enable auto-apply and give consent. The staged Internshala beta can also send applications for an explicitly consented, connected account. LinkedIn, Naukri, Unstop and Indeed applications stay prepared for you to review and submit. Your dashboard labels each outcome.",
+    a: "Yes, once you enable auto-apply and give consent. The agent sends applications to an employer's own application form or hiring inbox — no account of yours is involved, so nothing of yours is at risk. If you connect Internshala, it applies there too, from your own account. Your dashboard labels each outcome.",
   },
   {
-    q: "Why won't the agent submit on LinkedIn, Naukri, Unstop or Indeed for me?",
-    a: "Those applications stay in your control: Grindly prepares the role, cover letter and screening answers, then gives you a ready-to-submit link. For company-owned forms and hiring inboxes, the agent can send only after you enable auto-apply and consent. Internshala submission is separately gated to the staged beta, an explicitly consented user, and a connected account; it stops for CAPTCHA, OTP, unsupported flows, or questions it cannot answer honestly.",
+    q: "Do I have to connect Internshala?",
+    a: "No. Setup never asks for it and the agent is fully hands-off without it, working from companies' own careers pages and hiring inboxes. Connecting it simply widens the pool it can draw from, and you can do that any time from Integrations in the account menu. Grindly never sees your password — you log in on the real Internshala site inside a window you can see and drive.",
   },
   {
     q: "What does the agent do if it can't answer one of the questions?",

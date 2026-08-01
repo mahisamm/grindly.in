@@ -32,10 +32,10 @@ export default function ExtensionPrivacyPage() {
               time from your dashboard or the extension popup.
             </li>
             <li>
-              <strong>The job page you’re on.</strong> On the supported sites (Internshala, LinkedIn,
-              Naukri, Unstop, Indeed) the extension reads the current page’s address to look up the
-              matching kit, and — only when you click “Fill with Grindly” — reads and fills the
-              application form’s fields.
+              <strong>The job page you’re on.</strong> On a supported page — Internshala, or a
+              company’s own application form — the extension reads the current page’s address to
+              look up the matching kit, and — only when you click “Fill with Grindly” — reads and
+              fills the application form’s fields.
             </li>
           </ul>
 

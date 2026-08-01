@@ -275,17 +275,14 @@ type ProfileForm = {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
+// Boards a user can connect. One — the other four produced zero listings in
+// production and their adapters were deleted, so offering them here would be
+// offering a login that connects to nothing.
 const PLATFORM_META: Record<string, { label: string; color: string; icon: string }> = {
-  linkedin: { label: "LinkedIn", color: "text-[#0077B5]", icon: "in" },
   internshala: { label: "Internshala", color: "text-[#00aaff]", icon: "IS" },
-  naukri: { label: "Naukri", color: "text-[#f47c2d]", icon: "NK" },
-  unstop: { label: "Unstop", color: "text-[#6C63FF]", icon: "UN" },
-  indeed: { label: "Indeed", color: "text-[#2557A7]", icon: "ID" },
 };
 
-// Platforms surfaced in the UI right now. Code/adapters for the others stay
-// intact — add their key here to re-enable them in the dashboard later.
-const VISIBLE_PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"];
+const VISIBLE_PLATFORMS = ["internshala"];
 
 const STATUS_STYLE: Record<string, string> = {
   applied:  "bg-accent/15 text-accent",
@@ -1749,11 +1746,11 @@ export default function Dashboard() {
               </li>
               <li className="flex gap-3">
                 <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">2</span>
-                <span><span className="font-medium">Connect a job platform.</span> Log in on the real LinkedIn, Internshala, Naukri, Unstop, or Indeed in a secure window — Grindly never sees your password.</span>
+                <span><span className="font-medium">Connect Internshala (optional).</span> Log in on the real Internshala in a secure window — Grindly never sees your password. It widens the pool; the agent works without it.</span>
               </li>
               <li className="flex gap-3">
                 <span className="shrink-0 size-6 rounded-full bg-brand/20 text-brand-2 flex items-center justify-center text-xs font-bold">3</span>
-                <span><span className="font-medium">Run the agent.</span> It scores matches and <span className="font-medium">applies for you</span> wherever it can send on its own — a company&apos;s application form, an HR inbox, a careers portal, or Internshala. Anything it can&apos;t send itself lands here with an <span className="font-medium">Open &amp; submit</span> button for you. Then track the outcome here.</span>
+                <span><span className="font-medium">Run the agent.</span> It scores matches and <span className="font-medium">applies for you</span> — a company&apos;s own application form, an HR inbox, a careers portal, or Internshala if you connected it. If a listing needs a fact it doesn&apos;t hold about you, it asks instead of guessing. Then track the outcome here.</span>
               </li>
             </ol>
             <p className="mt-4 text-xs text-muted">Tip: <span className="text-foreground">Run now</span> searches every day for you — connecting a platform is optional (for auto-fill).</p>
