@@ -399,6 +399,117 @@ def _resolve_destination(job: dict, jd_text: str, *, allow_fetch: bool) -> tuple
         return fallback, loads
 
 
+# ── the shared index, read through ───────────────────────────────────────────
+#
+# Reading a listing's description and deciding where its application goes are
+# both facts about the LISTING. They do not vary by who is looking. Doing them
+# inside each user's run means the same employer page is fetched once per
+# matching user — invisible at one user, and a thousand identical requests at a
+# thousand, which is both wasteful and the fastest possible way to get the
+# crawler blocked by the employers we most want to reach.
+#
+# So both go through the `jobs` row: ask it first, and write back what was
+# learned. The first user to match a listing pays for it; everyone after reads
+# it for free.
+
+# How long a stored description is trusted. A posting's body barely changes
+# after publication, and a stale paragraph costs far less than re-fetching every
+# employer page daily — which, fleet-wide, is the crawl this exists to avoid.
+JD_TTL_DAYS = int(os.environ.get("GRINDLY_JD_TTL_DAYS", "14"))
+
+# Same question for the apply route. Longer, because a company moving from Keka
+# to Lever is a rare event, and the failure mode is visible and self-correcting:
+# the send fails, and the row gets re-resolved.
+ROUTE_TTL_DAYS = int(os.environ.get("GRINDLY_ROUTE_TTL_DAYS", "30"))
+
+
+def _fresh(ts, ttl_days: int) -> bool:
+    """Is this stored timestamp still inside its TTL? False for anything unset."""
+    if not ts:
+        return False
+    try:
+        return db.time_ago_db(ttl_days * 86400 * 1000) < _as_ms(ts)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _as_ms(ts) -> int:
+    """Milliseconds since epoch, from whatever the backend hands back.
+
+    SQLite stores these as an integer and Postgres as a timestamp, and the same
+    code reads both.
+    """
+    if isinstance(ts, (int, float)):
+        return int(ts)
+    return int(ts.timestamp() * 1000)
+
+
+def shared_jd(job: dict, job_id: str, fetch) -> tuple[str, int]:
+    """This listing's description, fetched at most once for the whole fleet.
+
+    Returns (text, fetches_spent) so the caller can charge its page budget for
+    real traffic only — a cache hit costs nothing and must not be billed as if
+    it did, or the budget shrinks for every user after the first.
+    """
+    if job.get("jd_text"):
+        return job["jd_text"], 0
+    try:
+        row = db.get_job(job_id) if job_id else None
+    except Exception as e:  # noqa: BLE001
+        log.debug("shared jd read failed for %s: %s", job_id, e)
+        row = None
+    if row and row.get("jd_text") and _fresh(row.get("jd_fetched_at"), JD_TTL_DAYS):
+        job["jd_text"] = row["jd_text"]
+        return row["jd_text"], 0
+
+    text = fetch() or ""
+    if text and job_id:
+        try:
+            db.set_job_jd(job_id, text)
+        except Exception as e:  # noqa: BLE001
+            # A write failure costs the next user one fetch, nothing more.
+            log.debug("shared jd write failed for %s: %s", job_id, e)
+    if text:
+        job["jd_text"] = text
+    return text, (1 if text else 0)
+
+
+def shared_destination(job: dict, job_id: str, jd_text: str, *,
+                       allow_fetch: bool) -> tuple[dict, int]:
+    """Where this application goes, decided at most once for the whole fleet.
+
+    The stored answer is only reused when it names a real employer-side channel.
+    A stored CHANNEL_PLATFORM means "we looked and found nothing better", and
+    that verdict is often a product of the moment — the description had not been
+    fetched yet, or the resolve budget had run out — so caching it would make a
+    temporary blank permanent for every user who ever matches this listing.
+    """
+    try:
+        row = db.get_job(job_id) if job_id else None
+    except Exception as e:  # noqa: BLE001
+        log.debug("shared route read failed for %s: %s", job_id, e)
+        row = None
+    if (row and row.get("apply_channel")
+            and row["apply_channel"] != resolver.CHANNEL_PLATFORM
+            and _fresh(row.get("resolved_at"), ROUTE_TTL_DAYS)):
+        return resolver.destination(
+            channel=row["apply_channel"],
+            tier=row.get("apply_tier") or resolver.TIER_A,
+            target=row.get("apply_target") or "",
+            vendor=row.get("apply_vendor") or "",
+            evidence="resolved earlier, from the shared index",
+        ), 0
+
+    dest, loads = _resolve_destination(job, jd_text, allow_fetch=allow_fetch)
+    if job_id and dest.get("channel") != resolver.CHANNEL_PLATFORM:
+        try:
+            db.set_job_route(job_id, dest.get("channel"), dest.get("target"),
+                             dest.get("tier"), dest.get("vendor"))
+        except Exception as e:  # noqa: BLE001
+            log.debug("shared route write failed for %s: %s", job_id, e)
+    return dest, loads
+
+
 def _fetch_public_html(url: str, timeout: int = 20) -> str:
     """Plain GET of a public page — a company careers page linked from a JD.
 
@@ -2273,12 +2384,17 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         # listing — decides whether the agent may send this without the user.
         jd_text = job.get("jd_text") or ""
         if live and not jd_text and resolve_fetches < RESOLVE_FETCH_BUDGET:
+            # Through the shared index: the first user to match this listing
+            # pays for the fetch, everyone after reads it. Charges the budget
+            # only when a request actually went out.
             # _scrape_jd_if_available tolerates a missing module and returns "".
-            jd_text = _scrape_jd_if_available(src, source_modules.get(src), job["url"], uid)
+            jd_text, spent = shared_jd(
+                job, job_id,
+                lambda: _scrape_jd_if_available(
+                    src, source_modules.get(src), job["url"], uid),
+            )
+            resolve_fetches += spent
             if jd_text:
-                job["jd_text"] = jd_text
-                resolve_fetches += 1
-
                 # Re-run the scam gate now that we can actually READ the listing.
                 #
                 # Both gates above fired against whatever text the board's search
@@ -2305,7 +2421,8 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                     matched -= 1
                     continue
         allow_fetch = live and resolve_fetches < RESOLVE_FETCH_BUDGET
-        dest, page_loads = _resolve_destination(job, jd_text, allow_fetch=allow_fetch)
+        dest, page_loads = shared_destination(
+            job, job_id, jd_text, allow_fetch=allow_fetch)
         resolve_fetches += page_loads
         if dest["channel"] != resolver.CHANNEL_PLATFORM:
             log.info("routed %s @ %s -> %s (%s)", job.get("title"), job.get("company"),
