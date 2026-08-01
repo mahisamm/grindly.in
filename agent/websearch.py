@@ -227,8 +227,19 @@ def _save_cache() -> None:
         # Worker and sweep share this volume. A fixed `.tmp` name lets one
         # process replace the other's file before its own atomic replacement.
         fd, tmp = tempfile.mkstemp(prefix=".search_cache-", suffix=".tmp", dir=cache_dir)
+        # Newest-first and capped, the same discipline atsboards needed after
+        # its own cache reached 425 MB in production. The TTL here governs
+        # READS only, so a wholesale dump wrote back every expired entry
+        # forever — and now that the cache is consulted before every query
+        # rather than only on failure, it fills far faster than it used to.
+        now = time.time()
+        keep = sorted(
+            ((ts, k, r) for k, (ts, r) in _CACHE.items() if now - ts <= CACHE_TTL and r),
+            key=lambda row: row[0],
+            reverse=True,
+        )[:_CACHE_MAX]
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({k: [ts, r] for k, (ts, r) in _CACHE.items()}, f)
+            json.dump({k: [ts, r] for ts, k, r in keep}, f)
         # Atomic: a half-written cache read by the next process would be a
         # corrupt file that costs a run's discovery.
         os.replace(tmp, _CACHE_FILE)
@@ -236,14 +247,23 @@ def _save_cache() -> None:
         print(f"[websearch] cache save skipped: {type(e).__name__}")
 
 
-def _cache_get(key: str) -> list[dict] | None:
+def _cache_get(key: str, allow_stale: bool = False) -> list[dict] | None:
+    """The cached answer for this query.
+
+    Two readers with different appetites. The normal one wants a FRESH answer
+    and is what stops the fleet re-asking upstream for something it already
+    knows. The `allow_stale` one runs only after upstream has come back empty,
+    where a stale answer is plainly better than reporting no work — and it must
+    not delete the entry, because the next throttled run will want it too.
+    """
     _load_cache()
     hit = _CACHE.get(key)
     if not hit:
         return None
     ts, results = hit
     if time.time() - ts > CACHE_TTL:
-        _CACHE.pop(key, None)
+        if allow_stale:
+            return results
         return None
     return results
 
@@ -278,6 +298,22 @@ def search(query: str, limit: int = 10) -> list[dict]:
         print(f"[websearch] unknown provider {provider()!r} — no results")
         return []
     key = f"{provider()}::{query}::{limit}"
+
+    # Serve a fresh cached answer WITHOUT asking upstream.
+    #
+    # This cache used to be consulted only after the provider came back empty,
+    # which meant it never saved a single request on the happy path. Every
+    # user's run re-issued the same ~162 searches — and the query set is
+    # deliberately role- and host-scoped, so it collapses almost completely
+    # across a fleet: the harvest terms are documented as "role-independent on
+    # purpose, so they cost the same regardless of who is asking". At 1000
+    # users that was ~162,000 upstream queries a day, from one IP, for a few
+    # hundred distinct answers — the surest way to get that IP throttled and
+    # take the only working discovery path down with it.
+    fresh = _cache_get(key)
+    if fresh:
+        return fresh
+
     try:
         results = fn(query, max(1, limit))
     except Exception as e:  # noqa: BLE001
@@ -286,9 +322,10 @@ def search(query: str, limit: int = 10) -> list[dict]:
     if results:
         _cache_put(key, results)
         return results
-    # Empty almost always means throttled, not "nothing exists". Serve the last
-    # good answer for this query rather than reporting no work.
-    cached = _cache_get(key)
+    # Empty almost always means throttled, not "nothing exists". `_cache_get`
+    # above already returned anything fresh, so this is the deliberately
+    # laxer read: a stale answer beats reporting no work at all.
+    cached = _cache_get(key, allow_stale=True)
     if cached:
         print(f"[websearch] upstream returned nothing — reusing {len(cached)} cached result(s)")
         return cached

@@ -46,6 +46,14 @@ function channelEnabled(channel: string): boolean {
  *  shadow, never as live, so a typo in the environment cannot start sending
  *  applications under someone's name. */
 export function autoApplyMode(): AutoApplyMode {
+  // The master switch outranks the mode string, exactly as agent/safety.py
+  // auto_apply_mode() does. Without this, GRINDLY_AUTOPILOT_ENABLED=0 with
+  // GRINDLY_AUTO_APPLY_MODE=live had the worker correctly doing nothing while
+  // this file told the user "the agent will submit this" — which is precisely
+  // the product lie the header of this file says it exists to prevent.
+  if ((process.env.GRINDLY_AUTOPILOT_ENABLED ?? "").trim() === "0") {
+    return AUTO_APPLY_OFF;
+  }
   const raw = (process.env.GRINDLY_AUTO_APPLY_MODE ?? AUTO_APPLY_SHADOW).trim().toLowerCase();
   if (raw === AUTO_APPLY_OFF || raw === AUTO_APPLY_LIVE) return raw;
   return AUTO_APPLY_SHADOW;

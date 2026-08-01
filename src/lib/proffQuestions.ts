@@ -481,15 +481,34 @@ export const DEFAULTS: Record<string, unknown> = {
   availability: "",
   hoursPerWeek: 0,
   willingToRelocate: "",
-  workAuthorization: "Indian citizen",
-  needsSponsorship: "No",
-  expectedStipend: 0,
+  // Blank, not "Indian citizen"/"No" — and note this is a NARROWER rule than
+  // "never default anything". `country` below stays "India" because that is
+  // the product's scope: someone signing up to an India internship service has
+  // chosen the country, and stating it invents nothing.
+  //
+  // These two are different in kind. Citizenship and sponsorship are legal
+  // claims about the person, typed verbatim onto a real employer's form, and
+  // they are false for a real slice of the users this product serves —
+  // international students studying in India, OCI holders, anyone on a student
+  // visa. Both fields are `advanced`, so the median user never saw the claim
+  // being made in their name. A wrong answer here is not a formatting slip; it
+  // is a misstatement of work eligibility to an employer.
+  workAuthorization: "",
+  needsSponsorship: "",
+  // null, not 0. `answered()` treats any number as answered when
+  // zeroIsAnAnswer is set, so a 0 default made `required` inert AND stated
+  // "₹0/mo" to employers as the candidate's expected stipend — a claim they
+  // never made. null is unanswered, so the field can actually block and the
+  // setup-gap prompt can ask for it.
+  expectedStipend: null,
   currentSalary: "",
   previousInternship: "",
   noticePeriod: "",
   currentLocation: "",
   dateOfBirth: "",
-  nationality: "Indian",
+  // Same split as above: nationality is a claim about the person and can be
+  // wrong; country is the product's stated scope and cannot.
+  nationality: "",
   country: "India",
   gender: "",
   differentlyAbled: "",
@@ -507,7 +526,12 @@ export const DEFAULTS: Record<string, unknown> = {
   // account that has never opened the setting.
   maxPerDay: 0,
   excludedCompanies: [],
-  autoApply: true,
+  // OFF by default. This is the switch that authorises software to submit
+  // applications under the student's own name; shipping it pre-flipped meant
+  // consent was assumed before they had read what it does, and left the
+  // readiness check asking someone to confirm a toggle that was already
+  // affirmative. Let the consent step be the thing that turns it on.
+  autoApply: false,
   // Same "start empty" rule as the eligibility facts above — the agent
   // prefills these off the resume (agent/resume_ai.py extract_contact); a
   // guessed default here is exactly the kind of invented fact it exists to

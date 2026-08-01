@@ -24,6 +24,11 @@ export const FAILURE_REASON = {
   FIREWALL_BLOCKED: "firewall_blocked",
   CUSTOM_QUESTIONS: "custom_questions",
   TIMEOUT: "timeout",
+  // Must stay in step with agent/safety.py FAILURE_REASON. This member was
+  // added on the Python side and not here, so `humanFailure("browser_launch")`
+  // fell through to `?? reason` and printed the raw snake_case token on the
+  // user's dashboard.
+  BROWSER_LAUNCH: "browser_launch",
   EXCEPTION: "exception",
 } as const;
 
@@ -38,6 +43,7 @@ const HUMAN: Record<string, string> = {
   firewall_blocked: "Blocked by your limits & rules",
   custom_questions: "Listing asked questions we won't answer for you",
   timeout: "Timed out mid-submit — outcome unconfirmed",
+  browser_launch: "Couldn't open a browser — nothing was sent, it will retry",
   exception: "Unexpected error during apply",
 };
 

@@ -72,7 +72,14 @@ def analyze(resume_text: str) -> dict:
 # and the application is discarded before a human is ever involved.
 _ATS_MIN_CHARS = 220
 
-_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.\w+\b")
+# The domain half must allow DOTS, or a multi-label TLD is silently truncated:
+# `\.\w+` stops at the first dot after the host, so `priya@iitb.ac.in` was
+# extracted as `priya@iitb.ac`. This is the regex that reads the candidate's own
+# email off their resume and prefills it onto real application forms — a
+# truncated address is one an employer cannot reply to, which costs the user the
+# entire application. Indian academic addresses (.ac.in, .edu.in, .res.in) and
+# .co.in are exactly the common case here.
+_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
 _PHONE_RE = re.compile(r"(?:\+?\d[\d\s-]{7,}\d)")
 
 # ---------- contact prefill: phone + GPA off the resume ----------

@@ -16,7 +16,11 @@ export async function GET(req: Request) {
   if ("error" in g) return g.error;
 
   const { searchParams } = new URL(req.url);
-  const page = Math.max(1, Number(searchParams.get("page") ?? 1));
+  // `|| 1` is load-bearing. `?page=abc` returns the string "abc", so `?? 1`
+  // never fires, Number("abc") is NaN, Math.max(1, NaN) is NaN — and that NaN
+  // flowed straight into `skip:` below. Matches the parse the other admin
+  // list routes already use.
+  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10) || 1);
   const status = searchParams.get("status") ?? "";
   const platform = searchParams.get("platform") ?? "";
   const userId = searchParams.get("userId") ?? "";
@@ -56,7 +60,9 @@ export async function GET(req: Request) {
   ]);
 
   return NextResponse.json({
-    page, totalPages: Math.ceil(total / PAGE_SIZE), total, applications,
+    // Floor of 1, like the other admin list routes: an empty result set is
+    // page 1 of 1, not page 1 of 0.
+    page, totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)), total, applications,
   });
 }
 

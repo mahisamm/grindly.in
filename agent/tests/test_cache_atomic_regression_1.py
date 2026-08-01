@@ -13,8 +13,13 @@ def test_websearch_cache_saves_concurrently_without_shared_tmp_race(tmp_path, mo
     # Regression: worker and sweep shared `search_cache.json.tmp`, so one could
     # atomically replace it while the other was still trying to do the same.
     # Found during production QA on 2026-07-30.
+    # NOW, not a sentinel: _save_cache drops expired entries (see
+    # test_search_cache_shared), so a 1970 epoch would write an empty file and
+    # this test would pass or fail for reasons unrelated to the race it exists
+    # to catch.
     monkeypatch.setattr(websearch, "_CACHE_FILE", str(tmp_path / "search_cache.json"))
-    monkeypatch.setattr(websearch, "_CACHE", {"python": (1.0, [{"url": "https://example.test"}])})
+    monkeypatch.setattr(
+        websearch, "_CACHE", {"python": (time.time(), [{"url": "https://example.test"}])})
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(lambda _: websearch._save_cache(), range(32)))

@@ -105,6 +105,24 @@ function pickedValue(v: unknown): string {
   return v === 0 || v === null || v === undefined ? "" : String(v);
 }
 
+/**
+ * Parse a JSON array column without letting a corrupt row break the page.
+ *
+ * These are DB-sourced strings read inside a `.then()`, where a throw becomes
+ * an unhandled rejection: the setup form silently stays empty and the student
+ * retypes everything with no error to explain it.
+ */
+function jsonList(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(String);
+  if (typeof v !== "string" || !v.trim()) return [];
+  try {
+    const parsed = JSON.parse(v);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
 
 export default function OnboardingPage() {
   const [step, setStep] = useState(0);
@@ -201,9 +219,13 @@ export default function OnboardingPage() {
         if (!d?.profile) return;
         const p = d.profile;
         setForm({
-          preferredDomains: JSON.parse(p.preferredDomains || "[]"),
-          preferredLocations: JSON.parse(p.preferredLocations || "[]"),
-          excludedCompanies: JSON.parse(p.excludedCompanies || "[]"),
+          // Guarded: these are raw DB strings, and a bare JSON.parse inside a
+          // .then() throws into an unhandled rejection — the form then silently
+          // never populates and the student re-types everything, with nothing
+          // on screen explaining why.
+          preferredDomains: jsonList(p.preferredDomains),
+          preferredLocations: jsonList(p.preferredLocations),
+          excludedCompanies: jsonList(p.excludedCompanies),
           workMode: p.workMode,
           experienceLevel: p.experienceLevel || "student",
           stipendMin: p.stipendMin,

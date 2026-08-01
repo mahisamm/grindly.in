@@ -205,15 +205,42 @@ describe("how much setup asks for", () => {
     expect(required).not.toContain("workAuthorization");
   });
 
-  it("presets what the product's own scope already decides", () => {
-    // A default is normally an invented fact. These are the scope of the
-    // product, stated once, visible and changeable under "More answers".
+  it("presets the product's scope, but never a claim about the person", () => {
+    // The line between these two is the point. `country` is the scope of the
+    // product: someone signing up to an India internship service has chosen
+    // the country, and stating it invents nothing.
     expect(DEFAULTS.country).toBe("India");
-    expect(DEFAULTS.workAuthorization).toBe("Indian citizen");
-    expect(DEFAULTS.nationality).toBe("Indian");
+
+    // Citizenship, nationality and sponsorship are legal claims ABOUT THE
+    // USER, typed verbatim onto a real employer's form — and false for a real
+    // slice of the people this product serves: international students studying
+    // in India, OCI holders, anyone on a student visa. Both fields are
+    // `advanced`, so the median user never saw the claim being made in their
+    // name. A wrong answer here misstates work eligibility to an employer.
+    expect(DEFAULTS.workAuthorization).toBe("");
+    expect(DEFAULTS.nationality).toBe("");
+    expect(DEFAULTS.needsSponsorship).toBe("");
+
     for (const key of ["country", "workAuthorization", "nationality"]) {
       expect(PROFF_FIELDS.find((f) => f.key === key)!.advanced, key).toBe(true);
     }
+  });
+
+  it("never states a stipend the user did not pick", () => {
+    // expectedStipend defaulted to 0, and `answered()` treats any number as
+    // answered when zeroIsAnAnswer is set — so `required` was inert AND every
+    // untouched account stated "₹0/mo" to employers as its expected pay. null
+    // is genuinely unanswered, so the field can block and the setup-gap prompt
+    // can ask for it.
+    expect(DEFAULTS.expectedStipend).toBeNull();
+    expect(missingRequired({ ...DEFAULTS }).map((f) => f.key))
+      .toContain("expectedStipend");
+  });
+
+  it("does not pre-consent to applying on the user's behalf", () => {
+    // autoApply authorises software to submit under the student's own name.
+    // Shipping it pre-flipped assumed consent before they read what it does.
+    expect(DEFAULTS.autoApply).toBe(false);
   });
 
   it("never hides a required question behind the More toggle", () => {

@@ -533,6 +533,40 @@ function blankIfUnset(v: unknown): string {
   return v === 0 || v === null || v === undefined ? "" : String(v);
 }
 
+/**
+ * Turn an engine-authored `reason` into something a student can read.
+ *
+ * These strings are written by the Python agent for operators and land under
+ * every job title on the dashboard. In shadow mode — the production default —
+ * the commonest one a new user ever sees is literally
+ * "Auto-apply is in shadow mode: destination resolved but nothing was sent."
+ * Others append raw operational text: "— internshala per-run cap (5) reached",
+ * "— linkedin paused (captcha/challenge cooldown)", "— daily cap reached".
+ *
+ * The full original stays in the `title` attribute, so nothing is hidden from
+ * anyone who wants it; this only decides what is shown by default.
+ */
+function plainReason(reason: string): string {
+  const r = reason.trim();
+  const rules: [RegExp, string][] = [
+    [/shadow mode/i, "Prepared and ready — open it to send."],
+    [/safe apply mode/i, "Prepared and ready — open it to send."],
+    [/never submitted from grindly|open it in your own browser/i,
+      "This site needs your own browser — open it to send."],
+    [/per-run cap|daily (cap|limit) reached/i, "Waiting for tomorrow's batch."],
+    [/paused \(captcha|challenge cooldown/i, "Paused for now — the agent will retry."],
+    [/reconnect|session expired|login/i, "Reconnect this site to continue."],
+    [/human check|captcha/i, "This employer asks for a human check — open it to send."],
+    [/waiting on facts only you can give/i, r],   // already written for the user
+  ];
+  for (const [pattern, plain] of rules) {
+    if (pattern.test(r)) return plain;
+  }
+  // A match explanation ("matches python, react · 4 of your skills…") is
+  // already user-facing; keep it, minus any operational tail after the dash.
+  return r.split(" — ")[0];
+}
+
 function profileToForm(p: RawProfile): ProfileForm {
   return {
     preferredDomains: parseJ<string[]>(p.preferredDomains, []),
@@ -2193,7 +2227,12 @@ export default function Dashboard() {
                 for something, so it sits above the history and says plainly
                 what happened. The agent stopped here on purpose: a CAPTCHA, a
                 login or a question it could not answer honestly. */}
-            {autopilot && false && autopilot!.actionNeeded?.length > 0 && (
+            {/* Disabled with `false &&`, which made a stuck task invisible AND
+                unrecoverable: this is the only surface that lists the CAPTCHA,
+                OTP and login gates the agent stopped on, and the only route to
+                retryTask. Applications simply stopped with nothing on screen
+                saying why. */}
+            {autopilot && autopilot!.actionNeeded?.length > 0 && (
               <div className="mt-4 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
                 <div className="text-sm font-semibold text-foreground">
                   Needs you ({autopilot!.actionNeeded.length})
@@ -2237,7 +2276,7 @@ export default function Dashboard() {
 
             {/* Browser health. An action-needed list with no paired browser is a
                 dead end, so say so instead of leaving the user to wonder. */}
-            {autopilot && false && autopilot!.browser && (
+            {autopilot && autopilot!.browser && (
               <p className="mt-3 flex items-center gap-2 text-xs text-muted">
                 <span
                   className={`size-1.5 rounded-full ${
@@ -2368,7 +2407,15 @@ export default function Dashboard() {
           const needsCheck = apps.filter((a) => a.status === "needs_review").length;
 
           // 1. Something is waiting on the user, in the order it blocks them.
-          if (false && toSubmit > 0) {
+          //
+          // These two branches were disabled with `false &&`, which recreated
+          // the exact contradiction the comment above says was fixed: the
+          // "N matches found for you" banner and its "Line up all N" button
+          // never rendered, so the chain fell through to "You're all caught up
+          // for today" while unsent matches sat in the list directly below it.
+          // It also orphaned approveAllApplications — the only way a user
+          // could send a batch.
+          if (toSubmit > 0) {
             return (
               <Banner tone="brand"
                 title={`${toSubmit} application${toSubmit !== 1 ? "s" : ""} ready to send`}
@@ -2377,7 +2424,7 @@ export default function Dashboard() {
               />
             );
           }
-          if (false && readyCount > 0) {
+          if (readyCount > 0) {
             return (
               <Banner tone="brand"
                 title={`${readyCount} match${readyCount !== 1 ? "es" : ""} found for you`}
@@ -2471,8 +2518,16 @@ export default function Dashboard() {
             splits once the agent has actually sent something. */}
         <div className={`mt-6 grid grid-cols-2 gap-3 ${me.stats.failed > 0 || agentSentCount > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
           {([
-            ["Processing", me.stats.ready, "text-muted", "The agent is processing eligible applications"],
-            ["In progress", me.stats.queued, "text-muted", "The agent has more eligible applications scheduled"],
+            // ONE waiting number, not two.
+            //
+            // This was "Processing" (stats.ready — due now) beside "In
+            // progress" (stats.queued — still embargoed), while the Autopilot
+            // panel 200px above showed "In queue", which is arithmetically the
+            // sum of both. Three tiles, three names, for one pile of rows, and
+            // nothing on screen said how they related. A student cannot act on
+            // any of the three differently, so they are one number.
+            ["Lined up", me.stats.ready + me.stats.queued, "text-muted",
+              "Roles the agent has found and is working through for you"],
             ...(agentSentCount > 0
               ? [
                   ["Agent sent", agentSentCount, "text-accent", "The agent submitted these to the company itself — nothing was needed from you"] as const,
@@ -3413,7 +3468,7 @@ export default function Dashboard() {
                       )}
                       {a.reason && (
                         <div className="text-xs text-muted mt-1 truncate max-w-md" title={a.reason}>
-                          {a.reason}
+                          {plainReason(a.reason)}
                         </div>
                       )}
                       {/* What they want that you don't show. Worth knowing before you
