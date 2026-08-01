@@ -243,8 +243,25 @@ _CONSENT_CANDIDATES = [
 
 
 def _human_type(page, el, text: str) -> None:
-    """Type at a human pace. Same contract `questions.fill` expects from every
-    adapter: pacing belongs to the caller, not the question engine."""
+    """Type at a human pace, into an EMPTY field.
+
+    The clear is the whole point, and its absence was corrupting real
+    applications. Several ATSs parse the uploaded resume and prefill name,
+    email and phone — asynchronously, so the value lands AFTER read_fields has
+    already decided the box was empty. `type()` then inserts at the cursor
+    instead of replacing, and a live Keka form went out reading:
+
+        First Name  'SammetaMahendhar'
+        Phone       '8096267553809'
+        Email       'mahendharsammeta2mahendharsammeta21@gmail.com1@gmail.com'
+
+    The employer's own validation caught the email ("a part following '@'
+    should not contain the symbol '@'") — which is what every "submit click
+    registered but page shows a validation error" failure on an employer form
+    actually was. Not a captcha: a mangled identity.
+
+    internshala._human_type has always cleared first; this adapter never did.
+    """
     try:
         stealth.scroll_to(page, el)
     except Exception:  # noqa: BLE001
@@ -253,6 +270,17 @@ def _human_type(page, el, text: str) -> None:
         el.click()
     except Exception:  # noqa: BLE001
         pass
+    # Select-all + Backspace rather than fill(""): fill() dispatches a single
+    # input event that some React forms treat as a programmatic write and
+    # revert, whereas a keyboard clear is indistinguishable from a person.
+    try:
+        el.press("Control+a")
+        el.press("Backspace")
+    except Exception:  # noqa: BLE001
+        try:
+            el.fill("")
+        except Exception:  # noqa: BLE001
+            pass
     el.type(text, delay=random.randint(18, 55))
 
 

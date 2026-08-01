@@ -744,6 +744,11 @@ _MIDDLE_NAME = re.compile(r"\bmiddle\s*name\b", re.I)
 _WANTS_A_DATUM = re.compile(
     r"\b(percentage|marks|score|cgpa|gpa|stipend|salary|ctc|expected\s+pay|"
     r"hours?\s+per|how\s+many|how\s+much|passing\s+year|year\s+of|"
+    # "Experience (in years)" is a NUMBER box, and a model handed it
+    # "I have around 2-3 years of experience, as indicated by my..." on a live
+    # Keka form, which the field mangled into "0232021". Any label naming its
+    # own unit in years/months is asking for a figure, never for prose.
+    r"in\s+years|in\s+months|years?\s+of\s+experience|experience\s*\(|"
     r"date\s+of|duration|number\s+of|age)\b",
     re.I,
 )
