@@ -312,6 +312,22 @@ def _requires_approval(src: str, auto_apply: bool) -> bool:
 # not, so a discovery sweep cannot turn into a crawl.
 RESOLVE_FETCH_BUDGET = int(os.environ.get("GRINDLY_RESOLVE_FETCH_BUDGET", "12"))
 
+# How many DIFFERENT users one listing may be handed.
+#
+# The number that makes a shared index safe. Without it, every user whose skills
+# match a posting gets that posting on the same day, so the employer receives
+# fifty near-identical applications from one product at once — spam from their
+# side, a fast route to being blocked from ours, and one listing burning fifty
+# users' slots instead of one.
+#
+# Three, not one, because a real employer receiving three applications for an
+# internship is completely ordinary, and one-per-listing would waste most of the
+# pool: a posting only ever suits a handful of the fleet anyway.
+#
+# It is also the capacity formula. Fleet sends per day <= live listings x K, so
+# this is the multiplier on everything the supply work buys.
+ALLOC_PER_LISTING = int(os.environ.get("GRINDLY_ALLOC_PER_LISTING", "3"))
+
 # Channels that deliver to an employer directly. Keyed by resolver channel so a
 # new channel is one entry here plus one module, with no branching in the loop.
 _CHANNEL_MODULES = {
@@ -2373,6 +2389,30 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                      job.get("title"), job.get("company"), rep.get("evidence"), rep.get("confidence") or 0.0)
             continue
 
+        # ── Is this listing still ours to hand out? ─────────────────────────
+        #
+        # One index shared by the whole fleet means, without a cap, that every
+        # user whose skills match a posting is handed that posting on the same
+        # day. From the employer's side that is fifty near-identical
+        # applications arriving together from one product — which is spam, gets
+        # the sender blocked, and burns the listing for all fifty users at once
+        # instead of costing one user one slot.
+        #
+        # So a listing is handed to at most ALLOC_PER_LISTING users, claimed
+        # atomically. See db.claim_job_allocation for why the check and the
+        # increment cannot be two statements.
+        allocated = False
+        if job_id:
+            allocated = db.claim_job_allocation(job_id, ALLOC_PER_LISTING)
+            if not allocated:
+                log.info("listing already allocated to %d user(s), skipping: %s @ %s",
+                         ALLOC_PER_LISTING, job.get("title"), job.get("company"))
+                # Deliberately NOT written as a 'skipped' row. Nothing is wrong
+                # with this listing or this user — it simply went to someone
+                # else — and filing a verdict would lock it out of every future
+                # run for this user (see db.applied_external_ids).
+                continue
+
         matched += 1
 
         # ── Where does this application actually go? ────────────────────────
@@ -2419,6 +2459,8 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                     log.info("scam gate (post-JD): skipped %s @ %s — %s",
                              job.get("title"), job.get("company"), scam_reason)
                     matched -= 1
+                    if allocated:
+                        db.release_job_allocation(job_id)
                     continue
         allow_fetch = live and resolve_fetches < RESOLVE_FETCH_BUDGET
         dest, page_loads = shared_destination(
@@ -2479,6 +2521,11 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
                      job.get("title"), job.get("company"),
                      dest.get("channel"), dest.get("tier"))
             matched -= 1
+            # Nothing was offered to this user, so the slot goes back to the
+            # pool. Without this, a fleet running in no-touch mode would consume
+            # every listing's allocation while sending nothing at all.
+            if allocated:
+                db.release_job_allocation(job_id)
             continue
 
         if not auto_ok:
