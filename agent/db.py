@@ -1264,6 +1264,41 @@ def release_job_allocation(job_id: str) -> None:
         )
 
 
+def reconcile_allocations() -> int:
+    """Reset every listing's alloc_count to the applications that actually exist.
+
+    alloc_count is incremented when a listing is handed to a user and
+    decremented on the paths that give up in the same run. That covers the
+    common cases and misses a whole class of them, because an application can
+    disappear LONG after the run that created it:
+
+      * the user disconnects a board, and the still-pending matches from it are
+        withdrawn (see src/app/api/integrations/disconnect);
+      * the user deletes their account, and every row cascades;
+      * a row is cleared by any future cleanup nobody has written yet.
+
+    Each of those leaks one slot on a live listing, permanently and silently —
+    the listing simply becomes available to fewer people, and nothing anywhere
+    reports it. Chasing them one by one would also mean the web app calling a
+    Python decrement, which is exactly the coupling this avoids.
+
+    So the count is derived rather than trusted. One statement, run daily beside
+    the expiry: the truth is the applications table, and this makes the counter
+    agree with it. Returns how many rows were corrected.
+    """
+    with conn() as c:
+        _ensure_job_columns(c)
+        cur = c.execute(
+            "UPDATE jobs SET alloc_count = COALESCE(("
+            "  SELECT COUNT(*) FROM applications a WHERE a.job_id = jobs.id"
+            "), 0) "
+            "WHERE COALESCE(alloc_count, 0) <> COALESCE(("
+            "  SELECT COUNT(*) FROM applications a WHERE a.job_id = jobs.id"
+            "), 0)"
+        )
+        return cur.rowcount or 0
+
+
 def get_job(job_id: str) -> dict | None:
     with conn() as c:
         _ensure_job_columns(c)

@@ -123,6 +123,44 @@ def test_a_retired_listing_is_not_allocated(testdb):
     assert db.claim_job_allocation(job_id, worker.ALLOC_PER_LISTING) is False
 
 
+def test_a_withdrawn_application_gives_its_slot_back_eventually(testdb):
+    """The leak the in-run releases cannot catch.
+
+    An application can disappear LONG after the run that created it — a board
+    disconnected withdraws its still-pending matches, a deleted account
+    cascades. Each leaks one slot on a live listing, permanently, and nothing
+    reports it: the listing just becomes available to fewer people. So the count
+    is derived from the applications that actually exist rather than trusted.
+    """
+    job_id = _seed()
+    with db.conn() as c:
+        c.execute("INSERT INTO users (id, email, plan, status, created_at) "
+                  "VALUES (?,?,?,?,?)", ("u1", "u1@x.com", "free", "active", 0))
+        c.execute("UPDATE jobs SET alloc_count=3 WHERE id=?", (job_id,))
+        c.execute("INSERT INTO applications (id, user_id, job_id, job_title, "
+                  "company, status, created_at) VALUES (?,?,?,?,?,?,?)",
+                  ("a1", "u1", job_id, "Intern", "Acme", "matched", 0))
+
+    assert db.claim_job_allocation(job_id, worker.ALLOC_PER_LISTING) is False
+    assert db.reconcile_allocations() == 1
+    assert db.get_job(job_id)["alloc_count"] == 1
+    # Two of the three slots were never really used, and are now available.
+    assert db.claim_job_allocation(job_id, worker.ALLOC_PER_LISTING) is True
+
+
+def test_reconciling_does_not_disturb_a_count_that_is_already_right(testdb):
+    job_id = _seed()
+    db.claim_job_allocation(job_id, worker.ALLOC_PER_LISTING)
+    with db.conn() as c:
+        c.execute("INSERT INTO users (id, email, plan, status, created_at) "
+                  "VALUES (?,?,?,?,?)", ("u1", "u1@x.com", "free", "active", 0))
+        c.execute("INSERT INTO applications (id, user_id, job_id, job_title, "
+                  "company, status, created_at) VALUES (?,?,?,?,?,?,?)",
+                  ("a1", "u1", job_id, "Intern", "Acme", "applied", 0))
+    assert db.reconcile_allocations() == 0
+    assert db.get_job(job_id)["alloc_count"] == 1
+
+
 def test_no_path_leaves_the_loop_holding_a_slot_it_never_used(testdb):
     """The leak this whole design is one careless `continue` away from.
 

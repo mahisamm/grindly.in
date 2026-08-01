@@ -237,6 +237,20 @@ def retire_stale_listings(now: datetime.datetime | None = None) -> int:
         log.info("retired %d listing(s) unseen for %d days", n, LISTING_TTL_DAYS)
         db.add_audit("listings_retired", user_id=None, target=str(n),
                      detail=f"unseen for {LISTING_TTL_DAYS} days")
+
+    # Make each listing's allocation counter agree with the applications that
+    # actually exist. The counter is incremented when a listing is handed out
+    # and decremented on the paths that give up in the same run — but an
+    # application can vanish long afterwards (a board disconnected, an account
+    # deleted), and each of those leaks one slot on a live listing permanently
+    # and silently. Deriving the count is cheaper and more honest than chasing
+    # every deletion path across two languages.
+    try:
+        fixed = db.reconcile_allocations()
+        if fixed:
+            log.info("reconciled the allocation count on %d listing(s)", fixed)
+    except Exception as e:  # noqa: BLE001
+        log.error("allocation reconcile failed: %s", e)
     return n
 
 
