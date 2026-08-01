@@ -2,12 +2,24 @@
 
 Why this is the first channel built
 -----------------------------------
-A large share of Indian internship listings say "apply here" and point at a
-Google Form. Nobody holds an account on a Google Form; it is a public intake
-box. So submitting one carries no ban risk, needs no browser, no stealth
-patching, no session, and no credentials — it is an HTTP POST. That makes it the
-cheapest possible path to a genuinely hands-off application, which is the whole
-point of the resolver work.
+Nobody holds an account on a Google Form; it is a public intake box. So
+submitting one carries no ban risk, needs no browser, no stealth patching, no
+session, and no credentials — it is an HTTP POST. That makes it the cheapest
+possible path to a genuinely hands-off application, which is the whole point of
+the resolver work.
+
+Kept despite finding none yet
+-----------------------------
+The premise above was "a large share of Indian internship listings point at a
+Google Form". Measured, that is wrong for the pool we actually accumulate: a
+60-listing door probe found **0%**, and the production `jobs` table holds zero
+form URLs. The honest reading is not that this sender is useless, though — it is
+that DISCOVERY never reaches forms. They are posted on Instagram, in college
+WhatsApp groups and on LinkedIn posts, none of which we crawl.
+
+So this stays. It is a working, captcha-free, account-free Tier A sender that
+costs nothing while idle, and deleting a sender because the crawler has not fed
+it yet would be amputating the wrong end of the problem.
 
 How a Google Form actually works
 --------------------------------

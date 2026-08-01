@@ -15,7 +15,7 @@ export async function GET() {
     select: {
       id: true, email: true, name: true, plan: true, paid: true, status: true,
       accessStatus: true, role: true, slackConnected: true, internshalaConnected: true,
-      gmailScanInterest: true, createdAt: true,
+      createdAt: true,
       profile: true,
     },
   });

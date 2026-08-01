@@ -183,7 +183,6 @@ type Me = {
     gmailConnected: boolean;
     gmailScanEnabled: boolean;
     gmailScanBeta?: boolean;
-    gmailScanInterest?: boolean;
     internshalaLoginEnabled: boolean;
   };
   profile: RawProfile | null;

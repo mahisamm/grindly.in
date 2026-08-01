@@ -33,7 +33,7 @@ export default function IntegrationsPage() {
         <div className="mb-6 border-b border-border pb-4">
           <h1 className="font-display text-2xl font-semibold tracking-tight">Integrations</h1>
           <p className="mt-1 text-sm text-muted">
-            Job platforms, where updates reach you, paired browsers, and interview alerts.
+            Job platforms, where updates reach you, and paired browsers.
           </p>
         </div>
 

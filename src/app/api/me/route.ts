@@ -335,7 +335,6 @@ export async function GET() {
       // Per-user: only allowlisted testers see the live Connect flow; everyone
       // else gets the waitlist link. See gmailScanBeta() in lib/googleOAuth.
       gmailScanBeta: gmailScanBeta(user.email),
-      gmailScanInterest: user.gmailScanInterest,
       internshalaLoginEnabled: internshalaLoginEnabled(user),
       paymentsEnabled: process.env.PAYMENTS_ENABLED === "true",
     },

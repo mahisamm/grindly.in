@@ -10,7 +10,7 @@ const ConnectViewer = dynamic(() => import("@/components/ConnectViewer"), { ssr:
 
 /**
  * Integrations — connected platforms, updates channel, paired browser
- * extensions, interview alerts.
+ * extensions.
  *
  * Lifted out of the dashboard, where it used to be a tab. It is settings, not
  * work: a user connects Internshala once and then essentially never returns,
@@ -38,7 +38,6 @@ type Me = {
     slackUserId: string | null;
     gmailConnected?: boolean;
     gmailScanBeta?: boolean;
-    gmailScanInterest?: boolean;
   };
   quota: { cap: number; remaining: number };
 };
@@ -467,93 +466,25 @@ export default function IntegrationsPanel() {
             )}
           </div>
 
-          {/* Interview alerts — ALWAYS shown so the choice is explicit: mark
-              outcomes yourself (works today), or let Grindly watch your inbox
-              (opt-in). The Connect action only appears once the capability is
-              live (GMAIL_SCAN_ENABLED); until gmail.readonly clears Google's
-              review the card explains that instead of dead-ending on a consent
-              screen Google blocks. No hidden feature, no broken button. */}
+          {/* This was a whole apparatus for automatic inbox detection: a Gmail
+              OAuth button, a "Scan now", a waitlist. All of it sat behind
+              GMAIL_SCAN_ENABLED, which has never been set on any deploy and
+              cannot be until gmail.readonly clears Google's restricted-scope
+              review — a review nobody is pursuing. So the largest card on this
+              page described a feature that could not be switched on.
+
+              What survives is the part that works and that the user actually
+              needs told: recruiter replies land in their inbox, not ours, so
+              outcomes get marked by hand. One tap, on the application itself. */}
           <div className="mt-5 rounded-xl border border-border bg-surface p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-base">📧</span>
-                <span className="font-medium">Interview alerts</span>
-              </div>
-              <span className={`text-xs rounded-full px-2 py-0.5 ${me.user.gmailConnected ? "bg-accent/20 text-accent" : "bg-surface-2 text-muted"}`}>
-                {me.user.gmailConnected ? "Auto — on" : "Manual"}
-              </span>
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="text-base">📧</span>
+              <span className="font-medium">When a company replies</span>
             </div>
-            <p className="text-xs text-muted mb-3">
-              Grindly can&apos;t see a recruiter&apos;s reply on its own. Two ways to stay on top of it — your choice:
+            <p className="text-xs text-muted">
+              The reply goes to your own inbox — Grindly never reads it. Mark the outcome on that
+              application in one tap and your interview rate stays accurate.
             </p>
-            <ul className="text-xs text-muted mb-3 space-y-1.5">
-              <li>• <span className="text-foreground font-medium">Do it yourself</span> — when a company replies, mark the outcome on that application (one tap). Always available, nothing to set up.</li>
-              <li>• <span className="text-foreground font-medium">Let Grindly watch</span> — connect Gmail (read-only) and the agent detects interview calls, offers, and rejections, then pings you on Slack or email. Optional.</li>
-            </ul>
-            {me.user.gmailScanBeta ? (
-              me.user.gmailConnected ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-accent">✓ Watching your inbox</span>
-                  <button
-                    onClick={async () => {
-                      const r = await fetch("/api/gmail/scan", { method: "POST" });
-                      const j = await r.json().catch(() => ({}));
-                      if (r.ok) setNotice({ kind: "ok", text: "Scanning your inbox — we'll notify you of any interview updates." });
-                      else setNotice({ kind: "err", text: j.error ?? "Couldn't start the scan." });
-                    }}
-                    className="rounded-lg border border-border px-3 py-1.5 text-xs hover:border-brand/60 transition"
-                  >
-                    Scan now
-                  </button>
-                  <button
-                    onClick={async () => {
-                      await fetch("/api/gmail/status", { method: "DELETE" });
-                      load();
-                    }}
-                    className="text-xs text-muted hover:text-danger transition"
-                  >
-                    Turn off
-                  </button>
-                </div>
-              ) : (
-                <a
-                  href="/api/auth/gmail"
-                  className="press inline-flex items-center gap-2 rounded-lg border-2 border-ink bg-surface sticker-sm px-4 py-2 text-sm font-medium hover:bg-surface-2 transition"
-                >
-                  <svg width="16" height="16" viewBox="0 0 48 48" fill="none">
-                    <path d="M47.532 24.552c0-1.636-.132-3.2-.388-4.704H24.48v8.896h12.956c-.568 2.952-2.22 5.456-4.692 7.132v5.912h7.572c4.432-4.072 6.988-10.072 6.988-17.236z" fill="#4285F4"/>
-                    <path d="M24.48 48c6.48 0 11.916-2.148 15.888-5.812l-7.572-5.912c-2.148 1.44-4.896 2.288-8.316 2.288-6.396 0-11.82-4.32-13.748-10.128H2.9v6.1C6.856 42.86 15.088 48 24.48 48z" fill="#34A853"/>
-                    <path d="M10.732 28.436A14.4 14.4 0 0 1 9.9 24c0-1.54.264-3.036.732-4.436v-6.1H2.9A23.952 23.952 0 0 0 .48 24c0 3.864.924 7.524 2.42 10.536l8.332-6.1z" fill="#FBBC05"/>
-                    <path d="M24.48 9.552c3.604 0 6.836 1.24 9.38 3.672l6.972-6.972C36.388 2.352 30.96 0 24.48 0 15.088 0 6.856 5.14 2.9 13.464l7.832 6.1C12.66 13.872 18.084 9.552 24.48 9.552z" fill="#EA4335"/>
-                  </svg>
-                  Connect Gmail (read-only)
-                </a>
-              )
-            ) : me.user.gmailScanInterest ? (
-              <p className="text-xs text-accent">
-                ✓ You&apos;re on the list — we&apos;ll email you the moment automatic inbox detection opens. Until then, mark outcomes yourself in one tap.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                <p className="text-xs text-muted">
-                  <span className="text-foreground font-medium">Automatic inbox detection is in review</span> — it&apos;s pending Google&apos;s security check of the read-only Gmail permission. For now, mark outcomes yourself (one tap) — or get a heads-up the day it opens:
-                </p>
-                <button
-                  onClick={async () => {
-                    const r = await fetch("/api/gmail/interest", { method: "POST" });
-                    if (r.ok) {
-                      setMe((prev) => (prev ? { ...prev, user: { ...prev.user, gmailScanInterest: true } } : prev));
-                      setNotice({ kind: "ok", text: "You're on the list — we'll email you when automatic inbox detection opens." });
-                    } else {
-                      setNotice({ kind: "err", text: "Couldn't save that — please try again." });
-                    }
-                  }}
-                  className="text-sm font-medium text-brand-2 hover:underline"
-                >
-                  Notify me when it&apos;s ready →
-                </button>
-              </div>
-            )}
           </div>
 
           {/* Six steps became four, and the contradiction went with them: the
