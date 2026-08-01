@@ -51,8 +51,8 @@ def test_capacity_is_sendable_listings_times_k(testdb):
     for i in range(10):
         _seed(f"j{i}")
     r = capacity.report()
-    assert r["sendable"] == 10
-    assert r["fleet_sends_per_day"] == 10 * worker.ALLOC_PER_LISTING
+    assert r["employer_side"] == 10
+    assert r["employer_sends_per_day"] == 10 * worker.ALLOC_PER_LISTING
 
 
 def test_a_listing_with_no_route_is_not_counted_as_capacity(testdb):
@@ -65,17 +65,17 @@ def test_a_listing_with_no_route_is_not_counted_as_capacity(testdb):
 
     r = capacity.report()
     assert r["live"] == 25
-    assert r["sendable"] == 5
-    assert r["fleet_sends_per_day"] == 5 * worker.ALLOC_PER_LISTING
+    assert r["employer_side"] == 5
+    assert r["employer_sends_per_day"] == 5 * worker.ALLOC_PER_LISTING
 
 
 def test_users_supported_divides_by_the_plans_own_quota(testdb):
     for i in range(30):
         _seed(f"j{i}")
     r = capacity.report()
-    sends = r["fleet_sends_per_day"]
-    assert r["users_supported"]["plus"] == sends // 5
-    assert r["users_supported"]["pro"] == sends // 15
+    sends = r["employer_sends_per_day"]
+    assert r["users_supported_hands_off"]["plus"] == sends // 5
+    assert r["users_supported_hands_off"]["pro"] == sends // 15
 
 
 def test_a_pro_user_costs_three_times_a_plus_user(testdb):
@@ -84,7 +84,7 @@ def test_a_pro_user_costs_three_times_a_plus_user(testdb):
     for i in range(60):
         _seed(f"j{i}")
     r = capacity.report()
-    assert r["users_supported"]["plus"] == 3 * r["users_supported"]["pro"]
+    assert r["users_supported_hands_off"]["plus"] == 3 * r["users_supported_hands_off"]["pro"]
 
 
 def test_the_ceiling_shows_what_resolving_routes_would_buy(testdb):
@@ -93,7 +93,7 @@ def test_the_ceiling_shows_what_resolving_routes_would_buy(testdb):
     for i in range(45):
         _seed(f"unrouted{i}", routed=False)
     r = capacity.report()
-    assert r["users_supported"]["plus"] < r["if_all_live_were_routed"]["plus"]
+    assert r["users_supported_hands_off"]["plus"] < r["if_all_live_were_routed"]["plus"]
 
 
 def test_a_retired_listing_is_not_capacity(testdb):
@@ -106,8 +106,52 @@ def test_a_retired_listing_is_not_capacity(testdb):
 
 def test_an_empty_index_reports_zero_rather_than_raising(testdb):
     r = capacity.report()
-    assert r["fleet_sends_per_day"] == 0
-    assert r["users_supported"]["plus"] == 0
+    assert r["employer_sends_per_day"] == 0
+    assert r["users_supported_hands_off"]["plus"] == 0
+
+
+def test_internshala_capacity_is_counted_but_kept_separate(testdb):
+    """What the first version of this readout got wrong.
+
+    It counted only employer-side routes and reported 52 users — while ignoring
+    that 62% of the live pool is Internshala, which demonstrably sends and is
+    the source of every confirmed application to date. But the two halves are
+    not interchangeable, and adding them together would hide the thing that
+    decides whether the product works: a user who never connects Internshala
+    gets the employer-side number and nothing else.
+    """
+    for i in range(10):
+        _seed(f"emp{i}", routed=True)
+    for i in range(30):
+        db.upsert_job({"source": "internshala", "external_id": f"is{i}",
+                       "title": "Intern", "company": "Acme",
+                       "url": f"https://internshala.com/i/{i}", "skills": []})
+
+    r = capacity.report()
+    assert r["employer_side"] == 10
+    assert r["board"] == 30
+    assert r["users_supported_hands_off"]["plus"] < r["users_supported_connected"]["plus"]
+
+
+def test_a_user_who_connects_nothing_is_the_floor_that_is_reported_first(testdb):
+    """A pool made entirely of board listings serves a hands-off user zero
+    applications. If that ever reads as full capacity, the promise is broken
+    and the readout is the only thing that would have said so."""
+    for i in range(50):
+        db.upsert_job({"source": "internshala", "external_id": f"is{i}",
+                       "title": "Intern", "company": "Acme",
+                       "url": f"https://internshala.com/i/{i}", "skills": []})
+    r = capacity.report()
+    assert r["users_supported_hands_off"]["plus"] == 0
+    assert r["users_supported_connected"]["plus"] > 0
+
+
+def test_a_retired_board_listing_is_not_counted_either(testdb):
+    jid = db.upsert_job({"source": "internshala", "external_id": "is1",
+                         "title": "Intern", "company": "Acme",
+                         "url": "https://internshala.com/i/1", "skills": []})
+    db.mark_job_dead(jid)
+    assert capacity.report()["board"] == 0
 
 
 def test_the_quotas_come_from_the_one_place_that_decides_them(testdb):
