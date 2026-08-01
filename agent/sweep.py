@@ -67,6 +67,12 @@ SWEEP_HOUR_END = int(os.environ.get("GRINDLY_SWEEP_HOUR_END", "18"))
 # that IP blocked.
 HARVEST_HOUR = int(os.environ.get("GRINDLY_HARVEST_HOUR", "7"))
 HARVEST_ENABLED = os.environ.get("GRINDLY_HARVEST_ENABLED", "1") == "1"
+
+# How long a listing survives without being seen by any crawl before it is
+# treated as closed. Three weeks: long enough that a posting missed by a couple
+# of search runs is not retired for it, short enough that the pool is not mostly
+# ghosts. Reversible — a later sighting brings the listing straight back.
+LISTING_TTL_DAYS = int(os.environ.get("GRINDLY_LISTING_TTL_DAYS", "21"))
 _last_harvest_date: str | None = None
 
 # How often to check whether anyone is due. Ten minutes is far finer than the
@@ -157,6 +163,11 @@ def run_harvest(now: datetime.datetime | None = None) -> dict | None:
     # still spent its search budget, and retrying it every ten minutes for the
     # rest of the day is how one bad afternoon becomes a rate-limited IP.
     _last_harvest_date = now.date().isoformat()
+    # Before the harvest, not after: the harvest re-sights everything still
+    # live, so anything it is about to find has its last_seen_at refreshed a
+    # moment later. Running expiry afterwards would retire listings the same
+    # run had just confirmed were alive.
+    retire_stale_listings(now)
     try:
         import harvester
 
@@ -170,6 +181,34 @@ def run_harvest(now: datetime.datetime | None = None) -> dict | None:
     except Exception as e:  # noqa: BLE001 — the fleet's runs matter more
         log.error("board harvest failed: %s", e)
         return None
+
+
+def retire_stale_listings(now: datetime.datetime | None = None) -> int:
+    """Retire pool listings no crawl has seen for weeks. Returns how many.
+
+    Without this the shared index only ever grows, and the agent spends a user's
+    daily quota applying to roles that closed months ago — which, from the
+    dashboard, looks exactly like an agent that is working fine.
+
+    Postings are rarely deleted when they close; they simply stop being returned
+    by search. So "nobody has seen this in three weeks" is the strongest signal
+    available, and it is self-correcting: upsert_job clears dead_at the moment a
+    crawl finds the listing again.
+
+    Rides the harvest's once-a-day guard rather than owning a schedule. It is a
+    single indexed UPDATE, so running it beside the harvest costs nothing, and
+    an expiry pass that runs on every ten-minute tick would be pure noise.
+    """
+    try:
+        n = db.expire_unseen_jobs(LISTING_TTL_DAYS)
+    except Exception as e:  # noqa: BLE001 — the fleet's runs matter more
+        log.error("listing expiry failed: %s", e)
+        return 0
+    if n:
+        log.info("retired %d listing(s) unseen for %d days", n, LISTING_TTL_DAYS)
+        db.add_audit("listings_retired", user_id=None, target=str(n),
+                     detail=f"unseen for {LISTING_TTL_DAYS} days")
+    return n
 
 
 def tick(now: datetime.datetime | None = None) -> int:
