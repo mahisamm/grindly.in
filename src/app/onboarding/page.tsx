@@ -635,7 +635,14 @@ export default function OnboardingPage() {
     await fetch("/api/profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ autoApply: Boolean(form.autoApply ?? true) }),
+      // `true`, not `form.autoApply ?? true`. Reaching this button and pressing
+      // it IS the consent — there is no auto-apply toggle in onboarding, so the
+      // form value is whatever DEFAULTS says, and `??` does not override a
+      // stored `false`. With autoApply now defaulting OFF (so nothing is
+      // pre-consented on the user's behalf), the old expression wrote `false`
+      // here, readiness.consent requires `!!p.autoApply`, and the agent would
+      // never have applied for a single new account.
+      body: JSON.stringify({ autoApply: true }),
     }).catch(() => {});
 
     const confirmPayment = async (proof?: RazorpayProof) => {
@@ -707,7 +714,14 @@ export default function OnboardingPage() {
     await fetch("/api/profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ autoApply: Boolean(form.autoApply ?? true) }),
+      // `true`, not `form.autoApply ?? true`. Reaching this button and pressing
+      // it IS the consent — there is no auto-apply toggle in onboarding, so the
+      // form value is whatever DEFAULTS says, and `??` does not override a
+      // stored `false`. With autoApply now defaulting OFF (so nothing is
+      // pre-consented on the user's behalf), the old expression wrote `false`
+      // here, readiness.consent requires `!!p.autoApply`, and the agent would
+      // never have applied for a single new account.
+      body: JSON.stringify({ autoApply: true }),
     }).catch(() => {});
     const response = await fetch("/api/trial/activate", { method: "POST" });
     if (response.ok) {
