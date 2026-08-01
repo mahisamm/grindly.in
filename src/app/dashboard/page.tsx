@@ -1773,7 +1773,12 @@ export default function Dashboard() {
           all the user saw was applications that never sent. Naming them, with
           the count they are holding up, is the difference between a one-minute
           edit and a product that looks broken. */}
-      {gapPromptOpen && (me.setupGaps?.length ?? 0) > 0 && (
+      {/* Queued behind the welcome modal, never alongside it. Both are
+          `fixed inset-0 z-50`, and a brand-new user triggers both conditions at
+          once: the gap prompt painted on top, and dismissing its backdrop
+          revealed a second modal underneath — which reads as a broken page on
+          the very first screen after signing up. */}
+      {!showOnboarding && gapPromptOpen && (me.setupGaps?.length ?? 0) > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={dismissGapPrompt}>
           <div className="glass rounded-2xl p-6 max-w-md w-full glow" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-display text-xl font-semibold">
@@ -2192,16 +2197,20 @@ export default function Dashboard() {
               </div>
             )}
 
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              {/* Two tiles, not four.
+                  "Sent today N/M" already contains "Left today" — printing both
+                  is the same fact twice, and the header prints the quota a
+                  third time. "In queue" was a third name for the pile the stats
+                  row below calls "Lined up". "Sent all-time" reads 0 for every
+                  new user and is the definition of a number nobody can act on;
+                  worse, it counted needs_review rows as sent, so it disagreed
+                  with the "Applied" tile further down the same page. */}
               {[
                 { label: "Sent today", value: `${autopilot.today.submitted}/${autopilot.today.limit}`,
                   hint: "confirmed submissions only — an attempt the site never confirmed is not counted here" },
-                { label: "Left today", value: autopilot.today.remaining,
-                  hint: "allowance still free — an unconfirmed attempt keeps its slot, because it may have gone through" },
-                { label: "In queue", value: autopilot.queued,
+                { label: "Lined up", value: autopilot.queued,
                   hint: "matched and waiting their turn" },
-                { label: "Sent all-time", value: autopilot.lifetimeSubmitted,
-                  hint: "confirmed submissions" },
               ].map((s) => (
                 <div key={s.label} className="rounded-xl border border-border bg-surface-2 p-3" title={s.hint}>
                   <div className="text-xs text-muted">{s.label}</div>
@@ -2555,7 +2564,12 @@ export default function Dashboard() {
           <div className="mt-4 rounded-xl border border-border bg-surface p-4">
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs uppercase tracking-wide text-muted">Outcomes</div>
-              {me.stats.interviewRate != null && (
+              {/* Only once there is enough to divide by. With one application
+                  and no reply yet this read "0% interview rate" on day two —
+                  statistically meaningless, and the most demoralising possible
+                  thing to show someone who just started. Employers take days
+                  to reply; the number is noise until the denominator is real. */}
+              {me.stats.interviewRate != null && me.stats.applied >= 10 && (
                 <div className="text-sm">
                   <span className="text-accent font-semibold">{me.stats.interviewRate}%</span>
                   <span className="text-muted"> interview rate</span>
