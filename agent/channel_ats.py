@@ -773,6 +773,27 @@ def apply(
                 "the form will not accept it yet: " + "; ".join(blocked[:3])
             )
 
+        # A human check we cannot answer, and must not try to.
+        #
+        # This is the measured reason employer-hosted applications were failing
+        # while every readiness check said "submit-ready": the form fills fine,
+        # then Cloudflare asks for a tick. Botsync's Workable page was clicked
+        # into an unticked "Verify you are human" box, sat on "Submitting…"
+        # forever, and burned a real daily slot for an application no employer
+        # ever saw.
+        #
+        # Returning BEFORE `submit_attempted` is what makes this worth doing:
+        # the worker refunds the slot and the idempotency claim, and hands the
+        # listing to the user's own browser — which has a person to tick the
+        # box and a residential IP. Solving it here is not on the table.
+        human_check = questions.unsolved_captcha(page)
+        if human_check:
+            safety.screenshot(page, uid, f"ats_captcha_{job.get('external_id', '')}")
+            return "needs_review", (
+                f"this employer asks for a {human_check} before submitting — "
+                "sending it to your own browser, where you can tick it"
+            )
+
         # Point of no return. The worker refunds the daily slot and the
         # idempotency claim for a needs_review WITHOUT this flag (nothing was
         # sent); WITH it, both stay spent — the click may have landed.

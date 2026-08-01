@@ -1412,6 +1412,63 @@ e => {
 """
 
 
+# An UNSOLVED captcha widget on the form we are about to submit.
+#
+# Detected by the presence of a real widget whose response TOKEN is still
+# empty, never by keyword-matching the page text. That distinction is the whole
+# design: an earlier text-based check ("does this page say captcha?") refused
+# seven of eight perfectly good applications, because ATS pages mention captcha
+# in their privacy blurb and cookie notice. A token, by contrast, is unambiguous
+# — the vendor's own widget writes it on success, so empty means unsolved and
+# non-empty means solved.
+#
+# Measured: Botsync's Workable form filled completely, passed every
+# required-field check, and was clicked — into an unticked Cloudflare
+# "Verify you are human" box. The button sat on "Submitting…" forever and the
+# application was recorded as a failure, having spent a real daily slot.
+#
+# We do not, and must not, solve these. The point is to stop BEFORE the click
+# so the slot is refunded and the listing is handed to the user's own browser,
+# which has a person and a residential IP.
+_CAPTCHA_JS = """
+() => {
+  const widgets = [
+    // [token field, widget container]
+    ['input[name="cf-turnstile-response"]', '.cf-turnstile, iframe[src*="challenges.cloudflare.com"]'],
+    ['textarea#g-recaptcha-response, textarea[name="g-recaptcha-response"]', '.g-recaptcha, iframe[src*="/recaptcha/"]'],
+    ['textarea[name="h-captcha-response"]', '.h-captcha, iframe[src*="hcaptcha.com"]'],
+  ];
+  const names = {0: 'Cloudflare human check', 1: 'reCAPTCHA', 2: 'hCaptcha'};
+  for (let i = 0; i < widgets.length; i++) {
+    const [tokenSel, boxSel] = widgets[i];
+    const box = document.querySelector(boxSel);
+    if (!box) continue;
+    // A widget that is present but hidden is not being asked of us.
+    const r = box.getBoundingClientRect ? box.getBoundingClientRect() : null;
+    if (r && r.width === 0 && r.height === 0) continue;
+    const token = document.querySelector(tokenSel);
+    // No token field at all means we cannot tell it is solved; treat the
+    // visible widget as blocking rather than guessing our way past it.
+    if (!token || !(token.value || '').trim()) return names[i];
+  }
+  return '';
+}
+"""
+
+
+def unsolved_captcha(page) -> str:
+    """The name of a visible, unsolved captcha on this page, or ''.
+
+    Fails OPEN (returns '') if the page cannot be read: a detector that
+    blocked every application whenever evaluation hiccuped would be worse than
+    the problem it solves.
+    """
+    try:
+        return (page.evaluate(_CAPTCHA_JS) or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def live_value(el) -> str:
     """What this field is holding after we filled it. '' when still empty."""
     try:
