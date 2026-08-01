@@ -99,9 +99,61 @@ def classify(job: dict) -> tuple[str, str]:
     return "UNKNOWN", "no recognised apply route"
 
 
+def captcha_check(urls: list[str]) -> dict:
+    """Open each ATS page and ask whether a human check guards its submit.
+
+    This is the number that decides whether employer-hosted applications can
+    ever be hands-off. Measured the expensive way — a real browser on the real
+    page — because a captcha is injected by script and is invisible to a plain
+    fetch. Never fills anything and never submits.
+    """
+    import questions
+    import stealth
+    from playwright.sync_api import sync_playwright
+
+    out = {"checked": 0, "guarded": 0, "clear": 0, "unreadable": 0, "vendors": {}}
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(
+            headless=os.environ.get("INTERNPILOT_HEADLESS", "0") == "1",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        ctx = browser.new_context(
+            user_agent=stealth.random_ua(), viewport=stealth.random_viewport())
+        stealth.apply_stealth(ctx)
+        stealth.block_heavy_resources(ctx)
+        page = ctx.new_page()
+        for url in urls:
+            out["checked"] += 1
+            vendor = hosts.vendor_of(url) or "other"
+            try:
+                page.goto(url, timeout=45000, wait_until="domcontentloaded")
+                page.wait_for_timeout(3500)   # widgets mount after load
+                found = questions.unsolved_captcha(page)
+            except Exception:  # noqa: BLE001
+                out["unreadable"] += 1
+                continue
+            slot = out["vendors"].setdefault(vendor, {"guarded": 0, "clear": 0})
+            if found:
+                out["guarded"] += 1
+                slot["guarded"] += 1
+                print(f"  GUARDED  {found:<24} {url[:66]}")
+            else:
+                out["clear"] += 1
+                slot["clear"] += 1
+                print(f"  clear    {'':<24} {url[:66]}")
+        try:
+            ctx.close(); browser.close()
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--sample", type=int, default=40)
+    ap.add_argument("--check-captcha", action="store_true",
+                    help="open every ATS page and test whether a human check "
+                         "guards its submit (slow, needs a browser)")
     ap.add_argument("--json", default="")
     args = ap.parse_args()
 
@@ -135,9 +187,24 @@ def main() -> int:
         for r in [r for r in rows if r["door"] == "OPEN_EMAIL"][:8]:
             print(f"    {r['why'][:44]:<44} {str(r['company'])[:26]}")
 
+    captcha = None
+    if args.check_captcha:
+        ats_urls = [r["url"] for r in rows if r["door"] == "ATS" and r["url"]]
+        print(f"\n=== CAPTCHA on {len(ats_urls)} ATS page(s) ===")
+        captcha = captcha_check(ats_urls)
+        readable = captcha["guarded"] + captcha["clear"]
+        print(f"\n  guarded by a human check : {captcha['guarded']}")
+        print(f"  clear to submit          : {captcha['clear']}")
+        print(f"  unreadable               : {captcha['unreadable']}")
+        if readable:
+            print(f"  => {100 * captcha['clear'] / readable:.0f}% of employer "
+                  f"pages are actually sendable")
+        for vendor, s in sorted(captcha["vendors"].items()):
+            print(f"    {vendor:<18} clear {s['clear']:>3}  guarded {s['guarded']:>3}")
+
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
-            json.dump({"counts": dict(counts), "rows": rows}, f, indent=2)
+            json.dump({"counts": dict(counts), "rows": rows, "captcha": captcha}, f, indent=2)
         print(f"\n[door] written to {args.json}")
     return 0
 
