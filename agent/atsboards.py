@@ -753,7 +753,7 @@ def fetch(keywords: list[str], limit: int = 25, uid: str = "") -> list[dict]:
     # turn out to produce nothing settle into backoff as they always did.
     fresh_budget = NEW_BOARDS_PER_RUN
     deferred = 0
-    for vendor, slug in _slugs_seen_before():
+    for vendor, slug in _intake_order(_slugs_seen_before()):
         if (vendor, slug) in pinned:
             continue
         if _never_polled(vendor, slug):
@@ -1077,6 +1077,76 @@ def _save_stats() -> None:
         os.replace(tmp, _STATS_FILE)
     except Exception as e:  # noqa: BLE001
         print(f"[atsboards] board stats save skipped: {type(e).__name__}")
+
+
+def vendor_yield_rates() -> dict[str, float]:
+    """Share of each vendor's polled boards that ever produced an internship.
+
+    Measured, not assumed, and the spread is enormous. On production after 1,257
+    first looks:
+
+        keka             68 polled,  22 yielded   32%
+        greenhouse      144 polled,   6 yielded    4%
+        lever            90 polled,   4 yielded    4%
+        workable        137 polled,   3 yielded    2%
+        smartrecruiters  84 polled,   2 yielded    2%
+        ashby           734 polled,   1 yielded  0.1%
+
+    Keka is two to three hundred times better than Ashby, which is the whole
+    reason this function exists: Keka is where an INDIAN company posts, and this
+    product only cares about India internships.
+    """
+    _load_stats()
+    polled: dict[str, int] = {}
+    yielded: dict[str, int] = {}
+    for key, row in _STATS.items():
+        vendor = key.split("::", 1)[0]
+        polled[vendor] = polled.get(vendor, 0) + 1
+        if row.get("yields"):
+            yielded[vendor] = yielded.get(vendor, 0) + 1
+    return {v: yielded.get(v, 0) / n for v, n in polled.items() if n}
+
+
+# Until a vendor has been sampled this many times, its measured rate is noise —
+# one lucky board out of three is not a 33% vendor.
+_MIN_SAMPLE = 25
+
+
+def _intake_order(pairs):
+    """Order boards so the first-look budget is spent where it pays.
+
+    The bug this fixes was costing almost the entire supply effort. Boards were
+    taken in sorted order, so "ashby" came first simply because it starts with
+    an A — and 734 of the 1,257 first looks ever made went to the vendor with a
+    0.1% hit rate, while 499 of 567 Keka boards (32%) sat unpolled. The budget
+    was being allocated alphabetically.
+
+    A vendor with too few samples to judge is ranked in the middle rather than
+    last, so a genuinely good new vendor is not starved of the polls it needs to
+    prove itself.
+    """
+    rates = vendor_yield_rates()
+    _load_stats()
+    counts: dict[str, int] = {}
+    for key in _STATS:
+        vendor = key.split("::", 1)[0]
+        counts[vendor] = counts.get(vendor, 0) + 1
+
+    # An unproven vendor scores the MEAN of the measured ones, so it lands
+    # between the known duds and the known winners. A fixed constant cannot do
+    # this: 0.5 looks like a sensible midpoint but is above every rate ever
+    # measured here (the best vendor is 32%), so it would rank an unknown vendor
+    # ahead of Keka and reintroduce the starvation from the other direction.
+    proven = [r for v, r in rates.items() if counts.get(v, 0) >= _MIN_SAMPLE]
+    unproven_score = (sum(proven) / len(proven)) if proven else 0.5
+
+    def rank(pair):
+        vendor, slug = pair
+        score = (rates.get(vendor, 0.0) if counts.get(vendor, 0) >= _MIN_SAMPLE
+                 else unproven_score)
+        return (-score, vendor, slug)
+
+    return sorted(pairs, key=rank)
 
 
 def note_board_result(vendor: str, slug: str, internships: int) -> None:
