@@ -84,6 +84,22 @@ def test_a_mirror_nobody_wrote_down_is_still_rejected():
         assert hosts.classify(f"https://{host}/x-intern") == "aggregator", host
 
 
+def test_a_government_internship_portal_is_not_an_employer():
+    """Measured escape. internship.aicte-india.org splits into the labels
+    {internship, aicte-india, org}, and the brand test matches LABELS — so
+    neither hit, and the portal was graded an employer.
+
+    Three of its pages reached the live pool. One resolved to
+    internship@aicte-india.org as an apply target, so the agent would have
+    emailed a ministry's front desk and spent one of a student's five daily
+    slots on a login page.
+    """
+    for url in ["https://internship.aicte-india.org/",
+                "https://internship.aicte-india.org/login_new.php",
+                "https://aicte-india.org/opportunities"]:
+        assert hosts.classify(url) == "aggregator", url
+
+
 def test_one_job_word_is_not_enough_to_condemn_a_company():
     """Two distinct job-board words are required, or a real employer whose name
     happens to contain "hire" or "job" would be thrown away."""

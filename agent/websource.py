@@ -446,8 +446,19 @@ def _company_from(title: str, url: str) -> str:
     m = re.search(r"\bat\s+([A-Z][\w&.\- ]{2,40})", title)
     if m and not _READS_LIKE_A_ROLE.search(m.group(1)):
         return m.group(1).strip()[:60]
+
     host = re.sub(r"^www\.", "", re.sub(r"^https?://", "", url).split("/")[0])
-    return _tidy_company(host.split(".")[0]) or "Unknown"
+    labels = [l for l in host.split(".") if l]
+
+    # Skip a leading label that is part of the URL's furniture rather than the
+    # employer's name. `careers.docusign.com` is DocuSign, not "Careers" — and
+    # the old first-label rule filed seven live listings under a company called
+    # Careers, including Criteo and DocuSign. That name is not cosmetic: it is
+    # written into the cover letter and typed into the employer's own form, so
+    # the application arrives addressed to a company that does not exist.
+    while len(labels) > 2 and labels[0].lower() in _NOT_A_COMPANY:
+        labels.pop(0)
+    return _tidy_company(labels[0] if labels else "") or "Unknown"
 
 
 # Path segments that are part of an ATS's URL structure, never a company name.

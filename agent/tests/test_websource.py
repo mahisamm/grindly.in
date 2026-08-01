@@ -109,7 +109,33 @@ def test_company_comes_from_the_ats_path_when_present():
 
 def test_company_falls_back_to_the_title_then_the_host():
     assert websource._company_from("Data Intern at Acme Corp", "https://x.io/1") == "Acme Corp"
-    assert websource._company_from("Intern", "https://careers.zeta.com/1") == "Careers"
+    assert websource._company_from("Intern", "https://zeta.com/1") == "Zeta"
+
+
+def test_a_careers_subdomain_names_the_company_not_the_subdomain():
+    """This test previously asserted the BUG — it expected careers.zeta.com to
+    produce a company called "Careers", and so guarded the defect instead of the
+    behaviour.
+
+    Measured in production: seven live listings were filed under a company
+    called Careers, including Criteo and DocuSign. The name is not cosmetic —
+    it is written into the cover letter and typed into the employer's own
+    application form, so the application arrives addressed to a company that
+    does not exist.
+    """
+    for url, expected in [
+        ("https://careers.zeta.com/1", "Zeta"),
+        ("https://careers.docusign.com/event-22319/talentcommunity/form", "Docusign"),
+        ("https://careers.criteo.com/en/jobs/r20878/data-analyst-intern/", "Criteo"),
+        ("https://jobs.antler.co/companies/volopay/jobs/1", "Antler"),
+    ]:
+        assert websource._company_from("Intern", url) == expected, url
+
+
+def test_a_two_label_host_still_uses_its_first_label():
+    """The skip must not eat the whole hostname: careers.com, if it existed,
+    is a company called Careers."""
+    assert websource._company_from("Intern", "https://careers.com/1") == "Careers"
 
 
 def test_a_company_name_is_never_blank():

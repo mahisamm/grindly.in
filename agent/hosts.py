@@ -83,6 +83,15 @@ _AGGREGATOR_BRANDS = {
     "alexahire", "hellointern", "jobgrid", "internshiphub", "antaltechjobs",
     "beincareer", "vthetecheejobs", "freshershunt", "coursejoiner",
     "gethiredfaster", "govtinternship", "pminternshipscheme", "web3",
+    # Government internship PORTALS. Same category as govtinternship and
+    # pminternshipscheme above, and missed only because the label test looks at
+    # hostname labels: internship.aicte-india.org splits to {internship,
+    # aicte-india, org} and matched nothing, so it was graded an employer.
+    # Three of its pages reached the live pool, one of them resolved to
+    # internship@aicte-india.org as an apply target — an application the agent
+    # would have emailed to a ministry's front desk, spending one of a
+    # student's five daily slots on a login page.
+    "aicte-india", "aicte", "mca", "internshala-portal", "nats-india",
     "facebook", "twitter", "instagram", "reddit", "youtube", "quora",
     "pinterest", "medium", "wikipedia", "wikimedia", "whatsapp", "telegram",
     "blogspot", "wordpress", "amazon", "flipkart", "github", "stackoverflow",
