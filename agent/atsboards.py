@@ -965,7 +965,23 @@ def _load_learned() -> None:
     except FileNotFoundError:
         pass
     except Exception as e:  # noqa: BLE001
-        print(f"[atsboards] learned-slug load skipped: {type(e).__name__}")
+        # Loud, and the wreckage is kept.
+        #
+        # This used to print one quiet line and carry on with an empty set, so a
+        # corrupt file turned 8,469 known boards into zero and the only trace
+        # was "learned-slug load skipped: JSONDecodeError" buried in a harvest
+        # log. Discovery then ran against the hardcoded list and looked like it
+        # was working. Renaming the bad file makes the loss recoverable and
+        # stops the next save from silently overwriting the evidence.
+        print(f"[atsboards] CORRUPT board index at {_LEARNED_FILE}: "
+              f"{type(e).__name__}: {e}")
+        print("[atsboards] the board list is EMPTY for this run — re-run "
+              "agent/tenants.py --all --learn to rebuild it")
+        try:
+            os.replace(_LEARNED_FILE, _LEARNED_FILE + ".corrupt")
+            print(f"[atsboards] kept the damaged file as {_LEARNED_FILE}.corrupt")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # A company slug is one path segment of a URL. Anything with an escape sequence
@@ -1012,10 +1028,20 @@ def remember_slugs(urls) -> int:
         _LEARNED.update(trimmed)
     try:
         os.makedirs(os.path.dirname(_LEARNED_FILE), exist_ok=True)
-        tmp = _LEARNED_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        # A UNIQUE temp file per writer, then an atomic rename.
+        #
+        # This used to be a fixed `ats_slugs.json.tmp`, and the rename being
+        # atomic hid the fact that the WRITE was not. Two workers running at
+        # once — the normal case with more than one user — both opened that same
+        # path, interleaved their output into it, and then each renamed the
+        # mangled result over the real file. Measured: it destroyed a
+        # 8,469-board index in production, leaving 215 KB of JSON that stops
+        # parsing at character 98,261. _save_stats got this right; this did not.
+        fd, tmp = tempfile.mkstemp(prefix=".ats_slugs-", suffix=".tmp",
+                                   dir=os.path.dirname(_LEARNED_FILE))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(sorted(_LEARNED), f)
-        os.replace(tmp, _LEARNED_FILE)  # atomic: a half-written list is a corrupt one
+        os.replace(tmp, _LEARNED_FILE)
     except Exception as e:  # noqa: BLE001
         print(f"[atsboards] learned-slug save skipped: {type(e).__name__}")
     print(f"[atsboards] learned {len(fresh)} new board(s) from discovery "
