@@ -746,7 +746,9 @@ def set_company_reputation(company: str, verdict: str, confidence: float,
         )
 
 
-_PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"]
+# Boards a user can connect. One. See worker.SOURCE_PRIORITY for why the other
+# four were removed — they produced zero listings and could never be submitted.
+_PLATFORMS = ["internshala"]
 
 
 def get_integrations(uid: str) -> list[dict]:

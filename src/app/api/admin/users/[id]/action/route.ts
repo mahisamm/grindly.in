@@ -19,7 +19,7 @@ const schema = z.discriminatedUnion("action", [
     action: z.literal("disconnect"),
     // Loose string in Prisma (platform enum was removed — see prisma/schema.prisma),
     // but admin input still needs real validation, not "any 1-40 char string".
-    platform: z.enum(["linkedin", "internshala", "naukri", "unstop", "indeed"]),
+    platform: z.enum(["internshala"]),
   }),
 ]);
 

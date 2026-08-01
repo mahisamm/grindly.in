@@ -471,7 +471,7 @@ def test_get_integrations_returns_all_platforms_with_defaults(testdb):
     _insert_user(testdb, "u1")
     rows = db.get_integrations("u1")
     platforms = {r["platform"] for r in rows}
-    assert platforms == {"linkedin", "internshala", "naukri", "unstop", "indeed"}
+    assert platforms == {"internshala"}
     assert all(r["status"] == "disconnected" for r in rows)
 
 

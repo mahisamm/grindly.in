@@ -10,7 +10,11 @@ Flow:
 Usage:
   python connect_platform.py --user <uid> --platform <platform> [--timeout 300]
 
-Supported platforms: linkedin | internshala | naukri | unstop | indeed
+Supported platforms: internshala
+
+It is the only board left. LinkedIn, Naukri, Indeed and Unstop each contributed
+zero listings to the production pool and were graded TIER_C (never submittable
+from our servers), so a login flow for them connected the user to nothing.
 """
 from __future__ import annotations
 import argparse
@@ -52,49 +56,6 @@ _PLATFORMS: dict[str, dict] = {
         "verify_url": "https://internshala.com/internships/",
         "label": "Internshala",
     },
-    "naukri": {
-        "login_url": "https://www.naukri.com/nlogin/login",
-        "check": lambda page: (
-            "logout" in page.content().lower()
-            or bool(page.query_selector(
-                ".nI-gNb-header__account, .nI-gNb-header__usrName, [class*='user-name']"
-            ))
-        ),
-        "label": "Naukri",
-    },
-    "unstop": {
-        "login_url": "https://unstop.com/login",
-        "check": lambda page: (
-            bool(page.query_selector(
-                ".user-info, .profile-pic, [class*='user-avatar'], "
-                "[class*='userAvatar'], .un-avatar"
-            ))
-            or ("dashboard" in page.url or "profile" in page.url)
-        ),
-        "label": "Unstop",
-    },
-    "indeed": {
-        "login_url": "https://secure.indeed.com/auth?hl=en_IN&co=IN",
-        "check": lambda page: (
-            "my jobs" in page.content().lower()
-            or "my resume" in page.content().lower()
-            or bool(page.query_selector("[data-gnav-element-name='UserAccountMenu'], .gnav-user"))
-        ),
-        "label": "Indeed",
-    },
-    "linkedin": {
-        "login_url": "https://www.linkedin.com/login",
-        "check": lambda page: (
-            "feed" in page.url
-            or bool(page.query_selector(".global-nav__me-photo, .nav-logo--minor"))
-            or (
-                "linkedin.com" in page.url
-                and "login" not in page.url
-                and "checkpoint" not in page.url
-            )
-        ),
-        "label": "LinkedIn",
-    },
 }
 
 
@@ -110,8 +71,8 @@ def _profile_base() -> str:
 
 
 def _profile_dir(uid: str, platform: str) -> str:
-    # Must match linkedin.py/naukri.py/etc _profile_dir() exactly, or
-    # connect_platform.py saves a login the apply-side driver will never find.
+    # Must match internshala.py's _profile_dir() exactly, or connect_platform.py
+    # saves a login the apply-side driver will never find.
     return os.path.join(_profile_base(), uid, platform)
 
 

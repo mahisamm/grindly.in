@@ -1,11 +1,7 @@
 import json
 
 import safety
-import indeed
 import internshala
-import linkedin
-import naukri
-import unstop
 
 
 def test_can_apply_blocks_firewall():
@@ -33,29 +29,20 @@ def test_can_apply_allows_good_job():
 
 def test_tier_c_and_unknown_sources_require_a_manual_final_submit(monkeypatch):
     """No combination of switches releases a Tier C board, or a source we do not
-    recognise. Turning Tier B on must not widen the blast radius by one board."""
+    recognise. Turning Tier B on must not widen the blast radius by one board.
+
+    The four Tier C adapters (linkedin/naukri/unstop/indeed) were deleted once
+    the production pool showed they had contributed zero listings each. The
+    POLICY they were guarded by has to outlive them: those names can still reach
+    the agent as the `source` on an older row, or as a host that turned up in a
+    web search, and the answer must still be "not from our servers". A source we
+    have never heard of is refused for exactly the same reason.
+    """
     monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
     monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
     for source in ("linkedin", "naukri", "unstop", "indeed", "future_source", None):
         required, reason = safety.requires_manual_final_submit(source)
         assert required is True, source
-        assert "own browser" in reason
-
-
-def test_tier_c_adapters_fail_closed_before_opening_a_submit_form(monkeypatch):
-    """The four Tier C adapters must refuse before they touch a browser, even
-    with every switch on.
-
-    internshala is deliberately absent: it is Tier B, and with both switches on
-    it is *supposed* to proceed — which would launch a real browser, so its
-    permitted path belongs in the policy tests, not here.
-    """
-    monkeypatch.setenv("GRINDLY_AUTO_APPLY_MODE", "live")
-    monkeypatch.setenv("GRINDLY_TIER_B_APPLY", "1")
-    job = {"url": "https://example.test/job"}
-    for adapter in (linkedin, naukri, unstop, indeed):
-        status, reason = adapter.apply(job, "", "test-user")
-        assert status == safety.APPLY_STATUS.NEEDS_REVIEW
         assert "own browser" in reason
 
 

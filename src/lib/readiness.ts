@@ -10,7 +10,12 @@
 // bumping it (because the promise itself changed) un-readies every account on
 // older wording until they re-agree. Agreement to v1 is not agreement to v2.
 
-export const CONSENT_VERSION = "2026-07-25";
+// 2026-08-01: the wording named four boards (LinkedIn, Naukri, Unstop, Indeed)
+// whose applications it said were "prepared for you to submit yourself". Those
+// boards are gone from the product, so that sentence described a thing that no
+// longer happens. Bumped rather than edited in place, because the record of
+// what a user agreed to has to match the text they were shown.
+export const CONSENT_VERSION = "2026-08-01";
 
 export const CONSENT_TEXT =
   "I authorize Grindly to submit internship applications on my behalf using " +

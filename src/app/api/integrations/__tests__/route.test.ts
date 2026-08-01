@@ -28,7 +28,7 @@ describe("GET /api/integrations", () => {
     mockFindMany.mockResolvedValue([]);
     const res = await GET();
     const body = await res.json();
-    expect(body.integrations).toHaveLength(5);
+    expect(body.integrations).toHaveLength(1);
     expect(body.integrations.every((i: { status: string }) => i.status === "disconnected")).toBe(true);
     expect(body.integrations.every((i: { connectToken: unknown }) => i.connectToken === null)).toBe(true);
   });
@@ -36,7 +36,7 @@ describe("GET /api/integrations", () => {
   it("surfaces connectToken while it is still live (not expired)", async () => {
     mockFindMany.mockResolvedValue([
       {
-        platform: "linkedin",
+        platform: "internshala",
         status: "connecting",
         connectedAt: null,
         connectToken: "tok_live",
@@ -45,14 +45,14 @@ describe("GET /api/integrations", () => {
     ]);
     const res = await GET();
     const body = await res.json();
-    const li = body.integrations.find((i: { platform: string }) => i.platform === "linkedin");
+    const li = body.integrations.find((i: { platform: string }) => i.platform === "internshala");
     expect(li.connectToken).toBe("tok_live");
   });
 
   it("never surfaces an expired connectToken", async () => {
     mockFindMany.mockResolvedValue([
       {
-        platform: "linkedin",
+        platform: "internshala",
         status: "connecting",
         connectedAt: null,
         connectToken: "tok_expired",
@@ -61,7 +61,7 @@ describe("GET /api/integrations", () => {
     ]);
     const res = await GET();
     const body = await res.json();
-    const li = body.integrations.find((i: { platform: string }) => i.platform === "linkedin");
+    const li = body.integrations.find((i: { platform: string }) => i.platform === "internshala");
     expect(li.connectToken).toBeNull();
   });
 
@@ -70,6 +70,6 @@ describe("GET /api/integrations", () => {
     const res = await GET();
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.integrations).toHaveLength(5);
+    expect(body.integrations).toHaveLength(1);
   });
 });

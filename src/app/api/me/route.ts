@@ -10,7 +10,7 @@ import { autoApplyMode, agentWillSend } from "@/lib/applyPolicy";
 import { notifyChannels } from "@/lib/notifyChannels";
 import { PROFF_FIELDS, unfilledFacts } from "@/lib/proffQuestions";
 
-const PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"] as const;
+const PLATFORMS = ["internshala"] as const;
 
 // No-hang watchdog: a login that's been "connecting" longer than this with no
 // progress is treated as timed out (worker down/slow) so the UI never spins

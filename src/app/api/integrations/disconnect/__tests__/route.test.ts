@@ -39,7 +39,7 @@ beforeEach(() => {
 describe("POST /api/integrations/disconnect", () => {
   it("returns 401 when no session", async () => {
     mockGetUid.mockResolvedValue(null);
-    const res = await POST(makeReq({ platform: "linkedin" }));
+    const res = await POST(makeReq({ platform: "internshala" }));
     expect(res.status).toBe(401);
   });
 
@@ -52,7 +52,7 @@ describe("POST /api/integrations/disconnect", () => {
 
   it("disconnects a known platform", async () => {
     mockGetUid.mockResolvedValue("u1");
-    const res = await POST(makeReq({ platform: "naukri" }));
+    const res = await POST(makeReq({ platform: "internshala" }));
     expect(res.status).toBe(200);
     expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -70,23 +70,29 @@ describe("POST /api/integrations/disconnect", () => {
     });
   });
 
-  it("does not touch the legacy flag for other platforms", async () => {
+  it("rejects a platform we do not integrate, and touches nothing", async () => {
+    // Was "does not touch the legacy flag for other platforms" — there are no
+    // other platforms now, so the guard that matters is the one at the door:
+    // a name we don't recognise must be turned away before any write happens.
     mockGetUid.mockResolvedValue("u1");
-    await POST(makeReq({ platform: "linkedin" }));
+    for (const platform of ["linkedin", "naukri", "unstop", "indeed", "made-up"]) {
+      const res = await POST(makeReq({ platform }));
+      expect(res.status).toBe(400);
+    }
     expect(mockUserUpdate).not.toHaveBeenCalled();
   });
 
   it("does not fail the request if the integrations table isn't migrated yet", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockUpsert.mockRejectedValue(new Error("no such table: user_integrations"));
-    const res = await POST(makeReq({ platform: "linkedin" }));
+    const res = await POST(makeReq({ platform: "internshala" }));
     expect(res.status).toBe(200);
   });
 
   it("withdraws only NOT-YET-SENT matches from the disconnected platform", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockAppFindMany.mockResolvedValue([{ id: "a1" }, { id: "a2" }]);
-    await POST(makeReq({ platform: "linkedin" }));
+    await POST(makeReq({ platform: "internshala" }));
 
     // Scoped to this user + this platform (via the Job relation), pending statuses only.
     expect(mockAppFindMany).toHaveBeenCalledWith(
@@ -94,7 +100,7 @@ describe("POST /api/integrations/disconnect", () => {
         where: expect.objectContaining({
           userId: "u1",
           status: { in: ["matched", "approved", "needs_review"] },
-          job: { source: "linkedin" },
+          job: { source: "internshala" },
         }),
       }),
     );
@@ -104,14 +110,14 @@ describe("POST /api/integrations/disconnect", () => {
   it("deletes nothing when the platform has no pending matches", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockAppFindMany.mockResolvedValue([]);
-    await POST(makeReq({ platform: "naukri" }));
+    await POST(makeReq({ platform: "internshala" }));
     expect(mockAppDeleteMany).not.toHaveBeenCalled();
   });
 
   it("still succeeds if the match cleanup throws", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockAppFindMany.mockRejectedValue(new Error("db down"));
-    const res = await POST(makeReq({ platform: "unstop" }));
+    const res = await POST(makeReq({ platform: "internshala" }));
     expect(res.status).toBe(200);
   });
 });

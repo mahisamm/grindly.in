@@ -137,7 +137,7 @@ def probe(email: str, limit: int, with_boards: bool) -> dict:
     kw_sets = worker._expand_search_keywords(plan["domains"], skills)
 
     sources = [s for s in worker.ALWAYS_ON_SOURCES if flags.source_enabled(s)]
-    rotation = worker._platforms_for_today(
+    rotation = worker._boards_for_today(
         user["id"], [s for s in worker.DISCOVERY_PLATFORMS if flags.source_enabled(s)]
     )
     if with_boards:

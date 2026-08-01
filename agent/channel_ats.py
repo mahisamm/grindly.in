@@ -4,8 +4,8 @@ Why this is a different risk class from a board adapter
 ------------------------------------------------------
 Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Zoho and friends host the
 *employer's* public intake page. The candidate has no account there; the page
-exists to receive applications from strangers. So unlike internshala.py or
-linkedin.py there is nothing to log into, nothing to rate-limit against a user's
+exists to receive applications from strangers. So unlike internshala.py there
+is nothing to log into, nothing to rate-limit against a user's
 identity, and nothing that can be banned. `resolver.py` already classifies these
 as Tier A for exactly that reason — this module is the sender that Tier A was
 missing, and until it existed an ATS-routed listing was resolved correctly and
@@ -23,8 +23,8 @@ larger and more brittle surface than driving the form the way a person does.
 
 Because there is no account, the browser here is deliberately *ephemeral* — no
 persistent profile, no cookie reuse, launched and torn down per application.
-That also sidesteps the profile-lock/asyncio cascade the board adapters have to
-manage (see stealth.clear_stale_lock and the pw.stop() notes in unstop.py).
+That also sidesteps the profile-lock/asyncio cascade the board adapter has to
+manage (see stealth.clear_stale_lock and the pw.stop() notes in internshala.py).
 
 The discipline this module keeps
 --------------------------------

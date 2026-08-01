@@ -52,7 +52,7 @@ beforeEach(() => {
 describe("POST /api/integrations/connect", () => {
   it("returns 401 when no session", async () => {
     mockGetUid.mockResolvedValue(null);
-    const res = await POST(makeReq({ platform: "linkedin" }));
+    const res = await POST(makeReq({ platform: "internshala" }));
     expect(res.status).toBe(401);
   });
 
@@ -66,14 +66,14 @@ describe("POST /api/integrations/connect", () => {
   it("marks connecting and defers to the connect service in production (no local spawn)", async () => {
     vi.stubEnv("NODE_ENV", "production");
     mockGetUid.mockResolvedValue("u1");
-    const res = await POST(makeReq({ platform: "linkedin" }));
+    const res = await POST(makeReq({ platform: "internshala" }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ ok: true, platform: "linkedin", mode: "remote" });
+    expect(body).toEqual({ ok: true, platform: "internshala", mode: "remote" });
     expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         update: { status: "connecting" },
-        create: { userId: "u1", platform: "linkedin", status: "connecting" },
+        create: { userId: "u1", platform: "internshala", status: "connecting" },
       }),
     );
     expect(mockSpawn).not.toHaveBeenCalled();
@@ -82,14 +82,14 @@ describe("POST /api/integrations/connect", () => {
   it("returns 404 when user not found", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockUserFindUnique.mockResolvedValue(null);
-    const res = await POST(makeReq({ platform: "linkedin" }));
+    const res = await POST(makeReq({ platform: "internshala" }));
     expect(res.status).toBe(404);
   });
 
   it("blocks a pending (unapproved) account with 403 access_pending", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockUserFindUnique.mockResolvedValue({ id: "u1", accessStatus: "pending", role: "user", email: "u1@example.com" });
-    const res = await POST(makeReq({ platform: "linkedin" }));
+    const res = await POST(makeReq({ platform: "internshala" }));
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe("access_pending");
     expect(mockUpsert).not.toHaveBeenCalled();
@@ -97,12 +97,12 @@ describe("POST /api/integrations/connect", () => {
 
   it("marks the integration as connecting and spawns the connect script", async () => {
     mockGetUid.mockResolvedValue("u1");
-    const res = await POST(makeReq({ platform: "linkedin" }));
+    const res = await POST(makeReq({ platform: "internshala" }));
     expect(res.status).toBe(200);
     expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         update: { status: "connecting" },
-        create: { userId: "u1", platform: "linkedin", status: "connecting" },
+        create: { userId: "u1", platform: "internshala", status: "connecting" },
       }),
     );
     expect(mockSpawn).toHaveBeenCalled();
@@ -111,7 +111,7 @@ describe("POST /api/integrations/connect", () => {
   it("returns 500 with a helpful message when spawning the browser fails", async () => {
     mockGetUid.mockResolvedValue("u1");
     mockSpawn.mockImplementation(() => { throw new Error("ENOENT"); });
-    const res = await POST(makeReq({ platform: "linkedin" }));
+    const res = await POST(makeReq({ platform: "internshala" }));
     expect(res.status).toBe(500);
   });
 });

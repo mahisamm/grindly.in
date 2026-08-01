@@ -44,11 +44,7 @@ type Me = {
 };
 
 const PLATFORM_META: Record<string, { label: string; color: string; icon: string }> = {
-  linkedin: { label: "LinkedIn", color: "text-[#0077B5]", icon: "in" },
   internshala: { label: "Internshala", color: "text-[#00aaff]", icon: "IS" },
-  naukri: { label: "Naukri", color: "text-[#f47c2d]", icon: "NK" },
-  unstop: { label: "Unstop", color: "text-[#6C63FF]", icon: "UN" },
-  indeed: { label: "Indeed", color: "text-[#2557A7]", icon: "ID" },
 };
 
 function fmtRelative(iso: string): string {
@@ -572,7 +568,10 @@ export default function IntegrationsPanel() {
                 <strong className="text-foreground">If the application goes to the company directly</strong> — their own form or hiring inbox — the agent fills it in, attaches your tailored resume and sends it. Those show as <strong>Agent sent</strong>. Nothing needed from you.
               </li>
               <li>
-                <strong className="text-foreground">If it only exists on LinkedIn, Internshala, Naukri, Unstop or Indeed</strong> — the agent prepares everything and you tap <strong>Open &amp; submit ↗</strong>, then attach your resume and press Submit there. It won&apos;t click submit for you on those: their terms forbid it and it&apos;s your account that gets banned.
+                <strong className="text-foreground">If it lives on Internshala</strong> — the agent submits it from your connected account, so that one is hands-off too. Connect Internshala above to switch it on.
+              </li>
+              <li>
+                <strong className="text-foreground">If a listing needs something only you can answer</strong> — a fact we don&apos;t hold, or a login we can&apos;t use — the agent prepares everything and hands it back rather than guessing.
               </li>
               <li>Come back and tap <strong>✓ I submitted it</strong> so your counts stay right — we&apos;ll ask automatically when you return to this tab.</li>
               <li>Up to <strong>{cap}</strong> applications a day on your plan. The agent never invents an answer about you; anything it can&apos;t answer honestly it hands back to you.</li>

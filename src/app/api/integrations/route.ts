@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 
-const PLATFORMS = ["linkedin", "internshala", "naukri", "unstop", "indeed"] as const;
+// Internshala is the only board the agent can actually submit on. The other
+// four were crawled for months and contributed zero listings to the pool, and
+// were graded TIER_C besides — connecting them linked the user to nothing.
+const PLATFORMS = ["internshala"] as const;
 
 export async function GET() {
   const uid = await getUid();

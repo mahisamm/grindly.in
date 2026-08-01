@@ -78,7 +78,10 @@ export async function DELETE(req: Request) {
     { target: path.join(LOG_DIR, "optimize", uid), recursive: true },
     { target: path.join(LOG_DIR, `${uid}.log`), recursive: false },
     { target: path.join(LOG_DIR, `${uid}-connect.log`), recursive: false },
-    ...["linkedin", "internshala", "naukri", "unstop", "indeed"].map((platform) => ({
+    // Includes the four boards that were removed from the product: a user who
+    // ran a connect flow before then still has their log file on disk, and
+    // "delete my account" has to take those too.
+    ...["internshala", "linkedin", "naukri", "unstop", "indeed"].map((platform) => ({
       target: path.join(LOG_DIR, `${uid}-${platform}-connect.log`),
       recursive: false,
     })),

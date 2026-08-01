@@ -4,7 +4,7 @@ import fsp from "node:fs/promises";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
 
-const ALLOWED = ["linkedin", "internshala", "naukri", "unstop", "indeed"];
+const ALLOWED = ["internshala"];
 
 export async function POST(req: Request) {
   const uid = await getUid();
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
   // Disconnecting already stops FUTURE discovery (agent/db.get_connected_platforms
   // only returns status='connected'). But matches ALREADY found on this platform
   // sit in the pipeline as status='matched' rows — including future-dated ones the
-  // user hasn't seen yet — and keep surfacing as "LinkedIn matches" on a platform
+  // user hasn't seen yet — and keep surfacing as matches on a platform
   // the user just disconnected. With the login gone they can never be submitted
   // anyway. So drop the not-yet-sent ones (matched / approved / needs_review).
   // Applied, failed and skipped rows are a real history record and are kept.

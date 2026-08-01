@@ -10,7 +10,8 @@ One run for one user:
   5. Write applications + a daily report into the shared DB.
   6. Send a Slack progress report via the notify adapter.
 
-Platform priority (highest first): linkedin > internshala > naukri > unstop > indeed
+Sources: internshala (board, TIER_B) + websource / atsboards (employer-hosted,
+TIER_A). See SOURCE_PRIORITY for why the other four boards were removed.
 
 Quota: free = 5/day   plus = 5/day   pro = 15/day   (all reset daily)
 
@@ -265,35 +266,22 @@ def _daily_apply_limit(uid: str, plan_cap: int, today: str | None = None) -> int
     return _daily_cap_for_today(uid, cap, today)
 
 
-def _platforms_for_today(uid: str, available: list[str], today: str | None = None) -> list[str]:
-    """Rotate which connected platforms actually get touched today. Hitting
-    all 5 platforms every single day is itself a bot signal — a human
-    job-searching doesn't check every site daily. Seeded by uid+date so
-    re-runs the same day pick the same platforms, but the set rotates daily
-    and differs per user (so many users don't all hit the same platform on
-    the same day).
+def _boards_for_today(uid: str, available: list[str], today: str | None = None) -> list[str]:
+    """The connected boards to touch today.
 
-    Biased toward 2 platforms (not 1) when 2+ are connected: the daily cap
-    is 5-10 applies, and dumping all of that onto a single site in one day
-    looks more bot-like per-platform than splitting it across two."""
-    if not available:
-        return []
-    today = today or datetime.date.today().isoformat()
-    rng = random.Random(f"{uid}:{today}:platforms")
-    # Preserve the caller's priority order (it passes SOURCE_PRIORITY filtered to
-    # the connected platforms) and ALWAYS include the top-priority one. A day's
-    # dice must never strand the user on only a weaker/less-reliable board — that
-    # is exactly how a run finds nothing while the mature platform sits untouched
-    # (e.g. an "unstop-only" day when internshala is the one that actually returns
-    # listings). A human checks their main job site every day anyway; the rotation
-    # variety comes from the *additional* platform(s) chosen below.
-    primary = available[0]
-    rest = list(available[1:])
-    # Draw the count first (same RNG order as before this guarantee was added, so
-    # the 1-vs-2 platform-day distribution is unchanged), then shuffle the rest.
-    n = min(len(available), rng.choice([1, 2, 2]))
-    rng.shuffle(rest)
-    return [primary] + rest[: max(0, n - 1)]
+    This used to be a daily ROTATION: with five boards connected, hitting all
+    five every single day is itself a bot signal, so a uid+date seed picked one
+    or two and left the rest alone. That machinery is gone with the boards it
+    served — Internshala is the only one left, and a rotation over a
+    single-element list is an identity function wearing a dice cup. Rotation
+    also actively hurt: a day whose dice skipped the one board that returns
+    listings was a day the user got nothing.
+
+    Kept as a named function rather than inlined because it is the one place
+    that answers "which boards does this run touch", and the probes call it.
+    """
+    del uid, today  # only meaningful while more than one board existed
+    return list(available)
 
 
 def _requires_approval(src: str, auto_apply: bool) -> bool:
@@ -336,9 +324,9 @@ _CHANNEL_MODULES = {
 # that can submit it, switched on, right now". Those are three separate facts and
 # conflating any two of them has already caused one real bug: a dict miss in
 # _CHANNEL_MODULES used to fall straight through to the BOARD adapter, so an
-# ATS-routed listing found on LinkedIn would be handed to linkedin.apply(). That
-# is the exact thing this whole design exists to prevent, and it survived only
-# because Safe Apply Mode caught it one layer further down.
+# ATS-routed listing would be handed to the board's own apply flow. That is the
+# exact thing this whole design exists to prevent, and it survived only because
+# Safe Apply Mode caught it one layer further down.
 #
 # So deliverability is an explicit question with an explicit answer.
 def channel_deliverable(dest: dict | None) -> bool:
@@ -620,14 +608,22 @@ def _cooldown_active(row: dict | None, cutoff) -> bool:
     return updated_at >= cutoff
 
 # Source priority order — agent applies across platforms in this sequence.
-SOURCE_PRIORITY = ["linkedin", "internshala", "naukri", "unstop", "indeed"]
+#
+# ONE board, deliberately. LinkedIn, Naukri, Indeed and Unstop were crawled for
+# months and contributed, measured on the production pool, **zero rows each**
+# (internshala 190, atsboards 76, websource 32). They were also graded TIER_C,
+# meaning even a listing they did find could never be submitted from our
+# servers. So they cost crawl time, memory, four apply adapters, four login
+# flows and their tests, and returned nothing that could become an application.
+# Their host names survive in hosts.py as a *refusal* list — a board URL that
+# reaches us via web search must still be recognised and dropped, which is the
+# only part of that knowledge that was ever load-bearing.
+SOURCE_PRIORITY = ["internshala"]
 
-# Platforms we can DISCOVER on with no login — every fetcher scrapes public search
-# / a guest API anonymously, so discovery is decoupled from "connecting" (a login
-# flow only apply and the Apply-Kit answer-draft use). internshala first so the
-# most reliable, internship-focused board is always in the daily rotation
-# (_platforms_for_today always includes index 0).
-DISCOVERY_PLATFORMS = ["internshala", "naukri", "linkedin", "unstop", "indeed"]
+# Platforms we can DISCOVER on with no login — the fetcher scrapes public search
+# anonymously, so discovery is decoupled from "connecting" (a login flow only
+# apply and the Apply-Kit answer-draft use).
+DISCOVERY_PLATFORMS = ["internshala"]
 
 # Sources that are not job boards. Both find internships on employers' OWN
 # pages — the only listings the agent can submit unattended, because the
@@ -1487,7 +1483,7 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
         #
         # Users who have connected nothing see no boards, exactly as before.
         board_pool = _no_touch_boards(board_pool, connected_platforms)
-    active_sources = _platforms_for_today(uid, board_pool) if discover else []
+    active_sources = _boards_for_today(uid, board_pool) if discover else []
     if discover:
         # Appended after the rotation, never subject to it.
         active_sources = active_sources + [
@@ -3165,7 +3161,7 @@ def run_job(uid: str, mode: str) -> dict:
 
 
 def _close_all_adapter_contexts(uid: str) -> None:
-    for modname in ("internshala", "linkedin", "naukri", "unstop", "indeed"):
+    for modname in DISCOVERY_PLATFORMS:
         try:
             mod = importlib.import_module(modname)
             mod.close(uid)

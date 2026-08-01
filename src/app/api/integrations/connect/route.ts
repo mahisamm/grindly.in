@@ -6,7 +6,7 @@ import { getUid } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { hasAppAccess } from "@/lib/access";
 
-const ALLOWED = ["linkedin", "internshala", "naukri", "unstop", "indeed"];
+const ALLOWED = ["internshala"];
 
 /**
  * POST /api/integrations/connect  body: { platform: string }

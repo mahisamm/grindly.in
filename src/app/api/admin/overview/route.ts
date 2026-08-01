@@ -88,7 +88,9 @@ export async function GET() {
   };
 
   // ── Per-platform fail rates (14d)
-  const platforms = ["internshala", "linkedin", "naukri", "unstop", "indeed"];
+  // The three sources that actually populate `jobs`. Rows are dropped below if
+  // a source produced nothing, so a retired source disappears on its own.
+  const platforms = ["internshala", "atsboards", "websource"];
   const platformStats = platforms.map((p) => {
     const pApps = platformApps.filter((a) => a.job?.source === p || (!a.job && p === "internshala"));
     const pApplied = pApps.filter((a) => a.status === "applied").length;

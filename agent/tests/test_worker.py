@@ -533,13 +533,11 @@ def test_requires_approval_true_for_non_adversarial_platform_with_auto_apply_off
     assert worker._requires_approval("mock_ats", auto_apply=False) is True
 
 
-def test_adversarial_platforms_covers_all_five_current_integrations():
-    # All 5 currently-integrated platforms ban bots in their ToS — none of
-    # them are ATS-hosted company pages. If that ever changes, this test
-    # should be the thing that forces a conscious update to the set.
-    assert worker.ADVERSARIAL_PLATFORMS == frozenset(
-        {"linkedin", "internshala", "naukri", "unstop", "indeed"}
-    )
+def test_adversarial_platforms_covers_every_current_board():
+    # Every board we integrate bans bots in its ToS — none is an ATS-hosted
+    # company page. If a board is ever added that welcomes automation, this
+    # test should be the thing that forces a conscious update to the set.
+    assert worker.ADVERSARIAL_PLATFORMS == frozenset({"internshala"})
 
 
 # ---------- _in_human_hours ----------
@@ -662,68 +660,37 @@ def test_daily_cap_for_today_differs_per_user_on_same_day():
     assert len(caps) > 1  # not every user gets the same number
 
 
-# ---------- _platforms_for_today (platform rotation) ----------
+# ---------- _boards_for_today ----------
+#
+# This was a daily rotation across five connected boards, seeded by uid+date, so
+# that no user hit every site every day. Four of those boards produced zero
+# listings in production and were removed; a rotation over one board is an
+# identity function, and a day whose dice skipped the only working board was a
+# day the user got nothing. What has to hold now is much smaller — and much more
+# important — so it is what is asserted.
 
-def test_platforms_for_today_empty_when_none_available():
-    assert worker._platforms_for_today("u1", [], today="2026-07-09") == []
-
-
-def test_platforms_for_today_picks_1_or_2_platforms():
-    for i in range(50):
-        picked = worker._platforms_for_today(
-            f"user{i}", worker.SOURCE_PRIORITY, today="2026-07-09"
-        )
-        assert 1 <= len(picked) <= 2
-
-def test_platforms_for_today_never_exceeds_available():
-    picked = worker._platforms_for_today("u1", ["linkedin"], today="2026-07-09")
-    assert picked == ["linkedin"]
+def test_boards_for_today_empty_when_none_connected():
+    assert worker._boards_for_today("u1", [], today="2026-07-09") == []
 
 
-def test_platforms_for_today_picks_only_from_available():
-    picked = worker._platforms_for_today(
-        "u1", worker.SOURCE_PRIORITY, today="2026-07-09"
-    )
+def test_the_connected_board_is_touched_every_single_day():
+    """The guarantee the rotation kept breaking: a user who connected a board
+    must have it searched today, whatever the date or the uid."""
+    for d in range(1, 32):
+        for uid in ("u1", "u2", "someone-else"):
+            picked = worker._boards_for_today(uid, ["internshala"], today=f"2026-08-{d:02d}")
+            assert picked == ["internshala"], f"{uid} on 2026-08-{d:02d}: {picked}"
+
+
+def test_boards_for_today_picks_only_from_connected():
+    picked = worker._boards_for_today("u1", worker.SOURCE_PRIORITY, today="2026-07-09")
     assert set(picked).issubset(set(worker.SOURCE_PRIORITY))
 
 
-def test_platforms_for_today_stable_within_same_day():
-    a = worker._platforms_for_today("u1", worker.SOURCE_PRIORITY, today="2026-07-09")
-    b = worker._platforms_for_today("u1", worker.SOURCE_PRIORITY, today="2026-07-09")
+def test_boards_for_today_is_stable_within_a_day():
+    a = worker._boards_for_today("u1", worker.SOURCE_PRIORITY, today="2026-07-09")
+    b = worker._boards_for_today("u1", worker.SOURCE_PRIORITY, today="2026-07-09")
     assert a == b
-
-
-def test_platforms_for_today_rotates_across_dates():
-    picks = [
-        tuple(worker._platforms_for_today("u1", worker.SOURCE_PRIORITY, today=f"2026-07-{d:02d}"))
-        for d in range(1, 29)
-    ]
-    assert len(set(picks)) > 1  # not the same platform(s) every single day
-
-
-def test_platforms_for_today_always_includes_primary():
-    # The top-priority connected platform must run EVERY day, so a day's dice can
-    # never strand the user on only a weaker/broken board (the "unstop-only day"
-    # that surfaced 0 matches while internshala — which works — sat untouched).
-    # available is SOURCE_PRIORITY-ordered, so index 0 is the primary.
-    available = [s for s in worker.SOURCE_PRIORITY if s in ("internshala", "unstop")]
-    assert available[0] == "internshala"
-    for d in range(1, 32):
-        picked = worker._platforms_for_today("u1", available, today=f"2026-08-{d:02d}")
-        assert "internshala" in picked, f"primary missing on 2026-08-{d:02d}: {picked}"
-
-
-def test_platforms_for_today_biases_toward_two_when_multiple_connected():
-    # The bias fix: with 2+ platforms connected, days should split volume
-    # across two platforms more often than concentrating on one. Assert
-    # 2-platform days actually occur (and, given the [1,2,2] weighting,
-    # are the majority) so the concentration bug can't silently regress.
-    two_days = sum(
-        1
-        for i in range(60)
-        if len(worker._platforms_for_today(f"user{i}", worker.SOURCE_PRIORITY, today="2026-07-09")) == 2
-    )
-    assert two_days > 30  # majority land on 2 platforms
 
 
 # ---------- analyze_only must not fail silently ----------

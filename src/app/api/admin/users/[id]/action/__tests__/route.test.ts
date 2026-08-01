@@ -95,9 +95,9 @@ describe("POST /api/admin/users/[id]/action", () => {
   });
 
   it("disconnects a platform integration for the target user", async () => {
-    await POST(makeReq({ action: "disconnect", platform: "linkedin" }), ctx());
+    await POST(makeReq({ action: "disconnect", platform: "internshala" }), ctx());
     expect(mockIntegrationUpdateMany).toHaveBeenCalledWith({
-      where: { userId: "target1", platform: "linkedin" },
+      where: { userId: "target1", platform: "internshala" },
       data: { status: "disconnected", connectedAt: null },
     });
   });

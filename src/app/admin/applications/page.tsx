@@ -22,7 +22,7 @@ type UserRow = {
 type GroupResp = { groupBy: "user"; users: UserRow[]; total: number };
 
 const STATUSES = ["", "applied", "failed", "skipped", "matched", "needs_review", "submitting"];
-const PLATFORMS = ["", "internshala", "linkedin", "naukri", "unstop", "indeed"];
+const PLATFORMS = ["", "internshala", "atsboards", "websource"];
 
 const inputCls =
   "w-full rounded border border-border bg-surface px-3 py-2 font-sans text-sm text-foreground outline-none placeholder:text-muted focus:border-brand sm:w-auto";

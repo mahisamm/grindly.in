@@ -5,7 +5,7 @@ Mirrors the TS side:
   * FAILURE_REASON / APPLY_STATUS  <-> src/lib/applyState.ts
   * can_apply                      <-> src/lib/firewall.ts (via matcher.firewall_block)
 
-Platform adapters (linkedin.py, internshala.py, ...) should:
+Board adapters (internshala.py) should:
   1. call session_ok(page) right after navigating, before touching any form;
      return ("login_required", FAILURE_REASON.SESSION_EXPIRED) if it fails.
   2. set status SUBMITTING conceptually before the final click, and only return

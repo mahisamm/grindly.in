@@ -341,7 +341,7 @@ def probe(email: str, *, found: int, runs: int, with_boards: bool = False) -> di
 
     sources = [s for s in worker.ALWAYS_ON_SOURCES if flags.source_enabled(s)]
     if with_boards:
-        sources = worker._platforms_for_today(
+        sources = worker._boards_for_today(
             user["id"], [s for s in worker.DISCOVERY_PLATFORMS if flags.source_enabled(s)]
         ) + sources
 

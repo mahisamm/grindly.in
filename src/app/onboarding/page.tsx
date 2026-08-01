@@ -1460,11 +1460,10 @@ export default function OnboardingPage() {
                 />
                 <span className="text-sm leading-relaxed text-muted">
                   I authorise Grindly to submit applications on my behalf when they go to a
-                  company&apos;s own application form or hiring inbox, and I understand that
-                  applications on LinkedIn, Naukri, Unstop and Indeed are prepared
-                  for me to submit myself. Internshala submission is separately limited to its
-                  staged beta flow. I can turn this off any time in my profile. I have
-                  read the{" "}
+                  company&apos;s own application form or hiring inbox, and — if I connect
+                  Internshala — from my Internshala account. Anything the agent cannot answer
+                  honestly about me is handed back to me instead of guessed. I can turn this
+                  off any time in my profile. I have read the{" "}
                   <a href="/terms" target="_blank" className="text-brand-2 underline">
                     Terms of Service
                   </a>
