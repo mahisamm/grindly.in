@@ -40,10 +40,11 @@ def testdb(tmp_path, monkeypatch):
     return path
 
 
-def _posting(i):
+def _posting(i, jd="We want a Python intern in Bengaluru."):
     return {"external_id": f"e{i}", "title": "Software Intern", "company": f"Co{i}",
             "location": "Bengaluru", "stipend": "20000", "duration": "6 months",
-            "skills": ["python"], "url": f"https://co{i}.keka.com/careers/jobdetails/{i}"}
+            "skills": ["python"], "jd_text": jd,
+            "url": f"https://co{i}.keka.com/careers/jobdetails/{i}"}
 
 
 def _boards(monkeypatch, postings):
@@ -59,6 +60,26 @@ def test_listings_reach_the_pool_with_no_user_involved(testdb, monkeypatch):
     out = sweep.harvest_listings()
     assert out["stored"] == 5
     assert len(db.live_jobs()) == 5
+
+
+def test_the_description_the_board_gave_us_is_kept(testdb, monkeypatch):
+    """atsboards reads the description straight out of the vendor's JSON, so it
+    costs nothing here. Dropping it made resolve_routes spend a real page fetch
+    — against the employer's own server — re-fetching text we had already been
+    handed a minute earlier, for every listing in every harvest."""
+    _boards(monkeypatch, [_posting(1, jd="Python intern, Bengaluru, 6 months.")])
+    out = sweep.harvest_listings()
+    assert out["with_jd"] == 1
+    assert db.live_jobs()[0]["jd_text"] == "Python intern, Bengaluru, 6 months."
+
+
+def test_a_listing_the_board_gave_no_description_for_is_still_stored(testdb, monkeypatch):
+    """Some vendors return a catalogue with no body text. That listing is still
+    worth having — resolve_routes will fetch the description later."""
+    _boards(monkeypatch, [_posting(1, jd="")])
+    out = sweep.harvest_listings()
+    assert out["stored"] == 1
+    assert out["with_jd"] == 0
 
 
 def test_the_same_listing_twice_is_one_row_with_a_fresh_sighting(testdb, monkeypatch):
@@ -87,7 +108,7 @@ def test_a_board_source_that_explodes_does_not_take_the_sweep_down(testdb, monke
 
     fake.fetch = boom
     monkeypatch.setitem(__import__("sys").modules, "atsboards", fake)
-    assert sweep.harvest_listings() == {"found": 0, "stored": 0}
+    assert sweep.harvest_listings() == {"found": 0, "stored": 0, "with_jd": 0}
 
 
 def test_the_keywords_are_broad_enough_not_to_bias_a_shared_pool(testdb):

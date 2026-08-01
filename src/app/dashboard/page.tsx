@@ -2579,28 +2579,21 @@ export default function Dashboard() {
               <span className="text-muted">→</span>
               <span><span className="text-accent font-medium">{me.stats.offers}</span> <span className="text-muted">offer{me.stats.offers !== 1 ? "s" : ""}</span></span>
             </div>
-            {/* How outcomes actually reach here. Honest: a company contacts the
-                student directly — Grindly tracks it, either automatically from Gmail
-                (once that's connected and the scope is live) or by the student
-                marking it. Answers the very common "how will I know I got an
-                interview?" question right where the funnel lives. */}
+            {/* How outcomes actually reach here. A company contacts the student
+                directly, and the student marks it.
+
+                This used to have two more branches offering automatic Gmail
+                detection, one of them linking to /integrations to "Connect
+                Gmail". That button no longer exists — the whole inbox-scanning
+                apparatus was removed because it could only ever run behind
+                GMAIL_SCAN_ENABLED, which has never been set and cannot be until
+                gmail.readonly clears Google's restricted-scope review. So the
+                link was a dead end waiting for whoever set that variable. */}
             <div className="mt-3 space-y-1.5 border-t border-border/60 pt-2.5">
-              {me.user.gmailScanBeta && me.user.gmailConnected ? (
-                <p className="text-xs text-accent">
-                  ✓ Grindly reads interview, offer, and rejection emails from your inbox and updates these automatically.
-                </p>
-              ) : me.user.gmailScanBeta ? (
-                <p className="text-xs text-muted">
-                  Companies email or call you directly.{" "}
-                  <Link href="/integrations" className="underline text-brand-2">Connect Gmail</Link>{" "}
-                  and Grindly auto-detects interview emails for you — otherwise mark each outcome yourself.
-                </p>
-              ) : (
-                <p className="text-xs text-muted">
-                  Companies reach out to you directly — by email or phone — so watch your inbox after applying.
-                  Grindly can&apos;t see that, so when you hear back, mark it on the application to keep your interview rate accurate.
-                </p>
-              )}
+              <p className="text-xs text-muted">
+                Companies reach out to you directly — by email or phone — so watch your inbox after applying.
+                Grindly can&apos;t see that, so when you hear back, mark it on the application to keep your interview rate accurate.
+              </p>
               {me.stats.outcomeReported < me.stats.applied && (
                 <p className="text-xs text-muted">
                   <button onClick={() => { setTab("applications"); setFilter("applied"); }} className="underline text-brand-2">Set outcomes →</button>

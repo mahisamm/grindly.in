@@ -280,7 +280,7 @@ def harvest_listings() -> dict:
         log.error("listing harvest could not import atsboards: %s", e)
         return {"found": 0, "stored": 0}
 
-    out = {"found": 0, "stored": 0}
+    out = {"found": 0, "stored": 0, "with_jd": 0}
     try:
         jobs = atsboards.fetch(FLEET_KEYWORDS, limit=FLEET_HARVEST_LIMIT)
     except Exception as e:  # noqa: BLE001
@@ -290,7 +290,7 @@ def harvest_listings() -> dict:
     out["found"] = len(jobs)
     for job in jobs:
         try:
-            db.upsert_job({
+            job_id = db.upsert_job({
                 "source": "atsboards",
                 "external_id": job.get("external_id") or "",
                 "title": job.get("title") or "",
@@ -302,13 +302,26 @@ def harvest_listings() -> dict:
                 "url": job.get("url") or "",
             })
             out["stored"] += 1
+            # Keep the description the board already handed us.
+            #
+            # atsboards reads it straight out of the vendor's JSON, so it costs
+            # nothing here. Dropping it meant resolve_routes then spent a real
+            # page fetch — against the employer's own server — re-fetching text
+            # we had already been given a minute earlier, for every listing in
+            # every harvest.
+            jd = job.get("jd_text") or ""
+            if jd:
+                db.set_job_jd(job_id, jd)
+                out["with_jd"] += 1
         except Exception as e:  # noqa: BLE001
             # One malformed posting must not cost the rest of the harvest.
             log.debug("could not store %s: %s", job.get("url"), e)
 
-    log.info("listing harvest: %d found, %d stored", out["found"], out["stored"])
+    log.info("listing harvest: %d found, %d stored, %d already had a description",
+             out["found"], out["stored"], out["with_jd"])
     db.add_audit("listing_harvest", user_id=None,
-                 target=str(out["stored"]), detail=f"{out['found']} returned")
+                 target=str(out["stored"]),
+                 detail=f"{out['found']} returned, {out['with_jd']} with a description")
     return out
 
 
