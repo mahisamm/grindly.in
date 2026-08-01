@@ -1198,10 +1198,18 @@ export default function OnboardingPage() {
           {step === 2 && (
             <div>
               <h2 className="font-display text-2xl font-semibold">Connect Internshala</h2>
+              {/* Do not promise that skipping still "prepares them to tap".
+                  With no-touch mode on — which is how this deploys — a board the
+                  user has not connected is dropped from discovery outright (see
+                  worker._no_touch_boards), so those listings never appear at
+                  all. The old wording described a screen the user would never
+                  see, and the only thing worse than a missing feature is one the
+                  setup page said they had. */}
               <p className="mt-1 text-sm text-muted">
-                Optional, and the biggest single difference to how much the agent can do
-                for you. Connected, it applies to Internshala listings on its own. Skipped,
-                it still finds and prepares them — you tap to send.
+                Optional. Connect it and the agent applies to Internshala listings on its
+                own, on top of everything else. Skip it and the agent works from companies&apos;
+                own careers pages and hiring inboxes instead — still fully hands-off, just a
+                smaller pool to draw from.
               </p>
 
               <div className={`mt-5 rounded-xl border p-4 ${

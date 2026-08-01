@@ -54,9 +54,10 @@ export default function Home() {
 
             <p className="mt-4 max-w-[44ch] text-[var(--ink-soft)] leading-relaxed">
               Grindly reads your resume, finds internships that actually match your
-              skills, and prepares them inside the limits you set. It can send only
-              to approved employer-owned forms after your explicit consent; where a
-              job-board account is involved, it leaves the final tap to you.
+              skills, and applies inside the limits you set — to companies&apos; own
+              application forms and hiring inboxes, and to Internshala if you connect
+              it. It never invents a fact about you: anything it can&apos;t answer
+              honestly, it hands back instead of guessing.
             </p>
 
             <div className="mt-6 flex flex-wrap items-center gap-2.5">
