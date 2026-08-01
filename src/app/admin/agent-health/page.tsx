@@ -13,6 +13,10 @@ type HealthData = {
   };
   funnel?: FunnelDay[];
   lastHarvest?: { target: string | null; detail: string | null; createdAt: string } | null;
+  capacity?: {
+    live: number; employerSide: number; board: number; k: number;
+    handsOffUsers: number; connectedUsers: number;
+  } | null;
   checks: Check[]; allOk: boolean; checkedAt: string };
 
 type FunnelDay = {
@@ -212,6 +216,57 @@ export default function AgentHealthPage() {
               </div>
             ))}
           </div>
+        )}
+      </div>
+    )}
+
+    {/* How many users the pool can serve. On this page because the failure is
+        silent: an agent serving 52 users out of a 300-listing pool looks
+        identical, from every other panel here, to one serving 500 — right up to
+        the morning the 53rd signs up and starts getting two applications a day
+        instead of five. Nothing else here would say so. */}
+    {data?.capacity && (
+      <div className="mt-6 rounded-lg border border-border/40 bg-surface-2/30 p-4">
+        <div className="mb-1 font-sans text-sm font-bold text-muted">
+          What the pool can serve
+        </div>
+        <div className="mb-3 font-sans text-[11px] text-muted">
+          {data.capacity.live} live listings — {data.capacity.employerSide} with an
+          employer-side route, {data.capacity.board} on Internshala. Each goes to at
+          most {data.capacity.k} users.
+        </div>
+        <div className="flex flex-wrap gap-6 font-sans">
+          <div>
+            <div className="text-2xl font-bold text-foreground">
+              {data.capacity.handsOffUsers}
+            </div>
+            <div className="text-[11px] text-muted">
+              users at 5/day, <strong>connecting nothing</strong>
+            </div>
+          </div>
+          <div>
+            <div className="text-2xl font-bold text-foreground">
+              {data.capacity.connectedUsers}
+            </div>
+            <div className="text-[11px] text-muted">
+              users at 5/day, if they connect Internshala
+            </div>
+          </div>
+          <div>
+            <div className="text-2xl font-bold text-foreground">
+              {Math.floor(data.capacity.handsOffUsers / 3)}
+            </div>
+            <div className="text-[11px] text-muted">
+              pro users at 15/day, connecting nothing
+            </div>
+          </div>
+        </div>
+        {data.capacity.employerSide === 0 && data.capacity.live > 0 && (
+          <p className="mt-3 font-sans text-[11px] text-danger">
+            No listing has a resolved employer-side route, so a user who connects
+            nothing can be served zero applications — however large the pool looks.
+            The daily route pass fills this in.
+          </p>
         )}
       </div>
     )}

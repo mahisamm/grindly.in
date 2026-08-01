@@ -10,6 +10,47 @@ export const dynamic = "force-dynamic";
 
 type CheckResult = { ok: boolean; detail: string };
 
+// How many users the listing pool can actually serve today.
+//
+// The mirror of agent/capacity.py, and the reason it is on THIS page: the
+// failure it catches is silent. An agent serving 52 users out of a 300-listing
+// pool looks identical, from every other panel here, to one serving 500 — right
+// up to the morning the 53rd signs up and quietly starts getting two
+// applications a day instead of five. Nothing else on this page would say so.
+//
+// Split by what the user had to do to earn it. Employer-side listings are
+// reachable by anyone the moment setup finishes; Internshala listings only work
+// for a user who completed the connect flow. A user who connects nothing gets
+// the first number and nothing else, so that is the floor worth watching.
+//
+// K must track worker.ALLOC_PER_LISTING. It is read from the environment both
+// processes share, so changing it in one place changes it in both.
+const ALLOC_PER_LISTING = Number(process.env.GRINDLY_ALLOC_PER_LISTING || "3");
+
+async function poolCapacity() {
+  try {
+    const [live, routed, board] = await Promise.all([
+      prisma.job.count({ where: { deadAt: null } }),
+      prisma.job.count({ where: { deadAt: null, applyChannel: { not: null } } }),
+      prisma.job.count({ where: { deadAt: null, source: "internshala" } }),
+    ]);
+    const k = ALLOC_PER_LISTING;
+    return {
+      live,
+      employerSide: routed,
+      board,
+      k,
+      // Quoted at the plus/free quota of 5 a day. Pro is a third of it.
+      handsOffUsers: Math.floor((routed * k) / 5),
+      connectedUsers: Math.floor(((routed + board) * k) / 5),
+    };
+  } catch {
+    // A capacity readout must never be the thing that takes the health page
+    // down — the page exists to be readable when something else is broken.
+    return null;
+  }
+}
+
 async function checkDb(): Promise<CheckResult> {
   try {
     const count = await prisma.user.count();
@@ -193,7 +234,7 @@ export async function GET() {
 
   // Queue depth stats
   const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000);
-  const [queueDepth, runningCount, staleCount, recentFailed, funnel, lastHarvest] =
+  const [queueDepth, runningCount, staleCount, recentFailed, funnel, lastHarvest, capacity] =
     await Promise.all([
       prisma.agentRun.count({ where: { status: "queued" } }),
       prisma.agentRun.count({ where: { status: "running" } }),
@@ -210,6 +251,7 @@ export async function GET() {
         orderBy: { createdAt: "desc" },
         select: { target: true, detail: true, createdAt: true },
       }),
+      poolCapacity(),
     ]);
 
   return NextResponse.json({
@@ -219,5 +261,6 @@ export async function GET() {
     queue: { queueDepth, runningCount, staleCount, recentFailed },
     funnel,
     lastHarvest,
+    capacity,
   });
 }
