@@ -699,7 +699,13 @@ def _first_preferred_location(profile: dict) -> str:
 _CURRENT_LOCATION_Q = re.compile(
     r"\b(current|present)\s+(location|city|residence|address)\b|"
     r"\bwhere\s+are\s+you\s+(currently\s+)?(based|located|living)\b|"
-    r"\bcity\s+of\s+residence\b",
+    r"\bcity\s+of\s+residence\b|"
+    # "Location (City)*" and a bare "City" — Greenhouse's phrasing, and the
+    # second thing a live AlphaGrep application stopped on with the answer
+    # already on file. Deliberately not a bare \blocation\b: "Preferred
+    # Location" and "Job Location" are different questions, and both are
+    # matched by their own patterns before this one is consulted.
+    r"^\s*location\s*\(\s*city\s*\)|^\s*city\s*\*?\s*$",
     re.I,
 )
 _GENDER_Q = re.compile(r"\bgender\b", re.I)
@@ -717,7 +723,20 @@ _NATIONALITY_Q = re.compile(r"\bnationalit(y|ies)\b|\bcountry\s+of\s+citizenship
 # hold one and live in the other — so a model answered it "India" on a real
 # Greenhouse form: plausible, unverified, stated under their name.
 _COUNTRY_Q = re.compile(r"^\s*country\b(?!\s+of\s+citizenship)", re.I)
-_COLLEGE_Q = re.compile(r"\b(college|university|institute|institution)\b", re.I)
+# "School" is what Greenhouse and Lever call the college box, and it was the
+# one common word missing here — measured on a live AlphaGrep application, which
+# reached the submit button and stopped on "School*" while the answer sat in the
+# profile under `college`.
+#
+# Bounded to the box that asks for a NAME. "School" also appears in "High School
+# Percentage" and "Schooling", which are different facts with their own answers,
+# so those keep their own patterns ahead of this one.
+_COLLEGE_Q = re.compile(
+    r"\b(college|university|institute|institution)\b|"
+    r"\bschool\s*(?:name|attended)?\s*\*?$|"
+    r"\b(?:name\s+of\s+(?:your\s+)?)?school\b(?!\s*(?:percent|%|marks|grade|board))",
+    re.I,
+)
 _DEGREE_Q = re.compile(
     r"\b(degree|course|qualification|programme|program|branch|stream|"
     r"speciali[sz]ation|major|discipline)\b",
