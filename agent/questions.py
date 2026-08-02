@@ -383,9 +383,40 @@ def _is_rich_text(el) -> bool:
 # The honest reading is that we could not find the question, which is a
 # different thing from a question with no good answer: it stops the application
 # for the candidate instead of filling the box with prose.
+# What a dropdown says when it is NOT answered.
+#
+# read_fields skips a <select> whose selected option does not match this,
+# because a vendor's own default (Keka's "+91", "INR") really is an answer and
+# re-asking it blocked submits. The cost of a miss here is total and silent: the
+# field is never offered to the answering engine, never filled, and the form's
+# own validation rejects the submit with the field still empty.
+#
+# Measured on a live Keka form, which is the highest-yielding vendor we have.
+# Its placeholder is "Select an option" — the old pattern required the string to
+# END after "select", so it matched a bare "Select" and missed this. Every Keka
+# dropdown was therefore read as already-answered:
+#
+#     gender            required  "Select an option"  -> skipped, blocks submit
+#     eligibletowork    required  "Select an option"  -> skipped
+#     nationality                 "Select an option"  -> skipped
+#     locationPreference          "Select an option"  -> skipped
+#
+# So it now allows the trailing noun phrase every ATS puts there, while still
+# refusing to treat a real value as a placeholder — "0" for months of experience
+# and "INR" for a currency are answers, and must keep being left alone.
 _PLACEHOLDER_LABEL = re.compile(
-    r"^\s*(select|search|choose|pick|type to search|start typing|"
-    r"select\.{2,3}|select…|--+)\s*\.{0,3}\s*$",
+    # Dashes alone — "--", "———" — are their own placeholder, not decoration
+    # around a word. Losing this alternative when the pattern was widened let a
+    # bare "--" through as a real option, and the answering engine wrote a
+    # sentence about Python into it.
+    r"^\s*[-–—]{2,}\s*$"
+    r"|"
+    r"^\s*(?:[-–—]{2,}\s*)?"
+    r"(?:please\s+)?"
+    r"(?:select|search|choose|pick|type to search|start typing)"
+    r"(?:\s+(?:an?|one|your|the)?\s*"
+    r"(?:option|item|value|choice|answer)?)?"
+    r"\s*[.…]{0,3}\s*(?:[-–—]{2,})?\s*$",
     re.I,
 )
 
