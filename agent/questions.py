@@ -611,10 +611,35 @@ _GRAD_MONTH_YEAR_Q = re.compile(
     r"\bmonth\s*(&|and|/)\s*year\s+of\s+(graduation|passing)\b",
     re.I,
 )
+# The month alone. _GRAD_MONTH_YEAR_Q above covers the combined box some
+# Indian portals use ("Graduation Month & Year"); Greenhouse splits it into
+# "End date month*" and "End date year*", and only the year half was matched
+# — so a live Sigmoid application stopped on a month already in the profile.
+_GRAD_MONTH_Q = re.compile(
+    r"\b(?:graduation|passing|completion)\s+month\b|"
+    r"\bmonth\s+of\s+(?:graduation|passing|completion)\b|"
+    r"\bend\s+date\s+month\b|\bend\s+month\b",
+    re.I,
+)
 _MONTH_NAMES = (
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
 )
+
+
+def _grad_month(profile: dict) -> str:
+    """The graduation month alone — "May" — for a box that asks only for it.
+
+    Separate from _grad_month_year because that one answers a combined
+    "Month & Year" box with "May 2027". Putting that string into a month-only
+    dropdown matches no option and the field stays empty.
+    """
+    raw = str(profile.get("grad_month") or "").strip()
+    if not raw:
+        return ""
+    if raw.isdigit() and 1 <= int(raw) <= 12:
+        return _MONTH_NAMES[int(raw) - 1]
+    return raw
 
 
 def _grad_month_year(profile: dict) -> str:
@@ -701,7 +726,11 @@ _YEARS_EXPERIENCE_Q = re.compile(
     # "Experience (in years)" — the parenthesis and the "in" are both optional
     # and can appear together, which a plain either/or missed.
     r"\bexperience\s*\(?\s*(?:in\s+)?(?:years?|yrs?)\b|"
-    r"\byears?\s+experience\b",
+    r"\byears?\s+experience\b|"
+    # "Total Professional Experience*" and "Relevant Professional
+    # Experience*" carry no "years" at all, and both stopped a live Sigmoid
+    # application. The box still wants a number of years.
+    r"\b(?:total|relevant|overall)\s+(?:professional|work|industry)\s+experience\b",
     re.I,
 )
 _PREV_INTERNSHIP_Q = re.compile(
@@ -795,7 +824,11 @@ _NOTICE_Q = re.compile(
 )
 _PREFERRED_LOCATION_Q = re.compile(
     r"\b(preferred|desired|willing\s+to\s+work\s+in)\s*(location|city|place)\b|"
-    r"\blocation\s+preference\b|\bpreferred\s+work\s+location\b",
+    r"\blocation\s+preference\b|\bpreferred\s+work\s+location\b|"
+    # Greenhouse asks it as a dropdown of the employer's offices. Same
+    # question, and it stopped a live Groww application.
+    r"\bwhich\s+location\s+are\s+you\s+applying\b|"
+    r"\blocation\s+(?:you\s+are\s+)?applying\s+(?:for|to)\b",
     re.I,
 )
 
@@ -1138,6 +1171,7 @@ def _setup_candidates(label: str, profile: dict) -> list[tuple[bool, str, str]]:
         # Before _GRAD_YEAR_Q, which matches this label too and would answer
         # a "month & year" box with a bare year.
         (bool(_GRAD_MONTH_YEAR_Q.search(label)), "grad_month", _grad_month_year(profile)),
+        (bool(_GRAD_MONTH_Q.search(label)), "grad_month", _grad_month(profile)),
         (bool(_GRAD_YEAR_Q.search(label)), "grad_year", _num("grad_year")),
         (bool(_HOURS_Q.search(label)), "hours_per_week", _num("hours_per_week")),
         # Zero is an ANSWER here, not the empty marker every other numeric column
