@@ -58,20 +58,56 @@ def test_it_keys_on_a_token_never_on_page_text():
 def test_a_solved_widget_does_not_block():
     """Non-empty token means the user (or a prior step) already passed it."""
     js = questions._CAPTCHA_JS
-    assert "(token.value || '').trim()" in js
+    assert "unsolved" in js
+    assert "(t.value || '').trim()" in js
 
 
 def test_a_hidden_widget_does_not_block():
     """Plenty of pages ship an inert widget that is never asked of us."""
     js = questions._CAPTCHA_JS
     assert "getBoundingClientRect" in js
-    assert "width === 0" in js
+    assert "r.width > 0 && r.height > 0" in js
 
 
 def test_all_three_major_vendors_are_covered():
     js = questions._CAPTCHA_JS
-    for host in ("challenges.cloudflare.com", "/recaptcha/", "hcaptcha.com"):
+    for host in ("challenges.cloudflare.com", "recaptcha", "hcaptcha.com"):
         assert host in js
+
+
+def test_an_invisible_recaptcha_badge_is_not_a_challenge():
+    """The measured failure this exists for.
+
+    On a live AlphaGrep Greenhouse form, after the agent had filled every single
+    field correctly:
+
+        g-recaptcha-response                 present, empty
+        anchor iframe (v2 checkbox ~300x78)  NONE
+        bframe (challenge popup)             NONE
+        .grecaptcha-badge                    1
+
+    That is reCAPTCHA v3. Nothing is asked of anybody — the token fills when the
+    page calls grecaptcha.execute() at submit, so an empty token BEFORE the
+    click is the normal state. The old rule matched iframe[src*="/recaptcha/"],
+    which the badge's own iframe satisfies at non-zero size, and every
+    Greenhouse application was refused at the last step.
+
+    safety.detect_challenge already drew this distinction by asking whether the
+    widget is DRAWN at checkbox size; this detector did not.
+    """
+    js = questions._CAPTCHA_JS
+    # It must look for the v2 tells specifically, not any recaptcha iframe.
+    assert "recaptcha/api2/anchor" in js
+    assert "recaptcha/api2/bframe" in js
+    # And size the anchor, because the badge is an anchor iframe too.
+    assert "r.width >= 200" in js
+
+
+def test_the_badge_alone_is_never_the_trigger():
+    """A page carrying only .grecaptcha-badge must pass. Asserted as the absence
+    of a bare recaptcha-iframe match, which is what let the badge block."""
+    js = questions._CAPTCHA_JS
+    assert 'iframe[src*="/recaptcha/"]' not in js
 
 
 # --- and the sender stops at the right moment --------------------------------

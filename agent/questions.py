@@ -1768,24 +1768,52 @@ e => {
 # which has a person and a residential IP.
 _CAPTCHA_JS = """
 () => {
-  const widgets = [
-    // [token field, widget container]
-    ['input[name="cf-turnstile-response"]', '.cf-turnstile, iframe[src*="challenges.cloudflare.com"]'],
-    ['textarea#g-recaptcha-response, textarea[name="g-recaptcha-response"]', '.g-recaptcha, iframe[src*="/recaptcha/"]'],
-    ['textarea[name="h-captcha-response"]', '.h-captcha, iframe[src*="hcaptcha.com"]'],
-  ];
-  const names = {0: 'Cloudflare human check', 1: 'reCAPTCHA', 2: 'hCaptcha'};
-  for (let i = 0; i < widgets.length; i++) {
-    const [tokenSel, boxSel] = widgets[i];
-    const box = document.querySelector(boxSel);
-    if (!box) continue;
-    // A widget that is present but hidden is not being asked of us.
-    const r = box.getBoundingClientRect ? box.getBoundingClientRect() : null;
-    if (r && r.width === 0 && r.height === 0) continue;
-    const token = document.querySelector(tokenSel);
-    // No token field at all means we cannot tell it is solved; treat the
-    // visible widget as blocking rather than guessing our way past it.
-    if (!token || !(token.value || '').trim()) return names[i];
+  const drawn = e => {
+    if (!e || !e.getBoundingClientRect) return false;
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const unsolved = sel => {
+    const t = document.querySelector(sel);
+    return !t || !(t.value || '').trim();
+  };
+
+  // Cloudflare and hCaptcha render one widget and mean it.
+  const cf = document.querySelector('.cf-turnstile, iframe[src*="challenges.cloudflare.com"]');
+  if (drawn(cf) && unsolved('input[name="cf-turnstile-response"]')) {
+    return 'Cloudflare human check';
+  }
+  const hc = document.querySelector('.h-captcha, iframe[src*="hcaptcha.com"]');
+  if (drawn(hc) && unsolved('textarea[name="h-captcha-response"]')) {
+    return 'hCaptcha';
+  }
+
+  // reCAPTCHA needs the extra distinction, and getting it wrong costs every
+  // application on the vendor.
+  //
+  //   v2  draws a checkbox — an api2/anchor iframe about 300x78 — or pops a
+  //       challenge in an api2/bframe. A person must act. A real wall.
+  //   v3  draws only .grecaptcha-badge in the corner. Nothing is asked of
+  //       anyone; the token fills when the page calls grecaptcha.execute() at
+  //       submit, so an empty token beforehand is the NORMAL state.
+  //
+  // Measured on a live AlphaGrep Greenhouse form after every field was filled:
+  // no anchor, no bframe, one badge — and the agent refused to submit a form
+  // that would have gone through.
+  const anchors = Array.from(document.querySelectorAll('iframe[src*="recaptcha/api2/anchor"]'));
+  const checkbox = anchors.find(f => {
+    const r = f.getBoundingClientRect();
+    // The badge is a narrow strip; a real checkbox widget is ~300 wide and
+    // ~78 tall. Width alone separates them cleanly.
+    return r.width >= 200 && r.height >= 40;
+  });
+  const challenge = Array.from(document.querySelectorAll('iframe[src*="recaptcha/api2/bframe"]'))
+    .find(f => { const r = f.getBoundingClientRect(); return r.width > 100 && r.height > 100; });
+  const explicit = document.querySelector('.g-recaptcha[data-sitekey]');
+
+  if ((checkbox || challenge || drawn(explicit))
+      && unsolved('textarea#g-recaptcha-response, textarea[name="g-recaptcha-response"]')) {
+    return 'reCAPTCHA';
   }
   return '';
 }
