@@ -1626,6 +1626,30 @@ def _choose_in_combobox(page, el, value: str) -> bool:
             if picked:
                 break
 
+        # Last resort: the list's own "Other".
+        #
+        # Greenhouse's School box is a fixed global catalogue. Measured on a
+        # live AlphaGrep form: "Delhi" offers DTU and IIT Delhi, "Indian
+        # Institute" offers six IITs, and "Anurag University" offers nothing —
+        # that university is not in the catalogue at all.
+        #
+        # For a student whose institution is genuinely absent, "Other" is the
+        # TRUE answer and the one a person would pick. It is reached only after
+        # every real match has failed, and only because we HAD an answer the
+        # list does not carry. A field we have no answer for never gets here —
+        # that is a fact nobody gave us, and it stays a question for the user.
+        if not picked:
+            try:
+                el.fill("")
+                el.type("Other", delay=25)
+                page.wait_for_timeout(_MENU_WAIT_MS)
+                picked = page.evaluate(PICK_JS, [el, "Other"])
+                if picked:
+                    print(f"[questions] {wanted!r} is not on this form's list — "
+                          f"answered 'Other', which is what it is")
+            except Exception:  # noqa: BLE001
+                picked = False
+
         if not picked:
             page.keyboard.press("Escape")
             return False
