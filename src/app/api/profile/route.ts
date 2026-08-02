@@ -33,7 +33,7 @@ const ARRAY_FIELDS = new Set([
 const NUM_FIELDS = new Set([
   "stipendMin", "minMatchScore", "maxPerDay", "matchQualityRating",
   // Eligibility facts the agent will state on screening forms (see lib/readiness).
-  "gradYear", "gradMonth",
+  "gradYear", "gradMonth", "educationStartYear",
   // The rest of what a screening form asks and a resume never carries. Setup
   // collects them once so the agent stops stalling on the same questions —
   // agent/questions.py answers from these verbatim.

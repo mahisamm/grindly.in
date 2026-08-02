@@ -185,7 +185,15 @@ describe("how much setup asks for", () => {
     // every account) and Dash Technologies on "Total Years of Experience *"
     // (which had no field anywhere). Gender is required on Keka, which is the
     // single largest source of Indian internships we have.
-    expect(asked.length).toBeLessThanOrEqual(15);
+    //
+    // 15 -> 16 on 2026-08-02, same rule again. A live AlphaGrep Securities
+    // application filled every other field and stopped on "Start date year*" —
+    // the year the degree BEGAN, which Greenhouse asks as its own required box
+    // on the education block and which had no field anywhere in the product.
+    // Deliberately asked rather than derived: graduation year minus a course
+    // length is a guess, wrong for anyone who took a gap or repeated a year,
+    // and it would be stated as fact on an employer's form.
+    expect(asked.length).toBeLessThanOrEqual(16);
   });
 
   it("only blocks on questions the agent is genuinely stuck without", () => {

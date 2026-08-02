@@ -76,6 +76,10 @@ export type ProffField = {
 // stated on an application as fact.
 const CURRENT_YEAR = new Date().getFullYear();
 export const GRAD_YEARS = Array.from({ length: 8 }, (_, i) => String(CURRENT_YEAR - 1 + i));
+// When a degree STARTED: the last ten years, newest first. A range that ends
+// at this year rather than running into the future, because nobody applies
+// for an internship before their course begins.
+export const START_YEARS = Array.from({ length: 10 }, (_, i) => String(CURRENT_YEAR - i));
 
 export const CONTACT_FIELDS = [
   // Only ever came from Google OAuth before; an account whose Google profile
@@ -124,6 +128,23 @@ export const PROFF_FIELDS: ProffField[] = [
     help: "Nearly every internship form asks. Also decides which roles you are eligible for.",
     type: "select",
     options: GRAD_YEARS,
+    numeric: true,
+    group: "Education",
+    required: true,
+  },
+  {
+    // Greenhouse asks this as "Start date year*" on its education block and
+    // will not accept the application without it. Measured on a live AlphaGrep
+    // Securities application: every other field filled, and it stopped here.
+    //
+    // Deliberately asked rather than derived. gradYear minus a course length is
+    // a guess — a year out for anyone who took a gap, transferred, or sat a
+    // year again — and it would be stated as fact on an employer's form.
+    key: "educationStartYear",
+    label: "Year you started your degree",
+    help: "Asked on the education section of Greenhouse and Lever forms, which will not submit without it.",
+    type: "select",
+    options: START_YEARS,
     numeric: true,
     group: "Education",
     required: true,
@@ -531,6 +552,7 @@ export const DEFAULTS: Record<string, unknown> = {
   expectedStipend: null,
   currentSalary: "",
   yearsExperience: "",
+  educationStartYear: 0,
   previousInternship: "",
   noticePeriod: "",
   currentLocation: "",

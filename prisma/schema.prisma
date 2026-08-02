@@ -301,6 +301,11 @@ model Profile {
   // forever. For most students the true answer is 0 — but 0 is a FACT about
   // them, not a default we may assume, so it is asked once and stored.
   yearsExperience   String? @map("years_experience")
+  // The year they STARTED their degree. Greenhouse asks it as "Start date
+  // year*" on the education block and will not submit without it. Not derived
+  // from gradYear minus a course length: that is a guess, and a wrong start
+  // year is a false statement about their education under their own name.
+  educationStartYear Int?   @map("education_start_year")
   previousInternship String? @map("previous_internship") // "Yes" | "No"
   noticePeriod      String? @map("notice_period")    // "Immediate" for most students
   currentLocation   String? @map("current_location") // the city they are in now

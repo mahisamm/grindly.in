@@ -856,6 +856,20 @@ _COLLEGE_Q = re.compile(
     r"\b(?:name\s+of\s+(?:your\s+)?)?school\b(?!\s*(?:percent|%|marks|grade|board))",
     re.I,
 )
+# "Start date year*" on Greenhouse's education block — the year the degree
+# BEGAN, which is a different fact from the graduation year and is asked as its
+# own required box. Measured on a live AlphaGrep application: every other field
+# filled and it stopped here.
+#
+# Anchored on start/from/joined so it cannot claim "Expected start date" (when
+# the candidate can begin the JOB), which is a different question entirely and
+# has its own answer.
+_EDU_START_Q = re.compile(
+    r"\b(?:start|starting|joined|joining|admission|enrol(?:l)?ment)\s*"
+    r"(?:date\s*)?(?:year|yr)\b|"
+    r"\byear\s+(?:of\s+)?(?:joining|admission|enrol(?:l)?ment|commencement)\b",
+    re.I,
+)
 _DEGREE_Q = re.compile(
     r"\b(degree|course|qualification|programme|program|branch|stream|"
     r"speciali[sz]ation|major|discipline)\b",
@@ -1081,6 +1095,13 @@ def _setup_candidates(label: str, profile: dict) -> list[tuple[bool, str, str]]:
         (bool(_YEARS_EXPERIENCE_Q.search(label)), "years_experience",
          _years_experience(profile)),
         (bool(_PREV_INTERNSHIP_Q.search(label)), "previous_internship", _text("previous_internship")),
+        # Ahead of the availability/notice rows below, which claim any label
+        # containing "start". "Start date year*" on Greenhouse is the year the
+        # DEGREE began; "Expected start date" is when the candidate can begin
+        # the job. Different facts, and answering the first with the second puts
+        # a wrong education history on the form.
+        (bool(_EDU_START_Q.search(label)), "education_start_year",
+         _text("education_start_year")),
         # Before _NOTICE_Q and _START_Q: both match this label too, and both
         # would hand a phrase to a numeric box.
         (bool(_JOIN_DAYS_Q.search(label)), "availability", _join_in_days(profile) or ""),
