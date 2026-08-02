@@ -60,6 +60,11 @@
              from a broken one, which is precisely what made this impossible to
              diagnose from the outside. -->
         <div class="hint" id="autoStatus" style="display:none"></div>
+        <!-- Applications stopped at a CAPTCHA or a question only the user can
+             answer. Their tabs stay open, but autopilot moves on, so without
+             this the popup reports progress while three of them sit there
+             half-finished. The notification can be missed; this cannot. -->
+        <button class="ghost" id="waiting" style="display:none"></button>
         <button class="ghost" id="runNow" style="display:none">Check for work now</button>
       </div>
       <div class="paste" id="pasteBox">

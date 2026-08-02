@@ -215,6 +215,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // rather than a tab that blinks out mid-submit.
           setTimeout(() => { chrome.tabs.remove(tabId).catch?.(() => {}); }, 4000);
         }
+        // A gate keeps its tab, so pool the interruption instead — see
+        // "One knock, not five" below.
+        if (msg.event === "awaiting_human" && sender.tab && typeof sender.tab.id === "number") {
+          let host = "";
+          try { host = new URL(sender.tab.url || "").hostname.replace(/^www\./, ""); } catch { /* keep "" */ }
+          await noteWaiting({
+            taskId: msg.taskId,
+            tabId: sender.tab.id,
+            host,
+            reason: (msg.extra && msg.extra.reason) || "unknown_question",
+            at: Date.now(),
+          });
+        }
         sendResponse(out);
         break;
       }
@@ -237,6 +250,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
       case "grindly:activeTask":
         sendResponse((await chrome.storage.local.get(TASK_STATE_KEY))[TASK_STATE_KEY] || null);
+        break;
+      case "grindly:waiting":
+        // For the popup. A notification can be missed or dismissed; opening the
+        // extension must still show that three applications are sitting there
+        // half-finished, or the count is only as reliable as the OS toast.
+        if (sender.tab) { sendResponse({ error: "forbidden" }); break; }
+        sendResponse(await pruneWaiting());
+        break;
+      case "grindly:focusWaiting":
+        if (sender.tab) { sendResponse({ error: "forbidden" }); break; }
+        await focusFirstWaiting();
+        sendResponse({ ok: true });
         break;
       default:
         sendResponse({ error: "unknown" });
@@ -332,8 +357,125 @@ async function tick() {
   chrome.tabs.create({ url: out.task.url, active: false });
 }
 
+// ---- One knock, not five ----------------------------------------------------
+//
+// A task that hits a CAPTCHA, a login or a question we cannot answer honestly
+// keeps its tab: the page is now the user's to finish. Autopilot does not wait
+// for them — it releases the slot and takes the next task — so on a bad run
+// five background tabs accumulate, each with a banner nobody has looked at,
+// while the popup cheerfully reports progress. The work is genuinely blocked
+// and the user is the last to know.
+//
+// So the tabs stay where they are, and the interruption is pooled: one
+// notification for however many are waiting, after a short quiet period, so a
+// run that stops on three forms knocks once instead of three times.
+
+const WAITING_KEY = "grindly_waiting";
+const NOTIFY_ALARM = "grindly-waiting-notify";
+const NOTIFY_ID = "grindly-waiting";
+// Creating an alarm that already exists replaces the pending one, so each new
+// blocked task pushes the knock back — the debounce falls out of that. Half a
+// minute is also the floor Chrome clamps alarms to in a packed extension;
+// asking for less would quietly become this anyway.
+const NOTIFY_DEBOUNCE_MIN = 0.5;
+
+/** What the person is actually being asked for, in their words. */
+const GATE_WORDS = {
+  captcha: "a CAPTCHA",
+  otp: "a code from your email or phone",
+  login: "a sign-in",
+  payment: "a payment step",
+  unknown_question: "a question only you can answer",
+  changed_form: "a check that it went through",
+};
+
+async function readWaiting() {
+  const v = (await chrome.storage.local.get(WAITING_KEY))[WAITING_KEY];
+  return Array.isArray(v) ? v : [];
+}
+
+async function noteWaiting(entry) {
+  const list = await readWaiting();
+  // A task can report a gate more than once (the modal check and the
+  // pre-submit check are separate moments). Count the application, not the
+  // reports, or one stubborn form reads as a pile-up.
+  if (list.some((w) => w.taskId === entry.taskId)) return;
+  list.push(entry);
+  await chrome.storage.local.set({ [WAITING_KEY]: list });
+  chrome.alarms.create(NOTIFY_ALARM, { delayInMinutes: NOTIFY_DEBOUNCE_MIN });
+}
+
+/** Forget anything whose tab is gone — closing it IS the user dealing with it. */
+async function pruneWaiting() {
+  const list = await readWaiting();
+  const open = [];
+  for (const w of list) {
+    // eslint-disable-next-line no-await-in-loop
+    const alive = await chrome.tabs.get(w.tabId).then(() => true, () => false);
+    if (alive) open.push(w);
+  }
+  if (open.length !== list.length) {
+    await chrome.storage.local.set({ [WAITING_KEY]: open });
+  }
+  return open;
+}
+
+async function flushWaiting() {
+  const open = await pruneWaiting();
+  if (!open.length) {
+    chrome.notifications.clear(NOTIFY_ID);
+    return;
+  }
+  const asks = [...new Set(open.map((w) => GATE_WORDS[w.reason] || "your input"))];
+  const where = [...new Set(open.map((w) => w.host).filter(Boolean))];
+  chrome.notifications.create(NOTIFY_ID, {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icons/icon128.png"),
+    title: open.length === 1
+      ? "One application needs you"
+      : `${open.length} applications need you`,
+    // Name what is being asked and where. "Something needs your attention" is
+    // the kind of notification people learn to dismiss without reading.
+    message:
+      `Grindly filled ${open.length === 1 ? "it" : "them"} and stopped for ` +
+      `${asks.slice(0, 2).join(" and ")}. ` +
+      `${where.slice(0, 2).join(", ")}${where.length > 2 ? ` and ${where.length - 2} more` : ""}. ` +
+      `${open.length === 1 ? "The tab is" : "The tabs are"} open and waiting.`,
+    priority: 1,
+  });
+}
+
+/** Bring the oldest waiting tab to the front. */
+async function focusFirstWaiting() {
+  const open = await pruneWaiting();
+  if (!open.length) return;
+  const tab = await chrome.tabs.get(open[0].tabId).catch(() => null);
+  if (!tab) return;
+  await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+  if (typeof tab.windowId === "number") {
+    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  }
+}
+
+chrome.notifications.onClicked.addListener((id) => {
+  if (id !== NOTIFY_ID) return;
+  chrome.notifications.clear(NOTIFY_ID);
+  focusFirstWaiting();
+});
+
+// Closing the tab is how someone says they are done with it — including
+// "I don't want this one". Nothing here should nag about it again.
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const list = await readWaiting();
+  const next = list.filter((w) => w.tabId !== tabId);
+  if (next.length === list.length) return;
+  await chrome.storage.local.set({ [WAITING_KEY]: next });
+  if (!next.length) chrome.notifications.clear(NOTIFY_ID);
+});
+
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === ALARM) tick();
+  if (a.name === NOTIFY_ALARM) flushWaiting();
 });
 
 // A service worker is evicted when idle and a browser gets restarted. Without

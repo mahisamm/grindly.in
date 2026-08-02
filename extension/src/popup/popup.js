@@ -53,6 +53,22 @@ function refreshStatus() {
     el.style.display = "block";
     el.textContent = st.text + (mins > 0 ? " (" + mins + "m ago)" : "");
   });
+  refreshWaiting();
+}
+
+// Applications that stopped for a human. Autopilot does not wait for them, so
+// the status line above can say "Opening an application…" while three others
+// sit half-finished in background tabs the user never noticed opening.
+function refreshWaiting() {
+  chrome.runtime.sendMessage({ type: "grindly:waiting" }, function (list) {
+    var el = document.getElementById("waiting");
+    var n = Array.isArray(list) ? list.length : 0;
+    if (!n) { el.style.display = "none"; return; }
+    el.style.display = "block";
+    el.textContent = n === 1
+      ? "1 application needs you — open it"
+      : n + " applications need you — open the first";
+  });
 }
 
 chrome.runtime.sendMessage({ type: "grindly:status" }, function (resp) {
@@ -94,6 +110,13 @@ document.getElementById("autoSw").addEventListener("click", function () {
     { type: "grindly:autopilot", on: turningOn },
     function (resp) { renderAutopilot(!!(resp && resp.on)); },
   );
+});
+
+document.getElementById("waiting").addEventListener("click", function () {
+  chrome.runtime.sendMessage({ type: "grindly:focusWaiting" }, function () {
+    // The popup closes as soon as that tab takes focus, so there is nothing
+    // useful to re-render here.
+  });
 });
 
 // Manual kick. Waiting on a five-minute timer to discover whether autopilot
