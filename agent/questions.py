@@ -590,6 +590,25 @@ _CURRENT_SALARY_Q = re.compile(
     r"\bcurrent\s+annual\s+(salary|income)\b|\bsalary\s+drawn\b",
     re.I,
 )
+
+# "Total Years of Experience *" / "Relevant Years of Experience *" / "Experience
+# (in years)". Required boxes on Keka and Darwinbox, and until now nothing could
+# answer them: measured on a real application to Dash Technologies, the agent
+# refused to guess and stopped at the submit button — correctly, and it would
+# have done so on every form asking this, forever.
+#
+# Deliberately does NOT match "work experience" as a section heading or a
+# free-text "describe your experience" box; those want prose, and this answer is
+# a number.
+_YEARS_EXPERIENCE_Q = re.compile(
+    r"\b(?:total|relevant|overall|professional|work)?\s*"
+    r"(?:years?|yrs?)\s+of\s+(?:work\s+)?experience\b|"
+    # "Experience (in years)" — the parenthesis and the "in" are both optional
+    # and can appear together, which a plain either/or missed.
+    r"\bexperience\s*\(?\s*(?:in\s+)?(?:years?|yrs?)\b|"
+    r"\byears?\s+experience\b",
+    re.I,
+)
 _PREV_INTERNSHIP_Q = re.compile(
     r"\b(previous|prior|past|any)\s+internship\b|"
     r"\binternship\s+experience\b|"
@@ -614,6 +633,25 @@ _DAYS_FOR_PHRASE = (
     ("2 month", "60"), ("two month", "60"),
     ("3 month", "90"), ("three month", "90"),
 )
+
+
+def _years_experience(profile: dict) -> str:
+    """The candidate's stated years of full-time experience, as a bare number.
+
+    Setup offers "0 — no full-time work yet" as the first option, because the
+    plain digit reads like a placeholder to a student who has never worked. The
+    employer's box wants the digit, so take it back out.
+
+    Returns "" when the user has not answered, which is what makes the form stop
+    and ask rather than send a guess. Zero is a FACT about a person — someone
+    who worked two years before a masters would have it written wrong under
+    their own name — so it is never assumed here.
+    """
+    raw = str(profile.get("years_experience") or "").strip()
+    if not raw:
+        return ""
+    m = re.search(r"\d+", raw)
+    return m.group(0) if m else ""
 
 
 def _join_in_days(profile: dict) -> str | None:
@@ -881,6 +919,10 @@ def _setup_candidates(label: str, profile: dict) -> list[tuple[bool, str, str]]:
         # some of the same words: "current salary" is not "expected salary", and
         # "notice period" is its own box on forms that also ask when you start.
         (bool(_CURRENT_SALARY_Q.search(label)), "current_salary", _text("current_salary")),
+        # Ahead of the generic numeric patterns: this box wants a count of
+        # years, and the stored answer already IS one.
+        (bool(_YEARS_EXPERIENCE_Q.search(label)), "years_experience",
+         _years_experience(profile)),
         (bool(_PREV_INTERNSHIP_Q.search(label)), "previous_internship", _text("previous_internship")),
         # Before _NOTICE_Q and _START_Q: both match this label too, and both
         # would hand a phrase to a numeric box.

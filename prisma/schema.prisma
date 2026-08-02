@@ -294,6 +294,13 @@ model Profile {
   // model may supply — so they are collected once here, and the agent then
   // answers every phrasing of them on every site, forever.
   currentSalary     String? @map("current_salary")   // "0" for a student — stated as written
+  // "Total Years of Experience *" and "Relevant Years of Experience *" are
+  // required boxes on Keka and Darwinbox, and there was nowhere to keep the
+  // answer. Measured on a real application to Dash Technologies: the agent
+  // correctly refused to guess, and would have refused on every form asking it,
+  // forever. For most students the true answer is 0 — but 0 is a FACT about
+  // them, not a default we may assume, so it is asked once and stored.
+  yearsExperience   String? @map("years_experience")
   previousInternship String? @map("previous_internship") // "Yes" | "No"
   noticePeriod      String? @map("notice_period")    // "Immediate" for most students
   currentLocation   String? @map("current_location") // the city they are in now

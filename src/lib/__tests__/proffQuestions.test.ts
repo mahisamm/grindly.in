@@ -178,7 +178,14 @@ describe("how much setup asks for", () => {
     // stop on — two of these were added after a live run refused three
     // employer forms for facts that were sitting hidden under "More answers".
     // It is a ceiling on drift, not a target: the wall this replaced was 26.
-    expect(asked.length).toBeLessThanOrEqual(13);
+    //
+    // 13 -> 15 on 2026-08-02, under that same rule. The first live send to real
+    // employers stopped at the submit button twice: Ken Research on "Gender *"
+    // (the field existed but was folded under "More answers", so it was blank on
+    // every account) and Dash Technologies on "Total Years of Experience *"
+    // (which had no field anywhere). Gender is required on Keka, which is the
+    // single largest source of Indian internships we have.
+    expect(asked.length).toBeLessThanOrEqual(15);
   });
 
   it("only blocks on questions the agent is genuinely stuck without", () => {

@@ -258,6 +258,26 @@ export const PROFF_FIELDS: ProffField[] = [
     required: true,
   },
   {
+    // "Total Years of Experience *" and "Relevant Years of Experience *" are
+    // required boxes on Keka and Darwinbox forms, and nothing in this list
+    // could answer them. Measured on a real application to Dash Technologies:
+    // the agent refused to guess and stopped at the submit button — correctly,
+    // and it would have done so on every form asking this, forever.
+    //
+    // Required, and not defaulted to 0. For most students 0 IS the answer, but
+    // it is a fact about them rather than one we may assume: someone who worked
+    // for two years before a masters would have that answer written wrong under
+    // their own name, on an employer's form.
+    key: "yearsExperience",
+    label: "Years of work experience",
+    help: "Asked as a required box on most Indian application forms. Count full-time work only — pick the first option if you have not worked full-time yet; internships and college projects do not count.",
+    type: "choice",
+    options: ["0 — no full-time work yet", "1", "2", "3", "4", "5"],
+    placeholder: "e.g. 2",
+    group: "About you",
+    required: true,
+  },
+  {
     key: "previousInternship",
     label: "Done an internship before?",
     help: "Answered exactly as picked. Never read off your resume, because a missed line there would answer 'no' for you.",
@@ -321,14 +341,22 @@ export const PROFF_FIELDS: ProffField[] = [
     advanced: true,
   },
   {
+    // NOT advanced any more. It was folded away behind "show more", so it was
+    // blank on every account — and it is a REQUIRED box on Keka, which is the
+    // single biggest source of Indian internships we have. Measured on a real
+    // application to Ken Research: the agent filled the form, reached "Gender *",
+    // refused to guess, and stopped at the submit button. One folded-away field
+    // was blocking that employer and every other form asking the same thing.
+    //
+    // "Prefer not to say" is a real answer that these forms accept, so nobody is
+    // forced to disclose anything to get their applications sent.
     key: "gender",
     label: "Gender",
-    help: "Optional. Asked on the diversity section of most application forms. Leave blank and those applications wait for you rather than being sent with a guess.",
+    help: "A required box on most Indian application forms — including Keka, where a lot of these internships live. \"Prefer not to say\" is accepted. Left blank, those applications stop and wait for you instead of being sent with a guess.",
     type: "choice",
     options: ["Male", "Female", "Non-binary", "Prefer not to say"],
     placeholder: "Type your own",
     group: "About you",
-    advanced: true,
   },
   {
     key: "differentlyAbled",
@@ -502,6 +530,7 @@ export const DEFAULTS: Record<string, unknown> = {
   // setup-gap prompt can ask for it.
   expectedStipend: null,
   currentSalary: "",
+  yearsExperience: "",
   previousInternship: "",
   noticePeriod: "",
   currentLocation: "",
