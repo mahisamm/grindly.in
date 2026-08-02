@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Logo } from "@/components/Brand";
 import { CountUp } from "@/components/Motion";
 import SupportChat from "@/components/SupportChat";
-import { PROFF_FIELDS, CONTACT_FIELDS } from "@/lib/proffQuestions";
+import { PROFF_FIELDS, CONTACT_FIELDS, likelyStartYear } from "@/lib/proffQuestions";
 import ChoiceField from "@/components/ChoiceField";
 import { normalizePlan } from "@/lib/plans";
 import { EMPLOYER_CHANNELS } from "@/lib/applyPolicy";
@@ -134,6 +134,7 @@ type RawProfile = {
   degree: string | null;
   college: string | null;
   gradYear: number | null;
+  educationStartYear: number | null;
   class12Percent: number | null;
   class10Percent: number | null;
   availability: string | null;
@@ -251,6 +252,7 @@ type ProfileForm = {
   degree: string;
   college: string;
   gradYear: number;
+  educationStartYear: number;
   class12Percent: number;
   class10Percent: number;
   availability: string;
@@ -337,6 +339,27 @@ const STATUS_HELP: Record<string, string> = {
  *  Tier B is a separate check. The agent submits those on the board the user
  *  connected, so their channel is "platform" and the employer-channel test
  *  above never sees them. */
+/** A stored value is "unset" when it's empty or a zero placeholder. */
+function pickedValue(v: unknown): string {
+  return v === 0 || v === null || v === undefined ? "" : String(v);
+}
+
+/**
+ * Marks an answer the agent worked out rather than was told.
+ *
+ * A value here is something to CHECK. The degree start year is arithmetic on
+ * the course (a B.Tech runs four years) and a guess about the person — lateral
+ * entry, a gap year or a repeated year each move it — so it is shown, labelled,
+ * and confirmed rather than written silently onto an employer's form.
+ */
+function WorkedOut() {
+  return (
+    <span className="ml-2 rounded-full border border-brand/40 bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand-2 align-middle">
+      worked out — check it
+    </span>
+  );
+}
+
 function sentByAgent(a: App): boolean {
   if (a.status !== "applied") return false;
   if ((EMPLOYER_CHANNELS as readonly string[]).includes(a.applyChannel ?? "")) return true;
@@ -590,6 +613,7 @@ function profileToForm(p: RawProfile): ProfileForm {
     degree: p.degree || "",
     college: p.college || "",
     gradYear: p.gradYear ?? 0,
+    educationStartYear: p.educationStartYear ?? 0,
     class12Percent: p.class12Percent ?? 0,
     class10Percent: p.class10Percent ?? 0,
     availability: p.availability || "",
@@ -780,6 +804,9 @@ export default function Dashboard() {
   }, []);
   const [page, setPage] = useState(0);
   const [profileForm, setProfileForm] = useState<ProfileForm | null>(null);
+  // Was the start year worked out rather than given? Drives the badge that
+  // tells the student to check it.
+  const [startYearWorkedOut, setStartYearWorkedOut] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
@@ -1524,7 +1551,38 @@ export default function Dashboard() {
 
   function patchForm<K extends keyof ProfileForm>(key: K, val: ProfileForm[K]) {
     setProfileForm((f) => f ? { ...f, [key]: val } : f);
+    if (key === "educationStartYear") {
+      // Once they have set it themselves it is a fact, and the estimate below
+      // must never touch it again.
+      setStartYearWorkedOut(false);
+    }
   }
+
+  // Work out when the degree started, from the course and its end year.
+  //
+  // A B.Tech runs four years, so graduating in 2027 means it began in 2023.
+  // That part is arithmetic about the QUALIFICATION and worth doing for the
+  // student rather than asking. Whether THIS student took four years is a fact
+  // about them — lateral entry from a diploma skips a year, and a gap year, a
+  // transfer or a repeated year each move it — so the answer is filled in and
+  // badged rather than written silently onto an employer's form.
+  //
+  // Lives here as well as in setup because setup runs exactly once: a user who
+  // finished onboarding before this field existed would otherwise never be
+  // offered it, and their applications would keep stalling on a box they were
+  // never shown.
+  useEffect(() => {
+    if (!profileForm) return;
+    if (pickedValue(profileForm.educationStartYear)) return;
+    const guess = likelyStartYear(profileForm.degree, profileForm.gradYear);
+    if (!guess) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- derived from
+    // two other answers, and only while this one is still empty.
+    setProfileForm((f) =>
+      !f || pickedValue(f.educationStartYear) ? f : { ...f, educationStartYear: guess },
+    );
+    setStartYearWorkedOut(true);
+  }, [profileForm?.degree, profileForm?.gradYear, profileForm?.educationStartYear, profileForm]);
 
   async function setOutcome(id: string, outcome: string) {
     const prevOutcome = me?.applications.find((a) => a.id === id)?.outcome ?? null;
@@ -3219,7 +3277,9 @@ export default function Dashboard() {
               <div className="space-y-4">
                 {PROFF_FIELDS.filter((f) => f.group === "Targeting").map((f) => (
                   <div key={f.key}>
-                    <label htmlFor={`field-${f.key}`} className="block text-sm font-medium mb-1">{f.label}</label>
+                    <label htmlFor={`field-${f.key}`} className="block text-sm font-medium mb-1">{f.label}
+                      {f.key === "educationStartYear" && startYearWorkedOut && <WorkedOut />}
+                    </label>
                     <p className="text-xs text-muted mb-1.5">{f.help}</p>
                     {f.type === "tags" && (
                       <TagInput
