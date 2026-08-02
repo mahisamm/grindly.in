@@ -11,6 +11,7 @@ import {
   DEFAULTS,
   missingRequired,
   blankOptional,
+  likelyStartYear,
 } from "@/lib/proffQuestions";
 import { PLANS, type Plan } from "@/lib/adapters/payment";
 
@@ -105,6 +106,23 @@ function FromResume() {
   );
 }
 
+/**
+ * Marks an answer the agent worked out rather than was told.
+ *
+ * Same contract as FromResume: a value here is something to CHECK. The start
+ * year is arithmetic on the course (a B.Tech runs four years) and a guess about
+ * the person — lateral entry, a gap year or a repeated year each move it — so
+ * it is shown, labelled, and confirmed rather than written silently onto an
+ * employer's form.
+ */
+function WorkedOut() {
+  return (
+    <span className="ml-2 rounded-full border border-brand/40 bg-brand/10 px-1.5 py-0.5 text-[10px] font-medium text-brand-2 align-middle">
+      worked out — check it
+    </span>
+  );
+}
+
 /** A stored value is "unset" when it's empty or a zero placeholder. */
 function pickedValue(v: unknown): string {
   return v === 0 || v === null || v === undefined ? "" : String(v);
@@ -152,6 +170,9 @@ export default function OnboardingPage() {
   // Which answers came off the resume, so each one can say so and be checked
   // rather than typed.
   const [fromResume, setFromResume] = useState<string[]>([]);
+  // Answers the agent worked out from other answers rather than being told.
+  // Shown with a badge so they read as something to check, not something known.
+  const [workedOut, setWorkedOut] = useState<string[]>([]);
   // Fields the user has edited by hand. The resume read must never overwrite
   // one: the extractor is best-effort, the person is not.
   const [touched, setTouched] = useState<string[]>([]);
@@ -310,6 +331,32 @@ export default function OnboardingPage() {
     setTouched((t) => (t.includes(key) ? t : [...t, key]));
     setForm((f) => ({ ...f, [key]: v }));
   }
+
+  // Work out when the degree started, once the course and its end year are both
+  // known. A B.Tech runs four years, so 2027 means it began in 2023 — that part
+  // is arithmetic about the QUALIFICATION and worth doing for the student
+  // rather than asking.
+  //
+  // Prefilled and badged, never silent. Lateral entry from a diploma skips a
+  // year, and a gap year, a transfer or a repeated year each move it — any of
+  // which would put a false education history on an employer's form under the
+  // candidate's own name. So the answer is shown as worked out, and one tap
+  // changes it.
+  //
+  // Only ever fills a BLANK box the user has not touched: a value they typed
+  // themselves is the fact, and this is the estimate.
+  useEffect(() => {
+    if (touched.includes("educationStartYear")) return;
+    if (pickedValue(form.educationStartYear)) return;
+    const guess = likelyStartYear(form.degree, form.gradYear);
+    if (!guess) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- derived from
+    // two other answers, and only when this one is still empty.
+    setForm((f) =>
+      pickedValue(f.educationStartYear) ? f : { ...f, educationStartYear: guess },
+    );
+    setWorkedOut((w) => (w.includes("educationStartYear") ? w : [...w, "educationStartYear"]));
+  }, [form.degree, form.gradYear, form.educationStartYear, touched]);
 
   /** Fields the resume can supply, and which profile column each comes from. */
   const FROM_RESUME: [string, string][] = [
@@ -874,6 +921,7 @@ export default function OnboardingPage() {
                       <label className="text-sm font-medium">
                         {f.label}
                         {fromResume.includes(f.key) && <FromResume />}
+                        {workedOut.includes(f.key) && <WorkedOut />}
                       </label>
                       <p className="text-xs text-muted mb-1.5">{f.help}</p>
                       <div className="flex items-center gap-2">
@@ -912,6 +960,7 @@ export default function OnboardingPage() {
                           {f.label}
                           {f.required && <span className="ml-1 text-danger">*</span>}
                           {fromResume.includes(f.key) && <FromResume />}
+                        {workedOut.includes(f.key) && <WorkedOut />}
                         </label>
                         <p className="text-xs text-muted mb-1.5">{f.help}</p>
                         {f.type === "tags" && (

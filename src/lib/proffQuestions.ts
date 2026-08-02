@@ -81,6 +81,36 @@ export const GRAD_YEARS = Array.from({ length: 8 }, (_, i) => String(CURRENT_YEA
 // for an internship before their course begins.
 export const START_YEARS = Array.from({ length: 10 }, (_, i) => String(CURRENT_YEAR - i));
 
+/**
+ * How long each degree runs in India. A fact about the QUALIFICATION, which is
+ * why it can be looked up rather than asked.
+ */
+const COURSE_YEARS: Record<string, number> = {
+  "B.Tech": 4, "B.E.": 4, "MBBS": 5, "B.Arch": 5,
+  "B.Sc": 3, "B.Com": 3, "B.A.": 3, "BCA": 3, "BBA": 3, "Diploma": 3,
+  "M.Tech": 2, "M.Sc": 2, "MCA": 2, "MBA": 2, "M.Com": 2, "M.A.": 2,
+};
+
+/**
+ * The year a degree most likely started, from its end year and its length.
+ *
+ * Offered as a PREFILLED answer the student can see and change — never written
+ * silently onto an application. The arithmetic is sound about the course and a
+ * guess about the person: lateral entry from a diploma skips a year, and a gap
+ * year, a transfer or a repeated year each move it. Any of those would put a
+ * false education history on an employer's form under the candidate's name, so
+ * the value is shown, marked as worked out rather than known, and confirmed.
+ *
+ * Returns null when it cannot be worked out, which leaves the question asked
+ * normally rather than pre-answered with something invented.
+ */
+export function likelyStartYear(degree: unknown, gradYear: unknown): number | null {
+  const years = COURSE_YEARS[String(degree ?? "").trim()];
+  const end = Number(gradYear);
+  if (!years || !Number.isFinite(end) || end < 1980 || end > CURRENT_YEAR + 10) return null;
+  return end - years;
+}
+
 export const CONTACT_FIELDS = [
   // Only ever came from Google OAuth before; an account whose Google profile
   // had no name set was permanently stuck with none and no way to add it.
