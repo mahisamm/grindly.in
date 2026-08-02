@@ -226,19 +226,58 @@ def _combobox_options(page, el) -> list[str]:
     nothing is selected.
     """
     try:
+        # Which options existed BEFORE this menu opened. Everything already on
+        # the page belongs to somebody else's widget.
+        #
+        # The old version read every [role="option"] in the document, so on a
+        # Greenhouse form — which renders an inline phone-country selector —
+        # School, Degree and Location all came back offering "Afghanistan+93,
+        # Åland Islands+358, Albania+355...". None of them contained "Anurag
+        # University" or "B.Tech", so all three were reported unanswerable while
+        # the answers sat in the profile. Measured on a live AlphaGrep form.
+        before = set(page.evaluate(
+            """() => Array.from(document.querySelectorAll('[role="option"]'))
+                 .map(o => (o.innerText || '').trim().replace(/\\s+/g, ' '))"""
+        ) or [])
+
         el.click()
         page.wait_for_timeout(_MENU_WAIT_MS)
         options = page.evaluate(
-            """() => {
+            """([el, before]) => {
+              const clean = o => (o.innerText || '').trim().replace(/\\s+/g, ' ');
               const seen = [];
+              const take = root => {
+                (root ? root.querySelectorAll('[role="option"]') : []).forEach(o => {
+                  const t = clean(o);
+                  if (t && t.length < 120 && !seen.includes(t)) seen.push(t);
+                });
+              };
+
+              // 1. The listbox this control SAYS it owns. Unambiguous when the
+              //    widget bothers to wire it up, which react-select does.
+              const id = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+              if (id) { id.split(/\\s+/).forEach(i => take(document.getElementById(i))); }
+              if (seen.length) return seen;
+
+              // 2. Otherwise the menu inside this control's own container —
+              //    near enough that another widget's list cannot be mistaken
+              //    for it.
+              let n = el.parentElement;
+              for (let d = 0; d < 5 && n && !seen.length; d++, n = n.parentElement) {
+                take(n);
+              }
+              if (seen.length) return seen;
+
+              // 3. Last resort: whatever appeared on the page that was not
+              //    there before the click. Still this widget's, by elimination.
+              const prior = new Set(before);
               document.querySelectorAll('[role="option"]').forEach(o => {
-                const t = (o.innerText || '').trim().replace(/\\s+/g, ' ');
-                // "Select..." and friends are the widget telling you nothing is
-                // chosen, not something a candidate can be.
-                if (t && t.length < 120 && !seen.includes(t)) seen.push(t);
+                const t = clean(o);
+                if (t && t.length < 120 && !prior.has(t) && !seen.includes(t)) seen.push(t);
               });
               return seen;
-            }"""
+            }""",
+            [el, sorted(before)],
         ) or []
     except Exception as e:  # noqa: BLE001
         print(f"[questions] could not read a dropdown's options: {e}")
