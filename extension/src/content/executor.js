@@ -147,13 +147,65 @@
     // then reported that the form asked something it could not answer.
     const kit = task.kit || {};
     let filled = 0;
-    const fillNow = () => window.GrindlyFill.applyFills(document.body, kit, document).filled;
+    let serverRefusals = [];
+
+    // Ask the SERVER what to type.
+    //
+    // The extension's own logic is four regexes — phone, email, CGPA, name —
+    // and until today it could not read a <select> at all, so "Gender *" was
+    // invisible to it and that one required dropdown blocked every Keka
+    // application. The server holds the engine that knows gender, school,
+    // degree, years of experience, notice period, option fitting, and the
+    // refusals that stop it inventing a fact about the candidate. Reimplementing
+    // that here would mean rediscovering every one of its bugs a second time.
+    //
+    // So: this reads the page, the server decides, this types the answer back.
+    // Falls back to the local engine only when the server cannot be reached —
+    // a student's application should not stall because our API had a bad
+    // minute, and the local path still refuses to invent anything.
+    const fillNow = () => {
+      const fields = window.GrindlyFill.readFields(document.body, document);
+      if (!fields.length) return { filled: 0, unanswered: [] };
+      return send({
+        type: "grindly:fillPlan",
+        fields: window.GrindlyFill.serializeFields(fields),
+        job: { title: task.jobTitle || "", company: task.company || "" },
+        coverLetter: kit.coverLetter || "",
+      }).then((plan) => {
+        if (!plan || plan.error || !Array.isArray(plan.fills)) {
+          const local = window.GrindlyFill.applyFills(document.body, kit, document);
+          return { filled: local.filled, unanswered: [], local: true };
+        }
+        const out = window.GrindlyFill.applyPlan(fields, plan);
+        return { filled: out.filled, unanswered: out.unanswered || [] };
+      });
+    };
+
     try {
-      filled = fillNow();
+      const result = await fillNow();
+      filled = result.filled;
+      serverRefusals = result.unanswered || [];
     } catch {
       stopHeartbeat();
       await report("failed", { reason: "fill_error" });
       banner("Grindly could not fill this form. Left it untouched for you.", "gate");
+      return;
+    }
+
+    // A required question the server would not answer stops this here, before
+    // any submit button is looked for. It refused because answering honestly
+    // was impossible — the fact is not on file — and sending anyway would put a
+    // guess in front of an employer under the user's name.
+    if (serverRefusals.length) {
+      const asked = serverRefusals.map((u) => u.label).filter(Boolean).slice(0, 3);
+      stopHeartbeat();
+      await report("blocked", { reason: "missing_facts", fields: asked });
+      banner(
+        "Grindly filled what it could. This form asks for something it does not " +
+        "have about you: " + (asked.join("; ") || "a required answer") +
+        ". Add it in your profile and it will finish this itself.",
+        "gate",
+      );
       return;
     }
 
@@ -185,11 +237,28 @@
           return;
         }
         try {
-          filled += fillNow();
+          // The modal that just opened is a different form with different
+          // questions, so it gets its own trip to the server rather than a
+          // replay of the plan for the page underneath it.
+          const more = await fillNow();
+          filled += more.filled;
+          serverRefusals = more.unanswered || [];
         } catch {
           stopHeartbeat();
           await report("failed", { reason: "fill_error" });
           banner("Grindly could not fill this form. Left it untouched for you.", "gate");
+          return;
+        }
+        if (serverRefusals.length) {
+          const asked = serverRefusals.map((u) => u.label).filter(Boolean).slice(0, 3);
+          stopHeartbeat();
+          await report("blocked", { reason: "missing_facts", fields: asked });
+          banner(
+            "Grindly filled what it could. This form asks for something it does " +
+            "not have about you: " + (asked.join("; ") || "a required answer") +
+            ". Add it in your profile and it will finish this itself.",
+            "gate",
+          );
           return;
         }
       }

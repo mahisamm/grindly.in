@@ -47,7 +47,6 @@ function dom(html: string) {
   // do nothing, which looked exactly like a broken filler.
   // @ts-expect-error test stub
   globalThis.window = d.window;
-  // @ts-expect-error test stub
   globalThis.Event = d.window.Event;
   const fields = engine.readFields(doc.getElementById("f"), doc);
   return { doc, fields, window: d.window };
@@ -213,5 +212,51 @@ describe("applying what the server decided", () => {
     for (const plan of [null, undefined, {}, { fills: null }]) {
       expect(() => engine.applyPlan(fields, plan)).not.toThrow();
     }
+  });
+});
+
+// ── the executor must ASK, not guess ─────────────────────────────────────
+
+describe("the executor asks the server", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require("node:fs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const path = require("node:path");
+  const EXEC = fs.readFileSync(
+    path.join(__dirname, "..", "content", "executor.js"), "utf8");
+  const BG = fs.readFileSync(
+    path.join(__dirname, "..", "background.js"), "utf8");
+
+  it("sends the form it read to the plan endpoint", () => {
+    expect(EXEC).toMatch(/grindly:fillPlan/);
+    expect(EXEC).toMatch(/serializeFields/);
+    expect(BG).toMatch(/\/api\/extension\/plan/);
+  });
+
+  it("applies what came back rather than its own guess", () => {
+    expect(EXEC).toMatch(/applyPlan/);
+  });
+
+  it("keeps a local fallback, because a bad API minute must not strand a student", () => {
+    // The local engine is weaker but still refuses to invent anything, so
+    // falling back is safe. Failing shut here would leave a half-read form in
+    // somebody's tab with no explanation.
+    expect(EXEC).toMatch(/applyFills/);
+  });
+
+  it("stops on a required question the server refused to answer", () => {
+    // The refusal is the point of the whole system: the fact is not on file, and
+    // sending anyway would put a guess in front of an employer under the user's
+    // name. It must reach the user as something they can fix.
+    expect(EXEC).toMatch(/serverRefusals/);
+    expect(EXEC).toMatch(/missing_facts/);
+  });
+
+  it("never lets a job page see the API token", () => {
+    // The content script runs on the employer's page. The token lives in the
+    // background worker and the fetch happens there — a page that could ask for
+    // a plan directly could ask for anything else too.
+    expect(EXEC).not.toMatch(/Authorization/);
+    expect(EXEC).not.toMatch(/Bearer/);
   });
 });

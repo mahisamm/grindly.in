@@ -297,8 +297,15 @@ describe("confirming a submission", () => {
   it("fills again after the form appears", () => {
     // The fields arrive with the modal. Filling only before it opened meant
     // filling a page that had no form on it.
+    //
+    // Asserted on the CALL, not the exact expression. Filling is a round trip
+    // to the server now — the modal is a different form with different
+    // questions, so it gets its own plan rather than a replay of the one for
+    // the page underneath — and the previous `filled += fillNow()` shape could
+    // not survive that.
     const body = SRC.slice(SRC.indexOf("waitForSender()"), SRC.indexOf("unansweredRequiredFields"));
-    expect(body).toMatch(/filled \+= fillNow\(\)/);
+    expect(body).toMatch(/await fillNow\(\)/);
+    expect(body).toMatch(/filled \+=/);
   });
 
   it("never presses an opener as though it were a send button", () => {

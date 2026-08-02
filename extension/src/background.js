@@ -171,6 +171,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // script: a job page must not be able to pull the next task.
         sendResponse(sender.tab ? { error: "forbidden" } : await claimTask());
         break;
+      case "grindly:fillPlan": {
+        // What to type, decided SERVER-SIDE.
+        //
+        // The extension is the hands: it runs in the student's own browser,
+        // where a CAPTCHA has a person to answer it and the IP is residential.
+        // The brain stays on the server, where forty-odd patterns for gender,
+        // school, degree, years of experience and the refusals that stop it
+        // inventing facts already live and are already tested. This message is
+        // the wire between them.
+        //
+        // The content script cannot make this call itself: the token is held
+        // here, and a job page must never see it.
+        sendResponse(
+          await authedFetch("/api/extension/plan", {
+            method: "POST",
+            body: JSON.stringify({
+              fields: msg.fields || [],
+              job: msg.job || {},
+              coverLetter: msg.coverLetter || "",
+            }),
+          }),
+        );
+        break;
+      }
       case "grindly:taskEvent": {
         const out = await reportTask(msg.taskId, msg.leaseToken, msg.event, msg.extra);
         // Autopilot opened this tab; autopilot cleans it up. Terminal states
