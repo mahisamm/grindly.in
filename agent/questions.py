@@ -635,6 +635,30 @@ _DAYS_FOR_PHRASE = (
 )
 
 
+def _current_salary(profile: dict) -> str:
+    """What the candidate currently earns, as a figure a salary box will take.
+
+    Setup asks this as "Are you earning right now?" and offers "Not earning — I
+    am a student", because a bare 0 reads like a placeholder to somebody who has
+    never been paid. That phrasing is right for the person and wrong for the
+    employer: measured on a live Keka application, the sentence itself was typed
+    into `Current Salary *`, which is a numeric box.
+
+    So the same treatment as _years_experience: keep the friendly label in
+    setup, hand the form the number. "Not earning" IS zero — that is what the
+    user said, not an assumption — and anything the user typed themselves is
+    passed through untouched.
+    """
+    raw = str(profile.get("current_salary") or "").strip()
+    if not raw:
+        return ""
+    if re.search(r"\bnot\s+earning\b|\bno\s+(?:current\s+)?(?:salary|income)\b"
+                 r"|\bunemployed\b|\bstudent\b", raw, re.I):
+        return "0"
+    m = re.search(r"\d[\d,]*", raw)
+    return m.group(0).replace(",", "") if m else raw
+
+
 def _years_experience(profile: dict) -> str:
     """The candidate's stated years of full-time experience, as a bare number.
 
@@ -937,7 +961,7 @@ def _setup_candidates(label: str, profile: dict) -> list[tuple[bool, str, str]]:
         # Ahead of the stipend and start-date patterns below, which both claim
         # some of the same words: "current salary" is not "expected salary", and
         # "notice period" is its own box on forms that also ask when you start.
-        (bool(_CURRENT_SALARY_Q.search(label)), "current_salary", _text("current_salary")),
+        (bool(_CURRENT_SALARY_Q.search(label)), "current_salary", _current_salary(profile)),
         # Ahead of the generic numeric patterns: this box wants a count of
         # years, and the stored answer already IS one.
         (bool(_YEARS_EXPERIENCE_Q.search(label)), "years_experience",
