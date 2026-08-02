@@ -1012,6 +1012,25 @@ def _fit_option(field: dict, value: str) -> str | None:
         text = str(option).strip().lower()
         if text.startswith(low) or low.startswith(text):
             return option
+
+    # A native <select> lists everything it will accept, so no match means the
+    # answer genuinely cannot be expressed in this form's vocabulary — refuse.
+    #
+    # A COMBOBOX is different, and treating the two alike blocked real
+    # applications. Greenhouse's School and Degree boxes are async
+    # autocompletes: they query a server as you type, and the handful of
+    # options visible when the menu first opens is a placeholder list, not the
+    # catalogue. "Anurag University" is absent from that snapshot and present in
+    # the real list. Measured on a live AlphaGrep application, which stopped at
+    # the submit button for School* and Degree* with both answers on file.
+    #
+    # Passing the value through is safe because nothing types it blindly:
+    # _choose_in_combobox types it, waits for the menu to filter, and picks a
+    # matching option — returning False and leaving the field EMPTY if none
+    # appears. So the verification still happens, one stage later, against the
+    # list that actually exists.
+    if field.get("kind") == "combobox":
+        return value
     return None
 
 
