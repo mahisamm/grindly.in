@@ -320,12 +320,22 @@ describe("confirming a submission", () => {
   });
 
   it("waits long enough for a real site to respond", () => {
-    expect(SRC).toMatch(/waited < 12000/);
+    // 2.5s was shorter than Internshala takes, so submissions that had very
+    // likely succeeded were reported unconfirmed. The window is asserted on the
+    // number, not the loop that used to spend it: waiting is a MutationObserver
+    // with a wall-clock deadline now, because the old loop counted the delay it
+    // asked for and a background tab is free to stretch that.
+    const afterClick = SRC.slice(SRC.indexOf("submit.click()"));
+    expect(afterClick).toMatch(/12000/);
   });
 
   it("still refuses to claim success it cannot see", () => {
     // The whole point survives: no confirmation, no "submitted".
-    expect(SRC).toMatch(/let confirmed = false/);
+    expect(SRC).toMatch(/if \(confirmed\)/);
     expect(SRC).toMatch(/did not confirm/i);
+    // And the only thing that can set it is the page saying so — never the
+    // click, never a timer running out.
+    const afterClick = SRC.slice(SRC.indexOf("submit.click()"));
+    expect(afterClick).toMatch(/CONFIRM_RE\.test/);
   });
 });

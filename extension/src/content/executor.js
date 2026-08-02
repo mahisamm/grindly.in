@@ -26,8 +26,80 @@
   // Give a slow page time to settle before deciding it has no form.
   const SETTLE_MS = 1500;
 
+  // Autopilot opens its tabs in the background, so NOBODY IS LOOKING AT THIS
+  // PAGE. That is the normal case here, not the edge case, and Chrome treats a
+  // hidden tab very differently: chained setTimeouts are clamped to one per
+  // second, and once the tab has been hidden five minutes, to one per MINUTE.
+  //
+  // Every wait in here used to count the delay it ASKED for — `waited += 300`
+  // — instead of the time that actually passed. Under that clamp each 300ms
+  // step really takes 60s, so an "8 second" wait ran for twenty-seven minutes,
+  // while the heartbeat below faithfully renewed the lease the whole time. The
+  // task never finished, never failed, and never released the one task slot, so
+  // autopilot stopped dead and the popup said "Working on an application…"
+  // forever. It only ever appeared to work when someone had the tab in front of
+  // them, which is exactly the condition that kept the timers running at speed.
+  //
+  // So: every deadline below is wall-clock, and waiting is driven by a
+  // MutationObserver, which is NOT throttled. A submit button appearing or a
+  // form vanishing is a DOM change, so we hear about it at once even when the
+  // page's timers have been cut to one tick a minute.
+  //
+  // RUN_DEADLINE_MS is the backstop for everything else. It sits well inside
+  // the server's ten-minute lease so that a run which somehow stalls anyway
+  // gives the page back to the user instead of holding the slot until the
+  // reaper takes it.
+  const RUN_DEADLINE_MS = 4 * 60000;
+  const runStartedAt = Date.now();
+  const runLeftMs = () => RUN_DEADLINE_MS - (Date.now() - runStartedAt);
+  /** Never wait longer than the run has left. */
+  const budget = (want) => Math.max(0, Math.min(want, runLeftMs()));
+
   let task = null;
   let heartbeat = null;
+
+  /**
+   * Wait until `test()` returns something truthy; resolve null at the deadline.
+   *
+   * The observer is the real signal and the interval is only a backstop — for a
+   * change the observer cannot see (a value written by script, an element whose
+   * visibility changed through a stylesheet) and for noticing the deadline on a
+   * page that has gone completely still. The backstop being throttled is fine;
+   * being throttled is precisely why it is not the primary path.
+   */
+  function waitFor(test, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        obs.disconnect();
+        clearInterval(poll);
+        resolve(v);
+      };
+      const check = () => {
+        let v = null;
+        try { v = test(); } catch { v = null; }
+        if (v) return finish(v);
+        if (Date.now() >= deadline) finish(null);
+      };
+      // Watches everything, and checks on every batch without coalescing. A
+      // busy page can produce a lot of those, but the observer hands them over
+      // in batches rather than one at a time, and this runs for seconds, not
+      // for the life of the tab. Rate-limiting it would mean a change arriving
+      // just after a check could be missed until the next tick — and on a page
+      // that then goes still, in a tab whose timers are down to one a minute,
+      // "the next tick" can fall past the deadline. Missing the send button is
+      // the expensive failure here; a few hundred DOM queries is not.
+      const obs = new MutationObserver(check);
+      obs.observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true, characterData: true,
+      });
+      const poll = setInterval(check, 300);
+      check();
+    });
+  }
 
   const send = (msg) =>
     new Promise((resolve) => chrome.runtime.sendMessage(msg, resolve));
@@ -94,12 +166,13 @@
    * including nothing, which the caller must treat as "no submission happened".
    */
   async function waitForSender(timeoutMs = 8000) {
-    for (let waited = 0; waited < timeoutMs; waited += 300) {
-      await new Promise((r) => setTimeout(r, 300));
-      const found = findSubmit();
-      if (found && window.GrindlySubmit.isSender(found)) return found;
-    }
-    return findSubmit();
+    const found = await waitFor(() => {
+      const el = findSubmit();
+      return el && window.GrindlySubmit.isSender(el) ? el : null;
+    }, budget(timeoutMs));
+    // Whatever the page ended up offering, even if it never became a real
+    // sender — the caller decides what that means.
+    return found || findSubmit();
   }
 
   async function run() {
@@ -199,7 +272,15 @@
     if (serverRefusals.length) {
       const asked = serverRefusals.map((u) => u.label).filter(Boolean).slice(0, 3);
       stopHeartbeat();
-      await report("blocked", { reason: "missing_facts", fields: asked });
+      // `awaiting_human` / `unknown_question`, not an event of its own. This IS
+      // the existing meaning — the form asks something we cannot answer
+      // honestly, so a person has to finish it — and the server already knows
+      // that one proves nothing was submitted, so it hands the reserved daily
+      // slot back. A "blocked" event would have been rejected as unknown, which
+      // is worse than useless: the task would sit in `filling` until its lease
+      // expired and the reaper would hand the same unanswerable form straight
+      // back to autopilot, forever.
+      await report("awaiting_human", { reason: "unknown_question", detail: asked.join("; ") });
       banner(
         "Grindly filled what it could. This form asks for something it does not " +
         "have about you: " + (asked.join("; ") || "a required answer") +
@@ -252,7 +333,7 @@
         if (serverRefusals.length) {
           const asked = serverRefusals.map((u) => u.label).filter(Boolean).slice(0, 3);
           stopHeartbeat();
-          await report("blocked", { reason: "missing_facts", fields: asked });
+          await report("awaiting_human", { reason: "unknown_question", detail: asked.join("; ") });
           banner(
             "Grindly filled what it could. This form asks for something it does " +
             "not have about you: " + (asked.join("; ") || "a required answer") +
@@ -295,6 +376,16 @@
       return;
     }
 
+    // Out of time. Do NOT click — the run has taken so long that the page in
+    // front of the button may no longer be the page we read, and a click on a
+    // stale form is the one mistake that cannot be taken back.
+    if (runLeftMs() <= 0) {
+      stopHeartbeat();
+      banner("Grindly ran out of time on this page and did not submit it. Open it to finish.", "gate");
+      await report("awaiting_human", { reason: "unknown_question", detail: "timed out before submit" });
+      return;
+    }
+
     // Remember the form so its disappearance can be read as success: on
     // Internshala the modal closing IS the confirmation, and there is often no
     // "thank you" text anywhere on the page.
@@ -310,17 +401,25 @@
     // to respond, so a submission that very likely succeeded was reported as
     // unconfirmed — which is safe, but leaves the user to check by hand every
     // time and makes a working feature look broken.
+    //
+    // The confirmation is always a DOM change — text appearing, or the form
+    // going away — so the observer sees it the moment it happens even in a tab
+    // whose timers have been throttled to a tick a minute. Twelve seconds here
+    // means twelve seconds of wall clock, not twelve seconds of timers that a
+    // background tab is free to stretch into a quarter of an hour.
     const CONFIRM_RE = /thank you|application (has been )?(received|submitted|sent)|successfully applied|we(?:'| ha)ve received|applied successfully/i;
-    let confirmed = false;
-    for (let waited = 0; waited < 12000; waited += 750) {
-      await new Promise((r) => setTimeout(r, 750));
-      if (CONFIRM_RE.test(document.body.innerText || "")) { confirmed = true; break; }
+    const confirmed = await waitFor(() => {
+      if (CONFIRM_RE.test(document.body.innerText || "")) return true;
       // The form vanishing (or the button going away) is the site telling us it
       // took the application, in the only language it speaks.
       const gone = formEl && !document.body.contains(formEl);
       const buttonGone = !document.body.contains(submit) || submit.offsetParent === null;
-      if (gone || buttonGone) { confirmed = true; break; }
-    }
+      return gone || buttonGone ? true : null;
+      // Deliberately NOT capped by the run deadline. Everything above it can be
+      // abandoned safely, but a click has already happened here — cutting this
+      // short would report "we could not confirm it" about an application that
+      // did land, and send the user to check by hand for no reason.
+    }, 12000);
     stopHeartbeat();
     if (confirmed) {
       banner("Grindly submitted this application.", "done");

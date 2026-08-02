@@ -249,7 +249,12 @@ describe("the executor asks the server", () => {
     // sending anyway would put a guess in front of an employer under the user's
     // name. It must reach the user as something they can fix.
     expect(EXEC).toMatch(/serverRefusals/);
-    expect(EXEC).toMatch(/missing_facts/);
+    // Reported as awaiting_human/unknown_question — the event the server
+    // actually accepts, and the one that hands the reserved daily slot back.
+    // See eventContract.test.ts, which checks that mechanically.
+    expect(EXEC).toMatch(/serverRefusals\.length/);
+    const stop = EXEC.slice(EXEC.indexOf("if (serverRefusals.length)"));
+    expect(stop).toMatch(/report\("awaiting_human", \{ reason: "unknown_question"/);
   });
 
   it("never lets a job page see the API token", () => {
