@@ -1356,6 +1356,11 @@ _PG_APP_COLUMNS = (
     ("apply_tier", "TEXT"),
     ("apply_target", "TEXT"),
     ("blocking_facts", "TEXT"),
+    # Written by release_due_matches and by the web's Approve button. Prisma
+    # already has it on Postgres; listed here so the agent can write it on a
+    # SQLite install too, rather than failing the release that is the only way
+    # a banked match ever gets sent.
+    ("approved_at", "TIMESTAMP(3)"),
 )
 _pg_app_columns_checked = False
 
@@ -1428,6 +1433,8 @@ def _ensure_app_columns(c):
         c.execute("ALTER TABLE applications ADD COLUMN outcome_at INTEGER")
     if "scheduled_for" not in cols:
         c.execute("ALTER TABLE applications ADD COLUMN scheduled_for INTEGER")
+    if "approved_at" not in cols:
+        c.execute("ALTER TABLE applications ADD COLUMN approved_at INTEGER")
     if "notified_at" not in cols:
         c.execute("ALTER TABLE applications ADD COLUMN notified_at INTEGER")
     if "answers_json" not in cols:
@@ -1854,6 +1861,49 @@ def add_audit(action: str, *, user_id: str | None = None,
             "VALUES (?,?,?,?,?,?)",
             (cuid(), user_id, action, target, detail, now_db()),
         )
+
+
+def release_due_matches(uid: str, limit: int) -> int:
+    """Promote due banked matches to 'approved'. Returns how many.
+
+    Standing consent IS the approval. A user with auto-apply on and current
+    consent has already said "send these for me"; requiring a per-row tap on top
+    of that is the thing the product exists to remove.
+
+    The gap this closes was total and invisible. A match that cannot be sent the
+    moment it is found — the daily cap was reached, the send window had closed,
+    a gate held the run — is banked as 'matched' with a scheduled_for. Only
+    'approved' rows are ever drained and sent, and nothing but a human tap
+    promoted a row from one to the other. So every banked match sat forever: on
+    2026-08-02 fourteen applications, all routed to real employer forms, five of
+    them due that morning, none of them sendable by any code path.
+
+    Deliberately narrow:
+      * only rows whose scheduled_for has actually arrived, so the pipeline's
+        pacing still holds and a month of queue does not empty in one run;
+      * only TIER A, because that is the tier whose whole definition is "no
+        account of the user's is at stake". A board row still needs its own
+        consent path and its own gate.
+      * bounded by `limit`, the caller's remaining daily quota.
+    """
+    if limit <= 0:
+        return 0
+    with conn() as c:
+        _ensure_app_columns(c)
+        rows = c.execute(
+            "SELECT id FROM applications "
+            "WHERE user_id=? AND status='matched' AND apply_tier='A' "
+            "AND (scheduled_for IS NULL OR scheduled_for <= ?) "
+            "ORDER BY scheduled_for ASC, match_score DESC LIMIT ?",
+            (uid, now_db(), int(limit)),
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        for app_id in ids:
+            c.execute(
+                "UPDATE applications SET status='approved', approved_at=? WHERE id=?",
+                (now_db(), app_id),
+            )
+    return len(ids)
 
 
 def get_approved_applications(uid: str) -> list[dict]:

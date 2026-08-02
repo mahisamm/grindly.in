@@ -2062,6 +2062,26 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
     # that only exists on a board still hits Safe Apply Mode's fail-closed gate
     # and is held for the user's own browser, exactly as before.
     requeue_after_seconds = 0
+
+    # Standing consent IS the approval, so release the matches that have come
+    # due before draining the queue.
+    #
+    # Without this the queue was write-only. A match that could not be sent the
+    # instant it was found — cap reached, send window shut, a gate holding the
+    # run — was banked as 'matched', and only 'approved' rows are ever drained.
+    # Nothing but a human tap promoted one to the other, so banked matches sat
+    # forever: measured on 2026-08-02, fourteen applications routed to real
+    # employer forms, five due that morning, none reachable by any code path.
+    # The dashboard read "matched" and the funnel read banked_for_user=14, which
+    # is exactly what a working pipeline looks like.
+    #
+    # Gated on the same readiness the inline send uses, not on a weaker one: if
+    # consent is stale or auto-apply is off, a due match stays banked.
+    if live and plan["ready"] and plan["auto_apply"] and remaining > 0:
+        released = db.release_due_matches(uid, remaining)
+        if released:
+            log.info("released %d due match(es) on standing consent", released)
+
     approved_apps = db.get_approved_applications(uid)
     if live and approved_apps:
         for approved_index, app_row in enumerate(approved_apps):
