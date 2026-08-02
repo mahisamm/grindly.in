@@ -58,6 +58,16 @@ const STR_FIELDS = new Set([
   // boxes Indian portals mark required. Stated verbatim like everything else
   // here; the agent invents none of them.
   "currentSalary",
+  // Both were left out of this list when their fields were added, so setup
+  // showed the box, the user answered it, the save returned 200, and the answer
+  // was dropped on the floor. Silent in every direction: nothing in the UI or
+  // the response said the field had not been accepted, and the agent went on
+  // refusing every form that asked for it.
+  //
+  // needsSponsorship was found by the test that now guards this list, on its
+  // first run — it had been discarding answers since the field was added.
+  "yearsExperience",
+  "needsSponsorship",
   "previousInternship",
   "noticePeriod",
   "currentLocation",
