@@ -14,7 +14,26 @@
   "use strict";
 
   // 1. Presence marker — the dashboard checks for this to know the extension is here.
-  document.documentElement.setAttribute("data-grindly-extension", "0.1.0");
+  document.documentElement.setAttribute("data-grindly-extension", "0.7.0");
+
+  // ...and announce it, rather than only answering when asked.
+  //
+  // The connect page pings once, from a React effect, and window.postMessage is
+  // NOT queued for listeners that do not exist yet. This script runs at
+  // document_idle; hydration often beats that. When it does, the page's single
+  // ping goes out to nobody, the attribute above has not been set yet either,
+  // and the page concludes the extension is absent — permanently, because there
+  // was never a second attempt. Zero pairings had ever happened in production,
+  // and this was the reason.
+  //
+  // So both orderings are covered now: run first and the attribute is waiting
+  // for the page, run second and this message finds a listener already there.
+  chrome.runtime.sendMessage({ type: "grindly:status" }, function (resp) {
+    window.postMessage(
+      { type: "grindly-ext:pong", installed: true, connected: !!(resp && resp.connected) },
+      window.location.origin,
+    );
+  });
 
   window.addEventListener("message", function (e) {
     if (e.source !== window || !e.data || typeof e.data !== "object") return;

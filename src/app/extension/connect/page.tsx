@@ -46,10 +46,37 @@ export default function ExtensionConnectPage() {
       if (e.data.type === "grindly-ext:paired") setPhase(e.data.ok ? "done" : "no_extension");
     };
     window.addEventListener("message", onMsg);
-    // ping in case the attribute check raced the content script
+
+    // Keep looking, rather than deciding once.
+    //
+    // The content script runs at document_idle and this effect runs after
+    // hydration; either can win. A single ping loses that race outright —
+    // window.postMessage is not queued for a listener that does not exist yet,
+    // so if this fires first the ping goes to nobody and never repeats. The
+    // page then reported the extension as absent forever. (The bridge also
+    // announces itself now, which covers the same race from its side.)
+    const observer = new MutationObserver(syncPresence);
+    observer.observe(document.documentElement, {
+      attributes: true, attributeFilter: ["data-grindly-extension"],
+    });
     window.postMessage({ type: "grindly-ext:ping" }, window.location.origin);
+    const retry = window.setInterval(() => {
+      if (document.documentElement.getAttribute("data-grindly-extension")) {
+        syncPresence();
+        window.clearInterval(retry);
+        return;
+      }
+      window.postMessage({ type: "grindly-ext:ping" }, window.location.origin);
+    }, 400);
+    // Stop after a few seconds: by then it really is not installed, and the
+    // page offers a code to paste either way.
+    const giveUp = window.setTimeout(() => window.clearInterval(retry), 4000);
+
     return () => {
       cancelled = true;
+      observer.disconnect();
+      window.clearInterval(retry);
+      window.clearTimeout(giveUp);
       window.removeEventListener("message", onMsg);
       window.removeEventListener("focus", onFocus);
     };
@@ -96,34 +123,59 @@ export default function ExtensionConnectPage() {
           </>
         )}
 
-        {phase === "ready" && extPresent && (
+        {/*
+          One "ready" state, and Connect is always offered.
+
+          This used to fork on extPresent, and the branch for "we can't see the
+          extension" was a dead end: a "Coming soon" notice, a link back to the
+          dashboard, and no way to pair. The paste-a-code fallback below existed
+          the whole time but could only be reached by pressing Connect — which
+          that branch did not render. So any user whose extension we failed to
+          detect could never connect, by any route, ever. Detection is a race
+          (see the effect above), which means this was not a rare case.
+
+          extPresent now only changes the wording. Connect works either way:
+          it mints the token first and offers it to copy if the handshake does
+          not land.
+        */}
+        {phase === "ready" && (
           <>
             <h1 className="text-xl font-semibold">Connect the extension</h1>
             <p className="mt-2 text-sm text-muted">
-              This links the browser extension to your Grindly account so it can auto-fill your
-              matched applications — in your own browser. You always click Submit yourself.
+              This links the browser extension to your Grindly account so it can fill your matched
+              applications — in your own browser, signed in as you.
             </p>
+            {!extPresent && (
+              <div className="mt-3 rounded-lg border border-border bg-surface-2 px-3 py-3 text-xs text-muted">
+                <p className="text-foreground">We can&apos;t see the extension in this browser yet.</p>
+                {/*
+                  It is not in the Chrome Web Store yet (that needs a developer
+                  account and a review that takes days), so during the beta the
+                  build is downloaded and loaded unpacked. Spelled out here
+                  because "install the extension" is not an instruction anyone
+                  can follow when there is nowhere to install it from — and
+                  there wasn't: dist/ is gitignored and no page linked to it.
+                */}
+                <ol className="mt-2 list-decimal space-y-1 pl-4">
+                  <li>
+                    <a href="/grindly-extension.zip" download className="text-brand underline">
+                      Download the extension
+                    </a>{" "}
+                    and unzip it somewhere you won&apos;t delete.
+                  </li>
+                  <li>Open <span className="text-foreground">chrome://extensions</span> and turn on Developer mode.</li>
+                  <li>Click <span className="text-foreground">Load unpacked</span> and pick the unzipped folder.</li>
+                  <li>Come back here and press Connect.</li>
+                </ol>
+                <p className="mt-2">
+                  Already installed it? Press Connect anyway — you&apos;ll get a code to paste
+                  into the extension.
+                </p>
+              </div>
+            )}
             <button onClick={connect} className="mt-5 w-full rounded-lg brand-gradient px-5 py-2.5 text-sm font-medium text-white hover:opacity-90 transition">
               Connect
             </button>
-          </>
-        )}
-
-        {phase === "ready" && !extPresent && (
-          <>
-            <span className="inline-flex items-center gap-2 rounded-full border border-brand/40 bg-brand/10 px-3 py-1 text-xs font-medium text-brand">
-              <span className="size-1.5 rounded-full bg-brand" /> Coming soon
-            </span>
-            <h1 className="mt-4 text-xl font-semibold">The browser extension is on the way</h1>
-            <p className="mt-2 text-sm text-muted">
-              It&apos;ll auto-fill your matched applications in your own browser — one click each, and you
-              always submit yourself. Until it ships, open each listing from your dashboard and submit it
-              with the cover letter and answers Grindly already prepared. We&apos;ll let you know the moment
-              it&apos;s ready.
-            </p>
-            <Link href="/dashboard" className="mt-5 inline-block rounded-lg border border-[var(--line-2)] px-5 py-2.5 text-sm hover:border-brand/40 transition">
-              Back to dashboard
-            </Link>
           </>
         )}
 

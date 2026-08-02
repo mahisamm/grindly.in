@@ -65,6 +65,30 @@ try {
     execFileSync("zip", ["-r", "-q", zipPath, "."], { cwd: staging, stdio: "inherit" });
   }
   console.log(`✔ Built ${path.relative(process.cwd(), zipPath)} (v${version})`);
+
+  // Publish a copy the app can actually hand to a user.
+  //
+  // dist/ is gitignored, so until now the built extension existed only on the
+  // machine that ran this script — it was never committed and never reached the
+  // server. There was no link to it anywhere in the product either. So nobody
+  // could obtain the extension, which is the other half of why production had
+  // zero pairings: even with a working connect page, there was nothing to
+  // connect to.
+  //
+  // public/ is served statically and ships with the Next build, and the name is
+  // deliberately unversioned so the download link never goes stale.
+  const published = path.join(root, "..", "public", "grindly-extension.zip");
+  fs.copyFileSync(zipPath, published);
+  // A sidecar saying what is inside. The zip is deflated, so nothing can read
+  // the packaged version out of it without a zip parser, and "is the published
+  // build stale?" is a question both the test suite and the connect page need
+  // to answer. A stale zip is worse than a missing one: someone installs it,
+  // pairs, and meets bugs that were fixed weeks ago.
+  fs.writeFileSync(
+    path.join(root, "..", "public", "grindly-extension.json"),
+    `${JSON.stringify({ version }, null, 2)}\n`,
+  );
+  console.log(`✔ Published ${path.relative(process.cwd(), published)}`);
 } catch (e) {
   console.error("Could not run the OS zip tool. Zip the contents of dist/pkg/ manually.");
   console.error(String(e.message || e));
