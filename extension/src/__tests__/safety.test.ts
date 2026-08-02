@@ -39,6 +39,12 @@ describe("extension never submits on the user's behalf", () => {
   it("filler only dispatches input/change events (framework-safe typing), nothing else", () => {
     const src = fs.readFileSync(path.join(EXT, "fillEngine.js"), "utf8");
     const events = [...src.matchAll(/new Event\(\s*["'](\w+)["']/g)].map((m) => m[1]);
-    expect(events.sort()).toEqual(["change", "input"]);
+    // The SET of event types, not the count. What matters is that nothing here
+    // ever dispatches a click or a submit — a second dispatch site (choosing an
+    // option in a <select> needs its own input+change, since assigning
+    // selectedIndex alone is invisible to React and Angular) is not a new
+    // capability, and asserting on the count made it look like one.
+    expect([...new Set(events)].sort()).toEqual(["change", "input"]);
+    expect(events.length).toBeGreaterThan(0);
   });
 });
