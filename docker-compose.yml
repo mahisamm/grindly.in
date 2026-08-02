@@ -161,6 +161,12 @@ services:
       GRINDLY_AUTO_APPLY_MODE: ${GRINDLY_AUTO_APPLY_MODE:-shadow}
       GRINDLY_TIER_B_APPLY: ${GRINDLY_TIER_B_APPLY:-}
       GRINDLY_ATS_APPLY: ${GRINDLY_ATS_APPLY:-}
+      # The answering engine, on the compose network. The extension posts a form
+      # snapshot to this app (the only thing that can authenticate it) and the
+      # app forwards it here, so the browser types the SAME answers the
+      # server-side sender would have chosen.
+      GRINDLY_PLANNER_URL: ${GRINDLY_PLANNER_URL:-http://planner:8781}
+      GRINDLY_PLANNER_SECRET: ${GRINDLY_PLANNER_SECRET}
       # Single explicit payments switch — see .env.example. Must be "true" (not
       # just Razorpay keys being present) before /api/pay will do anything.
       PAYMENTS_ENABLED: ${PAYMENTS_ENABLED:-false}
@@ -332,6 +338,49 @@ services:
   # Single replica, and it must stay that way: two of these would double-enqueue.
   # It only touches the DB (no browser), but reuses the worker image so there is
   # nothing extra to build.
+  # The answering engine, reachable by the web container.
+  #
+  # The extension needs the SAME decisions the server-side sender makes —
+  # forty-odd patterns for gender, school, degree, years of experience, option
+  # fitting, and the refusals that keep it from inventing facts. All of that is
+  # Python and lives in the worker image. The web container is node:20-slim with
+  # no Python at all, so a Next route cannot call it directly, and porting it to
+  # JavaScript would mean rediscovering every one of its bugs a second time.
+  #
+  # So the browser is the hands, this is the brain, and the web app is the only
+  # thing that authenticates the extension: snapshot in, values out.
+  #
+  # NO `ports:` mapping, deliberately. It is reachable on the compose network
+  # and nowhere else, and it additionally requires a shared secret. It reads no
+  # database, holds no session and cannot submit anything.
+  planner:
+    image: grindly-worker
+    command: ["python", "agent/plan_server.py"]
+    environment:
+      INTERNPILOT_DB: ""
+      GRINDLY_PLANNER_PORT: "8781"
+      GRINDLY_PLANNER_SECRET: ${GRINDLY_PLANNER_SECRET}
+      # Same providers the server path uses, so a free-text box gets the same
+      # answer whichever hands are doing the typing.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          # Imports questions.py and its pattern tables, answers one JSON shape,
+          # holds nothing between requests. No browser, no crawl, no database.
+          memory: 320M
+          cpus: "0.25"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8781/health',timeout=4)\" || exit 1"]
+      interval: 60s
+      timeout: 6s
+      retries: 3
+    restart: unless-stopped
+
   sweep:
     image: grindly-worker
     command: ["python", "agent/sweep.py", "--serve"]
