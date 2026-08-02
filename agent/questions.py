@@ -1545,34 +1545,87 @@ def _choose_in_combobox(page, el, value: str) -> bool:
     wanted = (value or "").strip()
     if not wanted:
         return False
+
+    # This widget's OWN options, never the whole page's.
+    #
+    # Greenhouse renders an inline phone-country selector whose listbox stays
+    # mounted, so a document-wide [role="option"] query returned
+    # "Afghanistan+93, Aland Islands+358, ..." for School and Degree alike and
+    # matched nothing. _combobox_options was fixed for this; the picker was not.
+    OWN_OPTIONS_JS = """
+      (el) => {
+        const clean = o => (o.innerText || '').trim().replace(/\\s+/g, ' ');
+        const out = [];
+        const take = root => {
+          if (!root) return;
+          root.querySelectorAll('[role="option"]').forEach(o => {
+            const t = clean(o);
+            if (t && !out.includes(t)) out.push(t);
+          });
+        };
+        const id = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+        if (id) id.split(/\\s+/).forEach(i => take(document.getElementById(i)));
+        if (out.length) return out;
+        let n = el.parentElement;
+        for (let d = 0; d < 5 && n && !out.length; d++, n = n.parentElement) take(n);
+        return out;
+      }
+    """
+
+    PICK_JS = """
+      ([el, want]) => {
+        const norm = s => (s || '').trim().replace(/\\s+/g, ' ').toLowerCase();
+        const target = norm(want);
+        const scope = [];
+        const add = root => {
+          if (!root) return;
+          root.querySelectorAll('[role="option"]').forEach(o => scope.push(o));
+        };
+        const id = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+        if (id) id.split(/\\s+/).forEach(i => add(document.getElementById(i)));
+        if (!scope.length) {
+          let n = el.parentElement;
+          for (let d = 0; d < 5 && n && !scope.length; d++, n = n.parentElement) add(n);
+        }
+        let hit = scope.find(o => norm(o.innerText) === target);
+        if (!hit) hit = scope.find(o => norm(o.innerText).startsWith(target));
+        if (!hit) hit = scope.find(o => target.startsWith(norm(o.innerText)));
+        if (!hit) hit = scope.find(o => norm(o.innerText).includes(target));
+        if (!hit) return false;
+        hit.scrollIntoView({block: 'nearest'});
+        hit.click();
+        return true;
+      }
+    """
+
+    # A person types a few characters and picks from what appears. Typing the
+    # whole stored answer can filter to nothing — the widget answered "No
+    # options" for "Anurag University" — so try progressively shorter queries.
+    queries = [wanted[:24]]
+    for cut in (16, 10, 6):
+        if len(wanted) > cut and wanted[:cut] not in queries:
+            queries.append(wanted[:cut])
+
     try:
         el.click()
         page.wait_for_timeout(250)
-        # Typing filters; it does not commit. Kept short so a stored answer that
-        # is merely a prefix of the option ("Yes" for "Yes, immediately") still
-        # narrows to it rather than to nothing.
-        try:
-            el.fill("")
-            el.type(wanted[:24], delay=25)
-            page.wait_for_timeout(_MENU_WAIT_MS)
-        except Exception:  # noqa: BLE001
-            page.wait_for_timeout(_MENU_WAIT_MS)
 
-        picked = page.evaluate(
-            """(want) => {
-              const norm = s => (s || '').trim().replace(/\\s+/g, ' ').toLowerCase();
-              const target = norm(want);
-              const opts = Array.from(document.querySelectorAll('[role="option"]'));
-              let hit = opts.find(o => norm(o.innerText) === target);
-              if (!hit) hit = opts.find(o => norm(o.innerText).startsWith(target));
-              if (!hit) hit = opts.find(o => target.startsWith(norm(o.innerText)));
-              if (!hit) return false;
-              hit.scrollIntoView({block: 'nearest'});
-              hit.click();
-              return true;
-            }""",
-            wanted,
-        )
+        picked = False
+        for query in queries:
+            try:
+                el.fill("")
+                el.type(query, delay=25)
+                page.wait_for_timeout(_MENU_WAIT_MS)
+            except Exception:  # noqa: BLE001
+                page.wait_for_timeout(_MENU_WAIT_MS)
+            shown = page.evaluate(OWN_OPTIONS_JS, el) or []
+            if not shown or all(_PLACEHOLDER_LABEL.match(o) or
+                                o.strip().lower() == "no options" for o in shown):
+                continue
+            picked = page.evaluate(PICK_JS, [el, wanted])
+            if picked:
+                break
+
         if not picked:
             page.keyboard.press("Escape")
             return False
