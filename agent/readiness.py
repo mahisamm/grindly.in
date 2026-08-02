@@ -8,11 +8,24 @@ second check is the one that actually protects the user.
 
 Keep CONSENT_VERSION in step with src/lib/readiness.ts. Bumping it un-readies
 every account that agreed to older wording: consent to v1 is not consent to v2.
+
+That instruction was already here and was not enough. On 2026-08-01 the TS
+constant was bumped to 2026-08-01 and this one was left at 2026-07-25. The web
+then wrote the new version onto the profile, this file compared it against the
+old one, and the agent held every run with "setup incomplete: consent" — for a
+user whose consent was current and whose auto_apply was on. It found 18
+matches, routed 14 of them to real employer forms, and sent none.
+
+Nothing about that was visible from the dashboard: the row said "matched", the
+funnel said banked_for_user=18, and the honest-looking explanation was a queue
+doing its job. A comment cannot hold two constants together across two
+languages, so tests/test_consent_version_matches_the_web.py now reads BOTH
+files and fails if they ever disagree again.
 """
 from __future__ import annotations
 import json
 
-CONSENT_VERSION = "2026-07-25"
+CONSENT_VERSION = "2026-08-01"
 
 
 def _has_domain(raw) -> bool:
