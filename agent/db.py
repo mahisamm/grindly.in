@@ -1915,12 +1915,23 @@ def get_approved_applications(uid: str) -> list[dict]:
     """
     with conn() as c:
         _ensure_app_columns(c)
+        # The query below reads the LISTING's route, so the jobs columns have to
+        # exist too — on a fresh SQLite install they are added lazily.
+        _ensure_job_columns(c)
         rows = c.execute("""
-            SELECT a.id, a.job_title, a.company, a.url, a.match_score,
+            SELECT a.id, a.job_id, a.job_title, a.company, a.url, a.match_score,
                    a.apply_channel, a.apply_tier, a.apply_target,
                    COALESCE(j.source, '') AS source,
                    COALESCE(j.skills, '[]') AS skills,
-                   COALESCE(j.external_id, '') AS external_id
+                   COALESCE(j.external_id, '') AS external_id,
+                   -- The LISTING's route, for an application banked before its
+                   -- own destination was resolved. Without it a blank channel
+                   -- reads as "board only" and a plain Lever page is refused as
+                   -- if it held the user's account.
+                   j.apply_channel AS job_apply_channel,
+                   j.apply_tier AS job_apply_tier,
+                   j.apply_target AS job_apply_target,
+                   j.apply_vendor AS job_apply_vendor
             FROM applications a
             LEFT JOIN jobs j ON j.id = a.job_id
             WHERE a.user_id=? AND a.status='approved'

@@ -2088,10 +2088,34 @@ def run_for_user(uid: str, mode: str = "live", manual: bool = False) -> dict:
             if remaining <= 0:
                 break
             src = app_row.get("source") or ""
+
+            # Fall back to the LISTING's route before giving up on the row.
+            #
+            # An application banked before its destination was resolved carries
+            # no channel of its own, and this used to read that blank as "board
+            # only" — so it was refused with "never submitted from Grindly's
+            # servers" even when the listing was a plain employer ATS page.
+            # Measured: three Mactores applications, all jobs.lever.co, all
+            # refused as if Lever were a job board holding the user's account.
+            #
+            # The shared index now stores the route on the job, resolved once
+            # for the whole fleet, so the answer is already there. This code
+            # predates it and was still guessing from `source`.
+            channel = app_row.get("apply_channel") or ""
+            tier = app_row.get("apply_tier") or ""
+            target = app_row.get("apply_target") or ""
+            if not channel and app_row.get("job_apply_channel"):
+                channel = app_row["job_apply_channel"]
+                tier = tier or app_row.get("job_apply_tier") or resolver.TIER_A
+                target = (target or app_row.get("job_apply_target")
+                          or app_row.get("url") or "")
+                log.info("approved row had no route of its own — using the "
+                         "listing's: %s (%s)", channel, app_row.get("job_apply_vendor"))
+
             row_dest = {
-                "channel": app_row.get("apply_channel") or resolver.CHANNEL_PLATFORM,
-                "tier": app_row.get("apply_tier") or resolver.platform_tier(src),
-                "target": app_row.get("apply_target") or "",
+                "channel": channel or resolver.CHANNEL_PLATFORM,
+                "tier": tier or resolver.platform_tier(src),
+                "target": target,
                 "vendor": "",
                 "evidence": "approved by the user",
             }
