@@ -78,6 +78,31 @@ el => {
   const aria = el.getAttribute('aria-label');
   if (aria) return clean(aria);
 
+  // The field's OWN <label>, when the form did not wire up `for`.
+  //
+  // Keka does not: its gender control is <select id="gender"> with a plain
+  // sibling <label>Gender *</label> and no `for` attribute. Falling straight
+  // through to the ancestor-text walk below returned the first ancestor whose
+  // text passed a length check — the whole contact section — so the question
+  // came back as "First Name * Middle Name Last Name * Mobile Phone * Email *"
+  // and nothing could match it to a stored answer.
+  //
+  // Only accepted when the ancestor holds exactly ONE label and ONE control:
+  // that is a form-group wrapping a single question. Two of either means we
+  // have climbed into a section and are guessing which label belongs to us.
+  {
+    let n = el.parentElement, hops = 0;
+    while (n && hops < 4) {
+      const labels = n.querySelectorAll('label');
+      const controls = n.querySelectorAll('input,textarea,select,[contenteditable="true"]');
+      if (labels.length === 1 && controls.length === 1) {
+        const t = clean(labels[0].innerText);
+        if (t) return t;
+      }
+      n = n.parentElement; hops++;
+    }
+  }
+
   let n = el.parentElement, hops = 0;
   while (n && hops < 4) {
     const c = n.cloneNode(true);
