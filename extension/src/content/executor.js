@@ -55,6 +55,24 @@
   /** Never wait longer than the run has left. */
   const budget = (want) => Math.max(0, Math.min(want, runLeftMs()));
 
+  // Gates worth interrupting a person for, and gates that are simply not.
+  //
+  // A CAPTCHA is one glance and a few keystrokes, and it is the whole reason
+  // this runs in the user's own browser rather than on a server: the check asks
+  // whether a human is present, and one is. It stops and asks.
+  //
+  // These three never do. A job application that asks for money is a scam, not
+  // an opportunity — agent/scam.py already screens for it and this is the last
+  // line. An OTP or a login wall means the site wants an account before it will
+  // take an application, which is a different decision than "apply to this
+  // job", and not one to make on someone's behalf at 2am. Interrupting for any
+  // of them spends the scarcest thing the product has — the user's willingness
+  // to be interrupted — on an application that should not be sent anyway.
+  //
+  // Skipped tasks close their tab, raise no notification, and hand their
+  // reserved daily slot back, so the run simply moves on to the next job.
+  const SKIP_GATES = new Set(["payment", "otp", "login"]);
+
   let task = null;
   let heartbeat = null;
 
@@ -175,6 +193,31 @@
     return found || findSubmit();
   }
 
+  /**
+   * Report a gate and end the run. Returns true if there was one.
+   *
+   * One place, because this decision is made at three separate moments — before
+   * filling, on the modal that just opened, and again immediately before
+   * submitting — and a policy that lives in three copies is a policy that ends
+   * up meaning three different things.
+   */
+  async function stopAtGate(g, where) {
+    if (!g.reason) return false;
+    stopHeartbeat();
+    if (SKIP_GATES.has(g.reason)) {
+      banner(`Grindly skipped this one: it asks for ${g.reason}. Moving on.`, "gate");
+      await report("skipped", { reason: g.reason, detail: g.evidence });
+      return true;
+    }
+    banner(
+      `Grindly stopped${where ? ` ${where}` : ""}: this page needs you (${g.reason}). ` +
+      "Finish it and Grindly will carry on.",
+      "gate",
+    );
+    await report("awaiting_human", { reason: g.reason, detail: g.evidence });
+    return true;
+  }
+
   async function run() {
     task = await send({ type: "grindly:activeTask" });
     if (!task || !task.url) return;
@@ -205,13 +248,7 @@
     // applications with reason "payment" on a board that charges nothing to
     // apply, and nothing recorded which words said otherwise.
     let g = gates.explainHumanGate(document);
-    let gate = g.reason;
-    if (gate) {
-      stopHeartbeat();
-      banner(`Grindly stopped: this page needs you (${gate}). Finish it and Grindly will carry on.`, "gate");
-      await report("awaiting_human", { reason: gate, detail: g.evidence });
-      return;
-    }
+    if (await stopAtGate(g)) return;
 
     // 2. Fill from approved facts only.
     // The kit shape fillEngine reads: { profile:{name,…}, answers, coverLetter }.
@@ -310,13 +347,7 @@
         // The form that just appeared is a new form: re-check for a gate, and
         // fill the fields it brought with it.
         g = gates.explainHumanGate(document);
-        gate = g.reason;
-        if (gate) {
-          stopHeartbeat();
-          banner(`Grindly stopped: this page needs you (${gate}).`, "gate");
-          await report("awaiting_human", { reason: gate, detail: g.evidence });
-          return;
-        }
+        if (await stopAtGate(g)) return;
         try {
           // The modal that just opened is a different form with different
           // questions, so it gets its own trip to the server rather than a
@@ -359,13 +390,7 @@
     // 5. Re-check immediately before submitting — a challenge can appear between
     //    the first check and now, and submitting into one is worse than stopping.
     g = gates.explainHumanGate(document);
-    gate = g.reason;
-    if (gate) {
-      stopHeartbeat();
-      banner(`Grindly stopped before submitting: ${gate}.`, "gate");
-      await report("awaiting_human", { reason: gate, detail: g.evidence });
-      return;
-    }
+    if (await stopAtGate(g, "before submitting")) return;
 
     // Never press an opener as though it were a send button. If the form never
     // appeared, the honest report is that nobody submitted anything.

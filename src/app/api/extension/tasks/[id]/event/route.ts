@@ -17,6 +17,13 @@ const TRANSITIONS: Record<string, string> = {
   heartbeat: "filling",
   filling: "filling",
   awaiting_human: "awaiting_human",
+  // Deliberately passed over, not blocked on. The page asked for money, an OTP,
+  // or an account, and none of those are worth interrupting someone for — see
+  // SKIP_GATES in the executor. Distinct from `awaiting_human` because nobody
+  // is going to come back to it, and distinct from `failed` because nothing
+  // went wrong: this is the agent declining a job on the user's behalf, which
+  // the timeline should say plainly.
+  skipped: "skipped",
   submitted: "submitted",
   failed: "failed",
 };
@@ -75,11 +82,24 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const gate = GATES.has(String(body.reason ?? "")) ? String(body.reason) : "unknown_question";
 
   // Slots reserved at claim time come back only on a definite non-send.
+  //
+  // `skipped` always qualifies: the gate was seen before any submit button was
+  // pressed, so nothing went out. Without this the day's allowance would drain
+  // on jobs the agent deliberately declined — five skipped scams and a user on
+  // the free tier has no applications left, having sent none.
   const releasable =
-    event === "failed" || (event === "awaiting_human" && PROVES_NO_SUBMIT.has(gate));
+    event === "failed" || event === "skipped" ||
+    (event === "awaiting_human" && PROVES_NO_SUBMIT.has(gate));
   if (releasable && task.reservedDate) {
     await releaseDailySlot(auth.userId, task.reservedDate);
     data.reservedDate = null;
+  }
+
+  if (event === "skipped") {
+    data.blockedReason = gate;
+    // No lease: nobody is coming back to this one.
+    data.leaseTokenHash = null;
+    data.leaseExpiresAt = null;
   }
 
   if (event === "awaiting_human") {

@@ -14,7 +14,13 @@
   "use strict";
 
   // 1. Presence marker — the dashboard checks for this to know the extension is here.
-  document.documentElement.setAttribute("data-grindly-extension", "0.7.0");
+  // Read from the manifest rather than hardcoded: this string was stuck at
+  // "0.1.0" for several releases, and a presence marker that lies about its
+  // version is worse than one that says nothing.
+  document.documentElement.setAttribute(
+    "data-grindly-extension",
+    (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || "unknown",
+  );
 
   // ...and announce it, rather than only answering when asked.
   //

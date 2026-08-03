@@ -111,8 +111,15 @@ describe("the background worker's boundaries", () => {
     // to leave five submitted-application tabs (plus every human gate) crowding
     // the strip. awaiting_human must NOT close: that page is now the user's to
     // finish, and yanking it would take their CAPTCHA or question with it.
-    const closer = BG.match(/if \(\s*\(msg\.event === "submitted" \|\| msg\.event === "failed"\)[\s\S]{0,600}?chrome\.tabs\.remove/);
+    //
+    // Asserted on the SET of events that close, not the literal expression:
+    // `skipped` joined it (a job declined for asking money, an OTP or an
+    // account leaves nothing to tidy up), and pinning the exact condition made
+    // that read as a regression rather than a new member.
+    const closer = BG.match(/if \(\s*\(msg\.event ===[\s\S]{0,700}?chrome\.tabs\.remove/);
     expect(closer, "terminal task events must close the task's own tab").toBeTruthy();
+    const closes = [...closer![0].matchAll(/msg\.event === "(\w+)"/g)].map((m) => m[1]);
+    expect(closes.sort()).toEqual(["failed", "skipped", "submitted"]);
     expect(closer![0]).not.toMatch(/awaiting_human/);
     // Scoped to the reporting tab — never a lookup that could hit another tab.
     expect(closer![0]).toMatch(/sender\.tab/);

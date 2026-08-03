@@ -49,6 +49,20 @@ describe("CAPTCHA and challenges", () => {
     ["hCaptcha widget", ".h-captcha"],
     ["Cloudflare challenge", "#cf-challenge-running"],
     ["a bare sitekey widget", "[data-sitekey]"],
+    // The old-fashioned kind: a distorted image and a box to type what it says.
+    // Every marker above assumes a third-party widget, so none of them matched
+    // Keka — which draws a plain <input id="captcha"> beside an image, and
+    // which is 188 of our 256 employer listings. Measured on 22 of 22 tenants,
+    // so this is the platform, not a few strict employers.
+    //
+    // Undetected, the page did not read as gated at all: the form filled, the
+    // captcha box stayed empty because no honest answer exists for it, and we
+    // either bounced off submit or clicked and reported "pressed but not
+    // confirmed" — spending a daily slot on an application with no chance.
+    ["a typed captcha box", "input#captcha"],
+    ["a captcha box named anything", "input[name*='captcha' i]"],
+    ["a captcha box with a vendor id", "input[id*='captcha' i]"],
+    ["the captcha image itself", "img[src*='captcha' i]"],
   ])("stops at %s", (_label, selector) => {
     expect(detectHumanGate(makeDoc({ selectors: { [selector]: {} } }))).toBe("captcha");
   });

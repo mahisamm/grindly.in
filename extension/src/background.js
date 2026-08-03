@@ -100,7 +100,8 @@ async function reportTask(taskId, leaseToken, event, extra) {
   const out = await authedFetch(`/api/extension/tasks/${taskId}/event`, {
     method: "POST", body,
   });
-  if (event === "submitted" || event === "failed" || event === "awaiting_human") {
+  if (event === "submitted" || event === "failed" || event === "awaiting_human" ||
+      event === "skipped") {
     await chrome.storage.local.remove(TASK_STATE_KEY);
     // This task is done, so take the next one now rather than idling until the
     // alarm comes round. Waiting five minutes between applications made
@@ -206,8 +207,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // sender.tab is the executor's OWN tab — the one the event is about —
         // and closing is gated on it matching the task we opened, so a report
         // relayed oddly can never close an unrelated tab.
+        // `skipped` closes its tab like a finished one: the whole point is that
+        // it leaves nothing behind for the user to notice or tidy up.
         if (
-          (msg.event === "submitted" || msg.event === "failed") &&
+          (msg.event === "submitted" || msg.event === "failed" || msg.event === "skipped") &&
           sender.tab && typeof sender.tab.id === "number"
         ) {
           const tabId = sender.tab.id;

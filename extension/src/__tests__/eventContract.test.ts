@@ -76,6 +76,27 @@ describe("the executor only speaks words the server knows", () => {
     }
   });
 
+  it("hands the daily slot back for a job it deliberately skipped", () => {
+    // A skip happens before any submit button is pressed, so nothing went out.
+    // Without this the day's allowance drains on jobs the agent declined: five
+    // skipped scams and a free-tier user has no applications left, having sent
+    // none — and the cap is a reservation, so the slots never come back on
+    // their own.
+    const releasable = ROUTE.slice(
+      ROUTE.indexOf("const releasable"), ROUTE.indexOf("if (releasable"));
+    expect(releasable).toMatch(/event === "skipped"/);
+  });
+
+  it("skips only gates that are never worth a person's time", () => {
+    // A CAPTCHA must NOT be in here. It is one glance and a few keystrokes, it
+    // is the entire reason this runs in the user's own browser, and it guards
+    // 188 of the 256 employer listings. Skipping it silently would delete most
+    // of the reachable pool while looking like a quieter product.
+    const set = EXEC.slice(EXEC.indexOf("const SKIP_GATES"));
+    const members = [...set.slice(0, set.indexOf("]")).matchAll(/"(\w+)"/g)].map((m) => m[1]);
+    expect(members.sort()).toEqual(["login", "otp", "payment"]);
+  });
+
   it("every gate humanGate can detect is one the server stores", () => {
     // These are passed straight through as `reason: gate`, so a new detector
     // with a new label lands in the database as "unknown_question" and the

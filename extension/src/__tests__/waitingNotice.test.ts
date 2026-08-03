@@ -61,7 +61,9 @@ function makeChrome(tabs: Record<number, { id: number; url: string; windowId: nu
         },
         update: async () => {},
         create: () => {},
-        remove: async () => {},
+        // Takes the id so a case can swap in a recorder — see the skipped-tab
+        // test, which needs to know WHICH tab got closed.
+        remove: async (_id: number) => {},
         onRemoved: on("tabRemoved"),
       },
       windows: { update: async () => {} },
@@ -107,6 +109,7 @@ const TABS = {
   11: { id: 11, url: "https://acme.keka.com/careers/job/1", windowId: 1 },
   12: { id: 12, url: "https://beta.keka.com/careers/job/2", windowId: 1 },
   13: { id: 13, url: "https://gamma.freshteam.com/jobs/3", windowId: 1 },
+  14: { id: 14, url: "https://delta.keka.com/careers/job/4", windowId: 1 },
 };
 
 beforeEach(() => {
@@ -216,4 +219,48 @@ describe("the manifest allows it", () => {
       fs.readFileSync(path.resolve(__dirname, "..", "..", "manifest.json"), "utf8"));
     expect(manifest.permissions).toContain("notifications");
   });
+});
+
+describe("gates that are not worth interrupting anyone for", () => {
+  const skip = (taskId: string, reason: string) => ({
+    type: "grindly:taskEvent", taskId, leaseToken: "lt", event: "skipped",
+    extra: { reason },
+  });
+
+  it("raises no notification for a skipped job", async () => {
+    // The whole point: a job that asks for money, an OTP or an account is
+    // declined on the user's behalf and they never hear about it.
+    const { c, send, fireAlarm } = load(TABS);
+    await send(skip("t1", "payment"), { tab: TABS[11] });
+    await send(skip("t2", "otp"), { tab: TABS[12] });
+    await fireAlarm("grindly-waiting-notify");
+    expect(Object.keys(c.notifications)).toHaveLength(0);
+  });
+
+  it("still knocks for a CAPTCHA in the same run", async () => {
+    // A CAPTCHA is one glance and a few keystrokes, and it is the reason this
+    // runs in the user's own browser at all. It must not be swallowed by a run
+    // that also skipped things.
+    const { c, send, fireAlarm } = load(TABS);
+    await send(skip("t1", "payment"), { tab: TABS[11] });
+    await send(gate("t2", "captcha"), { tab: TABS[12] });
+    await fireAlarm("grindly-waiting-notify");
+    const note = Object.values(c.notifications)[0] as { title: string };
+    expect(note.title).toBe("One application needs you");
+  });
+
+  it("closes the skipped tab but leaves a CAPTCHA tab open", async () => {
+    // A skipped job leaves nothing to notice or tidy up. A CAPTCHA keeps its
+    // tab, because that page is now the user's to finish.
+    const { c, send } = load(TABS);
+    const removed: number[] = [];
+    c.api.tabs.remove = async (id: number) => { removed.push(id); };
+    await send(skip("t9", "payment"), { tab: TABS[14] });
+    await send(gate("t8", "captcha"), { tab: TABS[13] });
+    await new Promise((r) => setTimeout(r, 4100));
+    // Cases above leave 4s close timers pending, and those fire against
+    // whichever `chrome` is global by then — this one. Look only at the tabs
+    // this case owns.
+    expect(removed.filter((id) => id === 13 || id === 14)).toEqual([14]);
+  }, 10_000);
 });

@@ -21,6 +21,20 @@ const CAPTCHA_MARKERS = [
   ".h-captcha",
   "#cf-challenge-running",
   "[data-sitekey]",
+  // The old-fashioned kind: a distorted image and a box to type what it says.
+  // Every marker above assumes a third-party widget, so none of them matched
+  // Keka — which draws a plain `<input id="captcha">` next to an image, and
+  // which is 188 of our 256 employer listings. Measured on 22 of 22 tenants,
+  // so this is the platform, not a handful of strict employers.
+  //
+  // Without this the page did not read as gated at all: the form filled, the
+  // captcha box stayed empty because no honest answer exists for it, and either
+  // the submit bounced or we clicked and reported "pressed but not confirmed" —
+  // spending a daily slot on an application that never had a chance.
+  "input#captcha",
+  "input[name*='captcha' i]",
+  "input[id*='captcha' i]",
+  "img[src*='captcha' i]",
 ];
 
 // Payment demands, stated the way a page that actually wants money states them.

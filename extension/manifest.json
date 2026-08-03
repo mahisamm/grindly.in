@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Grindly \u2014 Apply Assistant",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Runs your Grindly applications in your own browser. It fills from facts you approved and always stops for a CAPTCHA, a login, or a question it cannot answer honestly.",
   "permissions": [
     "activeTab",
