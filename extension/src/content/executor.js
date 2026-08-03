@@ -247,8 +247,29 @@
     // gate is unfalsifiable from the server side: production stopped real
     // applications with reason "payment" on a board that charges nothing to
     // apply, and nothing recorded which words said otherwise.
+    // A gate found BEFORE anything is filled.
+    //
+    // Skip-gates stop right here and touch nothing. On a login wall the fields
+    // in front of us ARE the login form, and typing application answers into
+    // it would be both useless and alarming.
+    //
+    // A CAPTCHA is the opposite case, and getting this backwards made the
+    // feature worthless on its first real run: nine tasks executed, every one
+    // stopped at this line, and the server that decides the answers was never
+    // called once. The user got eight open tabs containing EMPTY forms. They
+    // still had to solve the CAPTCHA — and then fill the entire application by
+    // hand, which is the whole product.
+    //
+    // Filling is not submitting. The rule is that we never SEND into a gate,
+    // and that still holds: the pre-submit check below is what enforces it. So
+    // note the CAPTCHA, fill everything we can answer honestly, and hand back a
+    // form that needs one CAPTCHA and one click.
     let g = gates.explainHumanGate(document);
-    if (await stopAtGate(g)) return;
+    if (g.reason && SKIP_GATES.has(g.reason)) {
+      await stopAtGate(g);
+      return;
+    }
+    let gateOnArrival = g.reason;
 
     // 2. Fill from approved facts only.
     // The kit shape fillEngine reads: { profile:{name,…}, answers, coverLetter }.
@@ -346,8 +367,15 @@
       if (submit) {
         // The form that just appeared is a new form: re-check for a gate, and
         // fill the fields it brought with it.
+        // Same rule as on arrival: a skip-gate stops untouched, a CAPTCHA gets
+        // noted and the modal still gets filled. Stopping here would hand back
+        // an empty modal — the exact form the user came to have filled.
         g = gates.explainHumanGate(document);
-        if (await stopAtGate(g)) return;
+        if (g.reason && SKIP_GATES.has(g.reason)) {
+          await stopAtGate(g);
+          return;
+        }
+        if (g.reason) gateOnArrival = g.reason;
         try {
           // The modal that just opened is a different form with different
           // questions, so it gets its own trip to the server rather than a
@@ -374,6 +402,22 @@
           return;
         }
       }
+    }
+
+    // 3b. The CAPTCHA we deliberately filled past. Hand it over NOW, with the
+    //     form completed, rather than looking for a submit button we are never
+    //     going to be allowed to press. The difference the user sees is the
+    //     difference between "solve this and press Submit" and "here is an
+    //     empty form and a puzzle".
+    if (gateOnArrival) {
+      stopHeartbeat();
+      banner(
+        `Grindly filled ${filled} field(s) for you. This page needs you for a ` +
+        `${gateOnArrival} — solve it and press Submit.`,
+        "gate",
+      );
+      await report("awaiting_human", { reason: gateOnArrival, detail: g.evidence });
+      return;
     }
 
     // 4. Any required question we hold no approved answer for stops the run.

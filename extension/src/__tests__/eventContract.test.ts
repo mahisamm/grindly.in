@@ -159,3 +159,52 @@ describe("nobody is watching this tab", () => {
     expect(afterClick).not.toMatch(/budget\(/);
   });
 });
+
+describe("a CAPTCHA gets a filled form, not an empty one", () => {
+  // The first real run: nine tasks executed, every one stopped at the arrival
+  // gate, and the planner that decides the answers was never called once. The
+  // user got eight tabs of EMPTY forms. They still had to solve the CAPTCHA and
+  // then fill the whole application by hand — which is the entire product.
+  //
+  // Filling is not submitting. The rule is that we never SEND into a gate, and
+  // the pre-submit check is what enforces that.
+
+  it("does not stop the run on arrival for a CAPTCHA", () => {
+    // Only the skip-gates short-circuit before filling.
+    const arrival = EXEC.slice(
+      EXEC.indexOf("let g = gates.explainHumanGate(document);"),
+      EXEC.indexOf("const kit = task.kit"));
+    expect(arrival).toMatch(/SKIP_GATES\.has\(g\.reason\)/);
+    expect(arrival).toMatch(/gateOnArrival = g\.reason/);
+  });
+
+  it("asks the server for a plan even when a CAPTCHA is present", () => {
+    // The whole failure was that /plan was never reached.
+    const beforeHandover = EXEC.slice(0, EXEC.indexOf("if (gateOnArrival) {"));
+    expect(beforeHandover).toMatch(/grindly:fillPlan/);
+  });
+
+  it("hands over before ever looking for a submit button", () => {
+    // We are not going to be allowed to press it, and pressing into a gate is
+    // the one thing this must never do.
+    expect(EXEC.indexOf("if (gateOnArrival) {"))
+      .toBeLessThan(EXEC.indexOf("submit.click()"));
+  });
+
+  it("tells the user the form is already filled", () => {
+    // "Solve this and press Submit" is a different product from "here is an
+    // empty form and a puzzle".
+    const handover = EXEC.slice(EXEC.indexOf("if (gateOnArrival) {"));
+    expect(handover).toMatch(/filled \$\{filled\} field/);
+    expect(handover).toMatch(/press Submit/);
+  });
+
+  it("still refuses to fill a login or payment wall", () => {
+    // Those fields are the login form. Typing application answers into one is
+    // useless and alarming, so they stop untouched.
+    const arrival = EXEC.slice(
+      EXEC.indexOf("let g = gates.explainHumanGate(document);"),
+      EXEC.indexOf("const kit = task.kit"));
+    expect(arrival).toMatch(/await stopAtGate\(g\);\s*\n\s*return;/);
+  });
+});
