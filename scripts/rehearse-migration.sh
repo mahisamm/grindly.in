@@ -26,12 +26,16 @@ q "$ADMIN" -c "CREATE DATABASE ${DB};" >/dev/null
 
 say "build a replica of the OLD schema and seed it"
 q "$TARGET" >/dev/null <<'SQL'
+-- NO deleted_at. The real pre-pivot users table does not have one — this
+-- fixture invented it by copying the NEW schema, so the rehearsal passed
+-- against a database that did not exist and the migration then failed on
+-- production at the first statement that touched it.
 CREATE TABLE users (
   id text PRIMARY KEY, email text UNIQUE NOT NULL, name text,
   password_hash text, google_id text UNIQUE, phone text,
   created_at timestamptz DEFAULT now(), paid boolean DEFAULT false,
   plan text DEFAULT 'free', status text DEFAULT 'registered',
-  role text DEFAULT 'user', token_version int DEFAULT 0, deleted_at timestamptz);
+  role text DEFAULT 'user', token_version int DEFAULT 0);
 CREATE TABLE applications (
   id text PRIMARY KEY, user_id text REFERENCES users(id) ON DELETE CASCADE,
   company text, created_at timestamptz DEFAULT now());
@@ -46,14 +50,13 @@ INSERT INTO users (id,email,name,password_hash,google_id,paid,plan,status,role,t
  ('u4','d.student@miet.ac.in','Divya','scrypt$z','g4',false,'free','active','user',7),
  ('u5','e.student@gmail.com','Esha','scrypt$w','g5',false,'starter','active','admin',2),
  ('u6','f.student@gmail.com','Farhan','scrypt$v','g6',false,'free','active','user',0);
-UPDATE users SET deleted_at = now() WHERE id = 'u6';
 INSERT INTO applications (id,user_id,company)
 SELECT 'a'||g,'u'||((g % 5)+1),'Company '||g FROM generate_series(1,260) g;
 INSERT INTO profiles (id,user_id) SELECT 'p'||id,id FROM users;
 SQL
 
-BEFORE=$(q "$TARGET" -tAc "SELECT count(*) FROM users WHERE deleted_at IS NULL;" | tr -d '[:space:]')
-echo "  seeded: ${BEFORE} live users (1 soft-deleted), 260 applications"
+BEFORE=$(q "$TARGET" -tAc "SELECT count(*) FROM users;" | tr -d '[:space:]')
+echo "  seeded: ${BEFORE} users, 260 applications"
 
 say "half 1 — carry into the legacy schema"
 q "$TARGET" -f /tmp/m1.sql || { echo "  half 1 FAILED"; exit 1; }
@@ -66,25 +69,23 @@ q "$TARGET" -f /tmp/m2.sql || { echo "  half 2 FAILED"; exit 1; }
 
 say "ASSERTIONS"
 g() { q "$TARGET" -tAc "$1" | tr -d '[:space:]'; }
-# db push ALTERS users in place, so the soft-deleted row survives too — 6 total,
-# 5 of them live. That is correct: the account stays deleted and its email stays
-# claimed, rather than the deletion being silently undone by the rewrite.
-check "all rows present"               "$(g 'SELECT count(*) FROM users;')" "6"
-check "live users carried"             "$(g 'SELECT count(*) FROM users WHERE deleted_at IS NULL;')" "$BEFORE"
-check "emails normalised to lowercase" "$(g 'SELECT count(*) FROM users WHERE deleted_at IS NULL AND email <> lower(email);')" "0"
+# `prisma db push` ALTERS `users` in place rather than dropping it — the table
+# exists in both schemas — so every row survives the rebuild and the restore's
+# job is to normalise them, not to reinsert them.
+check "users carried"                  "$(g 'SELECT count(*) FROM users;')" "$BEFORE"
+check "emails normalised to lowercase" "$(g 'SELECT count(*) FROM users WHERE email <> lower(email);')" "0"
 check "admin role preserved"           "$(g "SELECT count(*) FROM users WHERE role='admin';")" "1"
-check "nobody silently granted a plan" "$(g "SELECT count(*) FROM users WHERE deleted_at IS NULL AND plan <> 'free';")" "0"
-check "sessions invalidated"           "$(g 'SELECT count(*) FROM users WHERE deleted_at IS NULL AND token_version < 1000;')" "0"
+check "nobody silently granted a plan" "$(g "SELECT count(*) FROM users WHERE plan <> 'free';")" "0"
+check "sessions invalidated"           "$(g 'SELECT count(*) FROM users WHERE token_version < 1000;')" "0"
 check "google-only account kept"       "$(g 'SELECT count(*) FROM users WHERE password_hash IS NULL AND google_id IS NOT NULL;')" "1"
 check "applications archived"          "$(g 'SELECT count(*) FROM legacy.applications_archive;')" "260"
-check "soft-deleted stays deleted"     "$(g "SELECT count(*) FROM users WHERE email='f.student@gmail.com' AND deleted_at IS NOT NULL;")" "1"
+check "every account present"           "$(g "SELECT count(*) FROM users WHERE email='f.student@gmail.com';")" "1"
 check "new tables exist"               "$(g "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('resumes','variants','targets');")" "3"
 check "old tables gone"                "$(g "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='applications';")" "0"
 
 say "idempotency — half 2 twice must not duplicate"
 q "$TARGET" -f /tmp/m2.sql >/dev/null 2>&1
-check "re-run is a no-op"              "$(g 'SELECT count(*) FROM users;')" "6"
-check "re-run kept them live"          "$(g 'SELECT count(*) FROM users WHERE deleted_at IS NULL;')" "$BEFORE"
+check "re-run is a no-op"              "$(g 'SELECT count(*) FROM users;')" "$BEFORE"
 
 say "refusal — half 1 against an already-migrated database must ERROR"
 if q "$TARGET" -f /tmp/m1.sql >/dev/null 2>&1; then

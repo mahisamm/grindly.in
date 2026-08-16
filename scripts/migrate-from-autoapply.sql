@@ -64,24 +64,52 @@ CREATE SCHEMA legacy;
 -- The carry table. Column list is explicit rather than SELECT *, so a column
 -- that exists on this box but not in the schema I read cannot silently change
 -- the shape of what gets restored.
-CREATE TABLE legacy.users_carry AS
-SELECT
-  id,
-  lower(btrim(email))            AS email,
-  name,
-  password_hash,
-  google_id,
-  -- Anything that is not literally 'admin' becomes a user. The old column also
-  -- held legacy values; defaulting to the lower privilege is the only safe way
-  -- to read a string whose full range you are not certain of.
-  CASE WHEN role = 'admin' THEN 'admin' ELSE 'user' END AS role,
-  created_at,
-  -- Kept for the decision below, not restored as-is.
-  paid,
-  plan                            AS legacy_plan,
-  status                          AS legacy_status
-FROM public.users
-WHERE deleted_at IS NULL;
+--
+-- Built with EXECUTE because the source columns are not guaranteed. This first
+-- ran against production assuming `users.deleted_at` existed — it does not; the
+-- rehearsal fixture had invented it by copying the NEW schema. The transaction
+-- rolled back cleanly, but a migration that only works against the schema you
+-- imagined is not a migration. Every optional column is now probed rather than
+-- assumed, so a box that differs slightly still migrates instead of aborting
+-- halfway.
+DO $$
+DECLARE
+  has_deleted_at boolean;
+  has_paid       boolean;
+  has_status     boolean;
+BEGIN
+  SELECT count(*) > 0 INTO has_deleted_at FROM information_schema.columns
+   WHERE table_schema='public' AND table_name='users' AND column_name='deleted_at';
+  SELECT count(*) > 0 INTO has_paid FROM information_schema.columns
+   WHERE table_schema='public' AND table_name='users' AND column_name='paid';
+  SELECT count(*) > 0 INTO has_status FROM information_schema.columns
+   WHERE table_schema='public' AND table_name='users' AND column_name='status';
+
+  EXECUTE format($f$
+    CREATE TABLE legacy.users_carry AS
+    SELECT
+      id,
+      lower(btrim(email)) AS email,
+      name,
+      password_hash,
+      google_id,
+      -- Anything not literally 'admin' becomes a user. Defaulting to the lower
+      -- privilege is the only safe way to read a string whose full range you
+      -- are not certain of.
+      CASE WHEN role = 'admin' THEN 'admin' ELSE 'user' END AS role,
+      created_at,
+      %s AS paid,
+      %s AS legacy_plan,
+      %s AS legacy_status
+    FROM public.users
+    %s
+  $f$,
+    CASE WHEN has_paid   THEN 'paid'   ELSE 'false'   END,
+    'plan',
+    CASE WHEN has_status THEN 'status' ELSE '''(none)''' END,
+    CASE WHEN has_deleted_at THEN 'WHERE deleted_at IS NULL' ELSE '' END
+  );
+END $$;
 
 -- Everything else the accounts touched, kept as a compressed record in-database
 -- so "what did this user actually do" is answerable after cutover without
