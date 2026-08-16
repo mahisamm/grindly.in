@@ -42,23 +42,8 @@ ENV NODE_ENV=production \
     # "browser not found" at runtime is the result.
     PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 
-# Fonts are a hard dependency of the product, not a nicety, so they are named
-# here rather than left to whatever `playwright install --with-deps` happens to
-# pull in this month.
-#
-#   fonts-liberation  The resume template's typeface. Liberation Sans is
-#                     metric-compatible with Arial, so a rebuild previewed on a
-#                     developer's Windows machine and one downloaded from this
-#                     container lay out identically. Without it Chromium falls
-#                     back to DejaVu and every line breaks somewhere else.
-#   fonts-dejavu-core Fallback coverage for symbols Liberation lacks.
-#   fonts-noto-core   Non-Latin scripts. A candidate whose name is written in
-#                     Devanagari or Tamil renders as empty boxes without it —
-#                     silently, with no error anywhere, on the one line of the
-#                     document that matters most.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       openssl gosu python3 python3-venv python3-pip \
-      fonts-liberation fonts-dejavu-core fonts-noto-core \
     && rm -rf /var/lib/apt/lists/* \
     && addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 --ingroup nodejs nextjs
@@ -74,6 +59,31 @@ RUN python3 -m venv /opt/agent-venv \
     && /opt/agent-venv/bin/playwright install --with-deps chromium \
     && chmod -R a+rX /opt/playwright \
     && rm -rf /var/lib/apt/lists/* /tmp/agent-requirements.txt
+
+# Fonts, named explicitly rather than left to whatever `--with-deps` happens to
+# pull in this month. The resume template depends on these by name, so this is a
+# hard dependency of the product and not a nicety.
+#
+#   fonts-liberation  The template's typeface. Liberation Sans is
+#                     metric-compatible with Arial, which is what makes a
+#                     rebuild previewed on a developer's Windows machine and one
+#                     downloaded from this container lay out identically.
+#                     Without it Chromium falls back to DejaVu and every line
+#                     breaks somewhere else.
+#   fonts-dejavu-core Fallback coverage for symbols Liberation lacks.
+#   fonts-noto-core   Non-Latin scripts. A candidate whose name is written in
+#                     Devanagari or Tamil renders as empty boxes without it —
+#                     silently, with no error anywhere, on the one line of the
+#                     document that matters most.
+#
+# Deliberately its OWN layer, placed after the venv rather than merged into the
+# apt-get above. Merged, adding a font invalidates the layer that installs
+# Chromium, and the deploy box has 3.9 GB of RAM with a live site holding most
+# of it — a rebuild that re-downloads a browser there is how a one-line change
+# turns into an OOM during a deploy.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      fonts-liberation fonts-dejavu-core fonts-noto-core \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build --chown=nextjs:nodejs /app ./
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
