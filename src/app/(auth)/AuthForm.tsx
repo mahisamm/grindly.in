@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Logo } from "@/components/Brand";
@@ -28,12 +28,28 @@ const OAUTH_ERRORS: Record<string, string> = {
  * Sign in / sign up, sharing one component because they differ by three strings
  * and one endpoint.
  *
- * The Google button is rendered only when the server says the credentials
- * exist. That check comes from /api/me at runtime rather than from a
- * NEXT_PUBLIC_ build-time variable, because a Docker image built without the
- * key would otherwise keep hiding the button forever after an operator sets it.
+ * The Google button renders only when the server has the credentials. That
+ * comes in as a prop evaluated per-request on the server — not a NEXT_PUBLIC_
+ * build-time variable, which would bake the answer into the image and keep the
+ * button hidden forever after an operator set the key.
  */
-export function AuthForm({ mode }: { mode: "login" | "signup" }) {
+export function AuthForm({
+  mode,
+  googleAuth,
+}: {
+  mode: "login" | "signup";
+  /**
+   * Whether this server has Google OAuth configured.
+   *
+   * Passed in from the server component rather than fetched from /api/me on
+   * mount. Fetching it meant the Google button appeared a beat after the rest
+   * of the form — a layout shift on every visit, and on a slow connection a
+   * window where the page offers only the password field. That is the primary
+   * sign-in method for every existing account here, so it must be in the first
+   * byte of HTML, not in a follow-up request.
+   */
+  googleAuth: boolean;
+}) {
   const router = useRouter();
   const params = useSearchParams();
   const isSignup = mode === "signup";
@@ -47,23 +63,6 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   // verbatim is a text-injection footgun on the one page people trust most.
   const oauthError = OAUTH_ERRORS[params.get("error") ?? ""] ?? null;
   const [error, setError] = useState<string | null>(oauthError);
-  const [googleAuth, setGoogleAuth] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    fetch("/api/me")
-      .then((r) => r.json())
-      .then((d) => {
-        if (!live) return;
-        setGoogleAuth(Boolean(d?.server?.googleAuth));
-        // Already signed in — do not show a login form to someone who is.
-        if (d?.user) router.replace("/app");
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [router]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
