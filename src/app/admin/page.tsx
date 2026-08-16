@@ -25,7 +25,7 @@ export default async function AdminPage() {
   if (user.role !== "admin") redirect("/app");
 
   const caps = describe();
-  const since = new Date(Date.now() - 7 * 86_400_000);
+  const since = sevenDaysAgo();
 
   // Aggregates computed IN the database. These were `findMany` over every
   // resume and every paid order, sorted in JS — two unbounded full-table reads
@@ -181,6 +181,10 @@ export default async function AdminPage() {
       </section>
     </div>
   );
+}
+
+function sevenDaysAgo() {
+  return new Date(Date.now() - 7 * 86_400_000);
 }
 
 function Stat({ label, value }: { label: string; value: string | number }) {

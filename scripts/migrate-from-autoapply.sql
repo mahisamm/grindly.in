@@ -115,6 +115,12 @@ END $$;
 -- so "what did this user actually do" is answerable after cutover without
 -- restoring a whole dump.
 CREATE TABLE legacy.applications_archive AS SELECT * FROM public.applications;
+-- The old application archive contains enum-typed columns. Prisma must drop
+-- those old enum types during the pivot, so preserve their values as text rather
+-- than leaving the archive dependent on types in the managed public schema.
+ALTER TABLE legacy.applications_archive ALTER COLUMN status TYPE text USING status::text;
+ALTER TABLE legacy.applications_archive ALTER COLUMN failure_reason TYPE text USING failure_reason::text;
+ALTER TABLE legacy.applications_archive ALTER COLUMN outcome TYPE text USING outcome::text;
 CREATE TABLE legacy.profiles_archive     AS SELECT * FROM public.profiles;
 
 -- Duplicate emails would fail the new unique index halfway through the restore,
