@@ -45,6 +45,11 @@ const TIMEOUTS: Record<string, number> = {
   report: 120_000, // 120s only when with_advice is set; the score alone is instant
   jd: 90_000,
   companies: 15_000,
+  // Two provider calls, and a cold interpreter in front of them. Longer than
+  // the 60s default because timing out here is indistinguishable to the user
+  // from the "we know nothing about this company" answer, and those two must
+  // never look alike.
+  research: 120_000,
   render: 90_000,
   variants: 420_000,
 };
@@ -77,7 +82,13 @@ export async function runAgent<T = Record<string, unknown>>(
     try {
       child = spawn(pythonBin(), [cli], {
         cwd: process.cwd(),
-        env: process.env,
+        // UTF-8 on both pipes, said twice on purpose. We read stdout as utf8
+        // below, and Python writes it in the locale's encoding — cp1252 on a
+        // Windows dev machine — so every em dash in a finding arrived as a
+        // replacement character. cli.py reconfigures its own streams; these
+        // variables make it true even before the first line of that file runs,
+        // which is what covers a traceback from an import failing.
+        env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
@@ -179,6 +190,7 @@ export type {
   Advice,
   Band,
   CompanyPack,
+  CompanyResearch,
   CompanySource,
   Fidelity,
   Finding,

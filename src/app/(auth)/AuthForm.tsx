@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Logo } from "@/components/Brand";
 
 /**
@@ -50,7 +50,6 @@ export function AuthForm({
    */
   googleAuth: boolean;
 }) {
-  const router = useRouter();
   const params = useSearchParams();
   const isSignup = mode === "signup";
 
@@ -160,7 +159,7 @@ export function AuthForm({
             autoComplete="email"
             onChange={(e) => setEmail(e.target.value)}
             className="field w-full"
-            placeholder="you@college.edu.in"
+            placeholder="you@example.com"
           />
         </label>
 

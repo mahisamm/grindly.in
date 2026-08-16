@@ -73,6 +73,10 @@ export default async function Home() {
               <p className="text-muted mt-4 text-sm">
                 No card. Your first resume, the full report and one company pack are free.
               </p>
+              <p className="text-muted mt-2 text-sm">
+                First job or eleventh year — the same file goes through the same parser
+                either way, and a two-page senior resume is scored as one.
+              </p>
             </div>
 
             <aside className="bg-surface border-border rounded-xl border p-6">
@@ -114,11 +118,11 @@ export default async function Home() {
               },
               {
                 h: "Three versions, measured",
-                p: "You get up to three rebuilds under different strategies, each scored against your original. Any version that does not beat your resume is thrown away rather than shown to you behind a tempting button.",
+                p: "You get up to three rebuilds under different strategies, each scored against your original. Any version that does not beat your resume is thrown away rather than shown to you behind a tempting button. We aim for 80 and above — everything mechanical is ours to get right — and a rebuild that still lands short tells you the one thing missing instead of hiding it.",
               },
               {
                 h: "Tailored to a real company",
-                p: "Amazon publishes 16 Leadership Principles. Google publishes the bullet form it wants. We surface what you already have to match — every claim linked to the company's own page, never scraped, never guessed.",
+                p: "Amazon publishes 16 Leadership Principles. Google publishes the bullet form it wants. We surface what you already have to match — every claim linked to the company's own page, never scraped, never guessed. Type any other employer and you get one of three answers, including the honest one: for most companies there is nothing specific to tailor to, and we say so instead of inventing it.",
               },
             ].map((c) => (
               <div key={c.h}>
@@ -160,9 +164,9 @@ export default async function Home() {
         {/* pricing teaser */}
         <section className="border-border border-t">
           <div className="mx-auto max-w-6xl px-6 py-16">
-            <h2 className="font-display text-3xl font-bold">Priced for a placement season</h2>
+            <h2 className="font-display text-3xl font-bold">Priced for a job search</h2>
             <p className="text-muted mt-3 max-w-2xl leading-relaxed">
-              Not a subscription. A season runs six to ten weeks, so you buy a pass that
+              Not a subscription. A search runs weeks, not years, so you buy a pass that
               ends on its own — and you keep everything you made. The comparable tools
               charge {formatAmount(250000)}–{formatAmount(410000)} a month.
             </p>

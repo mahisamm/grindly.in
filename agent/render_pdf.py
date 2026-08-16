@@ -40,8 +40,13 @@ import shutil
 import tempfile
 
 # Page geometry, in millimetres. A4 because the entire target market prints A4.
+#
+# 15mm sides rather than 14: at 14mm an A4 line holds ~95 characters at body
+# size, which is past the point where the eye loses its place returning to the
+# next line. The extra 2mm costs roughly one word per line and buys a measure
+# that reads like a document instead of a spreadsheet.
 PAGE_FORMAT = "A4"
-MARGIN_MM = {"top": "14mm", "right": "14mm", "bottom": "14mm", "left": "14mm"}
+MARGIN_MM = {"top": "15mm", "right": "15mm", "bottom": "15mm", "left": "15mm"}
 
 # A rebuilt one-page resume that spills to three pages is not an improvement, so
 # the caller checks this and drops the variant.
@@ -52,7 +57,44 @@ RENDER_TIMEOUT_MS = int(os.environ.get("GRINDLY_RENDER_TIMEOUT_MS", "20000"))
 # Chromium prints at 96 CSS px per inch regardless of the host's DPI setting, so
 # a pt-based scale is stable across machines. Everything below is derived from
 # BASE_PT to keep the vertical rhythm consistent when the caller tightens it.
-BASE_PT = 10.0
+BASE_PT = 9.8
+
+# ONE family for the whole document, and the reason is not taste.
+#
+# The old template set Georgia for body text and Arial for headings, meta lines
+# and the contact line. Two problems, both visible in the output:
+#
+#   1. Neither font exists in the production container. Georgia and Arial are
+#      Microsoft fonts; the image installs Playwright's Debian dependencies,
+#      which include the Liberation family and nothing from Microsoft. So the
+#      resume a developer previewed on Windows and the resume a user downloaded
+#      from the server were set in different typefaces, at different widths,
+#      breaking differently across pages. Liberation Sans is metric-compatible
+#      with Arial and Liberation Serif with Times New Roman, so naming both puts
+#      Windows and the container on the same metrics rather than merely on
+#      "some sans-serif".
+#
+#   2. Georgia's numerals are old-style — 3, 4, 5, 7 and 9 hang below the
+#      baseline. On running text that is elegant; on a resume, where a third of
+#      the numerals are years and percentages sitting next to capital letters,
+#      it reads as wobbly and slightly broken. `2023 - Present` in Georgia looks
+#      like a typesetting accident. Every face named here has lining figures.
+#
+# Sans rather than serif because a resume is now read on a screen far more often
+# than on paper, and because tabular lining numerals make a right-aligned date
+# column line up exactly.
+FONT_STACK = (
+    '"Liberation Sans", Arial, "Helvetica Neue", Helvetica, "Nimbus Sans", '
+    '"DejaVu Sans", sans-serif'
+)
+
+# Ink. Near-black rather than pure black for body text: #000 on white at 9.8pt
+# renders with noticeably harsher antialiasing on screen, and the difference is
+# invisible on paper. Meta lines step down one level so the eye reads title
+# before employer without needing a second typeface to say so.
+INK = "#111111"
+INK_META = "#333333"
+RULE = "#111111"
 
 
 def _esc(value: object) -> str:
@@ -115,6 +157,26 @@ def _css(density: float = 1.0) -> str:
     Nothing here uses a webfont, a background image, or a colour that is not
     near-black: a resume is printed and photocopied, and a grey bullet at 60%
     opacity is a bullet a scanner loses.
+
+    The vertical rhythm is the design. Everything on this page is the same
+    typeface at four sizes, so the ONLY thing telling a reader where one section
+    ends and the next begins is space — and the previous version of this file
+    did not give it any. Section heading to next section was 8pt; item to item
+    was 5pt. Three points of difference over a full page reads as no difference,
+    so five identical full-width rules marched down the page with evenly-spaced
+    text between them and the whole document looked like a table with the cell
+    borders half turned off. The ratios below are deliberate and roughly 3:1
+    from the largest gap to the smallest:
+
+        section to section      15.5pt     "a new subject starts here"
+        heading to its content   4.5pt     "this belongs to that heading"
+        item to item             7.0pt     "different job, same subject"
+        line to line inside      2.0pt
+
+    A rule is drawn under a section heading and nowhere else. The header's own
+    underline is gone: it sat ten points above the first section's rule, and two
+    parallel full-width lines that close together at the top of a page is what
+    made the document read as a form to be filled in.
     """
     base = BASE_PT
     return f"""
@@ -122,12 +184,17 @@ def _css(density: float = 1.0) -> str:
       * {{ box-sizing: border-box; }}
       html, body {{ margin: 0; padding: 0; }}
       body {{
-        font-family: "Georgia", "Times New Roman", serif;
+        font-family: {FONT_STACK};
         font-size: {base}pt;
-        line-height: {1.32 * density:.3f};
-        color: #000000;
+        line-height: {1.38 * density:.3f};
+        color: {INK};
         background: #ffffff;
         -webkit-font-smoothing: antialiased;
+        /* Lining, fixed-width digits. Years and percentages sit beside capital
+           letters all over a resume, and proportional old-style figures make
+           "2023 - Present" look mis-set. Tabular widths also make the date
+           column line up on the right edge without a table. */
+        font-variant-numeric: lining-nums tabular-nums;
       }}
       .doc {{ padding: 0; }}
 
@@ -146,79 +213,205 @@ def _css(density: float = 1.0) -> str:
          correct, because both boxes share a left edge and vertical order wins. */
       header.hd {{
         text-align: left;
-        margin-bottom: {8 * density:.1f}pt;
-        padding-bottom: {5 * density:.1f}pt;
-        border-bottom: 0.8pt solid #000000;
+        margin-bottom: {13 * density:.1f}pt;
       }}
       h1.name {{
-        font-size: {base * 1.85:.1f}pt;
+        font-size: {base * 2.05:.1f}pt;
         font-weight: 700;
-        letter-spacing: 0.02em;
-        margin: 0 0 {3 * density:.1f}pt;
-        line-height: 1.1;
+        letter-spacing: -0.005em;
+        margin: 0 0 {4 * density:.1f}pt;
+        line-height: 1.08;
       }}
       p.contact {{
-        font-family: "Arial", "Helvetica", sans-serif;
-        font-size: {base * 0.90:.1f}pt;
+        font-size: {base * 0.92:.1f}pt;
+        color: {INK_META};
         margin: 0;
-        line-height: 1.35;
-        word-spacing: 0.02em;
+        line-height: 1.4;
       }}
+      /* The separator between contact fields, dimmed so the fields themselves
+         read as the content. It is real text in the PDF, not a border, so an
+         extractor still sees the delimiter it needs to split the header on. */
+      p.contact .sep {{ color: #999999; padding: 0 {base * 0.34:.1f}pt; }}
 
-      section.sec {{ margin-top: {8 * density:.1f}pt; }}
+      section.sec {{ margin-top: {15.5 * density:.1f}pt; }}
+      section.sec:first-of-type {{ margin-top: 0; }}
       h2.sec-h {{
-        font-family: "Arial", "Helvetica", sans-serif;
-        font-size: {base * 1.02:.1f}pt;
+        font-size: {base * 0.94:.1f}pt;
         font-weight: 700;
         text-transform: uppercase;
+        /* 0.08em, and this number is measured rather than chosen.
+           pdfminer inserts a word break when the gap between two glyphs exceeds
+           word_margin — 0.1 × the font size by default. Tracked headings are
+           therefore a cliff, not a gradient: rendered and read back at 9.2pt,
+           0.04 / 0.06 / 0.08 / 0.10em all extract as "EDUCATION", and 0.12em
+           extracts as "E D U C AT I O N". The first draft of this template used
+           0.13em, which read beautifully and made every section heading
+           invisible to `readiness.find_sections` — the rebuilt resume was told
+           it had no Education section, and a real ATS would have agreed. Do not
+           raise this past 0.10em without re-running tests/test_render.py. */
         letter-spacing: 0.08em;
-        margin: 0 0 {4 * density:.1f}pt;
-        padding-bottom: {2 * density:.1f}pt;
-        border-bottom: 0.5pt solid #000000;
+        margin: 0 0 {4.5 * density:.1f}pt;
+        padding-bottom: {2.5 * density:.1f}pt;
+        border-bottom: 0.5pt solid {RULE};
         page-break-after: avoid;
       }}
 
       article.item {{
-        margin-bottom: {5 * density:.1f}pt;
+        margin-bottom: {7 * density:.1f}pt;
         page-break-inside: avoid;
       }}
       article.item:last-child {{ margin-bottom: 0; }}
+
       p.item-head {{
-        font-size: {base * 1.03:.1f}pt;
+        font-size: {base * 1.04:.1f}pt;
         font-weight: 700;
         margin: 0;
-        line-height: 1.25;
+        line-height: 1.3;
       }}
+      /* Employer · dates · location, on one line under the title.
+         Everything on this line is inline text in a single block, which is what
+         keeps the date attached to its own role in the extracted text — see
+         `order_meta`. The date is separated by tone rather than by position:
+         full-strength ink against the meta grey, so it reads as its own field
+         without moving a single glyph. */
       p.item-sub {{
-        font-family: "Arial", "Helvetica", sans-serif;
-        font-size: {base * 0.88:.1f}pt;
-        font-style: italic;
-        margin: {1 * density:.1f}pt 0 0;
-        line-height: 1.25;
+        font-size: {base * 0.94:.1f}pt;
+        color: {INK_META};
+        margin: {1.5 * density:.1f}pt 0 0;
+        line-height: 1.3;
       }}
+      p.item-sub .date {{ color: {INK}; }}
+      p.item-sub .sep {{ color: #999999; padding: 0 {base * 0.30:.1f}pt; }}
       /* list-style is NONE and the glyph is real text inside the <li>. A CSS
          marker is generated content: it paints on the page and never reaches
          the text layer, so an extractor sees a wall of prose. Hanging indent
          via text-indent keeps the wrapped lines aligned under the text rather
          than under the bullet. */
       ul.bullets {{
-        margin: {2.5 * density:.1f}pt 0 0;
+        margin: {3.5 * density:.1f}pt 0 0;
         padding-left: 0;
         list-style: none;
       }}
       ul.bullets li {{
         margin: 0 0 {2 * density:.1f}pt;
-        line-height: {1.30 * density:.3f};
-        padding-left: {base * 1.15:.1f}pt;
-        text-indent: -{base * 1.15:.1f}pt;
+        line-height: {1.36 * density:.3f};
+        padding-left: {base * 1.05:.1f}pt;
+        text-indent: -{base * 1.05:.1f}pt;
       }}
       ul.bullets li:last-child {{ margin-bottom: 0; }}
-      ul.bullets li .b {{ padding-right: {base * 0.42:.1f}pt; }}
+      ul.bullets li .b {{ padding-right: {base * 0.40:.1f}pt; }}
 
-      p.skills-line {{ margin: 0 0 {2.5 * density:.1f}pt; line-height: 1.35; }}
+      p.skills-line {{ margin: 0 0 {3 * density:.1f}pt; line-height: 1.4; }}
       p.skills-line:last-child {{ margin-bottom: 0; }}
-      p.skills-line b {{ font-weight: 700; }}
+      /* The category is the label and the skills are the content, so the label
+         steps back rather than shouting in bold. Bold on both halves of every
+         line — which is what "Languages:" in bold beside bold-weight body text
+         amounts to at this size — is why the old skills block read as dense. */
+      p.skills-line .cat {{ font-weight: 700; }}
+
+      /* A summary or profile paragraph. Real prose, not a one-item bullet
+         list: an experienced candidate opens with two lines about what they do,
+         and rendering that as a lone bullet under a heading looks like a
+         mistake. */
+      p.prose {{ margin: 0 0 {3 * density:.1f}pt; line-height: 1.42; }}
+      p.prose:last-child {{ margin-bottom: 0; }}
     """
+
+
+# --------------------------------------------------------------------------
+# meta-line parsing
+# --------------------------------------------------------------------------
+
+# A date on a resume: a month-year, a numeric month/year, or a bare year, on its
+# own or as a range. Used ONLY to decide which segment of an item's meta line
+# gets right-aligned; nothing here changes a character of what is printed.
+_D = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*\d{4}|\d{1,2}[/-]\d{2,4}|(?:19|20)\d{2}"
+_OPEN = r"present|current|now|ongoing|date|till\s+date"
+# An optional qualifier people really write in front of a graduation date.
+_QUAL = r"(?:expected|expct?d|graduating|graduation|anticipated|since|class\s+of)\s*:?\s*"
+_DATE_SEGMENT_RE = re.compile(
+    rf"^(?:{_QUAL})?(?:{_D})\s*(?:[-–—]|to|until|through)?\s*(?:{_D}|{_OPEN})?\s*$",
+    re.I,
+)
+# Separators a header or meta line is built from. The renderer emits a middot;
+# extracted source resumes overwhelmingly use a pipe or a bullet.
+_SEPARATOR_RE = re.compile(r"\s*[|•·∙]\s*")
+
+# The separator printed between contact fields. A real character in the text
+# layer, so an extractor still sees where one field ends and the next begins.
+CONTACT_SEP = "·"
+
+
+def order_meta(sub: str, explicit_date: str = "") -> tuple[list[str], int]:
+    """An item's meta line as ordered fields, plus which one is the date.
+
+    Returns (fields, date_index), date_index -1 when there is no date. Fields
+    are put into one canonical order — employer, then date, then location —
+    because source resumes put them in every order there is, and a rebuilt
+    resume where every role reads the same way is easier to scan than one that
+    inherits four different conventions from four different sections.
+
+    THE DATE STAYS INLINE, and that is a measured decision rather than a
+    stylistic one. Setting the date hard right against the job title is what a
+    well-designed resume does and it looks markedly better — but rendered that
+    way and read back, pdfminer detaches every date from its role and emits
+    them together at the end of the section: "AI Intern / Piersoft / <bullets> /
+    AI Tech Lead / <bullets> / 2023 - Present / Jun 2025 - Aug 2025". A parser
+    filling an employment-history table then has two roles and two floating date
+    ranges with nothing connecting them.
+
+    Measured across four layouts (flex siblings, a floated span, a flex spacer,
+    and inline) with two extractors: pdfminer put the date 5 to 8 lines away
+    from its own title under all three right-aligned layouts, and one line away
+    under the inline one. pypdf kept them together in all four. We render for
+    the worse of the two, because we do not get to choose which parser a
+    recruiter runs.
+
+    An education line — "Excellencia Junior College | Percentage: 94%" — has no
+    date segment and comes through with its fields untouched; "94%" is not
+    mistaken for a year.
+    """
+    parts = [p.strip() for p in _SEPARATOR_RE.split(sub or "") if p.strip()]
+
+    if explicit_date:
+        date = explicit_date.strip()
+        # Drop a duplicate of the same date already sitting in the meta line.
+        parts = [p for p in parts if p != date]
+    else:
+        date = ""
+        for i, part in enumerate(parts):
+            # A lone segment is all-or-nothing: carving a trailing date out of
+            # "Software Engineer at Acme since Jan 2020" leaves a dangling
+            # "since", so only whole segments count as dates.
+            if _DATE_SEGMENT_RE.match(part):
+                date = part
+                parts = parts[:i] + parts[i + 1:]
+                break
+
+    if not date:
+        return parts, -1
+    # After the employer, before the location.
+    at = 1 if parts else 0
+    return parts[:at] + [date] + parts[at:], at
+
+
+def format_contact(line: str) -> list[str]:
+    """The contact header split into its fields, in order.
+
+    Kept as a list so the template can print its own separator between them
+    rather than inheriting whichever character the source resume happened to
+    use — sources arrive with pipes, bullets, middots, and mixtures of all
+    three in one line.
+    """
+    return [p for p in (s.strip() for s in _SEPARATOR_RE.split(line or "")) if p]
+
+
+_PROSE_HEADING_RE = re.compile(
+    r"summary|profile|objective|about\s*me|career\s+goal|professional\s+overview", re.I,
+)
+_SKILLS_HEADING_RE = re.compile(
+    r"skill|tool|technolog|language|framework|competenc|stack|interest|hobb", re.I,
+)
 
 
 def build_html(struct: dict, density: float = 1.0) -> str:
@@ -247,8 +440,12 @@ def build_html(struct: dict, density: float = 1.0) -> str:
         parts.append('<header class="hd">')
         if name:
             parts.append(f'<h1 class="name">{_esc(name)}</h1>')
-        if contact:
-            parts.append(f'<p class="contact">{_esc(contact)}</p>')
+        fields = format_contact(contact)
+        if fields:
+            sep = f'<span class="sep">{CONTACT_SEP}</span>'
+            parts.append('<p class="contact">'
+                         + sep.join(_esc(f) for f in fields)
+                         + "</p>")
         parts.append("</header>")
 
     for sec in struct.get("sections") or []:
@@ -260,14 +457,15 @@ def build_html(struct: dict, density: float = 1.0) -> str:
         if heading:
             parts.append(f'<h2 class="sec-h">{_esc(heading)}</h2>')
 
-        skills_like = bool(re.search(
-            r"skill|tool|technolog|language|framework|competenc|stack|interest|hobb",
-            heading, re.I,
-        )) if heading else False
+        skills_like = bool(_SKILLS_HEADING_RE.search(heading)) if heading else False
+        prose_like = bool(_PROSE_HEADING_RE.search(heading)) if heading else False
 
         for item in items:
             head = clean(item.get("head"))
-            sub = clean(item.get("sub"))
+            # An explicit `date` field wins; otherwise it is found inside the
+            # meta line. Explicit support exists so the rewrite step can hand
+            # one over directly, without the renderer having to infer it.
+            meta, date_at = order_meta(clean(item.get("sub")), clean(item.get("date")))
             bullets = [clean(b) for b in (item.get("bullets") or [])]
             bullets = [b for b in bullets if b]
 
@@ -276,18 +474,32 @@ def build_html(struct: dict, density: float = 1.0) -> str:
                 # list wastes a third of the page and reads worse.
                 body = ", ".join(bullets)
                 if head and body:
-                    parts.append(f'<p class="skills-line"><b>{_esc(head)}:</b> {_esc(body)}</p>')
+                    parts.append(f'<p class="skills-line"><span class="cat">{_esc(head)}:</span> {_esc(body)}</p>')
                 elif head:
                     parts.append(f'<p class="skills-line">{_esc(head)}</p>')
                 elif body:
                     parts.append(f'<p class="skills-line">{_esc(body)}</p>')
                 continue
 
+            if prose_like:
+                # A summary is prose. Rendering it as a bulleted list under a
+                # heading called "Professional Summary" is the single clearest
+                # tell that a document was assembled by a template rather than
+                # written by its owner.
+                for line in ([head] if head else []) + bullets:
+                    parts.append(f'<p class="prose">{_esc(line)}</p>')
+                continue
+
             parts.append('<article class="item">')
             if head:
                 parts.append(f'<p class="item-head">{_esc(head)}</p>')
-            if sub:
-                parts.append(f'<p class="item-sub">{_esc(sub)}</p>')
+            if meta:
+                rendered = [
+                    f'<span class="date">{_esc(f)}</span>' if i == date_at else _esc(f)
+                    for i, f in enumerate(meta)
+                ]
+                sep = f'<span class="sep">{CONTACT_SEP}</span>'
+                parts.append(f'<p class="item-sub">{sep.join(rendered)}</p>')
             if bullets:
                 parts.append('<ul class="bullets">')
                 parts.extend(

@@ -27,6 +27,9 @@ type AgentVariant = {
   report: Report;
   fidelity: Fidelity;
   pages: number | null;
+  meets_floor: boolean;
+  floor: number;
+  floor_gap: string;
   file: string;
   bytes: number;
 };
@@ -46,7 +49,10 @@ export async function POST(req: Request, { params }: Ctx) {
 
   const resume = await prisma.resume.findFirst({
     where: { id, userId: user.id },
-    select: { id: true, text: true, chars: true, skillsJson: true, contactJson: true },
+    select: {
+      id: true, text: true, chars: true,
+      skillsJson: true, contactJson: true, linksJson: true,
+    },
   });
   if (!resume) return notFound();
 
@@ -57,7 +63,7 @@ export async function POST(req: Request, { params }: Ctx) {
     );
   }
 
-  let body: { targetId?: string; company?: string; jd?: string } = {};
+  let body: { targetId?: string; company?: string; companyName?: string; jd?: string } = {};
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -96,6 +102,9 @@ export async function POST(req: Request, { params }: Ctx) {
     variants: AgentVariant[];
     baseline: number;
     reasons: string[];
+    floor: number;
+    meets_floor: boolean;
+    floor_gap: string;
     aborted: string | null;
   }>("variants", {
     text: resume.text,
@@ -105,6 +114,10 @@ export async function POST(req: Request, { params }: Ctx) {
     target_keywords: target.keywords,
     emphasis: target.emphasis,
     target_name: target.name,
+    // Link annotations off the uploaded PDF. A LinkedIn address hidden behind
+    // the word "LinkedIn" is invisible to every text extractor, so the rebuild
+    // prints it out — see _merge_profile_links in resume_optimize.py.
+    links: parseArray(resume.linksJson),
   });
 
   if (!result.ok) {
@@ -195,11 +208,16 @@ export async function POST(req: Request, { params }: Ctx) {
     baseline: result.baseline,
     reasons: result.reasons,
     targetId: target.id,
+    floor: result.floor,
+    meetsFloor: result.meets_floor,
+    floorGap: result.floor_gap,
     variants: created.map((v, i) => ({
       ...v,
       changes: result.variants[i]?.changes ?? [],
       report: result.variants[i]?.report ?? null,
       fidelity: result.variants[i]?.fidelity ?? null,
+      meetsFloor: result.variants[i]?.meets_floor ?? true,
+      floorGap: result.variants[i]?.floor_gap ?? "",
     })),
   });
 }
@@ -216,7 +234,7 @@ type ResolvedTarget = {
 async function resolveTarget(
   userId: string,
   resumeId: string,
-  body: { targetId?: string; company?: string; jd?: string },
+  body: { targetId?: string; company?: string; companyName?: string; jd?: string },
 ): Promise<ResolvedTarget | { error: NextResponse }> {
   const none: ResolvedTarget = { id: null, name: "", keywords: [], emphasis: [] };
 
@@ -228,7 +246,7 @@ async function resolveTarget(
     return targetToResolved(t);
   }
 
-  if (!body.company && !body.jd) return none;
+  if (!body.company && !body.companyName && !body.jd) return none;
 
   // Validate the INPUT before checking the plan limit. The other order tells a
   // user with a two-word job description to buy a Season Pass — the request was
@@ -279,6 +297,54 @@ async function resolveTarget(
     };
   }
 
+  // A company typed by hand, with no curated pack behind it. The lookup runs
+  // again here rather than trusting whatever the browser posted: the client
+  // already called /api/companies/research to show the user what tailoring
+  // would mean, but emphasis lines from that response are instructions we feed
+  // to a rewrite, and instructions must not be round-tripped through a page
+  // anyone can edit.
+  if (body.companyName) {
+    const found = await runAgent<{
+      tailoring: "curated" | "generated" | "not_required";
+      name: string; slug?: string; keywords: string[]; emphasis: string[];
+      note?: string;
+    }>("research", { name: body.companyName });
+    if (!found.ok) return { error: serverError("We could not look that company up.") };
+
+    if (found.tailoring === "not_required") {
+      // Not an error on the user's part, so it does not read as one. They are
+      // told what we know and pointed at the two things that do work.
+      return {
+        error: NextResponse.json(
+          { error: found.note, code: "tailoring_not_required", company: found.name },
+          { status: 422 },
+        ),
+      };
+    }
+
+    const created = await prisma.target.create({
+      data: {
+        userId, resumeId, kind: "company",
+        // A curated match keeps its slug so the pack stays live; a generated
+        // one has none, and its emphasis is stored because there is no pack to
+        // re-read it from later.
+        slug: found.slug ?? null,
+        name: found.name.slice(0, 120),
+        specJson: JSON.stringify({
+          skills: found.keywords ?? [],
+          emphasis: found.slug ? [] : (found.emphasis ?? []),
+          tailoring: found.tailoring,
+        }),
+      },
+    });
+    return {
+      id: created.id,
+      name: found.name,
+      keywords: found.keywords ?? [],
+      emphasis: found.emphasis ?? [],
+    };
+  }
+
   const jd = jdText;
   const parsed = await runAgent<{ spec: { title: string; company: string; skills: string[] } }>("jd", { text: jd });
   if (!parsed.ok) return { error: serverError("Could not read that job description.") };
@@ -296,8 +362,13 @@ async function resolveTarget(
 async function targetToResolved(t: {
   id: string; name: string; kind: string; slug: string | null; specJson: string | null;
 }): Promise<ResolvedTarget> {
-  const spec = (safeParse(t.specJson) ?? {}) as { skills?: string[] };
-  let emphasis: string[] = [];
+  const spec = (safeParse(t.specJson) ?? {}) as { skills?: string[]; emphasis?: string[] };
+  // A curated pack is re-read from `companies.py` every time, so editing a pack
+  // and deploying updates every target pointing at it. A generated one has no
+  // pack to re-read, so its emphasis was stored on the target — and is used
+  // verbatim rather than re-generated, because re-running the model on every
+  // rebuild would silently change what a saved target means.
+  let emphasis: string[] = Array.isArray(spec.emphasis) ? spec.emphasis : [];
   if (t.kind === "company" && t.slug) {
     const pack = await runAgent<{ pack: { emphasis: string[] } }>("companies", { slug: t.slug });
     if (pack.ok) emphasis = pack.pack.emphasis ?? [];

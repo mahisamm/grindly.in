@@ -269,6 +269,10 @@ model RateLimitEntry {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([key])
+  /// The sweep in lib/rateLimit.ts deletes every row whose window has closed.
+  /// Without this index that DELETE is a sequential scan of the whole table —
+  /// on the one path that runs on every rate-limited request in the app.
+  @@index([windowEnd])
   @@map("rate_limit_entries")
 }
 

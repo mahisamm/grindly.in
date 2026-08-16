@@ -51,10 +51,22 @@ import unicodedata
 # same class of extractor we do, so if pdfminer sees nothing the ATS sees nothing.
 MIN_READABLE_CHARS = 220
 
-# A one-page fresher resume is ~1800-3500 characters of extracted text. Under
-# 900 the document is real but thin; over 9000 it is almost certainly 3+ pages.
+# A one-page resume is ~1800-3500 characters of extracted text. Under 900 the
+# document is real but thin; over 9000 it is almost certainly 3+ pages.
+#
+# The upper bound moves with how much career there is to describe. Someone two
+# years out of college with 9000 characters has padding; someone fifteen years
+# in with four employers has a career, and telling them to cut it to one page is
+# advice from a campus placement cell being given to a principal engineer. The
+# threshold is raised rather than removed — three pages is too long for anybody.
 THIN_CHARS = 900
 BLOATED_CHARS = 9000
+SENIOR_BLOATED_CHARS = 13000
+
+# Years of history on the page above which we stop treating one page as the
+# target. Six because that is roughly where a second employer and a promotion
+# appear, and the two-page resume becomes normal rather than indulgent.
+SENIOR_YEARS = 6
 
 # PDF text layers leave these behind when a resume uses an icon font with no
 # Unicode mapping (FontAwesome is the usual culprit). They render as mojibake in
@@ -97,7 +109,17 @@ REQUIRED_SECTIONS = ("education", "skills")
 
 # Bullet glyphs real resumes use, plus the hyphen and asterisk that plain-text
 # exports degrade to.
-_BULLET_RE = re.compile(r"^\s*(?:[•▪●◦‣⁃∙▪●○–—*+·]|-\s)\s*")
+#
+# The ASCII and punctuation lookalikes (- * + · – —) must be followed by a space
+# AND by something that is not a digit. Without that second condition the very
+# first line of most Indian resumes — "+91 90000 00000 | name@example.com" —
+# counts as a bullet point. It then goes to `_band_impact` to be judged on
+# whether it leads with an action verb and states a measurable outcome, which a
+# phone number does not, so every resume in the target market lost impact score
+# for having a phone number in its header. The unambiguous glyphs keep their
+# no-space form, because "•Engineered the pipeline" with no space is a real
+# thing PDF extractors produce.
+_BULLET_RE = re.compile(r"^\s*(?:[•▪●◦‣⁃∙○]\s*|[-*+·–—]\s+(?=\D))")
 
 # Leading a bullet with a past-tense action verb is the one piece of resume
 # style with genuine parser-independent value: it puts the verb where both a
@@ -164,6 +186,23 @@ BAND_WEIGHTS = {
 }
 
 GRADE_BANDS = ((85, "A"), (70, "B"), (55, "C"), (40, "D"))
+
+# The score a rebuild has to reach before we are willing to hand it over.
+#
+# Not a marketing number. It is what the three MECHANICAL bands are worth when
+# they are all perfect, plus a little: readable + fields + structure, with
+# coverage redistributed across them, come to 76.5 of 100 on a document that
+# extracts cleanly, carries a full set of contact fields, and uses standard
+# headings in one column. Those three are properties of OUR template, not of the
+# candidate's career, so a rebuild that misses them is our bug. 80 sits just
+# above that line, which means clearing the floor requires the mechanical bands
+# to be right AND the bullets to say something — roughly one bullet in six
+# carrying a real number, or most of them leading with a verb.
+#
+# What it is NOT is a promise about anyone's hiring outcome, and it must never
+# be described as one. It is the point below which we would rather explain why
+# than hand someone a document and let them find out.
+SHIPPABLE_FLOOR = 80
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +317,28 @@ def find_date_ranges(text: str) -> list[str]:
     return [m.group(0) for m in _DATE_RANGE_RE.finditer(_norm(text))]
 
 
+_YEAR_RE = re.compile(r"\b(19[7-9]\d|20[0-4]\d)\b")
+
+
+def career_years(text: str) -> int:
+    """Years between the earliest and latest year the resume mentions.
+
+    A crude measure and deliberately so: it is used to decide whether one page
+    or two is the right target, and nothing finer than "how long has this person
+    been doing things" is needed for that. It reads years from anywhere in the
+    document, so a degree that started in 2014 counts — which is correct for
+    this purpose, since a resume covering 2014 to now has a decade of material
+    to fit whether the first four years were a degree or a job.
+
+    Bounded at 1970-2049 so a stray "1200 requests" or a pincode cannot make
+    someone look like they have been working since the Bronze Age.
+    """
+    years = sorted({int(m.group(0)) for m in _YEAR_RE.finditer(_norm(text))})
+    if len(years) < 2:
+        return 0
+    return years[-1] - years[0]
+
+
 # ---------------------------------------------------------------------------
 # bands
 # ---------------------------------------------------------------------------
@@ -390,8 +451,12 @@ def _band_readable(text: str) -> tuple[float, list[dict], dict]:
     # bought score and a dense resume was told it was "very short". The band
     # claims to measure text; it now measures text.
     chars = len(re.sub(r"\s+", " ", raw).strip())
+    years = career_years(raw)
+    senior = years >= SENIOR_YEARS
+    bloat_at = SENIOR_BLOATED_CHARS if senior else BLOATED_CHARS
     findings: list[dict] = []
-    facts = {"chars": chars, "cid_artifacts": len(_CID_RE.findall(raw)),
+    facts = {"chars": chars, "career_years": years, "senior": senior,
+             "cid_artifacts": len(_CID_RE.findall(raw)),
              "pua_artifacts": len(_PUA_RE.findall(raw))}
 
     if chars < MIN_READABLE_CHARS:
@@ -417,13 +482,20 @@ def _band_readable(text: str) -> tuple[float, list[dict], dict]:
             "task and the outcome. A page a recruiter can scan beats half a page "
             "they finish in four seconds.",
         ))
-    elif chars > BLOATED_CHARS:
+    elif chars > bloat_at:
         ratio -= 0.15
         findings.append(_finding(
             "warning", "readable",
             f"{chars} characters — that is three pages or more of text.",
-            "Indian campus recruiters expect one page. Cut the oldest roles and "
-            "any bullet that does not name a tool or an outcome.",
+            (
+                "With this much history two pages is normal, but three is not. "
+                "Cut the roles more than about twelve years old back to one line "
+                "each, and drop any bullet that does not name a tool, a scale or "
+                "an outcome."
+                if senior else
+                "One page is the target at this stage. Cut the oldest entries and "
+                "any bullet that does not name a tool or an outcome."
+            ),
         ))
 
     if facts["cid_artifacts"]:
@@ -620,21 +692,29 @@ def _band_impact(text: str) -> tuple[float, list[dict], dict]:
     action_ratio = action_led / len(bullets)
     quant_ratio = quantified / len(bullets)
 
-    # Full marks at 90% action-led and 55% quantified.
+    # Full marks at 95% action-led and 70% quantified.
     #
-    # These were 80% and 40%, with a comment claiming 40% was "what an honest
-    # strong resume actually reaches". The first genuinely strong resume run
-    # through this scorer reached 82% and 73% and took the band to a flat 100,
-    # which made the whole score top out — a ruler with no headroom cannot show
-    # a rewrite improving anything, and this product's entire job is to show
-    # exactly that. The old numbers were a guess; these are set above a measured
-    # strong resume so that full marks means unusually good rather than good.
+    # This calibration has been re-derived twice and the history matters, because
+    # both times the number moved for a reason rather than to taste.
     #
-    # 55% is still deliberately short of "every bullet needs a number". Pushing
+    # It started at 80% / 40%, guessed. It was then set to 90% / 55%, just above
+    # a measured strong resume, so that full marks would mean unusually good
+    # rather than good. That measurement was contaminated: `_BULLET_RE` counted
+    # the header line "+91 90000 00000 | name@example.com" as a bullet point, so
+    # the reference resume's ratios were computed with a phone number sitting in
+    # the denominator as an unquantified, non-action bullet. With that fixed the
+    # same document measures 90% and 80%, not 82% and 73% — it was always this
+    # good and the ruler was reading low. So the thresholds move up with it.
+    #
+    # 70% is still deliberately short of "every bullet needs a number". Pushing
     # toward 100% quantified is how competing tools talk people into inventing
     # metrics, and a number the candidate cannot defend in the interview costs
-    # them more than a missing one ever will.
-    got = 0.55 * min(1.0, action_ratio / 0.90) + 0.35 * min(1.0, quant_ratio / 0.55)
+    # them more than a missing one ever will. The cost of the change is small
+    # where it matters: a clean rewrite at 100% action-led and 30% quantified
+    # scores 0.80 on this band under the new thresholds and 0.84 under the old
+    # ones — one point of final score — while the top of the scale stops being
+    # reachable by a resume that is merely strong.
+    got = 0.55 * min(1.0, action_ratio / 0.95) + 0.35 * min(1.0, quant_ratio / 0.70)
 
     # Filler is judged per bullet, not in absolute terms.
     filler_rate = filler / len(bullets)

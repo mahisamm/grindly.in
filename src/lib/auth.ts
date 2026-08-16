@@ -47,6 +47,11 @@ export async function currentUser(): Promise<SessionUser | null> {
   // A soft-deleted account keeps its rows for the deletion grace period but must
   // not be able to sign in with a cookie issued before the delete.
   if (!user || user.deletedAt) return null;
+  // deletedAt is destructured away rather than passed on: this function has
+  // already acted on it, and handing callers a flag they might check again is
+  // how two different answers to "is this account deleted" end up in one
+  // codebase.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { deletedAt: _deletedAt, ...rest } = user;
   return rest;
 }

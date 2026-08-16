@@ -67,6 +67,42 @@ export type CompanyPack = {
   best_for: string[];
 };
 
+/**
+ * A company we were asked about that has no curated pack.
+ *
+ * `tailoring` is the whole point of the shape. "not_required" is a successful
+ * answer, not an error: for most employers there is nothing specific and
+ * checkable to say about how they screen, and saying so is better than
+ * generating a plausible paragraph about a company nobody has published
+ * anything about.
+ */
+export type CompanyResearch = {
+  ok: true;
+  tailoring: "curated" | "generated" | "not_required";
+  name: string;
+  slug?: string;
+  summary: string;
+  emphasis: string[];
+  keywords: string[];
+  confidence?: number;
+  size?: string;
+  /** Why we declined, or what a generated pack is and is not. */
+  note?: string;
+  sources?: CompanySource[];
+  disclaimer: string;
+};
+
+/**
+ * The score a rebuild has to reach before we hand it over.
+ *
+ * MUST equal `agent/readiness.SHIPPABLE_FLOOR`. It is duplicated rather than
+ * fetched because it is a constant the UI needs to render a static page, and a
+ * round trip to Python to learn the number 80 is a worse trade than this
+ * comment. `tests/floor.test.ts` reads the Python source and fails if the two
+ * ever drift.
+ */
+export const SHIPPABLE_FLOOR = 80;
+
 /** Band keys must match `agent/readiness.BAND_WEIGHTS`. */
 export const BAND_LABELS: Record<string, string> = {
   readable: "Machine-readable",

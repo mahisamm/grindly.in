@@ -42,8 +42,23 @@ ENV NODE_ENV=production \
     # "browser not found" at runtime is the result.
     PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 
+# Fonts are a hard dependency of the product, not a nicety, so they are named
+# here rather than left to whatever `playwright install --with-deps` happens to
+# pull in this month.
+#
+#   fonts-liberation  The resume template's typeface. Liberation Sans is
+#                     metric-compatible with Arial, so a rebuild previewed on a
+#                     developer's Windows machine and one downloaded from this
+#                     container lay out identically. Without it Chromium falls
+#                     back to DejaVu and every line breaks somewhere else.
+#   fonts-dejavu-core Fallback coverage for symbols Liberation lacks.
+#   fonts-noto-core   Non-Latin scripts. A candidate whose name is written in
+#                     Devanagari or Tamil renders as empty boxes without it —
+#                     silently, with no error anywhere, on the one line of the
+#                     document that matters most.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       openssl gosu python3 python3-venv python3-pip \
+      fonts-liberation fonts-dejavu-core fonts-noto-core \
     && rm -rf /var/lib/apt/lists/* \
     && addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 --ingroup nodejs nextjs

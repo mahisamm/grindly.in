@@ -30,6 +30,30 @@ import os
 import sys
 import traceback
 
+# UTF-8 on the pipes, unconditionally, before anything can write to them.
+#
+# Python picks stdout's encoding from the locale, and on Windows that is the
+# ANSI codepage — cp1252 on an ordinary machine. This program's contract is one
+# JSON object on stdout and the caller decodes it as UTF-8, so every character
+# above ASCII in a finding, a fix line or a company summary was being written as
+# a cp1252 byte and read back as a broken one. It showed up in the product as a
+# replacement character mid-sentence: "not just the word 'GitHub' behind a
+# hyperlink <?> extractors read text, not link annotations" — on the readiness
+# report, which is the screen the whole product is built around.
+#
+# Linux hides this: with no locale set, Python 3.7+ coerces to C.UTF-8 and
+# everything happens to work, so the container was fine and every developer on
+# Windows was reading corrupted output. Naming the encoding costs two lines and
+# makes development and production agree.
+#
+# stdin too: a resume pasted through this pipe carries accented names and
+# rupee signs, and decoding those as cp1252 mangles them on the way in.
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):  # pragma: no cover - already wrapped
+        pass
+
 # Every sibling module imports its peers by bare name (`import llm`), which only
 # resolves when this directory is on the path. Running `python agent/cli.py`
 # from the repo root puts the SCRIPT's directory on sys.path automatically, but
@@ -142,6 +166,21 @@ def cmd_companies(payload: dict) -> dict:
     }
 
 
+def cmd_research(payload: dict) -> dict:
+    """Target a company that has no curated pack.
+
+    Returns one of three honest answers — a curated pack, a clearly-labelled
+    generated one, or "tailoring is not required here and this is why". See
+    company_research.py; the interesting work is in deciding to decline.
+    """
+    import company_research
+
+    return company_research.research(
+        str(payload.get("name") or ""),
+        str(payload.get("role") or "")[:120],
+    )
+
+
 def cmd_variants(payload: dict) -> dict:
     """Build up to three measured rewrites and write their PDFs to `out_dir`.
 
@@ -170,6 +209,10 @@ def cmd_variants(payload: dict) -> dict:
         target_keywords=target_keywords,
         emphasis=emphasis,
         target_name=target_name,
+        # The PDF's link annotations, from `ingest`. A resume that shows the
+        # word "LinkedIn" behind a hyperlink carries an address no text
+        # extractor sees — printing it as text is how the rebuild stops losing it.
+        source_links=_str_list(payload.get("links"), limit=24),
     )
 
     written = []
@@ -238,6 +281,7 @@ COMMANDS = {
     "report": cmd_report,
     "jd": cmd_jd,
     "companies": cmd_companies,
+    "research": cmd_research,
     "variants": cmd_variants,
     "render": cmd_render,
     "health": cmd_health,

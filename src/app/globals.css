@@ -438,3 +438,89 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .overflow-y-auto, .overflow-auto { -webkit-overflow-scrolling: touch; }
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
 .safe-top { padding-top: env(safe-area-inset-top); }
+
+/* ── Buttons and form fields ────────────────────────────────
+   These are used on every screen in the app — 20 buttons and 9
+   inputs — and until now they were used and never defined. The
+   design system was ported over from the prototype and this
+   block did not come with it, so `.field` and `.btn` matched
+   nothing: the sign-in page rendered a heading, two labels, two
+   invisible inputs and the words "Sign in" in body text. A
+   person landing on it could not see where to type.
+
+   Styled as the rest of the system is: paper, a hairline of ink,
+   and a hard offset shadow rather than a soft one. No blur
+   anywhere — this is a letterpress specimen, not a glass UI.
+   ─────────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.68rem 1.15rem;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 3px 3px 0 rgba(23, 20, 15, 0.10);
+  transition: transform 0.08s var(--ease), box-shadow 0.08s var(--ease),
+              background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.btn:hover { background: var(--paper-2); }
+/* Pressed state moves the button onto its own shadow, so the
+   click has somewhere to land. */
+.btn:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 rgba(23, 20, 15, 0.10);
+}
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+.btn-primary {
+  background: var(--cta);
+  border-color: var(--cta-2);
+  color: var(--paper);
+  box-shadow: 3px 3px 0 rgba(23, 20, 15, 0.20);
+}
+.btn-primary:hover { background: var(--cta-2); }
+.btn-primary:active:not(:disabled) { box-shadow: 1px 1px 0 rgba(23, 20, 15, 0.20); }
+
+/* A form control has to look like one before it is focused. The
+   border is the affordance; the vermilion ring is the feedback. */
+.field {
+  display: block;
+  padding: 0.62rem 0.8rem;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.45;
+  transition: border-color 0.12s var(--ease), box-shadow 0.12s var(--ease);
+}
+.field::placeholder { color: var(--ink-mute); }
+.field:focus,
+.field:focus-visible {
+  outline: none;
+  border-color: var(--vermilion);
+  box-shadow: 0 0 0 3px rgba(227, 64, 42, 0.18);
+}
+.field:disabled { opacity: 0.6; cursor: not-allowed; }
+textarea.field { resize: vertical; min-height: 6rem; }
+
+/* Keyboard focus must be visible on buttons too — the hard
+   shadow reads as depth, not as focus. */
+.btn:focus-visible {
+  outline: 2px solid var(--vermilion);
+  outline-offset: 2px;
+}

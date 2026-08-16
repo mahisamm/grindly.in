@@ -3,6 +3,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/auth";
 import { runAgent } from "@/lib/agent";
+import { limitsFor } from "@/lib/plans";
 import type { Advice, CompanyPack, Fidelity, Report } from "@/lib/reportTypes";
 import { ResumeWorkspace } from "./Workspace";
 
@@ -63,6 +64,12 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
         }}
         packs={packs.ok ? packs.packs : []}
         disclaimer={packs.ok ? packs.disclaimer : ""}
+        // How many company targets this plan allows per resume, so the tab can
+        // say so BEFORE the user picks one. Without it, a free user who has
+        // already tailored for one company clicks "Tailor for Freshworks",
+        // waits, and is answered with a 402 telling them to buy a pass — an
+        // upgrade prompt as the response to a button that looked available.
+        targetLimit={limitsFor(user).targetsPerResume}
       />
     </div>
   );

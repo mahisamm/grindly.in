@@ -85,7 +85,7 @@ export const PRODUCTS: Record<Sku, Product> = {
     currency: "INR",
     grants: "pass",
     days: 90,
-    blurb: "Everything, for one placement season. One payment, no auto-renew.",
+    blurb: "Everything, for one job search. One payment, no auto-renew.",
   },
   pack1: {
     sku: "pack1",

@@ -16,9 +16,38 @@ import { prisma } from "@/lib/prisma";
  * @param limit    Max requests allowed in the window.
  * @param windowMs Window duration in milliseconds.
  */
+/**
+ * How often a call also sweeps expired rows away, as 1-in-N.
+ *
+ * The table is keyed by "action:ip" and "action:userId", so it gains a row per
+ * distinct client per action and never loses one — every rate-limited request
+ * from every IP that has ever hit the app, kept forever, to answer a question
+ * about the last hour. On a box with one vCPU and 4 GB that is a slow leak with
+ * no upper bound and no alarm attached to it.
+ *
+ * Swept opportunistically rather than on a schedule because there is no
+ * scheduler here to hang it off. 1-in-50 means the sweep runs often enough to
+ * keep the table small and rarely enough that it costs nothing measurable, and
+ * a DELETE on an indexed timestamp with nothing to delete is close to free.
+ */
+const SWEEP_ONE_IN = 50;
+
+async function sweepExpired(now: Date): Promise<void> {
+  if (Math.random() * SWEEP_ONE_IN >= 1) return;
+  // Never allowed to fail a request: this is housekeeping, and a rate-limit
+  // check that throws because a cleanup lost a race is a self-inflicted outage.
+  await prisma.rateLimitEntry
+    .deleteMany({ where: { windowEnd: { lt: now } } })
+    .catch((e) => console.error("[rateLimit] sweep failed:", e));
+}
+
 export async function isRateLimited(key: string, limit: number, windowMs: number): Promise<boolean> {
   const now = new Date();
   const windowEnd = new Date(now.getTime() + windowMs);
+
+  // Fire-and-forget: the caller is waiting on a permission decision, not on
+  // garbage collection.
+  void sweepExpired(now);
 
   const entry = await prisma.rateLimitEntry.findUnique({ where: { key } });
 

@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Advice, CompanyPack, Fidelity, Report } from "@/lib/reportTypes";
+import type {
+  Advice, CompanyPack, CompanyResearch, Fidelity, Report,
+} from "@/lib/reportTypes";
+import { SHIPPABLE_FLOOR } from "@/lib/reportTypes";
 import { FidelityLine, Findings, ReportPanel, ScoreDial } from "@/components/Score";
 
 type VariantView = {
@@ -45,10 +48,13 @@ export function ResumeWorkspace({
   resume,
   packs,
   disclaimer,
+  targetLimit,
 }: {
   resume: ResumeView;
   packs: CompanyPack[];
   disclaimer: string;
+  /** Company targets this plan allows per resume. */
+  targetLimit: number;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("report");
@@ -169,6 +175,7 @@ export function ResumeWorkspace({
             resume={resume}
             packs={packs}
             disclaimer={disclaimer}
+            targetLimit={targetLimit}
             busy={busy}
             onTarget={(body) => post(`/api/resumes/${resume.id}/variants`, body, "rewrite")}
           />
@@ -352,6 +359,13 @@ function RewriteTab({
             labelled, because the same score on a clean single-column layout is still a
             win for a parser.
           </p>
+          <p className="text-muted mt-2 leading-relaxed">
+            We aim for {SHIPPABLE_FLOOR} and above. Everything mechanical — clean
+            extraction, contact fields a parser can lift, standard headings, one column —
+            is ours to get right, and a rebuild that still lands short says which one
+            thing is missing rather than quietly handing you a weaker document. The part
+            we will never do to reach the number is write a fact you did not.
+          </p>
         </div>
         <button onClick={() => onRun(null)} disabled={busy !== null} className="btn btn-primary">
           {busy === "rewrite" ? "Rebuilding…" : untargeted.length ? "Run again" : "Rebuild my resume"}
@@ -379,6 +393,16 @@ function RewriteTab({
 
 function VariantCard({ variant }: { variant: VariantView }) {
   const delta = variant.score - variant.baselineScore;
+  // Derived from the score rather than stored, so it can never disagree with
+  // the number printed beside it. SHIPPABLE_FLOOR mirrors the Python constant.
+  const belowFloor = variant.score < SHIPPABLE_FLOOR;
+  // The one thing standing between this rebuild and the floor. Taken from the
+  // report the card already has, so it is the same sentence whether the page
+  // was just refreshed or loaded cold.
+  const blocker = belowFloor
+    ? variant.report?.findings?.[0]?.fix ?? variant.report?.findings?.[0]?.problem ?? ""
+    : "";
+
   return (
     <li className="bg-surface border-border flex flex-col rounded-xl border p-5">
       <div className="flex items-start justify-between gap-3">
@@ -391,6 +415,21 @@ function VariantCard({ variant }: { variant: VariantView }) {
         </div>
         <ScoreDial score={variant.score} grade={variant.grade} size={64} />
       </div>
+
+      {belowFloor && (
+        <div
+          className="mt-4 rounded-lg border p-3 text-sm leading-snug"
+          style={{ borderColor: "#a8730f", background: "var(--surface-2)" }}
+        >
+          <p className="font-medium">
+            Under {SHIPPABLE_FLOOR} — one thing is missing, and it is not the layout.
+          </p>
+          <p className="text-muted mt-1">
+            {blocker ||
+              "The rebuild parses cleanly; what it needs now is content only you can supply."}
+          </p>
+        </div>
+      )}
 
       {variant.changes.length > 0 && (
         <ul className="text-muted mt-4 list-disc space-y-1 pl-4 text-sm leading-snug">
@@ -422,17 +461,25 @@ function TargetTab({
   resume,
   packs,
   disclaimer,
+  targetLimit,
   busy,
   onTarget,
 }: {
   resume: ResumeView;
   packs: CompanyPack[];
   disclaimer: string;
+  targetLimit: number;
   busy: string | null;
   onTarget: (body: Record<string, string>) => void;
 }) {
   const [jd, setJd] = useState("");
   const [open, setOpen] = useState<string | null>(null);
+
+  // Said up front rather than discovered by hitting a 402. Aiming at a company
+  // the resume is already aimed at reuses that target and costs nothing more,
+  // so the count is of NEW targets left, not of clicks left.
+  const used = resume.targets.length;
+  const left = Math.max(0, targetLimit - used);
 
   return (
     <div className="flex flex-col gap-10">
@@ -443,6 +490,23 @@ function TargetTab({
           you can check. Targeting changes what your resume <i>surfaces</i> — it can never
           add a skill, a date or a number you did not already have.
         </p>
+        <p className="mt-3 max-w-2xl text-sm">
+          {left > 0 ? (
+            <span className="text-muted">
+              {left} of {targetLimit} target{targetLimit === 1 ? "" : "s"} left on this
+              resume. Re-running one you have already set up is free.
+            </span>
+          ) : (
+            <span>
+              You have used all {targetLimit} target{targetLimit === 1 ? "" : "s"} your plan
+              allows on this resume. You can still re-run the ones below.{" "}
+              <a href="/pricing" className="text-brand underline">
+                A Season Pass raises it
+              </a>
+              .
+            </span>
+          )}
+        </p>
 
         <ul className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {packs.map((p) => {
@@ -451,7 +515,10 @@ function TargetTab({
               ? resume.variants.filter((v) => v.targetId === existing.id)
               : [];
             return (
-              <li key={p.slug} className="bg-surface border-border rounded-xl border p-5">
+              // flex-col with the action pushed to the bottom: the summaries
+              // are two to four lines long, so without it every button in a row
+              // sits at a different height and the grid reads as broken.
+              <li key={p.slug} className="bg-surface border-border flex flex-col rounded-xl border p-5">
                 <h3 className="font-display text-lg font-semibold">{p.name}</h3>
                 <p className="text-muted mt-1.5 text-sm leading-snug">{p.summary}</p>
 
@@ -459,7 +526,9 @@ function TargetTab({
                   onClick={() => setOpen(open === p.slug ? null : p.slug)}
                   className="text-muted hover:text-ink mt-3 text-xs underline"
                 >
-                  {open === p.slug ? "Hide sources" : `${p.sources.length} sources`}
+                  {open === p.slug
+                    ? "Hide sources"
+                    : `${p.sources.length} source${p.sources.length === 1 ? "" : "s"}`}
                 </button>
                 {open === p.slug && (
                   <ul className="mt-2 space-y-2 text-xs leading-snug">
@@ -498,21 +567,39 @@ function TargetTab({
                   </ul>
                 )}
 
-                <button
-                  onClick={() =>
-                    onTarget(existing ? { targetId: existing.id } : { company: p.slug })
-                  }
-                  disabled={busy !== null}
-                  className="btn mt-4 w-full justify-center text-sm"
-                >
-                  {busy === "rewrite" ? "Working…" : variants.length ? "Rebuild" : "Tailor for " + p.name}
-                </button>
+                {/* mt-auto on the WRAPPER, not the button: the auto margin
+                    takes up the slack so every card's action sits on the same
+                    line, and pt-4 keeps a real gap on the tallest card, where
+                    there is no slack left to take up. */}
+                <div className="mt-auto pt-4">
+                  <button
+                    onClick={() =>
+                      onTarget(existing ? { targetId: existing.id } : { company: p.slug })
+                    }
+                    // Disabled rather than allowed-and-then-refused. Setting up
+                    // a NEW target is what the plan caps; re-running one that
+                    // already exists is always available.
+                    disabled={busy !== null || (!existing && left === 0)}
+                    title={!existing && left === 0 ? "No targets left on this resume" : undefined}
+                    className="btn w-full justify-center text-sm"
+                  >
+                    {busy === "rewrite"
+                      ? "Working…"
+                      : variants.length
+                        ? "Rebuild"
+                        : !existing && left === 0
+                          ? "No targets left"
+                          : "Tailor for " + p.name}
+                  </button>
+                </div>
               </li>
             );
           })}
         </ul>
         <p className="text-muted mt-6 max-w-3xl text-xs leading-relaxed">{disclaimer}</p>
       </section>
+
+      <AnyCompany resume={resume} busy={busy} onTarget={onTarget} targetsLeft={left} />
 
       <section className="border-border border-t pt-10">
         <h2 className="font-display text-2xl font-semibold">Or paste a job description</h2>
@@ -591,6 +678,191 @@ function TargetTab({
           })}
       </section>
     </div>
+  );
+}
+
+/**
+ * Target any employer, curated or not.
+ *
+ * Ten packs is not a company list, it is a demo. This is the section that makes
+ * the feature real for the other few million employers, and its most important
+ * behaviour is the one that does nothing: for most companies there is nothing
+ * specific and checkable to say about how they screen, and it says so instead
+ * of generating a confident paragraph. See agent/company_research.py.
+ *
+ * The lookup is free and writes nothing. Only the "tailor" button spends a run,
+ * so a user can find out that tailoring will not help them without paying for
+ * the privilege.
+ */
+function AnyCompany({
+  resume,
+  busy,
+  onTarget,
+  targetsLeft,
+}: {
+  resume: ResumeView;
+  busy: string | null;
+  onTarget: (body: Record<string, string>) => void;
+  /** New company targets this plan still allows on this resume. */
+  targetsLeft: number;
+}) {
+  const [name, setName] = useState("");
+  const [looking, setLooking] = useState(false);
+  const [found, setFound] = useState<CompanyResearch | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const existing = found
+    ? resume.targets.find((t) => t.name.toLowerCase() === found.name.toLowerCase())
+    : undefined;
+
+  async function look() {
+    const typed = name.trim();
+    if (typed.length < 2) return;
+    setLooking(true);
+    setError(null);
+    setFound(null);
+    try {
+      const res = await fetch("/api/companies/research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: typed }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.error ?? "That lookup did not work.");
+        return;
+      }
+      setFound(data as CompanyResearch);
+    } catch {
+      setError("We could not reach the server.");
+    } finally {
+      setLooking(false);
+    }
+  }
+
+  return (
+    <section className="border-border border-t pt-10">
+      <h2 className="font-display text-2xl font-semibold">Any other company</h2>
+      <p className="text-muted mt-2 max-w-2xl leading-relaxed">
+        Type a name — the ten packs above are the ones a person has read the sources
+        for, not the only companies you can aim at. We will tell you what we actually
+        know about how they screen, and when the honest answer is &ldquo;nothing
+        specific&rdquo;, you will get that instead of a paragraph we made up.
+      </p>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          look();
+        }}
+        className="mt-5 flex flex-wrap gap-3"
+      >
+        <label className="min-w-[16rem] flex-1">
+          <span className="sr-only">Company name</span>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={80}
+            placeholder="Freshworks, Zoho, a 40-person startup…"
+            className="field w-full"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={looking || name.trim().length < 2}
+          className="btn"
+        >
+          {looking ? "Looking…" : "Look it up"}
+        </button>
+      </form>
+
+      {error && (
+        <p role="alert" className="mt-4 text-sm" style={{ color: "#a3271b" }}>
+          {error}
+        </p>
+      )}
+
+      {found && (
+        <div className="bg-surface border-border mt-6 rounded-xl border p-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h3 className="font-display text-lg font-semibold">{found.name}</h3>
+            <span
+              className="rounded px-2 py-0.5 font-mono text-[10px] tracking-[0.12em] uppercase"
+              style={{
+                background: "var(--surface-2)",
+                color: found.tailoring === "curated" ? "var(--brand)" : "var(--muted)",
+              }}
+            >
+              {found.tailoring === "curated"
+                ? "curated · sources checked"
+                : found.tailoring === "generated"
+                  ? "generated · no sources"
+                  : "no tailoring needed"}
+            </span>
+          </div>
+
+          {found.summary && <p className="mt-2 text-sm leading-relaxed">{found.summary}</p>}
+
+          {found.tailoring === "not_required" ? (
+            <>
+              <p className="text-muted mt-3 text-sm leading-relaxed">{found.note}</p>
+              <p className="mt-4 text-sm">
+                Use <b>Rewrites</b> for the general rebuild, or paste their job posting
+                below — a real posting beats anything we could guess about the company.
+              </p>
+            </>
+          ) : (
+            <>
+              {found.emphasis.length > 0 && (
+                <ul className="mt-3 list-disc space-y-1 pl-4 text-sm leading-snug">
+                  {found.emphasis.map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+              )}
+              {found.keywords.length > 0 && (
+                <ul className="mt-3 flex flex-wrap gap-1.5">
+                  {found.keywords.map((k) => (
+                    <li
+                      key={k}
+                      className="bg-surface-2 border-border rounded border px-2 py-0.5 font-mono text-[11px]"
+                    >
+                      {k}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {found.note && (
+                <p className="text-muted mt-4 text-xs leading-relaxed">{found.note}</p>
+              )}
+              <button
+                onClick={() =>
+                  onTarget(
+                    existing ? { targetId: existing.id } : { companyName: found.name },
+                  )
+                }
+                disabled={busy !== null || (!existing && targetsLeft === 0)}
+                className="btn btn-primary mt-5"
+              >
+                {busy === "rewrite"
+                  ? "Working…"
+                  : !existing && targetsLeft === 0
+                    ? "No targets left on this resume"
+                    : `Tailor for ${found.name}`}
+              </button>
+              {!existing && targetsLeft === 0 && (
+                <p className="text-muted mt-2 text-xs">
+                  Looking a company up is always free — it is aiming your resume at a
+                  new one that your plan limits.{" "}
+                  <a href="/pricing" className="text-brand underline">See plans</a>.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

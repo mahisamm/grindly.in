@@ -240,6 +240,7 @@ def generate_variants(
     target_keywords: list[str] | None = None,
     emphasis: list[str] | None = None,
     target_name: str = "",
+    source_links: list[str] | None = None,
 ) -> dict:
     """Produce up to 3 compiled, measured resume variants + why any were dropped.
 
@@ -309,7 +310,7 @@ def generate_variants(
     # is serialised into the rewrite prompt, and the redaction that keeps a phone
     # number out of a third-party API is a runtime setting (agent/redact.py), not
     # a guarantee. Don't put PII somewhere it only stays private if a flag holds.
-    identity = _identity_from_source(text, contact_fallback)
+    identity = _identity_from_source(text, contact_fallback, source_links)
     # How much of the master survived extraction bounds everything downstream: a
     # thin base can only produce thin, low-scoring variants, and from the outside
     # that is indistinguishable from a bad rewrite.
@@ -336,11 +337,19 @@ def generate_variants(
 
     # Wins first, then ties. Losers never reach this list (_one_variant drops them).
     out.sort(key=lambda v: (v["beats_baseline"], v["score"]), reverse=True)
+    shipped = out[:3]
     return {
-        "variants": out[:3],
+        "variants": shipped,
         "baseline": baseline_score,
         "baseline_report": baseline_report,
         "reasons": reasons,
+        # The floor, and whether the batch cleared it. Reported per batch as
+        # well as per variant so the caller can lead with one honest sentence
+        # instead of making the user compare three numbers to a threshold they
+        # were never told about.
+        "floor": readiness.SHIPPABLE_FLOOR,
+        "meets_floor": bool(shipped) and all(v["meets_floor"] for v in shipped),
+        "floor_gap": next((v["floor_gap"] for v in shipped if not v["meets_floor"]), ""),
         "aborted": None,
     }
 
@@ -407,6 +416,15 @@ def _one_variant(
         print(f"[optimize] {label}: removed {len(dropped)} ungrounded item(s): {dropped[:3]}")
 
     changes = _clean_changes(rewritten.get("changes"))
+    # Put the gate's work into the change list, which is what gets stored and
+    # shown on every later page load. A rewrite that tried to add something and
+    # was stopped is the single most reassuring thing this product can tell
+    # someone, and until now it only ever appeared in a server log.
+    if dropped:
+        changes = ([
+            f"Removed {len(dropped)} entr{'y' if len(dropped) == 1 else 'ies'} the "
+            f"rewrite tried to add that your resume does not support"
+        ] + changes)[:5]
 
     invented = _fabricated_skills(struct, allowed)
     if invented:
@@ -417,40 +435,48 @@ def _one_variant(
 
     with tempfile.TemporaryDirectory(prefix="grindly-opt-") as tmp:
         pdf_path = os.path.join(tmp, "variant.pdf")
-        result = render_pdf.render_fitted(struct, pdf_path, _MAX_PAGES)
-        if not result.ok or not os.path.exists(pdf_path):
-            print(f"[optimize] {label}: render failed — {result.reason}")
-            _dump_debug(debug_dir, label, html_doc, None)
-            return None, f"{label}: the document didn't render"
-        if result.pages and result.pages > _MAX_PAGES:
-            print(f"[optimize] {label}: {result.pages} pages — over the {_MAX_PAGES}-page cap")
-            return None, f"{label}: came out {result.pages} pages, over the {_MAX_PAGES}-page limit"
+        built = _render_and_score(struct, pdf_path, target_keywords)
+        if built.get("error"):
+            _dump_debug(debug_dir, label, html_doc,
+                        pdf_path if built.get("rendered") else None)
+            print(f"[optimize] {label}: {built['error']}")
+            return None, f"{label}: {built['error']}"
 
-        # Read the rendered PDF back the way an ATS would and score THAT. Scoring
-        # the struct we meant to print would measure our intent; scoring the
-        # extracted text measures the artefact the employer actually receives,
-        # which is the only claim this product is allowed to make.
-        parsed = render_pdf.extract_back(pdf_path)
-        n_chars = len((parsed or "").strip())
-        if n_chars < 200:
-            # Our bug, not the user's resume. Keep the evidence: without the HTML
-            # and the PDF there is no way to tell an empty render from a font
-            # that carries no extractable text.
-            print(f"[optimize] {label}: rendered PDF yields only {n_chars} chars of text — rejecting")
-            _dump_debug(debug_dir, label, html_doc, pdf_path)
-            return None, f"{label}: the rendered PDF came out unreadable ({n_chars} chars) — a bug on our side"
+        # Below the floor, try the repairs that are ours to make and measure
+        # again. One extra render, once, and only for a document that would
+        # otherwise be handed over under-strength — see `_repair_for_floor` for
+        # what it will and will not touch.
+        #
+        # The first render's bytes and report are already held in memory, so a
+        # retry that fails or does not help costs nothing: `built` simply is not
+        # replaced. The struct keeps the repair either way, because a heading a
+        # parser can classify is the right heading whether or not it moved the
+        # number.
+        if built["score"] < readiness.SHIPPABLE_FLOOR:
+            repairs = _repair_for_floor(struct, built["report"], master_skills)
+            if repairs:
+                print(f"[optimize] {label}: {built['score']} is under the floor — repairing: {repairs}")
+                retry = _render_and_score(struct, pdf_path, target_keywords)
+                if retry.get("error"):
+                    print(f"[optimize] {label}: repaired render failed ({retry['error']}) — keeping the first")
+                elif retry["score"] > built["score"]:
+                    print(f"[optimize] {label}: repaired {built['score']} → {retry['score']}")
+                    built = retry
+                    changes = changes + [f"Fixed for machine readability: {r}" for r in repairs]
+                else:
+                    print(f"[optimize] {label}: repair did not help ({retry['score']}) — keeping the first")
 
-        report = readiness.score(parsed, target_keywords)
-        score = int(report.get("score") or 0)
+        result = built["result"]
+        parsed = built["parsed"]
+        report = built["report"]
+        score = built["score"]
+        pdf_bytes = built["pdf_bytes"]
         beats = score > baseline_score
 
         # How much of what we printed survived the round trip. This is the
         # number the product leads with, and it is only meaningful measured
         # here — between the struct we rendered and the text we read back.
         fidelity = readiness.parse_fidelity(_fact_strings(struct), parsed)
-
-        with open(pdf_path, "rb") as f:
-            pdf_bytes = f.read()
 
     if score < baseline_score - _SCORE_NOISE:
         # Never offered. A materially lower-scoring rebuild next to the user's own
@@ -466,6 +492,15 @@ def _one_variant(
         print(f"[optimize] {label}: kept as a tie ({score} vs baseline {baseline_score})")
         reason = (f"{label}: {score}, level with your {baseline_score} — kept for its "
                   f"cleaner single-column layout")
+    # A gate that fired silently is a gate the user has no reason to believe in.
+    # When grounding strips an invented line out of an otherwise good rewrite,
+    # the variant is still shipped — that is the right call, they get an honest
+    # document rather than nothing — but the removal is reported, because "it
+    # cannot add a skill you do not have" is the central claim of this product
+    # and this is the only place it is ever visibly enforced.
+    if dropped:
+        reason += f" (removed {len(dropped)} invented entr{'y' if len(dropped) == 1 else 'ies'})"
+    meets_floor = score >= readiness.SHIPPABLE_FLOOR
     return {
         "label": label,
         "score": score,
@@ -476,8 +511,167 @@ def _one_variant(
         "report": report,
         "fidelity": fidelity,
         "pages": result.pages,
+        # Whether this rebuild reached the score we are willing to stand behind,
+        # and if not, the one thing standing in the way. Both go to the UI: a
+        # document handed over at 74 with no explanation is worse than one
+        # handed over at 74 beside the sentence that gets it to 84.
+        "meets_floor": meets_floor,
+        "floor": readiness.SHIPPABLE_FLOOR,
+        "floor_gap": "" if meets_floor else _floor_gap(report),
         "pdf_bytes": pdf_bytes,
     }, reason
+
+
+def _render_and_score(struct: dict, pdf_path: str, target_keywords: list[str] | None) -> dict:
+    """Render one struct, read the PDF back, score the text that came out.
+
+    Returns either `{"error": str, "rendered": bool}` or a dict carrying the
+    render result, the extracted text, the report, the score and the PDF bytes.
+    Split out of `_one_variant` so the floor repair can run the exact same
+    measurement a second time rather than an approximation of it.
+
+    The PDF is read back rather than the struct being scored directly. Scoring
+    the struct measures our intent; scoring the extracted text measures the
+    artefact the employer actually receives, which is the only claim this
+    product is allowed to make.
+    """
+    result = render_pdf.render_fitted(struct, pdf_path, _MAX_PAGES)
+    if not result.ok or not os.path.exists(pdf_path):
+        return {"error": f"the document didn't render ({result.reason})", "rendered": False}
+    if result.pages and result.pages > _MAX_PAGES:
+        return {
+            "error": f"came out {result.pages} pages, over the {_MAX_PAGES}-page limit",
+            "rendered": True,
+        }
+
+    parsed = render_pdf.extract_back(pdf_path)
+    n_chars = len((parsed or "").strip())
+    if n_chars < 200:
+        # Our bug, not the user's resume. The caller keeps the evidence: without
+        # the HTML and the PDF there is no way to tell an empty render from a
+        # font that carries no extractable text.
+        return {
+            "error": f"the rendered PDF came out unreadable ({n_chars} chars) — a bug on our side",
+            "rendered": True,
+        }
+
+    report = readiness.score(parsed, target_keywords)
+    with open(pdf_path, "rb") as f:
+        pdf_bytes = f.read()
+    return {
+        "result": result,
+        "parsed": parsed,
+        "report": report,
+        "score": int(report.get("score") or 0),
+        "pdf_bytes": pdf_bytes,
+    }
+
+
+# ---------------- the shippable floor ----------------
+
+# Headings that mean "Education" / "Technical Skills" / "Experience" to a human
+# but not to `readiness.SECTION_PATTERNS`, and therefore not to an ATS either.
+# Renaming these is not cosmetic: a section a parser cannot classify is a block
+# of the resume it drops on the floor.
+_HEADING_CANON: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"^\s*(?:academic|scholastic)\b.*|^\s*schooling\b.*", re.I), "Education"),
+    (re.compile(r"^\s*(?:technical\s+)?(?:proficienc|expertise|toolkit|tech\s*stack)\w*\b.*", re.I),
+     "Technical Skills"),
+    (re.compile(r"^\s*(?:career|employment|professional)\s+(?:history|journey|background|summary\s+of\s+roles)\b.*", re.I),
+     "Experience"),
+    (re.compile(r"^\s*(?:my\s+)?journey\b.*|^\s*where\s+i(?:'ve)?\s+worked\b.*", re.I), "Experience"),
+]
+
+
+def _canonicalise_headings(struct: dict) -> list[str]:
+    """Rename headings a parser cannot classify. Returns what was renamed."""
+    renamed: list[str] = []
+    taken = {str(s.get("heading") or "").strip().lower() for s in struct.get("sections") or []}
+    for sec in struct.get("sections") or []:
+        heading = str(sec.get("heading") or "").strip()
+        if not heading:
+            continue
+        for pattern, canonical in _HEADING_CANON:
+            if pattern.match(heading) and canonical.lower() not in taken:
+                sec["heading"] = canonical
+                taken.add(canonical.lower())
+                renamed.append(f"{heading} → {canonical}")
+                break
+    return renamed
+
+
+def _skills_section(master_skills: list[str]) -> dict | None:
+    """A Technical Skills section built from the candidate's OWN skill list.
+
+    `master_skills` is what `resume_parse.extract_skills` read off their resume,
+    which is the same list every rewrite is checked against. Printing it back
+    adds no claim they have not already made — it moves a claim out of prose,
+    where a keyword search misses it, into the block a recruiter searches.
+    """
+    skills = [s.strip() for s in (master_skills or []) if s and s.strip()]
+    if len(skills) < 3:
+        return None
+    return {
+        "heading": "Technical Skills",
+        "items": [{"head": "Skills", "sub": "", "bullets": skills[:24]}],
+    }
+
+
+def _repair_for_floor(struct: dict, report: dict, master_skills: list[str]) -> list[str]:
+    """Fix, in place, the score deficits that are OURS rather than the user's.
+
+    Runs only when a rendered variant lands below `readiness.SHIPPABLE_FLOOR`.
+    Every repair here is mechanical and adds no fact: it either renames a
+    heading a parser cannot classify, or prints back a skill the candidate
+    already claimed. Returns the repairs applied, empty if none were possible.
+
+    What it deliberately does NOT do is anything that would raise the score by
+    changing what the resume says. A thin resume stays thin, a resume with no
+    dates stays undated, and bullets with no numbers do not acquire any. Those
+    gaps are reported to the user as gaps. A "guaranteed 80" that is reached by
+    writing the missing content is not a guarantee, it is a fabrication with a
+    number attached to it.
+    """
+    bands = report.get("bands") or {}
+    facts = report.get("facts") or {}
+    repairs: list[str] = []
+
+    if (bands.get("structure") or {}).get("score", 100) < 100:
+        sections = (facts.get("structure") or {}).get("sections") or {}
+        renamed = _canonicalise_headings(struct)
+        if renamed:
+            repairs.append("renamed sections a parser could not classify: " + ", ".join(renamed))
+        if not sections.get("skills") and not any(
+            _SKILLS_SECTION_RE.search(str(s.get("heading") or ""))
+            for s in struct.get("sections") or []
+        ):
+            block = _skills_section(master_skills)
+            if block:
+                struct.setdefault("sections", []).append(block)
+                repairs.append("added a Technical Skills section from the skills already on your resume")
+
+    return repairs
+
+
+def _floor_gap(report: dict) -> str:
+    """The single most useful sentence about why a variant is under the floor.
+
+    One reason, not a list. A user looking at a 74 wants to know the one thing
+    to change, and the bands are not equally actionable — a resume that reads as
+    a scan cannot be improved by adding numbers to its bullets.
+    """
+    bands = report.get("bands") or {}
+
+    def short(name: str) -> float:
+        band = bands.get(name) or {}
+        return (band.get("weight") or 0) - (band.get("points") or 0)
+
+    worst = max(("readable", "fields", "structure", "impact", "coverage"),
+                key=lambda n: short(n) if n in bands else -1.0)
+    for finding in report.get("findings") or []:
+        if finding.get("band") == worst:
+            return finding.get("fix") or finding.get("problem") or ""
+    return ""
 
 
 def _fact_strings(struct: dict) -> list[str]:
@@ -765,7 +959,18 @@ def _fabricated_skills(struct: dict, allowed: set[str]) -> list[str]:
     The vocabulary is TECH_VOCAB, not the 60-string KNOWN_SKILLS this used to
     read: anything outside that short list was previously free to invent.
     """
-    blob = _flatten(struct).lower()
+    # Identity is excluded, and this is a correctness rule rather than an
+    # optimisation. The name and contact line are not model output: they are
+    # lifted from the raw source by `_identity_from_source` and stamped on
+    # afterwards, so by construction they cannot be something a rewrite
+    # invented. Scanning them turned real headers into fabrications — a
+    # recovered "github.com/priya-r" contains the vocabulary word "github" and
+    # the token "r", neither of which the candidate had "claimed as a skill",
+    # so EVERY variant was rejected with "it invented skills you don't have
+    # (github, r)" the moment the profile-link recovery started working. A
+    # candidate named Ruby, or one whose employer is Kotlin Labs, would have hit
+    # the same wall.
+    blob = _flatten(struct, include_identity=False).lower()
     bad: list[str] = []
     for sk in sorted(TECH_VOCAB):
         present = re.search(r"(?<![a-z])" + re.escape(sk) + r"(?![a-z])", blob)
@@ -787,8 +992,11 @@ def _fabricated_skills(struct: dict, allowed: set[str]) -> list[str]:
     return bad
 
 
-def _flatten(struct: dict) -> str:
-    parts: list[str] = [str(struct.get("name") or ""), str(struct.get("contact_line") or "")]
+def _flatten(struct: dict, include_identity: bool = True) -> str:
+    parts: list[str] = (
+        [str(struct.get("name") or ""), str(struct.get("contact_line") or "")]
+        if include_identity else []
+    )
     for sec in struct.get("sections") or []:
         parts.append(str(sec.get("heading") or ""))
         for item in sec.get("items") or []:
@@ -804,19 +1012,93 @@ _CID_RE = re.compile(r"\(cid:\d+\)")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 _PHONE_RE = re.compile(r"(?:\+\d{1,3}[\s-]?)?\d{5}[\s-]?\d{5}\b|(?:\+\d{1,3}[\s-]?)?\d{10}\b")
 _GLYPH_RE = re.compile(r"[^\w@.+\-/:,&() ]")
+# Field separators a contact header is built from. The pipe covers most source
+# resumes; the middot is what OUR OWN template prints, and a user who downloads
+# a Grindly rebuild and uploads it again must not have their header collapse
+# into one unsplittable segment. `_GLYPH_RE` erases the middot a line later, so
+# splitting has to happen first.
+_SEP_RE = re.compile(r"\s*[|•·∙]\s*")
 _PLACEHOLDER_RE = re.compile(r"\[[^\]]*redact[^\]]*\]", re.I)
 # A document title is not a name. Plenty of templates open with "Curriculum Vitae"
 # or "RESUME" on its own line, which passes every other test for a person's name.
 _NOT_A_NAME = frozenset({"resume", "curriculum", "vitae", "cv", "profile", "summary", "biodata"})
 
 
-def _identity_from_source(text: str, contact_fallback: str = "") -> tuple[str, str]:
+# Profile hosts worth printing in a header. Deliberately short: a link
+# annotation on a resume can point at anything — a certificate, a company
+# website, a Google Doc — and appending all of them turns the header into a
+# link dump. These are the ones a recruiter looks for and an application form
+# asks for by name.
+_PROFILE_HOSTS = (
+    "linkedin.com", "github.com", "gitlab.com", "kaggle.com",
+    "behance.net", "dribbble.com", "medium.com", "leetcode.com",
+    "scholar.google.com", "orcid.org", "stackoverflow.com",
+)
+
+
+def _display_url(url: str) -> str:
+    """A URL as it should read on a printed page: no scheme, no www, no slash."""
+    u = re.sub(r"^https?://", "", (url or "").strip(), flags=re.I)
+    u = re.sub(r"^www\.", "", u, flags=re.I)
+    return u.rstrip("/")
+
+
+def _merge_profile_links(contact: str, links: list[str] | None) -> str:
+    """Fold profile URLs from the PDF's link annotations into the contact line.
+
+    This recovers a real, fixable loss rather than adding anything. Most resumes
+    put their LinkedIn behind the *word* "LinkedIn", or behind a bare handle —
+    "mahendhar-sammeta" — with the actual address living only in the PDF's link
+    annotation. A text extractor never sees it, so `readiness._band_fields`
+    reports "no LinkedIn or GitHub link is visible", correctly: the URL is not
+    in the document a parser reads, and an application form that asks for a
+    profile URL gets nothing. The address is the candidate's own and it is
+    already in the file they uploaded; printing it as text is the whole fix.
+
+    A bare handle already on the line is REPLACED by the full URL rather than
+    joined by it, so the header does not read "mahendhar-sammeta ·
+    linkedin.com/in/mahendhar-sammeta".
+    """
+    line = (contact or "").strip()
+    chosen: list[str] = []
+    for raw in links or []:
+        display = _display_url(raw)
+        host = display.split("/", 1)[0].lower()
+        if not any(host == h or host.endswith("." + h) for h in _PROFILE_HOSTS):
+            continue
+        if any(host in seen.lower() for seen in chosen):
+            continue          # one link per host — the first is the profile
+        if host in line.lower():
+            continue          # the address is already printed as text
+        chosen.append(display)
+        if len(chosen) >= 3:
+            break
+
+    for display in chosen:
+        handle = display.rstrip("/").rsplit("/", 1)[-1]
+        # Replace a bare handle standing in for this URL, if one is on the line.
+        if handle and len(handle) >= 4:
+            pattern = re.compile(rf"(?<![\w/.-]){re.escape(handle)}(?![\w/.-])")
+            replaced, n = pattern.subn(display, line, count=1)
+            if n:
+                line = replaced
+                continue
+        line = f"{line} | {display}" if line else display
+    return line
+
+
+def _identity_from_source(
+    text: str, contact_fallback: str = "", links: list[str] | None = None,
+) -> tuple[str, str]:
     """(name, contact_line) read from the RAW resume, before any redaction.
 
     Everything the model returns for these two fields is placeholder text — the
     LLM boundary redacts PII on the way out, so "[email redacted]" is a faithful
     copy of what it was shown. Taking the header off the source locally is the
     only way the compiled PDF carries a real phone number.
+
+    `links` are the PDF's link annotations, which carry addresses the text layer
+    does not — see `_merge_profile_links`.
     """
     lines = [ln.strip() for ln in (text or "").splitlines()]
     lines = [ln for ln in lines if ln][:8]
@@ -855,7 +1137,8 @@ def _identity_from_source(text: str, contact_fallback: str = "") -> tuple[str, s
         if m:
             bits.append(m.group(0).strip())
         contact = " | ".join(bits)
-    return name, (contact or _clean_contact_line(contact_fallback))
+    contact = contact or _clean_contact_line(contact_fallback)
+    return name, _merge_profile_links(contact, links)
 
 
 def _header_line(line: str) -> str:
@@ -872,7 +1155,7 @@ def _header_line(line: str) -> str:
     cleaned = _clean_contact_line(line)
     if not cleaned:
         return ""
-    segments = [s.strip() for s in cleaned.split("|") if s.strip()]
+    segments = [s.strip() for s in _SEP_RE.split(cleaned) if s.strip()]
 
     def _is_contact(seg: str) -> bool:
         return bool(_EMAIL_RE.search(seg) or _PHONE_RE.search(seg)
@@ -893,7 +1176,7 @@ def _clean_contact_line(line: str) -> str:
     into a new PDF renders mojibake next to the phone number.
     """
     out = []
-    for seg in _CID_RE.sub("", line or "").split("|"):
+    for seg in _SEP_RE.split(_CID_RE.sub("", line or "")):
         seg = _GLYPH_RE.sub(" ", seg)
         seg = re.sub(r"\s+", " ", seg).strip(" .,-")
         if seg:
