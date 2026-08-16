@@ -1,0 +1,89 @@
+import Link from "next/link";
+import { prisma } from "@/lib/prisma";
+import { currentUser } from "@/lib/auth";
+import { limitsFor } from "@/lib/plans";
+import { Uploader } from "./Uploader";
+
+export const dynamic = "force-dynamic";
+
+export const metadata = { title: "Your resumes — Grindly" };
+
+export default async function WorkspacePage() {
+  const user = await currentUser();
+  if (!user) return null; // the layout already redirected
+
+  const resumes = await prisma.resume.findMany({
+    where: { userId: user.id },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true, label: true, chars: true, score: true, grade: true,
+      createdAt: true, _count: { select: { variants: true, targets: true } },
+    },
+  });
+
+  const limit = limitsFor(user).resumes;
+
+  return (
+    <div className="mx-auto max-w-6xl px-6 py-10">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="font-display text-3xl font-bold">Your resumes</h1>
+          <p className="text-muted mt-1.5 text-sm">
+            {resumes.length} of {limit} used on your plan.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-8">
+        <Uploader canUpload={resumes.length < limit} limit={limit} />
+      </div>
+
+      {resumes.length === 0 ? (
+        <div className="border-border mt-10 rounded-xl border border-dashed p-10 text-center">
+          <h2 className="font-display text-xl font-semibold">Nothing here yet</h2>
+          <p className="text-muted mx-auto mt-2 max-w-md text-sm leading-relaxed">
+            Upload the PDF you have been sending to employers. In about a second you will
+            see exactly what a parser reads off it — which is usually not what you think.
+          </p>
+        </div>
+      ) : (
+        <ul className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {resumes.map((r) => (
+            <li key={r.id}>
+              <Link
+                href={`/app/${r.id}`}
+                className="bg-surface border-border hover:border-ink block h-full rounded-xl border p-5 transition-colors"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <h2 className="font-display text-lg leading-tight font-semibold">{r.label}</h2>
+                  {r.score !== null && (
+                    <span
+                      className="shrink-0 rounded px-2 py-1 font-mono text-xs tabular-nums"
+                      style={{
+                        background:
+                          r.score >= 70 ? "var(--brand)" : r.score >= 40 ? "#a8730f" : "#a3271b",
+                        color: "var(--paper)",
+                      }}
+                    >
+                      {r.score}
+                    </span>
+                  )}
+                </div>
+                <p className="text-muted mt-2 font-mono text-[11px] tracking-[0.08em] uppercase">
+                  {r.chars.toLocaleString()} chars read
+                  {r._count.variants > 0 && ` · ${r._count.variants} rewrites`}
+                  {r._count.targets > 0 && ` · ${r._count.targets} targets`}
+                </p>
+                <p className="text-muted mt-3 text-xs">
+                  {new Date(r.createdAt).toLocaleDateString("en-IN", {
+                    day: "numeric", month: "short", year: "numeric",
+                  })}
+                </p>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

@@ -13,8 +13,15 @@ const OUTBOX = path.join(process.cwd(), "data", "email-outbox.jsonl");
 
 export type Email = { to: string; subject: string; body: string };
 
+// Must agree with config.smtpConfigured(). These disagreed — HOST+USER here,
+// HOST+USER+PASS there — so a deployment with a host and user but no password
+// was "configured" to this file and "not configured" to everything else.
 function smtpConfigured(): boolean {
-  return !!(process.env.EMAIL_SMTP_HOST && process.env.EMAIL_SMTP_USER);
+  return !!(
+    process.env.EMAIL_SMTP_HOST &&
+    process.env.EMAIL_SMTP_USER &&
+    process.env.EMAIL_SMTP_PASS
+  );
 }
 
 let transporter: nodemailer.Transporter | null = null;

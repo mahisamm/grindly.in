@@ -1,7 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { Fraunces, Space_Grotesk, JetBrains_Mono } from "next/font/google";
-import Script from "next/script";
-import Track from "@/components/Track";
 import "./globals.css";
 
 const bodySans = Space_Grotesk({
@@ -35,12 +33,9 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Grindly — your AI preps internship applications while you sleep",
+  title: "Grindly — see your resume the way a machine reads it",
   description:
-    "Grindly reads your resume, finds matching internships, and prepares supported applications for your approval. Daily updates via Slack or email.",
-  verification: {
-    google: "-dvm3t95vbpe8XdI2ddbTpQG5lK5pPKgY_X3ZBzLp7Q",
-  },
+    "Grindly measures what survives when a parser reads your resume, rebuilds it as a clean single-column PDF, and tailors it to the company you are applying to — without inventing a single fact.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
@@ -56,15 +51,16 @@ export const metadata: Metadata = {
     ],
   },
   openGraph: {
-    title: "Grindly — AI Internship Agent",
-    description: "Your AI preps internship applications while you sleep — you review and submit. Upload your resume, set preferences, done.",
+    title: "Grindly — see your resume the way a machine reads it",
+    description:
+      "Measure what a parser actually recovers from your resume, rebuild it clean, and tailor it per company. Every number measured, nothing invented.",
     siteName: "Grindly",
     type: "website",
   },
   twitter: {
     card: "summary",
-    title: "Grindly — AI Internship Agent",
-    description: "Your AI preps internship applications while you sleep — you review and submit.",
+    title: "Grindly — see your resume the way a machine reads it",
+    description: "Measure what a parser recovers from your resume, rebuild it clean, tailor it per company.",
   },
   formatDetection: {
     telephone: false,
@@ -92,13 +88,9 @@ export default function RootLayout({
         {/* Keyboard/screen-reader users: jump straight past the nav to content. */}
         <a href="#main-content" className="skip-link">Skip to main content</a>
         <div className="grain-fixed" aria-hidden="true" />
-        <Track />
         <div id="main-content" tabIndex={-1} className="flex min-h-full flex-col outline-none">
           {children}
         </div>
-        {/* External file, not an inline body — lets script-src drop 'unsafe-inline'
-            for the app's own scripts (see next.config.ts CSP comment). */}
-        <Script src="/sw-register.js" strategy="afterInteractive" />
       </body>
     </html>
   );

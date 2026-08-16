@@ -1,222 +1,214 @@
-"use client";
-
-import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
-import { PageTitle, Panel, StatCard, Badge, WeekTable, fmtDate, TableWrap } from "./ui";
+import { redirect } from "next/navigation";
+import { prisma } from "@/lib/prisma";
+import { currentUser } from "@/lib/auth";
+import { describe } from "@/lib/config";
+import { formatAmount } from "@/lib/plans";
 
-type Overview = {
-  users: { total: number; active: number; paused: number; paid: number; free: number; admins: number;
-    byPlan: { free: number; plus: number; pro: number } };
-  runs: { matched: number; applied: number; failed: number; failRate: number; appliedToday: number; windowDays: number; allTimeApplied: number };
-  trend: { date: string; count: number }[];
-  integrationHealth: { connected: number; needsLogin: number; disconnected: number; connecting: number };
-  platformStats: { platform: string; applied: number; failed: number; failRate: number }[];
-  cronHealth: { lastRunAt: string; status: string; mode: string; error: string | null; staleHours: number } | null;
-  recentFailures: { id: string; userId: string | null; email: string; jobTitle: string; company: string; reason: string; createdAt: string }[];
-};
+export const dynamic = "force-dynamic";
+export const metadata = { title: "Admin — Grindly" };
 
-export default function AdminOverview() {
-  const [d, setD] = useState<Overview | null>(null);
-  const [err, setErr] = useState("");
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const [health, setHealth] = useState<Record<string, unknown> | null>(null);
+/**
+ * The operator's page: is it working, who is using it, what is broken.
+ *
+ * Deliberately one page rather than eight. The previous build had admin
+ * sections for applications, agent health, integrations and support — a
+ * console for a machine that no longer exists. What an operator of THIS product
+ * actually needs to know fits above the fold: is the agent able to render, are
+ * people getting scores, and what errored.
+ */
+export default async function AdminPage() {
+  const user = await currentUser();
+  // notFound() would be the same information; a redirect is friendlier for a
+  // signed-in non-admin who followed a stale link.
+  if (!user) redirect("/login");
+  if (user.role !== "admin") redirect("/app");
 
-  const load = useCallback(() => {
-    fetch("/api/health").then((r) => r.ok ? r.json() : null).then(setHealth).catch(() => {});
-    fetch("/api/admin/overview")
-      .then((r) => (r.ok ? r.json() : Promise.reject(r)))
-      .then((data) => { setD(data); setLastRefresh(new Date()); })
-      .catch(() => setErr("Failed to load."));
-  }, []);
+  const caps = describe();
+  const since = new Date(Date.now() - 7 * 86_400_000);
 
-  useEffect(() => {
-    load();
-    const id = setInterval(load, 60_000);
-    return () => clearInterval(id);
-  }, [load]);
+  // Aggregates computed IN the database. These were `findMany` over every
+  // resume and every paid order, sorted in JS — two unbounded full-table reads
+  // into Node's heap, on every admin page load, to produce two numbers.
+  const [users, resumes, variants, revenueAgg, medianRows, recentErrors, recent] =
+    await Promise.all([
+      prisma.user.count(),
+      prisma.resume.count(),
+      prisma.variant.count(),
+      prisma.order.aggregate({ where: { status: "paid" }, _sum: { amount: true } }),
+      prisma.$queryRaw<{ median: number | null }[]>`
+        SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY score)::int AS median
+        FROM resumes WHERE score IS NOT NULL
+      `,
+      prisma.errorEvent.findMany({
+        where: { resolvedAt: null },
+        orderBy: { lastSeenAt: "desc" },
+        take: 10,
+      }),
+      prisma.user.findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: "desc" },
+        take: 15,
+        select: {
+          id: true, email: true, plan: true, createdAt: true,
+          _count: { select: { resumes: true } },
+        },
+      }),
+    ]);
 
-  if (err) return <p className="font-sans text-sm text-brand">{err}</p>;
-  if (!d) return <p className="font-sans text-sm text-muted">Loading…</p>;
-
-  const cronOk = d.cronHealth && d.cronHealth.status === "done" && d.cronHealth.staleHours < 25;
-  const cronWarn = d.cronHealth && (d.cronHealth.staleHours >= 25 || d.cronHealth.status === "failed");
+  const revenue = revenueAgg._sum.amount ?? 0;
+  const median = medianRows[0]?.median ?? null;
 
   return (
-    <>
-      <div className="mb-6 flex items-start justify-between">
-        <PageTitle title="Fleet overview" sub={`Run metrics over the last ${d.runs.windowDays} days · auto-refresh 60s`} />
-        {lastRefresh && (
-          <span className="font-sans text-[11px] text-muted">
-            refreshed {lastRefresh.toLocaleTimeString()}
-          </span>
-        )}
+    <div className="mx-auto max-w-6xl px-6 py-10">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h1 className="font-display text-3xl font-bold">Admin</h1>
+        <Link href="/app" className="text-muted hover:text-ink text-sm">
+          ← Back to the app
+        </Link>
       </div>
 
-      {/* Hero numbers */}
-      {/* One column on a phone: two 5xl numbers side by side at 390px wrap their
-          own captions into unreadable slivers. */}
-      <div className="grid grid-cols-1 gap-4 mb-6 sm:grid-cols-2">
-        <Panel className="px-4 py-4 sm:px-6 sm:py-5">
-          <div className="font-sans text-[11px] uppercase tracking-wide text-muted">Active subscribers</div>
-          <div className="mt-1 font-sans text-4xl font-bold tabular-nums text-accent sm:text-5xl">{d.users.active}</div>
-          <div className="mt-1 font-sans text-xs text-muted">{d.users.total} total · {d.users.paused} paused · {d.users.paid} paid</div>
-        </Panel>
-        <Panel className="px-4 py-4 sm:px-6 sm:py-5">
-          <div className="font-sans text-[11px] uppercase tracking-wide text-muted">Successful applications</div>
-          <div className="mt-1 font-sans text-4xl font-bold tabular-nums text-foreground sm:text-5xl">{d.runs.allTimeApplied}</div>
-          <div className="mt-1 font-sans text-xs text-muted">+{d.runs.appliedToday} today · {d.runs.applied} in 14d · {d.runs.failRate}% fail rate</div>
-        </Panel>
-      </div>
-
-      {/* Secondary stats */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-6">
-        <StatCard label="Applied today" value={d.runs.appliedToday} tone="good" />
-        <StatCard label="Applied (14d)" value={d.runs.applied} />
-        <StatCard label="Fail rate" value={`${d.runs.failRate}%`} tone={d.runs.failRate > 20 ? "bad" : d.runs.failRate > 10 ? "warn" : "good"} hint={`${d.runs.failed} failed`} />
-        <StatCard label="Need login" value={d.integrationHealth.needsLogin} tone={d.integrationHealth.needsLogin > 0 ? "warn" : "default"} />
-      </div>
-
-      {/* Cron health */}
-      {d.cronHealth && (
-        <Panel className="mt-4 px-4 py-3">
-          <div className="flex items-center gap-3 font-sans text-xs">
-            <span className="uppercase tracking-wide text-muted">Last agent run</span>
-            <Badge value={d.cronHealth.status} />
-            <span className="text-muted">{fmtDate(d.cronHealth.lastRunAt)}</span>
-            {cronOk && <span className="text-accent">✓ on schedule</span>}
-            {cronWarn && <span className="text-warn">⚠ {d.cronHealth.staleHours}h ago — check cron</span>}
-            {d.cronHealth.error && <span className="text-brand">error: {d.cronHealth.error}</span>}
-            <Link href="/admin/agent-health" className="ml-auto text-brand hover:underline">
-              run diagnostics →
-            </Link>
-          </div>
-        </Panel>
-      )}
-      {!d.cronHealth && (
-        <Panel className="mt-4 px-4 py-3">
-          <div className="flex items-center justify-between font-sans text-xs text-muted">
-            <span>No agent runs yet.</span>
-            <Link href="/admin/agent-health" className="text-brand hover:underline">run diagnostics →</Link>
-          </div>
-        </Panel>
-      )}
-
-      {/* 7-day table */}
-      <Panel className="mt-6 p-4">
-        <div className="mb-3 font-sans text-[11px] uppercase tracking-wide text-muted">Applications · last 7 days</div>
-        <WeekTable data={d.trend} />
-      </Panel>
-
-      <div className="mt-6 grid gap-6 lg:grid-cols-3">
-        {/* Recent failures */}
-        <Panel className="lg:col-span-2">
-          <div className="border-b border-border px-4 py-3 font-sans text-sm font-bold">Recent failures</div>
-          {d.recentFailures.length === 0 ? (
-            <p className="px-4 py-6 font-sans text-sm text-muted">No failures. Clean.</p>
-          ) : (
-            <TableWrap min="min-w-[640px]">
-              <table className="w-full text-left font-sans text-xs">
-                <thead className="text-muted">
-                  <tr className="border-b border-border">
-                    <th className="px-4 py-2 font-medium">User</th>
-                    <th className="px-4 py-2 font-medium">Job</th>
-                    <th className="px-4 py-2 font-medium">Reason</th>
-                    <th className="px-4 py-2 font-medium">When</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {d.recentFailures.map((f) => (
-                    <tr key={f.id} className="border-b border-surface-2 hover:bg-surface-2">
-                      <td className="px-4 py-2">
-                        {f.userId ? (
-                          <Link href={`/admin/users/${f.userId}`} className="text-brand hover:underline">{f.email}</Link>
-                        ) : f.email}
-                      </td>
-                      <td className="px-4 py-2 text-muted">{f.company}</td>
-                      <td className="px-4 py-2"><Badge value={f.reason} /></td>
-                      <td className="px-4 py-2 text-muted">{fmtDate(f.createdAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </TableWrap>
-          )}
-        </Panel>
-
-        {/* Right column */}
-        <div className="flex flex-col gap-6">
-          <Panel className="p-4">
-            <div className="mb-3 font-sans text-sm font-bold">Integration health</div>
-            <ul className="space-y-2 font-sans text-xs">
-              <li className="flex justify-between"><span className="text-muted">connected</span><span className="text-accent">{d.integrationHealth.connected}</span></li>
-              <li className="flex justify-between"><span className="text-muted">needs login</span><span className="text-warn">{d.integrationHealth.needsLogin}</span></li>
-              <li className="flex justify-between"><span className="text-muted">connecting</span><span className="text-warn">{d.integrationHealth.connecting}</span></li>
-              <li className="flex justify-between"><span className="text-muted">disconnected</span><span className="text-muted">{d.integrationHealth.disconnected}</span></li>
-            </ul>
-            <div className="mt-4 border-t border-border pt-3 font-sans text-xs">
-              <div className="mb-2 text-muted">plan mix</div>
-              <div className="flex justify-between"><span>free</span><span>{d.users.byPlan.free}</span></div>
-              <div className="flex justify-between"><span>plus</span><span>{d.users.byPlan.plus}</span></div>
-              <div className="flex justify-between"><span>pro</span><span>{d.users.byPlan.pro}</span></div>
-            </div>
-          </Panel>
-
-          {/* Per-platform fail rates */}
-          {d.platformStats.length > 0 && (
-            <Panel className="p-4">
-              <div className="mb-3 font-sans text-sm font-bold">Platform fail rates · 14d</div>
-              <ul className="space-y-2 font-sans text-xs">
-                {d.platformStats.map((p) => (
-                  <li key={p.platform} className="flex items-center justify-between gap-2">
-                    <span className="text-muted capitalize">{p.platform}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted">{p.applied}✓ {p.failed}✗</span>
-                      <span className={p.failRate > 20 ? "text-brand" : p.failRate > 10 ? "text-warn" : "text-accent"}>
-                        {p.failRate}%
-                      </span>
-                    </div>
-                  </li>
+      <section className="mt-8">
+        <h2 className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">
+          This deployment
+        </h2>
+        <div className="bg-surface border-border mt-3 rounded-xl border p-5 text-sm">
+          <dl className="grid gap-x-8 gap-y-2 sm:grid-cols-2">
+            <Row label="Environment" value={caps.env} />
+            <Row label="Sign-in" value={caps.auth.google ? "password + Google" : "password only"} />
+            <Row label="Payments" value={caps.payments.provider} />
+            <Row label="Email" value={caps.email} />
+            <Row
+              label="Rewrites"
+              value={caps.llmProviders.length ? caps.llmProviders.join(", ") : "disabled (no LLM key)"}
+            />
+          </dl>
+          {caps.missing.length > 0 && (
+            <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--border)" }}>
+              <p className="font-mono text-[10px] tracking-[0.12em] uppercase" style={{ color: "#a8730f" }}>
+                Not configured
+              </p>
+              <ul className="text-muted mt-1.5 list-disc space-y-0.5 pl-4">
+                {caps.missing.map((m) => (
+                  <li key={m}>{m}</li>
                 ))}
               </ul>
-            </Panel>
+            </div>
           )}
         </div>
+      </section>
 
-      {/* System status */}
-      {health && (
-        <div className="mt-6">
-          <Panel className="p-5">
-            <div className="mb-3 font-sans text-sm font-bold text-muted uppercase tracking-wide">System status</div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {([
-                { label: "Database", ok: !!(health as {checks?: {db?: {ok: boolean}}}).checks?.db?.ok, link: null },
-                { label: "Email", ok: !!(health as {services?: {email: boolean}}).services?.email, link: "/admin/settings" },
-                { label: "LLM", ok: !!(health as {services?: {llm: boolean}}).services?.llm, link: null },
-                { label: "Google OAuth", ok: !!(health as {services?: {googleOAuth: boolean}}).services?.googleOAuth, link: null },
-              ] as { label: string; ok: boolean; link: string | null }[]).map(({ label, ok, link }) => (
-                <div key={label} className="flex items-center gap-2 rounded bg-surface-2/60 px-3 py-2">
-                  <span className={`h-2 w-2 rounded-full ${ok ? "bg-accent" : "bg-brand"}`} />
-                  <span className="text-xs text-muted">{label}</span>
-                  {!ok && link && (
-                    <Link href={link} className="ml-auto text-[10px] text-brand hover:underline">fix</Link>
-                  )}
-                </div>
-              ))}
-            </div>
-            {((health as {missing?: string[]}).missing ?? []).length > 0 && (
-              <div className="mt-3">
-                <div className="text-[11px] uppercase tracking-wide text-brand mb-1">Missing config</div>
-                <ul className="space-y-0.5">
-                  {((health as {missing?: string[]}).missing ?? []).map((m, i) => (
-                    <li key={i} className="font-sans text-xs text-brand/80">{m}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </Panel>
+      <section className="mt-8">
+        <h2 className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">Usage</h2>
+        <div className="mt-3 grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
+          <Stat label="Accounts" value={users} />
+          <Stat label="Resumes" value={resumes} />
+          <Stat label="Rewrites kept" value={variants} />
+          <Stat label="Median score" value={median ?? "—"} />
+          {/* Labelled honestly: in stub mode these orders are grants, not money.
+              Reporting them as "Revenue" told an operator they had been paid. */}
+          <Stat
+            label={caps.payments.enabled ? "Revenue" : "Granted (stub)"}
+            value={formatAmount(revenue)}
+          />
         </div>
-      )}
-      </div>
+      </section>
+
+      <section className="mt-8">
+        <h2 className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">
+          Unresolved errors
+        </h2>
+        {recentErrors.length === 0 ? (
+          <p className="text-muted mt-3 text-sm">Nothing logged.</p>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[620px] text-sm">
+              <thead>
+                <tr className="border-border border-b text-left">
+                  <Th>Source</Th>
+                  <Th>Kind</Th>
+                  <Th>Message</Th>
+                  <Th>Seen</Th>
+                  <Th>Last</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentErrors.map((e) => (
+                  <tr key={e.id} className="border-border border-b">
+                    <Td>{e.source}</Td>
+                    <Td>{e.kind}</Td>
+                    <Td className="max-w-[24rem] truncate">{e.message}</Td>
+                    <Td className="tabular-nums">{e.count}</Td>
+                    <Td>{new Date(e.lastSeenAt).toLocaleString("en-IN")}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="mt-8">
+        <h2 className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">
+          Signed up this week
+        </h2>
+        {recent.length === 0 ? (
+          <p className="text-muted mt-3 text-sm">Nobody yet.</p>
+        ) : (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[520px] text-sm">
+              <thead>
+                <tr className="border-border border-b text-left">
+                  <Th>Email</Th>
+                  <Th>Plan</Th>
+                  <Th>Resumes</Th>
+                  <Th>Joined</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {recent.map((u) => (
+                  <tr key={u.id} className="border-border border-b">
+                    <Td>{u.email}</Td>
+                    <Td>{u.plan}</Td>
+                    <Td className="tabular-nums">{u._count.resumes}</Td>
+                    <Td>{new Date(u.createdAt).toLocaleDateString("en-IN")}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="bg-surface border-border rounded-xl border p-4">
+      <p className="font-mono text-[10px] tracking-[0.12em] uppercase opacity-60">{label}</p>
+      <p className="font-display mt-1.5 text-2xl font-bold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <>
+      <dt className="text-muted">{label}</dt>
+      <dd className="font-mono text-xs">{value}</dd>
     </>
   );
+}
+
+function Th({ children }: { children: React.ReactNode }) {
+  return (
+    <th className="text-muted py-2 pr-4 font-mono text-[10px] font-medium tracking-[0.1em] uppercase">
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <td className={`py-2 pr-4 ${className}`}>{children}</td>;
 }

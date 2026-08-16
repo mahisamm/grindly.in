@@ -1,101 +1,158 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { Logo } from "@/components/Brand";
+import { PRODUCTS, formatAmount } from "@/lib/plans";
 
-export const metadata = { title: "Terms of Service – Grindly" };
+export const metadata: Metadata = { title: "Terms — Grindly" };
+
+const UPDATED = "16 August 2026";
 
 export default function TermsPage() {
   return (
-    <main className="mx-auto max-w-3xl px-6 py-12 font-mono text-ink">
-      <nav className="mb-10 flex items-center justify-between font-sans" aria-label="Legal page navigation">
-        <Link href="/" aria-label="Grindly home"><Logo size={30} /></Link>
-        <Link href="/" className="text-sm font-semibold text-brand hover:underline">Back to home</Link>
-      </nav>
-      <h1 className="mb-2 text-2xl font-bold text-ink">Terms of Service</h1>
-      <p className="mb-10 text-sm text-muted">Last updated: June 2026</p>
+    <>
+      <header className="border-border border-b">
+        <nav className="mx-auto flex max-w-4xl items-center justify-between px-6 py-5">
+          <Link href="/"><Logo /></Link>
+          <Link href="/privacy" className="text-muted hover:text-ink text-sm">Privacy</Link>
+        </nav>
+      </header>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">1. What Grindly does</h2>
-        <p className="text-sm leading-relaxed">
-          Grindly is an AI-powered job application agent. It searches for internships and, once you
-          enable auto-apply and give consent, submits applications on your behalf to employers&apos;
-          own application forms and hiring inboxes, where you hold no account. If you choose to
-          connect Internshala, it also submits there using a browser session you create by logging
-          in yourself, or an optional encrypted credential-login relay. Grindly skips application
-          flows it does not support, and never states a fact about you that you have not given it.
-          You remain solely responsible for all applications submitted through your account.
-        </p>
-      </section>
+      <main className="mx-auto max-w-3xl flex-1 px-6 py-14">
+        <h1 className="font-display text-4xl font-bold">Terms</h1>
+        <p className="text-muted mt-2 text-sm">Last updated {UPDATED}</p>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">2. Eligibility</h2>
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li>You must be at least 18 years old to use Grindly</li>
-          <li>You must have a valid Google account to sign in</li>
-          <li>You must have legitimate accounts on any job platform you connect</li>
-        </ul>
-      </section>
+        <Section title="What Grindly does">
+          <p>
+            Grindly measures how well a machine can read your resume, rebuilds it
+            onto a clean single-column layout, and tailors what it surfaces toward
+            a role you name. That is the whole service.
+          </p>
+        </Section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">3. Your responsibilities</h2>
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li>You are responsible for the accuracy of your resume and profile information</li>
-          <li>You must only connect accounts that you own and are authorized to use</li>
-          <li>You must comply with the terms of service of each job platform you connect</li>
-          <li>You must not use Grindly to submit false, misleading, or fraudulent applications</li>
-          <li>Setting a reasonable daily application cap is your responsibility — excessive applications may result in your job platform accounts being restricted</li>
-        </ul>
-      </section>
+        <Section title="What we do not claim">
+          <p>
+            <b>There is no ATS score, and we do not promise one.</b> Applicant
+            tracking systems parse resumes into fields for recruiters to search;
+            they do not grade them and they do not reject on a score. The number
+            Grindly shows is our own published rubric, computed by our own code.
+            It is useful and it is reproducible. It is not a rating issued by any
+            employer&rsquo;s software.
+          </p>
+          <p>
+            We do not promise interviews, offers, or that any application will be
+            read. Nobody can.
+          </p>
+        </Section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">4. Beta service</h2>
-        <p className="text-sm leading-relaxed">
-          Grindly is currently in beta. The service is provided as-is, without warranty of any kind.
-          Features may change, be unavailable, or behave unexpectedly. We are not liable for any
-          missed applications, account restrictions on third-party platforms, or any other damages
-          resulting from use of this service.
-        </p>
-      </section>
+        <Section title="Everything on your resume is your statement">
+          <p>
+            Grindly will not invent facts. Rewrites are checked against your
+            source before they are produced: a rewrite cannot introduce a skill,
+            an employer, a date or a number that your resume does not already
+            contain, and one that tries is discarded rather than shown to you.
+          </p>
+          <p>
+            That said, the finished document goes out under your name, and{" "}
+            <b>you are responsible for it being true</b>. Read what we produce
+            before you send it. If a rewrite has emphasised something in a way you
+            cannot defend in an interview, change it. Do not use Grindly to
+            misrepresent your qualifications to an employer.
+          </p>
+        </Section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">5. Acceptable use</h2>
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li>Do not attempt to reverse-engineer, scrape, or abuse the Grindly API</li>
-          <li>Do not use Grindly to harass employers or submit spam applications</li>
-          <li>Do not share your account credentials with others</li>
-          <li>Accounts found to be in violation may be suspended without notice</li>
-        </ul>
-      </section>
+        <Section title="We do not apply on your behalf">
+          <p>
+            Grindly does not submit applications, does not log into job boards,
+            and does not act on any account of yours. Bulk-submitting applications
+            through a platform typically breaks that platform&rsquo;s terms and can
+            get a candidate&rsquo;s account suspended. We hand you a PDF; sending it
+            is your decision and your action.
+          </p>
+        </Section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">6. Limitation of liability</h2>
-        <p className="text-sm leading-relaxed">
-          To the maximum extent permitted by law, Grindly and its operators shall not be liable
-          for any indirect, incidental, or consequential damages, including but not limited to
-          loss of employment opportunities, platform account bans, or data loss.
-        </p>
-      </section>
+        <Section title="Company names">
+          <p>
+            Grindly is not affiliated with, endorsed by, or partnered with any
+            company named in the product. Company names and trademarks belong to
+            their owners and appear only to identify the employer you are applying
+            to. Each company pack links to material that employer published
+            itself, with the date a human last checked it — open the link and
+            verify.
+          </p>
+        </Section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">7. Changes to these terms</h2>
-        <p className="text-sm leading-relaxed">
-          We may update these terms from time to time. Continued use of Grindly after changes
-          are posted constitutes acceptance of the new terms.
-        </p>
-      </section>
+        <Section title="Your account">
+          <p>
+            Keep your password to yourself; you are responsible for what happens
+            under your account. Do not upload someone else&rsquo;s resume without
+            their permission, do not attempt to reach another user&rsquo;s data, and
+            do not try to break the service for other people.
+          </p>
+          <p>
+            We may suspend an account that is being used to attack the service or
+            to defraud employers. We will tell you why.
+          </p>
+        </Section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">8. Contact</h2>
-        <p className="text-sm">
-          Questions about these terms:{" "}
-          <a href="mailto:mahendharsammeta21@gmail.com" className="text-brand hover:underline">
-            mahendharsammeta21@gmail.com
-          </a>
-        </p>
-      </section>
-      <footer className="mt-12 flex flex-wrap gap-5 border-t border-border pt-6 font-sans text-sm">
-        <Link href="/privacy" className="font-semibold text-brand hover:underline">Privacy Policy</Link>
-        <Link href="/login" className="font-semibold text-brand hover:underline">Sign in</Link>
+        <Section title="Paying">
+          <p>
+            The {PRODUCTS.pass90.name} costs {formatAmount(PRODUCTS.pass90.amount)}{" "}
+            and lasts {PRODUCTS.pass90.days} days. It is a one-time payment.{" "}
+            <b>It does not auto-renew</b>, so there is nothing to cancel and
+            nothing will be charged again. A single company pack costs{" "}
+            {formatAmount(PRODUCTS.pack1.amount)}.
+          </p>
+          <p>
+            When a pass ends you drop to the free plan and keep every resume and
+            every PDF you have already made. Nothing is deleted.
+          </p>
+          <p>
+            If the product does not work as described, email us within 7 days of
+            paying and we will refund you. We will not refund a pass because a
+            job application was unsuccessful — that is outside anything we control
+            or promise.
+          </p>
+        </Section>
+
+        <Section title="Availability and liability">
+          <p>
+            The service is provided as it is. We do not guarantee it will be
+            available at any particular moment, and features that depend on
+            third-party model providers can degrade when those providers do — in
+            which case the readiness report still works, because it never needed
+            them.
+          </p>
+          <p>
+            To the extent the law allows, our total liability to you is limited to
+            what you have paid us in the previous twelve months. Nothing here
+            limits liability for fraud or for anything that cannot lawfully be
+            limited.
+          </p>
+        </Section>
+
+        <Section title="Changes and law">
+          <p>
+            If these terms change materially we will update the date above. These
+            terms are governed by the laws of India.
+          </p>
+        </Section>
+      </main>
+
+      <footer className="border-border border-t">
+        <div className="text-muted mx-auto flex max-w-4xl gap-5 px-6 py-8 text-sm">
+          <Link href="/" className="hover:text-ink">Home</Link>
+          <Link href="/privacy" className="hover:text-ink">Privacy</Link>
+        </div>
       </footer>
-    </main>
+    </>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="mt-10">
+      <h2 className="font-display text-2xl font-semibold">{title}</h2>
+      <div className="mt-3 flex flex-col gap-3 leading-relaxed">{children}</div>
+    </section>
   );
 }

@@ -1,122 +1,136 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { PRODUCTS, effectivePlan, extendedExpiry, isSku } from "@/lib/plans";
+import { verifyWebhook } from "@/lib/payment";
 import { audit } from "@/lib/audit";
-import { PLANS, type Plan, verifyWebhookSignature } from "@/lib/adapters/payment";
 
-type RzpPaymentEntity = {
-  id?: string;
-  email?: string;
-  notes?: { userId?: string; plan?: string };
-};
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type RzpEvent = {
-  event?: string;
-  payload?: {
-    payment?: { entity?: RzpPaymentEntity };
-    refund?: { entity?: { id?: string; payment_id?: string } };
-  };
-};
-
-async function grantPlan(uid: string, plan: Plan, paymentId: string) {
-  const perDay = PLANS[plan].perDay;
-
-  // Idempotency: skip if already on same plan (webhook may fire after confirm)
-  const existing = await prisma.user.findUnique({
-    where: { id: uid },
-    select: { paid: true, plan: true },
-  });
-  if (existing?.paid && existing.plan === plan) return;
-
-  await prisma.user.update({
-    where: { id: uid },
-    data: { paid: true, status: "active", plan },
-  });
-  await prisma.profile.upsert({
-    where: { userId: uid },
-    update: { maxPerDay: perDay },
-    create: {
-      userId: uid,
-      maxPerDay: perDay,
-      skills: "[]",
-      preferredDomains: "[]",
-      preferredLocations: "[]",
-      excludedCompanies: "[]",
-    },
-  });
-  await audit("payment", { userId: uid, target: paymentId, detail: plan });
-}
-
-async function revokePlan(uid: string, refundId: string) {
-  await prisma.user.update({
-    where: { id: uid },
-    // plan goes back to "free", not to a paid tier. paid:false + maxPerDay:0 already
-    // neuter the account, but leaving a paid plan name on a refunded user makes every
-    // downstream read (admin plan mix, planCap) quietly wrong.
-    data: { paid: false, status: "paused", plan: "free" },
-  });
-  await prisma.profile.updateMany({
-    where: { userId: uid },
-    data: { maxPerDay: 0 },
-  });
-  await audit("payment_refunded", { userId: uid, target: refundId, detail: "refunded" });
-}
-
+/**
+ * Razorpay's server-to-server notification.
+ *
+ * This is the path that makes a payment survive the user's browser. Granting
+ * used to depend entirely on the browser calling `/api/pay/confirm` after
+ * checkout — so closing the tab, losing signal, or any error between Razorpay's
+ * capture and our fetch left the user charged (capture is automatic) with an
+ * order stuck at `created` forever, and no reconciliation anywhere. The verifier
+ * for this existed in `lib/payment.ts` with no caller.
+ *
+ * Idempotent with `/api/pay/confirm`: whichever arrives first claims the order
+ * by moving it `created` → `paid` in a conditional update, and the other one
+ * sees zero rows affected and grants nothing. Webhooks redeliver by design.
+ */
 export async function POST(req: Request) {
-  if (!process.env.RAZORPAY_WEBHOOK_SECRET) {
-    return NextResponse.json({ error: "webhook not configured" }, { status: 503 });
-  }
-
-  const sig = req.headers.get("x-razorpay-signature") || "";
+  // The RAW body, read before any parsing. The signature covers the exact bytes
+  // Razorpay sent; re-serialising a parsed object changes key order and
+  // whitespace and the HMAC will never match.
   const raw = await req.text();
+  const signature = req.headers.get("x-razorpay-signature") ?? "";
 
-  if (!verifyWebhookSignature(raw, sig)) {
-    return NextResponse.json({ error: "invalid signature" }, { status: 400 });
+  if (!verifyWebhook(raw, signature)) {
+    // 401 rather than 400: this is an authentication failure, and Razorpay's
+    // dashboard reports it as one so a misconfigured secret is obvious.
+    return NextResponse.json({ error: "bad signature" }, { status: 401 });
   }
 
-  let event: RzpEvent;
+  let event: {
+    event?: string;
+    payload?: {
+      payment?: {
+        entity?: {
+          order_id?: string;
+          id?: string;
+          amount?: number;
+          currency?: string;
+          status?: string;
+        };
+      };
+    };
+  };
   try {
     event = JSON.parse(raw);
   } catch {
-    return NextResponse.json({ error: "bad payload" }, { status: 400 });
+    return NextResponse.json({ error: "bad json" }, { status: 400 });
   }
 
-  // ── Payment captured ────────────────────────────────────────────────────
-  if (event.event === "payment.captured") {
-    const payment = event.payload?.payment?.entity ?? {};
-    const uid  = payment.notes?.userId;
-    // Default to the CHEAPER plan on any missing/garbled note — granting Pro by
-    // default would hand out the expensive tier for free on malformed payloads.
-    const plan: Plan = payment.notes?.plan === "pro" ? "pro" : "plus";
-    if (uid) await grantPlan(uid, plan, String(payment.id ?? ""));
+  if (event.event !== "payment.captured") {
+    // Acknowledged and ignored. Returning non-200 for events we do not handle
+    // makes Razorpay retry them forever.
+    return NextResponse.json({ ok: true, ignored: event.event ?? null });
   }
 
-  // ── Refund created — downgrade + pause ─────────────────────────────────
-  if (event.event === "refund.created") {
-    const payment = event.payload?.payment?.entity ?? {};
-    const refund  = event.payload?.refund?.entity  ?? {};
-    const uid = payment.notes?.userId;
+  const entity = event.payload?.payment?.entity ?? {};
+  const providerOrderId = entity.order_id;
+  if (!providerOrderId) {
+    return NextResponse.json({ ok: true, ignored: "no order id" });
+  }
+  // A captured event can still be a PARTIAL capture. Granting the full product
+  // for part of its price is a discount anyone can help themselves to, so the
+  // amount and currency are checked against the order rather than assumed.
+  if (entity.status && entity.status !== "captured") {
+    return NextResponse.json({ ok: true, ignored: `status ${entity.status}` });
+  }
 
-    if (uid) {
-      await revokePlan(uid, String(refund.id ?? ""));
-    } else if (payment.email) {
-      // Fallback: look up by email if notes lacked userId
-      const user = await prisma.user.findUnique({
-        where: { email: payment.email },
-        select: { id: true },
+  const order = await prisma.order.findUnique({ where: { providerOrderId } });
+  if (!order) {
+    // Not ours, or from another environment sharing the account. Acknowledge.
+    return NextResponse.json({ ok: true, ignored: "unknown order" });
+  }
+  if (!isSku(order.sku)) {
+    console.error("[webhook] order carries unknown sku:", order.sku);
+    return NextResponse.json({ ok: true, ignored: "unknown sku" });
+  }
+  const product = PRODUCTS[order.sku];
+
+  // Underpayment must never grant. Acknowledged (200) so Razorpay stops
+  // retrying, but nothing is granted and it is logged loudly for a human.
+  if (typeof entity.amount === "number" && entity.amount < order.amount) {
+    console.error(
+      `[webhook] underpayment on ${order.id}: paid ${entity.amount}, owed ${order.amount}`,
+    );
+    await audit(order.userId, "pay_underpaid", order.id, String(entity.amount));
+    return NextResponse.json({ ok: true, ignored: "amount below order" });
+  }
+  if (entity.currency && entity.currency !== order.currency) {
+    console.error(`[webhook] currency mismatch on ${order.id}: ${entity.currency}`);
+    return NextResponse.json({ ok: true, ignored: "currency mismatch" });
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const claimed = await tx.order.updateMany({
+        where: { id: order.id, status: "created" },
+        data: {
+          status: "paid",
+          paidAt: new Date(),
+          providerPaymentId: entity.id ?? null,
+        },
       });
-      if (user) await revokePlan(user.id, String(refund.id ?? ""));
-    } else {
-      console.error("[payment:refund] no userId or email in payload", refund.id);
-      await audit("payment_refunded", { target: String(refund.id ?? ""), detail: "no_uid_manual_review" });
-    }
+      // Already granted by /api/pay/confirm, or by an earlier delivery of this
+      // same webhook. Nothing to do — and crucially, no second grant.
+      if (claimed.count === 0) return;
+
+      const current = await tx.user.findUnique({
+        where: { id: order.userId },
+        select: { plan: true, planExpiresAt: true },
+      });
+      const live = effectivePlan(current ?? {});
+      await tx.user.update({
+        where: { id: order.userId },
+        data: {
+          plan: live === "pass" ? "pass" : product.grants,
+          planExpiresAt: extendedExpiry(current?.planExpiresAt ?? null, product.days),
+        },
+      });
+      await audit(order.userId, "pay_webhook", order.id, order.sku);
+    });
+  } catch (e) {
+    console.error("[webhook] grant failed:", e);
+    // 500 so Razorpay retries. The claim is conditional, so a retry after a
+    // partial failure cannot double-grant.
+    return NextResponse.json({ error: "grant failed" }, { status: 500 });
   }
 
-  // ── Payment failed ──────────────────────────────────────────────────────
-  if (event.event === "payment.failed") {
-    const payment = event.payload?.payment?.entity ?? {};
-    console.error(`[payment:failed] id=${payment.id}`);
-    await audit("payment_failed", { target: String(payment.id ?? ""), detail: "payment_failed" });
-  }
-
-  return NextResponse.json({ received: true });
+  return NextResponse.json({ ok: true });
 }

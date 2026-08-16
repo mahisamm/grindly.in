@@ -1,109 +1,135 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const { mockCount, mockProfileFind, mockRateFindUnique, mockRateUpsert, mockRateUpdate } = vi.hoisted(() => ({
-  mockCount: vi.fn(),
-  mockProfileFind: vi.fn(),
-  mockRateFindUnique: vi.fn(),
-  mockRateUpsert: vi.fn(),
-  mockRateUpdate: vi.fn(),
+/**
+ * The daily-ceiling logic, which had no tests.
+ *
+ * The property that matters is the rollback: a refused reservation must not
+ * consume the allowance it was refused for. Without it, a user who hits the cap
+ * at 10am keeps incrementing the counter with every retry and can never use the
+ * product again, even after the window they were told to wait for.
+ */
+
+const { mockUser, mockUsage } = vi.hoisted(() => ({
+  mockUser: { findUnique: vi.fn() },
+  mockUsage: { upsert: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
 }));
+
 vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    application: { count: mockCount },
-    profile: { findUnique: mockProfileFind },
-    rateLimitEntry: { findUnique: mockRateFindUnique, upsert: mockRateUpsert, update: mockRateUpdate },
-  },
+  prisma: { user: mockUser, dailyUsage: mockUsage },
 }));
 
-import { getQuota, pendingApprovedCount, remainingForApproval, tryConsumeApplyQuota } from "@/lib/quota";
-import { PLAN_CAPS, PLANS } from "@/lib/plans";
+import { localDate, refund, reserve, usageToday } from "@/lib/quota";
 
 beforeEach(() => {
   vi.resetAllMocks();
-  // Day boundaries come from the user's profile timezone now.
-  mockProfileFind.mockResolvedValue({ timezone: "Asia/Kolkata" });
+  mockUser.findUnique.mockResolvedValue({ plan: "free", planExpiresAt: null });
+  mockUsage.update.mockResolvedValue({});
+  mockUsage.updateMany.mockResolvedValue({ count: 1 });
 });
 
-describe("application quotas", () => {
-  it("defines the requested paid plan limits", () => {
-    expect(PLANS.plus.perDay).toBe(5);
-    expect(PLANS.pro.perDay).toBe(15);
+describe("localDate", () => {
+  it("returns an ISO date in the user's zone, not UTC", () => {
+    // 18:45 UTC on the 5th is already the 6th in Kolkata (+05:30).
+    const at = new Date("2026-03-05T18:45:00Z");
+    expect(localDate("Asia/Kolkata", at)).toBe("2026-03-06");
+    expect(localDate("UTC", at)).toBe("2026-03-05");
   });
 
-  it("treats free as a daily plan (5/day) during the free beta", async () => {
-    mockCount.mockResolvedValue(3);
-    const quota = await getQuota("u1", "free");
-    expect(quota).toEqual({ kind: "daily", cap: PLAN_CAPS.free, used: 3, remaining: 2 });
-    // daily → counts today's applications (appliedAt filter), not lifetime total.
-    expect(mockCount.mock.calls[0][0].where.appliedAt.gte).toBeInstanceOf(Date);
-  });
-
-  it("uses appliedAt for paid daily limits", async () => {
-    mockCount.mockResolvedValue(4);
-    const quota = await getQuota("u1", "pro");
-    expect(quota).toEqual({ kind: "daily", cap: 15, used: 4, remaining: 11 });
-    expect(mockCount.mock.calls[0][0].where.appliedAt.gte).toBeInstanceOf(Date);
-  });
-
-  it("never returns a negative remaining quota", async () => {
-    mockCount.mockResolvedValue(99);
-    expect((await getQuota("u1", "plus")).remaining).toBe(0);
+  it("falls back to UTC for a nonsense timezone rather than throwing", () => {
+    // A tampered profile must not be able to 500 every quota check.
+    expect(() => localDate("Not/AZone", new Date("2026-03-05T18:45:00Z"))).not.toThrow();
+    expect(localDate("Not/AZone", new Date("2026-03-05T18:45:00Z"))).toBe("2026-03-05");
   });
 });
 
-describe("pendingApprovedCount / remainingForApproval (approval-accumulation guard)", () => {
-  it("subtracts already-approved-but-unsubmitted rows from today's remaining cap", async () => {
-    // getQuota() -> applied-today count
-    mockCount.mockResolvedValueOnce(1);
-    // pendingApprovedCount() -> approved-and-waiting count
-    mockCount.mockResolvedValueOnce(2);
-    const approvable = await remainingForApproval("u1", "plus"); // cap 5
-    expect(approvable).toBe(2); // 5 - 1 applied - 2 pending = 2
+describe("reserve", () => {
+  it("allows a request inside the limit and reports what is left", async () => {
+    mockUsage.upsert.mockResolvedValue({ variantRuns: 1 });
+    const verdict = await reserve("u1", "variantRuns");
+    expect(verdict.allowed).toBe(true);
+    if (verdict.allowed) {
+      expect(verdict.used).toBe(1);
+      expect(verdict.limit).toBe(2); // free plan
+      expect(verdict.remaining).toBe(1);
+    }
+    expect(mockUsage.update).not.toHaveBeenCalled();
   });
 
-  it("floors at zero instead of going negative when the backlog exceeds the cap", async () => {
-    mockCount.mockResolvedValueOnce(0); // applied today
-    mockCount.mockResolvedValueOnce(50); // huge accumulated backlog
-    expect(await remainingForApproval("u1", "free")).toBe(0);
+  it("refuses past the limit AND hands the reserved unit back", async () => {
+    // The rollback is the whole point: without it every refused retry burns
+    // another unit and the counter climbs forever.
+    mockUsage.upsert.mockResolvedValue({ variantRuns: 3 });
+    const verdict = await reserve("u1", "variantRuns");
+    expect(verdict.allowed).toBe(false);
+    expect(mockUsage.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { variantRuns: { decrement: 1 } } }),
+    );
   });
 
-  it("counts only rows approved TODAY, so the reservation expires with its day", async () => {
-    // Counting every approved row for all time bricked the product: almost
-    // nobody ticks "yes, I submitted it", so after one day of approvals the
-    // pending count permanently equalled the cap and the user could never
-    // approve again — told to "try again tomorrow" on every tomorrow.
-    mockCount.mockResolvedValueOnce(7);
-    await pendingApprovedCount("u1");
-    const arg = mockCount.mock.calls[0][0];
-    expect(arg.where.userId).toBe("u1");
-    expect(arg.where.status).toBe("approved");
-    expect(arg.where.approvedAt.gte).toBeInstanceOf(Date);
-    // The boundary is the start of today, not "24h ago".
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    expect(arg.where.approvedAt.gte.getTime()).toBe(start.getTime());
+  it("reserves atomically — one increment, one round trip", async () => {
+    mockUsage.upsert.mockResolvedValue({ variantRuns: 1 });
+    await reserve("u1", "variantRuns");
+    expect(mockUsage.upsert).toHaveBeenCalledTimes(1);
+    const call = mockUsage.upsert.mock.calls[0][0];
+    // A read-then-write would let concurrent requests both see the same count
+    // and both proceed.
+    expect(call.update).toEqual({ variantRuns: { increment: 1 } });
+  });
+
+  it("gives a paid plan its larger ceiling", async () => {
+    mockUser.findUnique.mockResolvedValue({
+      plan: "pass",
+      planExpiresAt: new Date(Date.now() + 86_400_000),
+    });
+    mockUsage.upsert.mockResolvedValue({ variantRuns: 10 });
+    const verdict = await reserve("u1", "variantRuns");
+    expect(verdict.allowed).toBe(true);
+    expect(verdict.limit).toBe(40);
+  });
+
+  it("refuses a user that does not exist", async () => {
+    mockUser.findUnique.mockResolvedValue(null);
+    const verdict = await reserve("ghost", "variantRuns");
+    expect(verdict.allowed).toBe(false);
+    expect(mockUsage.upsert).not.toHaveBeenCalled();
+  });
+
+  it("keys the row by user AND local date", async () => {
+    mockUsage.upsert.mockResolvedValue({ uploads: 1 });
+    await reserve("u1", "uploads", "UTC");
+    const where = mockUsage.upsert.mock.calls[0][0].where;
+    expect(where.userId_localDate.userId).toBe("u1");
+    expect(where.userId_localDate.localDate).toBe(localDate("UTC"));
   });
 });
 
-describe("tryConsumeApplyQuota (atomic check-and-consume)", () => {
-  it("consumes and allows when under cap (increment path)", async () => {
-    mockRateFindUnique.mockResolvedValue({ key: "k", count: 2, windowEnd: new Date(Date.now() + 1000) });
-    mockRateUpdate.mockResolvedValue({ count: 3 });
-    const ok = await tryConsumeApplyQuota("u1", 5);
-    expect(ok).toBe(true);
-    expect(mockRateUpdate).toHaveBeenCalled();
+describe("refund", () => {
+  it("never drives a counter below zero", async () => {
+    await refund("u1", "variantRuns");
+    const where = mockUsage.updateMany.mock.calls[0][0].where;
+    expect(where.variantRuns).toEqual({ gt: 0 });
   });
 
-  it("blocks once the atomic counter reaches cap", async () => {
-    mockRateFindUnique.mockResolvedValue({ key: "k", count: 5, windowEnd: new Date(Date.now() + 1000) });
-    mockRateUpdate.mockResolvedValue({ count: 6 });
-    const ok = await tryConsumeApplyQuota("u1", 5);
-    expect(ok).toBe(false);
+  it("swallows a database error rather than failing the request it is cleaning up after", async () => {
+    mockUsage.updateMany.mockRejectedValue(new Error("db down"));
+    await expect(refund("u1", "variantRuns")).resolves.toBeUndefined();
+  });
+});
+
+describe("usageToday", () => {
+  it("reports every meter and never mutates", async () => {
+    mockUsage.findUnique.mockResolvedValue({ variantRuns: 1, adviceRuns: 0, uploads: 2 });
+    const usage = await usageToday("u1");
+    expect(usage.variantRuns).toEqual({ used: 1, limit: 2 });
+    expect(usage.adviceRuns).toEqual({ used: 0, limit: 3 });
+    expect(usage.uploads).toEqual({ used: 2, limit: 5 });
+    expect(mockUsage.upsert).not.toHaveBeenCalled();
+    expect(mockUsage.update).not.toHaveBeenCalled();
   });
 
-  it("rejects a non-positive cap without touching the DB", async () => {
-    const ok = await tryConsumeApplyQuota("u1", 0);
-    expect(ok).toBe(false);
-    expect(mockRateFindUnique).not.toHaveBeenCalled();
+  it("reports zeroes when there is no row yet", async () => {
+    mockUsage.findUnique.mockResolvedValue(null);
+    const usage = await usageToday("u1");
+    expect(usage.variantRuns.used).toBe(0);
   });
 });

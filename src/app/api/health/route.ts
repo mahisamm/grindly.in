@@ -1,51 +1,55 @@
 import { NextResponse } from "next/server";
-import {
-  serviceStatus, missingProdConfig, missingBetaAutomationConfig, encryptionKeyValid,
-} from "@/lib/serverConfig";
-import { getAdminOrNull } from "@/lib/admin";
-import { databaseSchemaReady } from "@/lib/databaseHealth";
+import { prisma } from "@/lib/prisma";
+import { describe } from "@/lib/config";
+import { runAgent } from "@/lib/agent";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /**
- * GET /api/health — readiness probe for deploys + manual checks.
+ * Is this deployment actually able to do its job?
  *
- * `ok` is liveness (DB reachable + encryption key valid) and stays public,
- * because that is what a probe and an uptime monitor actually need.
+ * Deliberately checks the two things that are invisible until a user hits them:
+ * that Postgres answers, and that the Python side can render a PDF. A health
+ * check that only reports "the web process is up" is the one that stays green
+ * through an outage — the previous build's did exactly that while every rewrite
+ * failed for want of a compiler.
  *
- * The diagnostic half — `services`, `missing`, `prodReady` — is admin-only.
- * It never contained a secret VALUE, but naming which secret is missing is
- * itself a map for an attacker: `missingProdConfig()` will happily tell an
- * anonymous caller "APP_ENCRYPTION_KEY (64 hex) — platform connect throws",
- * i.e. that the key protecting stored Internshala and Gmail credentials is
- * absent or malformed, and which integrations are unwired.
+ * `?deep=1` runs the Python probe, which spawns an interpreter and costs about a
+ * second. The default is cheap enough for a container healthcheck on a 15s loop.
  */
-export async function GET() {
-  const checks: Record<string, boolean> = {};
-  checks.encryptionKey = encryptionKeyValid();
+export async function GET(req: Request) {
+  const deep = new URL(req.url).searchParams.get("deep") === "1";
+  const caps = describe();
 
+  let database = false;
   try {
-    checks.database = await databaseSchemaReady();
-  } catch {
-    checks.database = false;
+    await prisma.$queryRaw`SELECT 1`;
+    database = true;
+  } catch (e) {
+    console.error("[health] database unreachable:", e);
   }
 
-  const ok = checks.encryptionKey && checks.database;
-  const status = ok ? 200 : 503;
+  const checks: Record<string, unknown> = {
+    database,
+    encryptionKey: caps.missing.every((m) => !m.startsWith("APP_ENCRYPTION_KEY")),
+    payments: caps.payments.provider,
+    email: caps.email,
+    googleAuth: caps.auth.google,
+    llmProviders: caps.llmProviders,
+  };
 
-  const admin = await getAdminOrNull();
-  if (!admin) return NextResponse.json({ ok, checks }, { status });
+  if (deep) {
+    const probe = await runAgent<{ checks: Record<string, unknown> }>("health");
+    checks.agent = probe.ok ? probe.checks : { error: probe.error };
+  }
 
-  const missing = missingProdConfig();
-  const betaMissing = missingBetaAutomationConfig();
+  // `ok` is about serving requests correctly, not about being fully configured.
+  // A deployment with no LLM key still scores resumes, so it is healthy; it just
+  // cannot rewrite. Conflating the two makes the healthcheck flap on config.
+  const ok = database && checks.encryptionKey === true;
   return NextResponse.json(
-    {
-      ok,
-      checks,
-      services: serviceStatus(),
-      prodReady: ok && missing.length === 0,
-      betaAutomationReady: ok && missing.length === 0 && betaMissing.length === 0,
-      missing,
-      betaMissing,
-    },
-    { status },
+    { ok, env: caps.env, checks, missing: caps.missing },
+    { status: ok ? 200 : 503, headers: { "Cache-Control": "no-store" } },
   );
 }

@@ -1,25 +1,14 @@
-# Production stack: caddy (TLS) → web + worker fleet + postgres + redis.
-# A one-shot `migrate` service creates the Postgres schema + seeds the admin
-# before web/worker start. See PHASE3_DEPLOY_REPORT.md for the deploy runbook.
-# Redis is provisioned for when the queue moves off the DB to BullMQ/Celery.
+# Production stack: caddy (TLS) → web → postgres.
 #
-# ── MEMORY BUDGET (read before deploying on a small VPS) ─────────────────────
-# Sum of the persistent services' `limits.memory`:
-#   postgres 512M · redis 128M · web 768M · worker 1.5G · sweep 256M ·
-#   connect 1.28G · caddy 128M · backup 256M  ≈  4.75 GB of hard caps.
-# The two big ones — worker and connect — each drive a REAL headed Chromium and
-# can momentarily spike toward their cap when a heavy job/login page loads. On a
-# 4 GB box that oversubscribes and the kernel OOM-kills whichever hits its cgroup
-# cap first (usually worker mid-apply or connect mid-login), i.e. a core feature
-# dies silently. Requirements:
-#   • Provision ≥ 6 GB RAM, and add swap regardless (`fallocate -l 2G /swapfile
-#     && mkswap /swapfile && swapon /swapfile`, persist in /etc/fstab).
-#   • Verify on the VPS with `free -h` and, during a concurrent real apply +
-#     connect, `docker stats` — no service should sit pinned at its cap.
-#   • Stuck on a 4 GB box for the beta? Platform-connect is OPTIONAL (discovery
-#     scrapes public listings with no login), so you can run WITHOUT the `connect`
-#     service — start the stack with `--scale connect=0` to reclaim ~1.28 GB. The
-#     "connect a platform" button then just won't have a browser to drive.
+# Three services, down from nine. The previous stack ran a browser-worker fleet,
+# a scheduler, a remote-browser connect service, a self-hosted metasearch engine
+# and an answering-engine sidecar — about 4.75 GB of memory caps — because the
+# product drove real browsers against job boards. This one renders PDFs.
+#
+# MEMORY: postgres 512M · web 1.5G · caddy 128M ≈ 2.2 GB of caps. The web
+# container is the big one because it spawns headless Chromium to render
+# resumes; a render peaks around 400 MB and several can overlap. A 4 GB VPS is
+# comfortable. Add swap regardless.
 
 x-logging: &default-logging
   driver: json-file
@@ -32,7 +21,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: grindly
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       POSTGRES_DB: grindly
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -40,478 +29,106 @@ services:
       test: ["CMD-SHELL", "pg_isready -U grindly"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
     deploy:
       resources:
-        limits:
-          memory: 512M
-          cpus: "1.0"
+        limits: { memory: 512M, cpus: "1.0" }
     logging: *default-logging
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-          cpus: "0.25"
-    logging: *default-logging
-    restart: unless-stopped
-
-  # Self-hosted metasearch, the agent's web-discovery source. It fronts 70+
-  # engines and answers with JSON, so discovery is not limited to the two job
-  # boards — most India internships live on a company's own careers page or
-  # Google Form, and those are reachable only by searching the open web.
-  #
-  # Self-hosted rather than a paid search API on purpose: at ~10-15 searches per
-  # user-run, a hundred users is ~36k queries/month, past every free tier and
-  # into real money. This costs nothing per query and scales with the VPS.
-  #
-  # NO PORTS. It is reachable only as http://searxng:8080 from inside the compose
-  # network — an open metasearch instance on the public internet would be used by
-  # strangers as an open proxy and get this server's IP banned by the upstream
-  # engines the agent depends on.
-  searxng:
-    image: docker.io/searxng/searxng:latest
-    environment:
-      SEARXNG_BASE_URL: http://searxng:8080/
-      # Signs the limiter's tokens. Reuses the app secret rather than adding
-      # another one to rotate; it never leaves the internal network.
-      SEARXNG_SECRET: ${APP_ENCRYPTION_KEY}
-    volumes:
-      - ./searxng:/etc/searxng:rw
-    # Trims the sandbox to what the process needs, minus the setuid/setgid it
-    # keeps for dropping privileges after bind.
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - SETGID
-      - SETUID
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: "0.5"
-    logging: *default-logging
-    restart: unless-stopped
-
-  # One-shot: create/refresh the schema (prisma db push) + seed the admin, then
-  # exit. web + worker wait for this to complete successfully.
+  # One-shot: create the schema, promote ADMIN_EMAIL if that account exists,
+  # then exit. web waits for it to complete successfully.
   migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: { context: ., dockerfile: Dockerfile }
     image: grindly-web
     command: sh -c "npx prisma db push --skip-generate && node scripts/seed-admin.mjs"
     environment:
       DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
-      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres: { condition: service_healthy }
     logging: *default-logging
     restart: "no"
 
   web:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: { context: ., dockerfile: Dockerfile }
     image: grindly-web
     environment:
-      # connection_limit lifts Prisma's tiny default (num_cpu*2+1 = 3 on a 1-vCPU
-      # host) so /api/me polling from ~100 dashboards doesn't queue on the pool;
-      # pool_timeout gives a request a few seconds to get a connection under a
-      # burst instead of erroring. Well under Postgres max_connections (100).
+      # connection_limit lifts Prisma's default (num_cpu*2+1 = 3 on one vCPU) so
+      # dashboard polling doesn't queue on the pool.
       DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly?connection_limit=15&pool_timeout=15
-      # Autopilot flags. The web container is where the extension's claim
-      # endpoint runs, so these must be here too — passing them only to the
-      # worker meant the browser executor read "disabled on the server" while
-      # the worker read it as on. Same trap as before: a container sees only
-      # the variables its own service names.
-      GRINDLY_AUTOPILOT_ENABLED: ${GRINDLY_AUTOPILOT_ENABLED:-1}
-      GRINDLY_BROWSER_EXECUTOR_ENABLED: ${GRINDLY_BROWSER_EXECUTOR_ENABLED:-0}
-      GRINDLY_DIRECT_SUBMIT_ENABLED: ${GRINDLY_DIRECT_SUBMIT_ENABLED:-1}
-      GRINDLY_SEARCH_DISCOVERY_ENABLED: ${GRINDLY_SEARCH_DISCOVERY_ENABLED:-0}
-      # Enforces the full autonomous-beta contract at web-process startup.
-      BETA_ENFORCE_READINESS: ${BETA_ENFORCE_READINESS:-0}
-      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
-      REDIS_URL: redis://redis:6379
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?APP_ENCRYPTION_KEY must be set}
       NODE_ENV: production
-      TRUST_PROXY: "1"              # behind Caddy — trust x-forwarded-for for rate limiting
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
-      # Used by the strict beta release gate as well as Caddy's TLS configuration.
-      APP_DOMAIN: ${APP_DOMAIN}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      GOOGLE_OAUTH_BRAND_VERIFIED: ${GOOGLE_OAUTH_BRAND_VERIFIED:-}
-      # Gmail runs on its own OAuth client so its restricted scope can't hold
-      # login hostage behind Google verification (see .env.example).
-      GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
-      GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET:-}
-      GMAIL_SCAN_ENABLED: ${GMAIL_SCAN_ENABLED:-}
-      GMAIL_SEND_ENABLED: ${GMAIL_SEND_ENABLED:-}
-      # The web app must read the SAME auto-apply switches as the worker, or the
-      # dashboard tells users the agent will send something it won't (or the
-      # reverse). src/lib/applyPolicy.ts mirrors agent/safety.py; both default to
-      # shadow, so an unset value here is safe but must still match the worker.
-      GRINDLY_AUTO_APPLY_MODE: ${GRINDLY_AUTO_APPLY_MODE:-shadow}
-      GRINDLY_TIER_B_APPLY: ${GRINDLY_TIER_B_APPLY:-}
-      GRINDLY_ATS_APPLY: ${GRINDLY_ATS_APPLY:-}
-      # The answering engine, on the compose network. The extension posts a form
-      # snapshot to this app (the only thing that can authenticate it) and the
-      # app forwards it here, so the browser types the SAME answers the
-      # server-side sender would have chosen.
-      GRINDLY_PLANNER_URL: ${GRINDLY_PLANNER_URL:-http://planner:8781}
-      GRINDLY_PLANNER_SECRET: ${GRINDLY_PLANNER_SECRET}
-      # Single explicit payments switch — see .env.example. Must be "true" (not
-      # just Razorpay keys being present) before /api/pay will do anything.
+      # The image ships its own interpreter with the agent deps installed.
+      PYTHON_BIN: python3
+      # Behind Caddy, so x-forwarded-for is ours and trustworthy.
+      TRUST_PROXY: "1"
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://${APP_DOMAIN}}
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      GRINDLY_REDACT_PII: ${GRINDLY_REDACT_PII:-1}
+      # Explicit switch — see lib/config.ts. Keys alone must never mean "live".
       PAYMENTS_ENABLED: ${PAYMENTS_ENABLED:-false}
-      # Razorpay. Both keys are required for paid upgrades in production.
-      # Local development without keys uses stub checkout. Setting KEY_ID flips /api/pay and
-      # /api/pay/confirm into real-money mode, so KEY_SECRET must be set with it
-      # — the secret is what verifies the payment signature.
       RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
       RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
       RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
-      ADMIN_EMAIL: ${ADMIN_EMAIL}
-      GROQ_API_KEY: ${GROQ_API_KEY}
-      # Staged rollout of Internshala credential login (see .env.example)
-      INTERNSHALA_BETA_EMAILS: ${INTERNSHALA_BETA_EMAILS:-}
-      INTERNSHALA_BETA_OPEN: ${INTERNSHALA_BETA_OPEN:-}
-      SENTRY_DSN: ${SENTRY_DSN:-}
-      # SMTP — password-reset mail and any web-side notification. Unset = the mail
-      # is written to data/email-outbox.jsonl instead of being sent.
       EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST:-}
       EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-587}
       EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
       EMAIL_SMTP_PASS: ${EMAIL_SMTP_PASS:-}
       EMAIL_FROM: ${EMAIL_FROM:-Grindly <no-reply@grindly.in>}
-      # Needed for the onboarding DM. Unset = written to data/slack-outbox.jsonl.
-      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
-    expose:
-      - "3000"
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    expose: ["3000"]
     volumes:
-      # Shared with the worker: resume uploads + apply screenshots live here.
+      # Uploaded resumes and rendered variant PDFs.
       - appdata:/app/data
     healthcheck:
+      # The shallow check, deliberately: `?deep=1` spawns a Python interpreter,
+      # and doing that every fifteen seconds forever is a background CPU tax for
+      # information that only changes on deploy.
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
-      timeout: 5s
+      timeout: 8s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 768M
-          cpus: "1.0"
-    logging: *default-logging
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    image: grindly-worker           # tagged so `sweep` can reuse it, not rebuild it
-    environment:
-      INTERNPILOT_DB: ""            # unset → db.py uses the Postgres DATABASE_URL
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
-      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
-      # "0" (headed) — NOT "1". Dockerfile.worker runs Chromium headed inside
-      # an Xvfb virtual display specifically to eliminate headless-mode JS
-      # probes (navigator.webdriver leaks, missing GPU renderer, etc — see
-      # that file's comment). Setting this to "1" would launch real headless
-      # Chromium instead, silently defeating the entire point of Xvfb while
-      # still paying its startup cost — this was found and fixed as a bug.
-      INTERNPILOT_HEADLESS: "0"
-      # Persistent login sessions live here, on the shared appdata volume, so the
-      # web app, the login worker, and every apply worker replica see the same profile.
-      GRINDLY_PROFILE_BASE: /app/data/browser_profile
-      GRINDLY_SPREAD_APPLIES: "1"   # human-pacing: 5-15 min gap between applies
-      # Beta-safe anti-bot-detection ceilings (see .env.example) — must be set
-      # here or worker.py falls back to its much looser code defaults (15 /
-      # unlimited) instead of these.
-      GRINDLY_CAP_PER_PLATFORM: ${GRINDLY_CAP_PER_PLATFORM:-5}
-      GRINDLY_CAP_PER_RUN: ${GRINDLY_CAP_PER_RUN:-5}
-      # ── Auto-apply routing (agent/resolver.py, agent/safety.py) ────────────
-      # Defaults to shadow: the agent resolves and RECORDS where each application
-      # would really go, and sends nothing. Read the result after a week with
-      #   docker compose exec worker python agent/coverage_report.py --days 7
-      # Must match the web service's copy of these two, or the dashboard tells
-      # users something different from what the agent does.
-      GRINDLY_AUTO_APPLY_MODE: ${GRINDLY_AUTO_APPLY_MODE:-shadow}
-      GRINDLY_TIER_B_APPLY: ${GRINDLY_TIER_B_APPLY:-}
-      GRINDLY_ATS_APPLY: ${GRINDLY_ATS_APPLY:-}
-      GRINDLY_RESOLVE_FETCH_BUDGET: ${GRINDLY_RESOLVE_FETCH_BUDGET:-12}
-      # Autopilot kill switches (agent/flags.py). Named explicitly because a
-      # container sees only the vars listed here — a value in .env alone reaches
-      # compose for interpolation but never the process, which is exactly how
-      # discovery read "flag off" while .env plainly said 1.
-      GRINDLY_AUTOPILOT_ENABLED: ${GRINDLY_AUTOPILOT_ENABLED:-1}
-      GRINDLY_DIRECT_SUBMIT_ENABLED: ${GRINDLY_DIRECT_SUBMIT_ENABLED:-1}
-      GRINDLY_BROWSER_EXECUTOR_ENABLED: ${GRINDLY_BROWSER_EXECUTOR_ENABLED:-0}
-      GRINDLY_DAILY_REPORT_ENABLED: ${GRINDLY_DAILY_REPORT_ENABLED:-1}
-      # Product mode: retain only applications the hosted agent can finish.
-      # Board jobs that would require a user click are discarded, not surfaced.
-      GRINDLY_NO_TOUCH_ONLY: ${GRINDLY_NO_TOUCH_ONLY:-1}
-      # Web discovery of employer-hosted internships (the Tier A source).
-      GRINDLY_SEARCH_DISCOVERY_ENABLED: ${GRINDLY_SEARCH_DISCOVERY_ENABLED:-0}
-      # Set to 1 only for a release candidate/beta host. The web process then
-      # refuses to boot if the advertised autonomous-beta contract is incomplete.
-      BETA_ENFORCE_READINESS: ${BETA_ENFORCE_READINESS:-0}
-      GRINDLY_SEARCH_PROVIDER: ${GRINDLY_SEARCH_PROVIDER:-searxng}
-      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
-      SEARCH_API_KEY: ${SEARCH_API_KEY:-}
-      # Emailing an application from the user's own Gmail needs BOTH the switch
-      # and the OAuth client that minted their refresh token — agent/channel_email
-      # refreshes the access token itself (email_scanner.refresh_access_token) and
-      # Google rejects a refresh whose client_id differs from the issuing one. The
-      # worker had neither of these before, so the channel could only ever fail.
-      GMAIL_SEND_ENABLED: ${GMAIL_SEND_ENABLED:-}
-      GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
-      GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET:-}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      GROQ_API_KEY: ${GROQ_API_KEY}
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
-      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
-      SENTRY_DSN: ${SENTRY_DSN:-}
-      # Report delivery. The worker sends each user's daily report on the channel
-      # they chose (profile.report_channel). Without these the email path falls
-      # back to data/email-outbox.jsonl — persisted, but read by nobody, which is
-      # exactly the state every report was in before this was wired up.
-      EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST:-}
-      EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-587}
-      EMAIL_SMTP_USER: ${EMAIL_SMTP_USER:-}
-      EMAIL_SMTP_PASS: ${EMAIL_SMTP_PASS:-}
-      EMAIL_FROM: ${EMAIL_FROM:-Grindly <no-reply@grindly.in>}
-      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
-      OPS_SLACK_CHANNEL: ${OPS_SLACK_CHANNEL:-ops-alerts}
-    deploy:
-      # Single browser-worker on a 1-vCPU host: two headed Chromium workers only
-      # contend for the one core (no throughput gain) and can OOM the box. The
-      # run queue serialises per user, so one worker drains 100 users' runs in
-      # sequence — correct for an async "applies in the background" product.
-      #
-      # replicas > 1 is now CORRECTNESS-safe: claim_next()'s per-user advisory
-      # lock (run_queue.py:_claim_guarded, Postgres only) means two concurrent
-      # claimers can no longer both claim the same user and double-apply. What
-      # still gates the number is HARDWARE — each replica drives a headed
-      # Chromium (~1 core + ~1.5G). Raise replicas to match real cores/RAM as
-      # the host grows (e.g. 4 vCPU / 8G → replicas: 3–4), not before.
-      replicas: 1
-      resources:
-        limits:
-          memory: 1.5G
-          cpus: "1.0"
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'worker.py --serve' || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
       start_period: 20s
-    logging: *default-logging
-    volumes:
-      - appdata:/app/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
-  # The thing that makes this a daily product rather than a button.
-  #
-  # worker --serve only DRAINS the run queue; nothing filled it, so the agent ran
-  # exactly when a user pressed "Run agent" and never otherwise. This enqueues one
-  # live run per active user per day, at a per-user hour derived from their id so
-  # the whole fleet doesn't hit Internshala in the same minute every morning.
-  #
-  # Single replica, and it must stay that way: two of these would double-enqueue.
-  # It only touches the DB (no browser), but reuses the worker image so there is
-  # nothing extra to build.
-  # The answering engine, reachable by the web container.
-  #
-  # The extension needs the SAME decisions the server-side sender makes —
-  # forty-odd patterns for gender, school, degree, years of experience, option
-  # fitting, and the refusals that keep it from inventing facts. All of that is
-  # Python and lives in the worker image. The web container is node:20-slim with
-  # no Python at all, so a Next route cannot call it directly, and porting it to
-  # JavaScript would mean rediscovering every one of its bugs a second time.
-  #
-  # So the browser is the hands, this is the brain, and the web app is the only
-  # thing that authenticates the extension: snapshot in, values out.
-  #
-  # NO `ports:` mapping, deliberately. It is reachable on the compose network
-  # and nowhere else, and it additionally requires a shared secret. It reads no
-  # database, holds no session and cannot submit anything.
-  planner:
-    image: grindly-worker
-    command: ["python", "agent/plan_server.py"]
-    environment:
-      INTERNPILOT_DB: ""
-      GRINDLY_PLANNER_PORT: "8781"
-      GRINDLY_PLANNER_SECRET: ${GRINDLY_PLANNER_SECRET}
-      # Same providers the server path uses, so a free-text box gets the same
-      # answer whichever hands are doing the typing.
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
-      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     deploy:
-      replicas: 1
       resources:
-        limits:
-          # Imports questions.py and its pattern tables, answers one JSON shape,
-          # holds nothing between requests. No browser, no crawl, no database.
-          memory: 320M
-          cpus: "0.25"
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8781/health',timeout=4)\" || exit 1"]
-      interval: 60s
-      timeout: 6s
-      retries: 3
-    restart: unless-stopped
-
-  sweep:
-    image: grindly-worker
-    command: ["python", "agent/sweep.py", "--serve"]
-    environment:
-      INTERNPILOT_DB: ""
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
-      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
-    deploy:
-      replicas: 1
-      resources:
-        limits:
-          # 896M, and every step of that was measured rather than guessed.
-          #
-          # 256M -> 384M: the container idles at 213M, because importing the
-          # discovery stack (atsboards -> websource -> websearch) costs most of
-          # that before a line of work runs. At 83% of the old limit, the daily
-          # harvest allocating on top would have been an OOM kill of the one
-          # process that enqueues everybody's agent.
-          #
-          # 384M -> 896M: the sweep now polls the board index into the shared
-          # pool itself, instead of that only happening inside a user's run. A
-          # 300-board pass measured on this box peaks at 542M RSS and takes 28
-          # seconds. 384M would have OOM-killed the scheduler on its first
-          # harvest after the tenant enumerator landed — 8,469 boards, up from
-          # 574. The host has 3.9G with ~2.2G free, so this is affordable.
-          memory: 896M
-          cpus: "0.25"
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'sweep.py' || exit 1"]
-      interval: 60s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
+        limits: { memory: 1536M, cpus: "2.0" }
     logging: *default-logging
-    volumes:
-      # The board index lives here (data/ats_slugs.json, ats_board_stats.json,
-      # ats_boards.json) and this container is what grows it: sweep runs the
-      # daily fleet-wide harvest. Without the mount the harvest wrote every
-      # board it learned into the container's own filesystem, where the worker
-      # could never read it and a restart threw it away — the whole job would
-      # have been an expensive no-op. Caught because a harvest here reported
-      # "0 known" while the worker knew 483.
-      - appdata:/app/data
     depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-      worker:
-        condition: service_started   # ensures the shared image is built first
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
     restart: unless-stopped
 
-  # Remote-browser connect service — lets a hosted user (no local machine, no
-  # screen) log into a job platform for real by watching/driving a live
-  # browser stream in their dashboard. A single service process owns a small
-  # isolated display/port pool (see agent/connect_service.py). Only
-  # reachable from inside the compose network — Caddy proxies the public
-  # /connect-ws/ path to it; it is never given a host port mapping.
-  connect:
-    build:
-      context: .
-      dockerfile: Dockerfile.connect
-    environment:
-      INTERNPILOT_DB: ""
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
-      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
-      GRINDLY_PROFILE_BASE: /app/data/browser_profile
-      GRINDLY_CONNECT_MAX_SESSIONS: "2"
-    deploy:
-      replicas: 1
-      resources:
-        limits:
-          memory: 1280M
-          cpus: "1.0"
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'connect_service.py' || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    logging: *default-logging
-    volumes:
-      - appdata:/app/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
-  # TLS terminator + reverse proxy. Auto-provisions Let's Encrypt certs for
-  # $APP_DOMAIN. Public entrypoint — web is not exposed to the host directly.
   caddy:
     image: caddy:2-alpine
-    ports:
-      - "80:80"
-      - "443:443"
+    ports: ["80:80", "443:443"]
     environment:
-      APP_DOMAIN: ${APP_DOMAIN}
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddydata:/data
       - caddyconfig:/config
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
     deploy:
       resources:
-        limits:
-          memory: 128M
-          cpus: "0.5"
+        limits: { memory: 128M, cpus: "0.5" }
     logging: *default-logging
-    depends_on:
-      - web
+    depends_on: [web]
     restart: unless-stopped
 
-  # Daily pg_dump → /backup, 7-day retention, plus a restore drill that loads
-  # each dump into a throwaway database and records the result in
-  # backup_health — workerWatchdog.ts alerts if a cycle goes missing or the
-  # restore fails, instead of finding out only when someone needs it.
+  # Daily pg_dump with 7-day retention. A backup nobody has restored is a
+  # hypothesis, so the drill script loads each dump into a throwaway database
+  # and fails loudly if it will not restore.
   backup:
     image: postgres:16-alpine
     environment:
-      # DATABASE_URL, not PGPASSWORD. POSTGRES_PASSWORD holds the password in
-      # its URL-ENCODED form (it exists to be substituted into DATABASE_URL),
-      # so handing it to libpq as a literal password authenticated with the
-      # wrong string and every dump failed — silently, for four days. Connect
-      # exactly the way the app does.
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
     entrypoint: []
     command: ["sh", "/scripts/backup-drill.sh"]
     volumes:
@@ -519,13 +136,10 @@ services:
       - ./scripts/backup-drill.sh:/scripts/backup-drill.sh:ro
     deploy:
       resources:
-        limits:
-          memory: 256M
-          cpus: "0.5"
+        limits: { memory: 256M, cpus: "0.5" }
     logging: *default-logging
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres: { condition: service_healthy }
     restart: unless-stopped
 
 volumes:

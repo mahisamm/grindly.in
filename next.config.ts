@@ -16,13 +16,11 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      // 'unsafe-inline' is no longer needed for the app's own scripts (the SW
-      // registration moved to an external /sw-register.js — see layout.tsx).
-      // It's kept only because the Razorpay checkout modal may inject inline
-      // event handlers we can't verify without a live checkout run (payments
-      // are currently off — PAYMENTS_ENABLED — so this is dormant risk).
-      // Tightening further needs either confirming Razorpay is CSP-clean
-      // without it, or a per-request nonce threaded through proxy.ts.
+      // 'unsafe-inline' is kept only because the Razorpay checkout modal may
+      // inject inline event handlers we cannot verify without a live checkout
+      // run. Payments default to stub mode, so this is dormant risk rather than
+      // active — but it IS risk, and tightening it needs either confirming
+      // Razorpay is CSP-clean without it or threading a per-request nonce.
       `script-src 'self' 'unsafe-inline' https://checkout.razorpay.com${isDev ? " 'unsafe-eval'" : ""}`,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
@@ -44,9 +42,14 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname),
   },
-  async rewrites() {
-    return [{ source: "/sw.js", destination: "/sw" }];
-  },
+  // The /sw.js rewrite is gone with the service worker. It cached every
+  // non-API GET into the browser's Cache API — including /app/<id>, whose
+  // props embed the full resume text, contact details and scores. On a shared
+  // campus machine that served the previous user's resume to the next one
+  // whenever the network dropped. It also listed a "/offline" route that does
+  // not exist, and `caches.addAll` is atomic, so install rejected on every load
+  // and the whole thing never actually ran. There is no offline story here
+  // worth that risk.
   async headers() {
     return [
       {

@@ -1,119 +1,150 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUid } from "@/lib/session";
-import { PLANS, type Plan, fetchOrder, verifyPaymentSignature } from "@/lib/adapters/payment";
-import { sendMessage, onboardingDM } from "@/lib/adapters/slack";
+import { requireUser, badRequest, notFound, serverError } from "@/lib/auth";
+import { PRODUCTS, effectivePlan, extendedExpiry, isSku } from "@/lib/plans";
+import { verifyPayment } from "@/lib/payment";
 import { audit } from "@/lib/audit";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 /**
- * POST /api/pay/confirm
+ * Confirm a payment and grant the pass.
  *
- * Called by the Razorpay modal success handler with the payment proof.
- * Verifies the HMAC signature before granting the plan.
+ * Three properties this endpoint has, each guarding a specific way the naive
+ * version gets robbed:
  *
- * Stub mode (no RAZORPAY_KEY_ID) is development-only: it skips verification and
- * grants the plan directly. Production rejects this path, so
- * whether we are in stub mode is decided by SERVER ENV ALONE. It was previously
- * also readable from a `stub` flag in the request body, which meant that the
- * moment RAZORPAY_KEY_ID was set, any logged-in user could POST {"stub":true}
- * to skip signature verification and grant themselves a paid plan for free.
+ *   1. The product and price come off the ORDER ROW, never the request. A
+ *      client that says "I paid for pass90" is ignored; we look up what they
+ *      started checkout for.
+ *
+ *   2. The signature is verified before anything is granted, and in stub mode
+ *      only a stub order id is accepted — so a stub deployment cannot be handed
+ *      a fabricated Razorpay payment.
+ *
+ *   3. Granting is idempotent on the order's status. Replaying a valid
+ *      confirmation does not extend the pass a second time; the previous build
+ *      had exactly this shape of bug in the other direction, charging a weekly
+ *      entitlement twice for one booking.
  */
 export async function POST(req: Request) {
-  const sessionUid = await getUid();
-  if (!sessionUid) return NextResponse.json({ error: "no session" }, { status: 401 });
+  const auth = await requireUser();
+  if ("error" in auth) return auth.error;
+  const { user } = auth;
 
-  const body = (await req.json().catch(() => ({}))) as {
+  let body: {
+    orderId?: string;
     razorpay_order_id?: string;
     razorpay_payment_id?: string;
     razorpay_signature?: string;
-    plan?: Plan;
   };
-
-  // Provisional only. The plan that is actually granted comes from the paid
-  // ORDER below, never from this body — see the note in the Razorpay branch.
-  let plan: Plan = body.plan === "pro" ? "pro" : "plus";
-
-  // Single explicit switch — see NEXT_PUBLIC_PAYMENTS_ENABLED in .env.example
-  // and the matching check in /api/pay. Not an inference from NODE_ENV/keys.
-  if (process.env.PAYMENTS_ENABLED !== "true") {
-    return NextResponse.json({ error: "Paid plan activation is unavailable." }, { status: 503 });
-  }
-  if (process.env.NODE_ENV === "production" && !process.env.RAZORPAY_KEY_ID) {
-    return NextResponse.json({ error: "Paid plan activation is unavailable." }, { status: 503 });
+  try {
+    body = await req.json();
+  } catch {
+    return badRequest("Send a JSON body.");
   }
 
-  // Real Razorpay mode — verify signature before any DB write
-  if (process.env.RAZORPAY_KEY_ID) {
-    if (!body.razorpay_order_id || !body.razorpay_payment_id || !body.razorpay_signature) {
-      return NextResponse.json({ error: "missing payment fields" }, { status: 400 });
-    }
-    const valid = verifyPaymentSignature({
-      orderId:   body.razorpay_order_id,
-      paymentId: body.razorpay_payment_id,
-      signature: body.razorpay_signature,
+  const orderId = String(body.orderId ?? "");
+  if (!orderId) return badRequest("Missing order.");
+
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, userId: user.id },
+  });
+  if (!order) return notFound();
+
+  if (order.status === "paid") {
+    // Idempotent replay: report success without granting again.
+    const fresh = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { plan: true, planExpiresAt: true },
     });
-    if (!valid) {
-      return NextResponse.json({ error: "invalid signature" }, { status: 400 });
-    }
+    return NextResponse.json({ ok: true, alreadyApplied: true, plan: fresh?.plan, expiresAt: fresh?.planExpiresAt });
+  }
+  if (order.status !== "created") {
+    return badRequest("That order can no longer be completed.");
+  }
 
-    // The signature covers orderId|paymentId and NOTHING ELSE. Taking the plan
-    // from the request body therefore let a genuine Plus payment be confirmed
-    // with `plan: "pro"` and upgrade the account to something nobody paid for.
-    // Read the plan and the owner from the order Razorpay actually holds.
-    const order = await fetchOrder(body.razorpay_order_id);
-    if (!order || !order.plan) {
-      return NextResponse.json({ error: "could not verify this order" }, { status: 400 });
-    }
-    // An order belongs to the account that created it. Without this check a
-    // valid payment made by one user could be replayed to upgrade another.
-    if (order.userId && order.userId !== sessionUid) {
-      await audit("payment_rejected", {
-        userId: sessionUid, target: body.razorpay_order_id, detail: "order belongs to another account",
+  // The signature must be for THIS order. Without this check the HMAC proves
+  // only that *some* payment happened: buy the ₹99 pack once, keep the
+  // (order_id, payment_id, signature) triple, then start a ₹399 order and
+  // replay the triple here. It validates, and the expensive product is granted,
+  // indefinitely. The signature is evidence about the order it names, so the
+  // order it names has to be the one being confirmed.
+  const claimedOrderId = body.razorpay_order_id || order.providerOrderId || "";
+  if (order.providerOrderId && claimedOrderId !== order.providerOrderId) {
+    await audit(user.id, "pay_rejected", order.id, "order id mismatch");
+    return NextResponse.json({ error: "We could not verify that payment." }, { status: 402 });
+  }
+
+  const verified = verifyPayment({
+    orderId: claimedOrderId,
+    paymentId: body.razorpay_payment_id || `stub_${order.id}`,
+    signature: body.razorpay_signature || "",
+  });
+
+  if (!verified) {
+    // The order is left at `created`, NOT marked failed.
+    //
+    // Razorpay captures automatically, so a payment may well have gone through
+    // even when this particular confirmation could not be verified. The webhook
+    // only claims orders in `created`, so flipping this to `failed` permanently
+    // blocked the one path that could still grant the plan — leaving the user
+    // charged, ungranted, and with no reconciliation anywhere.
+    await audit(user.id, "pay_rejected", order.id);
+    return NextResponse.json({ error: "We could not verify that payment." }, { status: 402 });
+  }
+
+  if (!isSku(order.sku)) {
+    console.error("[pay] order carries unknown sku:", order.sku);
+    return serverError("That order refers to a product we no longer sell.");
+  }
+  const product = PRODUCTS[order.sku];
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Re-read inside the transaction and only move `created` -> `paid`. Two
+      // concurrent confirmations both passed the check above; only one gets to
+      // do this update, and the other's updateMany matches zero rows.
+      const claimed = await tx.order.updateMany({
+        where: { id: order.id, status: "created" },
+        data: {
+          status: "paid",
+          paidAt: new Date(),
+          providerPaymentId: body.razorpay_payment_id ?? `stub_${order.id}`,
+        },
       });
-      return NextResponse.json({ error: "this order belongs to another account" }, { status: 403 });
-    }
-    if (order.status && order.status !== "paid") {
-      return NextResponse.json({ error: "this order is not paid" }, { status: 400 });
-    }
-    plan = order.plan;
-    await audit("payment", { userId: sessionUid, target: body.razorpay_payment_id, detail: plan });
-  }
+      if (claimed.count === 0) return;
 
-  const perDay = PLANS[plan].perDay;
-
-  const existing = await prisma.user.findUnique({
-    where: { id: sessionUid },
-    include: { profile: true },
-  });
-  if (!existing) return NextResponse.json({ error: "user not found" }, { status: 404 });
-
-  const user = await prisma.user.update({
-    where: { id: sessionUid },
-    data: {
-      paid: true,
-      plan,
-      status: "active",
-      profile: existing.profile
-        ? { update: { maxPerDay: perDay } }
-        : {
-            create: {
-              maxPerDay: perDay,
-              skills: "[]",
-              preferredDomains: "[]",
-              preferredLocations: "[]",
-              excludedCompanies: "[]",
-            },
-          },
-    },
-    include: { profile: true },
-  });
-
-  if (user.slackChannel || user.slackConnected) {
-    await sendMessage({
-      channel: user.slackChannel || user.slackUserId || "demo-dm",
-      text: onboardingDM(user.name || ""),
+      const current = await tx.user.findUnique({
+        where: { id: user.id },
+        select: { plan: true, planExpiresAt: true },
+      });
+      // Grant what the PRODUCT says it grants. This used to set `plan: "pass"`
+      // unconditionally, so the ₹99 single-company pack bought the full ₹399
+      // tier for a week.
+      //
+      // A smaller purchase never downgrades a live larger one: buying a pack
+      // while a Season Pass is running extends the pass rather than replacing
+      // it with the lesser tier.
+      const live = effectivePlan(current ?? {});
+      const nextPlan = live === "pass" ? "pass" : product.grants;
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          plan: nextPlan,
+          planExpiresAt: extendedExpiry(current?.planExpiresAt ?? null, product.days),
+        },
+      });
     });
+  } catch (e) {
+    console.error("[pay] grant failed:", e);
+    return serverError("Your payment went through but we could not apply it. Contact support.");
   }
 
-  return NextResponse.json({ ok: true });
+  const fresh = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { plan: true, planExpiresAt: true },
+  });
+  await audit(user.id, "pay_confirmed", order.id, order.sku);
+  return NextResponse.json({ ok: true, plan: fresh?.plan, expiresAt: fresh?.planExpiresAt });
 }

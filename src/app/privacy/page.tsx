@@ -1,82 +1,159 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { Logo } from "@/components/Brand";
 
-export const metadata = { title: "Privacy Policy – Grindly" };
+export const metadata: Metadata = { title: "Privacy — Grindly" };
 
+const UPDATED = "16 August 2026";
+
+/**
+ * Written to be read, and to be true.
+ *
+ * A resume is a dossier: name, phone, address, education, employment history,
+ * sometimes date of birth and a photograph. Under India's DPDP Act 2023 that is
+ * personal data and this is a data fiduciary. The page says what is collected,
+ * where it goes, and how to get rid of it, in the order a worried person asks.
+ */
 export default function PrivacyPage() {
   return (
-    <main className="mx-auto max-w-3xl px-6 py-12 font-mono text-ink">
-      <nav className="mb-10 flex items-center justify-between font-sans" aria-label="Legal page navigation">
-        <Link href="/" aria-label="Grindly home"><Logo size={30} /></Link>
-        <Link href="/" className="text-sm font-semibold text-brand hover:underline">Back to home</Link>
-      </nav>
-      <h1 className="mb-2 text-2xl font-bold text-ink">Privacy Policy</h1>
-      <p className="mb-10 text-sm text-muted">Last updated: June 2026</p>
+    <>
+      <header className="border-border border-b">
+        <nav className="mx-auto flex max-w-4xl items-center justify-between px-6 py-5">
+          <Link href="/"><Logo /></Link>
+          <Link href="/terms" className="text-muted hover:text-ink text-sm">Terms</Link>
+        </nav>
+      </header>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">1. What we collect</h2>
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li>Name and email address (via Google Sign-In)</li>
-          <li>Resume content (uploaded or pasted by you)</li>
-          <li>Job preferences: domains, locations, work mode, stipend range</li>
-          <li>Platform credentials (encrypted with AES-256-GCM; we never store plaintext passwords)</li>
-          <li>Application history: matches we prepared, applications you submitted, and applications Grindly sent where you explicitly authorised it, plus outcomes and timestamps</li>
-        </ul>
-      </section>
+      <main className="prose-grindly mx-auto max-w-3xl flex-1 px-6 py-14">
+        <h1 className="font-display text-4xl font-bold">Privacy</h1>
+        <p className="text-muted mt-2 text-sm">Last updated {UPDATED}</p>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">2. How we use your data</h2>
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li>To match your resume to relevant internship listings</li>
-          <li>To prepare applications for you to review and submit yourself, and — only after you enable auto-apply and give explicit consent — to send eligible applications to employer-owned forms, hiring inboxes, or the staged Internshala beta flow</li>
-          <li>To generate tailored cover letters using AI language models</li>
-          <li>To send you progress reports via Slack or notification channels you configure</li>
-        </ul>
-      </section>
+        <Section title="The short version">
+          <p>
+            We store your resume and what we measured from it. We do not sell it,
+            we do not train models on it, and we do not send applications
+            anywhere on your behalf. Delete your account and the files go with it.
+          </p>
+        </Section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">3. Third-party services</h2>
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li><strong>Google OAuth</strong> — used for sign-in only; we receive your name and email</li>
-          <li><strong>AI providers (Groq, Cerebras, Mistral, Gemini)</strong> — resume and cover-letter text is sent to score matches and draft applications. Before any text leaves our servers it is passed through an automatic redaction step that strips direct identifiers — email addresses, phone numbers, and long ID/card numbers are removed — so providers receive your skills and experience, not your contact details</li>
-          <li><strong>Internshala</strong> — optional. The integration uses the browser session created when you log in yourself, and Grindly does not receive or store that platform password. If you instead choose the hosted credential-login flow, the credential is encrypted with AES-256-GCM before storage and used only to establish your browser session; plaintext is never stored</li>
-          <li>We do not sell your data to third parties</li>
-        </ul>
-      </section>
+        <Section title="What we collect">
+          <ul>
+            <li>
+              <b>Your account.</b> Email address, an optional name, and either a
+              password hash (scrypt — we never store the password) or a Google
+              account id if you sign in that way.
+            </li>
+            <li>
+              <b>Your resume.</b> The file you upload, the text extracted from it,
+              and the contact details read off its header. A resume commonly
+              contains your phone number, address, education and employment
+              history; whatever is in yours is in ours.
+            </li>
+            <li>
+              <b>What we measured.</b> Readiness scores, findings, the rebuilt
+              PDFs, and any job description you paste in.
+            </li>
+            <li>
+              <b>Operational records.</b> Sign-in events, rate-limit counters, and
+              errors. IP addresses appear in rate-limit keys and are not kept as a
+              browsing history.
+            </li>
+          </ul>
+          <p>
+            We do not use advertising trackers, and there is no third-party
+            analytics script on this site.
+          </p>
+        </Section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">4. Data storage and security</h2>
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li>All data is stored in a PostgreSQL database on a private server</li>
-          <li>Platform credentials are encrypted at rest with AES-256-GCM</li>
-          <li>Session tokens are HMAC-signed and transmitted over HTTPS only</li>
-          <li>We retain your data for as long as your account is active</li>
-        </ul>
-      </section>
+        <Section title="Where your resume goes">
+          <p>
+            The score is computed entirely on our own server by a deterministic
+            program. No model is involved and nothing leaves the machine.
+          </p>
+          <p>
+            Rewriting and the written review DO send resume text to a language
+            model provider — currently Groq, Google Gemini, Cerebras or Mistral,
+            whichever the deployment has configured. Before any text leaves the
+            server we strip email addresses, phone numbers and long identity
+            numbers from it. Those providers receive your skills and experience;
+            they do not receive your contact details.
+          </p>
+          <p>
+            Your name is not stripped, because a rewrite has to keep it and no
+            name detector is reliable enough to remove it without mangling
+            ordinary resume text. If that matters to you, do not use the rewrite
+            feature — the readiness report works without it.
+          </p>
+        </Section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">5. Your rights</h2>
-        <ul className="list-disc space-y-1 pl-5 text-sm">
-          <li>You can delete your account and all associated data at any time from the dashboard</li>
-          <li>You can revoke platform connections at any time from the Integrations tab</li>
-          <li>You can export your application history from the Applications page</li>
-          <li>Residents of India may exercise rights under the DPDP Act 2023 by contacting us</li>
-        </ul>
-      </section>
+        <Section title="How long we keep it">
+          <p>
+            Until you delete it. Deleting a resume removes the row, the uploaded
+            file and every rebuilt PDF made from it. Deleting your account removes
+            everything above.
+          </p>
+          <p>
+            Operational records — sign-in events and error reports — are kept
+            separately for security and debugging, and are not linked to your
+            resume content.
+          </p>
+        </Section>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-base font-semibold text-ink">6. Contact</h2>
-        <p className="text-sm">
-          For privacy questions or data deletion requests, email:{" "}
-          <a href="mailto:mahendharsammeta21@gmail.com" className="text-brand hover:underline">
-            mahendharsammeta21@gmail.com
-          </a>
-        </p>
-      </section>
-      <footer className="mt-12 flex flex-wrap gap-5 border-t border-border pt-6 font-sans text-sm">
-        <Link href="/terms" className="font-semibold text-brand hover:underline">Terms of Service</Link>
-        <Link href="/login" className="font-semibold text-brand hover:underline">Sign in</Link>
+        <Section title="Your rights">
+          <p>
+            You can see everything we hold from your account page, correct it by
+            re-uploading, and delete it at any time without asking us. Under
+            India&rsquo;s Digital Personal Data Protection Act 2023 — and under the
+            GDPR if you are in the EU — you may also request a copy or a
+            correction by email, and we will respond within 30 days.
+          </p>
+        </Section>
+
+        <Section title="Security">
+          <p>
+            Sessions are signed cookies, revocable on sign-out. Passwords are
+            hashed with scrypt. Uploaded files are stored outside the web root and
+            served only through a route that checks you own them. Rendering runs
+            with JavaScript disabled and no network access.
+          </p>
+          <p>
+            No system is perfect. If you find a problem, tell us before you tell
+            anyone else and we will fix it.
+          </p>
+        </Section>
+
+        <Section title="Children">
+          <p>
+            Grindly is not intended for anyone under 16, and we do not knowingly
+            hold data about them.
+          </p>
+        </Section>
+
+        <Section title="Changes">
+          <p>
+            If we change how your data is handled in a way that matters, we will
+            update the date at the top and say what changed.
+          </p>
+        </Section>
+      </main>
+
+      <footer className="border-border border-t">
+        <div className="text-muted mx-auto flex max-w-4xl gap-5 px-6 py-8 text-sm">
+          <Link href="/" className="hover:text-ink">Home</Link>
+          <Link href="/terms" className="hover:text-ink">Terms</Link>
+        </div>
       </footer>
-    </main>
+    </>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="mt-10">
+      <h2 className="font-display text-2xl font-semibold">{title}</h2>
+      <div className="mt-3 flex flex-col gap-3 leading-relaxed [&_li]:mb-2 [&_ul]:list-disc [&_ul]:pl-5">
+        {children}
+      </div>
+    </section>
   );
 }

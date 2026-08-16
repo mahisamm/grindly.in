@@ -1,20 +1,13 @@
-// Login and Gmail deliberately use SEPARATE Google OAuth clients.
-//
-// Login asks for openid/email/profile — "non-sensitive" scopes that Google
-// serves to the public with no verification at all. Gmail scanning asks for
-// gmail.readonly, which Google classes as RESTRICTED: any GCP project that
-// registers it must pass full verification (including a CASA security
-// assessment, a multi-week process) before it may serve anyone outside its
-// test-user list.
-//
-// Publishing status is per-project, so a single shared client would drag the
-// only way into the app behind that review — exactly the "Access blocked:
-// has not completed the Google verification process" wall. Keeping the clients
-// separate lets the login project publish today while the Gmail project
-// verifies on its own timeline.
-//
-// GMAIL_CLIENT_ID/SECRET unset falls back to the login client, which is correct
-// for local dev and for a single-project setup still in Testing mode.
+/**
+ * Google sign-in: just enough OAuth to identify someone.
+ *
+ * This file used to be mostly Gmail scaffolding — readonly and send scopes,
+ * beta allow-lists, and switches for a feature gated behind Google's restricted
+ * scope review that never shipped. All of that went with the auto-apply build.
+ * What is left asks for `openid email profile` and nothing else, which matters:
+ * a sensitive or restricted scope on this client would put the entire login
+ * flow behind Google verification, and login is one of only two doors in.
+ */
 
 export type OAuthClient = { clientId: string; clientSecret: string };
 
@@ -25,84 +18,72 @@ export function loginClient(): OAuthClient | null {
   return { clientId, clientSecret };
 }
 
-export function gmailClient(): OAuthClient | null {
-  const clientId = process.env.GMAIL_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GMAIL_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
-  return { clientId, clientSecret };
+/** Timeout on every outbound call — Google being slow must not hold a request open. */
+const TIMEOUT_MS = 10_000;
+
+async function postForm(url: string, body: URLSearchParams): Promise<Response> {
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
 }
 
-/** Gmail scanning stays off unless explicitly switched on. Until gmail.readonly
- *  clears Google verification, sending a user into that consent flow either
- *  shows a full-page "Google hasn't verified this app" warning or is refused
- *  outright — so the dashboard hides the entry point rather than offering a
- *  button that leads to a wall. */
-export function gmailScanEnabled(): boolean {
-  return process.env.GMAIL_SCAN_ENABLED === "1" && !!gmailClient();
-}
+/** Swap the one-time code for an access token. Throws with a readable message. */
+export async function exchangeCode(code: string, redirectUri: string): Promise<string> {
+  const client = loginClient();
+  if (!client) throw new Error("Google OAuth is not configured");
 
-/** Emails cleared to use Gmail scanning while it is still in Google's Testing
- *  mode (owner + hand-picked beta testers, each also added as a Google test
- *  user). Comma-separated in GMAIL_SCAN_BETA_EMAILS, matched case-insensitively. */
-export function gmailScanBetaEmails(): Set<string> {
-  return new Set(
-    (process.env.GMAIL_SCAN_BETA_EMAILS ?? "")
-      .split(",")
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean),
+  const res = await postForm(
+    "https://oauth2.googleapis.com/token",
+    new URLSearchParams({
+      code,
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code",
+    }),
   );
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`token exchange failed (${res.status}): ${detail.slice(0, 200)}`);
+  }
+  const data = (await res.json()) as { access_token?: string };
+  if (!data.access_token) throw new Error("token exchange returned no access token");
+  return data.access_token;
 }
 
-/** Whether THIS user may see the live "Connect Gmail" flow. Distinct from
- *  gmailScanEnabled(): the env switch turns the backend capability on for the
- *  fleet, but until gmail.readonly is publicly verified only allowlisted testers
- *  can complete Google's consent (everyone else hits the "unverified app" wall).
- *  So the public sees a waitlist link and only beta emails see Connect. */
-export function gmailScanBeta(email: string | null | undefined): boolean {
-  if (!gmailScanEnabled() || !email) return false;
-  return gmailScanBetaEmails().has(email.toLowerCase());
-}
+export type GoogleProfile = {
+  sub: string;
+  email: string;
+  name?: string;
+  email_verified?: boolean;
+};
 
-/** Whether the agent may SEND application emails from the user's Gmail.
+/**
+ * Read the profile behind an access token.
  *
- *  A large share of internship listings are cross-posts whose real intake is an
- *  HR mailbox. Mailing the application from the candidate's own address is the
- *  lowest-risk delivery channel Grindly has — no account of theirs is being
- *  automated, the recruiter gets a normal email from a real person, and replies
- *  land in their inbox where they belong.
- *
- *  Separate switch from scanning on purpose: reading someone's inbox and sending
- *  mail as them are different grants with different consequences if either is
- *  wrong, and gmail.send carries its own restricted-scope verification. Off
- *  unless the deploy says otherwise — a default-on send capability is not
- *  something a misconfigured environment should be able to hand out. Mirrored
- *  agent-side by channel_email.enabled() (GMAIL_SEND_ENABLED). */
-export function gmailSendEnabled(): boolean {
-  return process.env.GMAIL_SEND_ENABLED === "1" && !!gmailClient();
-}
-
-/** The scopes the Gmail consent screen asks for.
- *
- *  Requested together in one consent so the user is not sent back to Google a
- *  second time, but each half is independently gated: a token minted with send
- *  is useless while GMAIL_SEND_ENABLED is off, and vice versa. Never returns an
- *  empty list — a consent screen asking for nothing is a broken redirect, so
- *  callers must check gmailConnectBeta() before starting the flow at all. */
-export function gmailScopes(): string[] {
-  const scopes: string[] = [];
-  if (gmailScanEnabled()) scopes.push("https://www.googleapis.com/auth/gmail.readonly");
-  if (gmailSendEnabled()) scopes.push("https://www.googleapis.com/auth/gmail.send");
-  return scopes;
-}
-
-/** May this user start the Gmail consent flow at all?
- *
- *  True when at least one Gmail capability is switched on for the fleet AND this
- *  email is on the beta list. Both scopes are restricted, so a non-tester who
- *  reaches the URL directly is turned away here rather than at Google's
- *  "unverified app" wall — which is a dead end with no way back. */
-export function gmailConnectBeta(email: string | null | undefined): boolean {
-  if (!email) return false;
-  if (!gmailScanEnabled() && !gmailSendEnabled()) return false;
-  return gmailScanBetaEmails().has(email.toLowerCase());
+ * `email_verified` is returned rather than discarded because the caller must
+ * refuse an unverified address: Google will hand out a profile for an email the
+ * holder has not proven they own, and accepting it would let someone claim an
+ * existing account by address alone.
+ */
+export async function fetchProfile(accessToken: string): Promise<GoogleProfile> {
+  const res = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error(`profile fetch failed (${res.status})`);
+  }
+  const data = (await res.json()) as Partial<GoogleProfile>;
+  if (!data.sub || !data.email) throw new Error("profile response was incomplete");
+  return {
+    sub: String(data.sub),
+    email: String(data.email),
+    name: data.name ? String(data.name) : undefined,
+    email_verified: data.email_verified,
+  };
 }

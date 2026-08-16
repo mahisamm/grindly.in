@@ -1,147 +1,144 @@
 #!/usr/bin/env node
 /**
- * Preflight — fail fast with a human message if the machine isn't ready to run
- * Grindly. Run by `npm run preflight` and automatically before `npm run dev`.
+ * Fail fast, with a human message, if this machine cannot run Grindly.
  *
- * Checks: .env present, APP_ENCRYPTION_KEY valid, DATABASE_URL set, Python
- * available, Playwright + chromium installed, agent deps importable.
+ * Runs automatically before `npm run dev`. The rule it follows: a ✗ is something
+ * that WILL break in the user's face, a ! is something that degrades. Getting
+ * that line right is the whole value — a preflight that shouts about everything
+ * teaches people to ignore it.
  */
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 const root = process.cwd();
-const betaMode = process.argv.includes("--beta");
 let hard = 0;
 let soft = 0;
+
 const ok = (m) => console.log(`  \x1b[32m✓\x1b[0m ${m}`);
 const bad = (m) => { console.log(`  \x1b[31m✗\x1b[0m ${m}`); hard++; };
 const warn = (m) => { console.log(`  \x1b[33m!\x1b[0m ${m}`); soft++; };
 
-// ---- parse .env (Next loads it at runtime; this script needs it standalone) ----
 function readEnv() {
   const out = {};
-  for (const f of [".env", ".env.local"]) {
-    const p = path.join(root, f);
+  for (const file of [".env", ".env.local"]) {
+    const p = path.join(root, file);
     if (!fs.existsSync(p)) continue;
     for (const line of fs.readFileSync(p, "utf8").split(/\r?\n/)) {
-      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-      if (m && !line.trimStart().startsWith("#")) out[m[1]] = m[2].replace(/^["']|["']$/g, "");
+      if (line.trimStart().startsWith("#")) continue;
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+      if (m) out[m[1]] = m[2].replace(/^["']|["']$/g, "");
     }
   }
+  // A real environment variable always wins over the file.
   return { ...out, ...process.env };
 }
 
 console.log("\nGrindly preflight\n");
 
-const envFile = fs.existsSync(path.join(root, ".env"));
-if (envFile) ok(".env present"); else bad(".env missing — run: cp .env.example .env  (then `npm run setup`)");
+if (fs.existsSync(path.join(root, ".env"))) ok(".env present");
+else bad(".env missing — run: cp .env.example .env && npm run setup");
 
 const env = readEnv();
 
-if (!env.DATABASE_URL) bad("DATABASE_URL not set in .env");
-else if (!/^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL)) {
-  bad("DATABASE_URL must use postgresql:// or postgres:// because prisma/schema.prisma uses PostgreSQL");
+// ---- database ----
+if (!env.DATABASE_URL) {
+  bad("DATABASE_URL is not set");
+} else if (!/^postgres(ql)?:\/\//i.test(env.DATABASE_URL)) {
+  bad("DATABASE_URL must use postgresql:// or postgres:// — prisma/schema.prisma is PostgreSQL");
 } else {
   try {
-    const parsed = new URL(env.DATABASE_URL);
-    ok(`DATABASE_URL = ${parsed.protocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ""}/${parsed.pathname.replace(/^\//, "")}`);
+    const u = new URL(env.DATABASE_URL);
+    ok(`DATABASE_URL → ${u.hostname}:${u.port || 5432}${u.pathname}`);
   } catch {
-    bad("DATABASE_URL is not a valid PostgreSQL connection URL");
+    bad("DATABASE_URL is not a valid connection URL");
   }
 }
 
-const key = env.APP_ENCRYPTION_KEY || "";
-if (!/^[0-9a-fA-F]{64}$/.test(key)) {
-  bad("APP_ENCRYPTION_KEY missing or not 64 hex chars — connecting platforms will fail. Run `npm run setup`.");
-} else ok("APP_ENCRYPTION_KEY valid (64 hex)");
-
-// ---- Phase 2 external service keys ----
-// Beta auth is Google-only, so Google OAuth is REQUIRED in prod; SMS + SMTP are
-// optional (no phone OTP; Google users have no password to reset).
-const isProd = (env.NODE_ENV || "") === "production";
-
-if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) ok("Google OAuth configured (login method)");
-else {
-  const m = "No Google OAuth (GOOGLE_CLIENT_ID/SECRET) — the ONLY login method is down";
-  if (isProd) bad(m); else warn(m);
+// ---- secrets ----
+if (/^[0-9a-fA-F]{64}$/.test(env.APP_ENCRYPTION_KEY ?? "")) {
+  ok("APP_ENCRYPTION_KEY is 64 hex characters");
+} else {
+  bad("APP_ENCRYPTION_KEY missing or malformed — sessions cannot be signed. Run `npm run setup`.");
 }
 
-if (env.GOOGLE_OAUTH_BRAND_VERIFIED === "1") ok("Google OAuth consent screen brand verified as Grindly");
-else {
-  const m = "Google OAuth brand not verified — set the consent-screen app name to Grindly, then set GOOGLE_OAUTH_BRAND_VERIFIED=1";
-  if (isProd) bad(m); else warn(m);
-}
-
-const smsKind = env.FAST2SMS_API_KEY ? "fast2sms"
-  : (env.MSG91_AUTH_KEY && env.MSG91_TEMPLATE_ID && env.MSG91_SENDER_ID) ? "msg91"
-  : (env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_NUMBER) ? "twilio"
-  : null;
-if (smsKind) ok(`SMS provider: ${smsKind}`);
-else warn("No SMS provider — fine for Google-only beta (phone OTP login disabled)");
-
-if (env.EMAIL_SMTP_HOST && env.EMAIL_SMTP_USER && env.EMAIL_SMTP_PASS) ok("SMTP email configured");
-else warn("No complete SMTP configuration — dashboard notifications still work, but email reports cannot be delivered");
-
-const hasLlm = env.GROQ_API_KEY || env.GEMINI_API_KEY || env.CEREBRAS_API_KEY || env.MISTRAL_API_KEY;
-if (hasLlm) ok("LLM key present"); else warn("No LLM key — agent falls back to weak heuristic matching");
-
+// ---- python + the agent ----
 const py = env.PYTHON_BIN || "python";
-let pyOk = false;
+let pythonOk = false;
 try {
-  const v = execSync(`${py} --version`, { stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
-  ok(`Python: ${v} (PYTHON_BIN=${py})`);
-  pyOk = true;
+  const version = execFileSync(py, ["--version"], { stdio: ["ignore", "pipe", "pipe"] })
+    .toString()
+    .trim();
+  ok(`Python: ${version}`);
+  pythonOk = true;
 } catch {
-  bad(`Python not found via PYTHON_BIN="${py}". Install Python 3.10+ or set PYTHON_BIN to its path.`);
+  bad(
+    `Python not found at PYTHON_BIN="${py}". Every resume is read and rendered by ` +
+      "agent/cli.py, so nothing works without it. Point PYTHON_BIN at the interpreter " +
+      "that has agent/requirements.txt installed.",
+  );
 }
 
-if (pyOk) {
+if (pythonOk) {
+  // The agent reports on itself rather than being probed import by import — one
+  // spawn, and it is the same code path the app uses, so a green line here means
+  // the app's calls will work rather than merely that some imports resolve.
   try {
-    execSync(`${py} -c "import playwright"`, { stdio: "ignore" });
-    ok("Playwright (python) installed");
-    try {
-      execSync(`${py} -m playwright install --dry-run chromium`, { stdio: "ignore" });
-      ok("Playwright chromium present");
-    } catch {
-      warn("Playwright chromium may be missing — run: " + py + " -m playwright install chromium");
+    const raw = execFileSync(py, [path.join(root, "agent", "cli.py")], {
+      input: JSON.stringify({ cmd: "health" }),
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 30_000,
+    }).toString();
+    const health = JSON.parse(raw);
+    const c = health.checks ?? {};
+
+    if (c.pdfminer && c.pypdf) ok("PDF extractors installed (pdfminer + pypdf)");
+    else bad("PDF extraction is unavailable — run: " + py + " -m pip install -r agent/requirements.txt");
+
+    if (c.docx) ok("DOCX extractor installed");
+    else warn("python-docx missing — DOCX uploads will not be readable");
+
+    if (c.renderer) {
+      ok("Chromium renderer available");
+    } else {
+      bad(
+        "Playwright/Chromium is missing, so no resume can be rebuilt into a PDF. Run: " +
+          py + " -m playwright install chromium",
+      );
     }
-  } catch {
-    bad(`Playwright not installed for ${py}. Run \`npm run setup\` or: ${py} -m pip install -r agent/requirements.txt`);
-  }
-  // sanity: agent core modules import
-  try {
-    execSync(`${py} -c "import sys; sys.path.insert(0,'agent'); import db, matcher, safety"`, { stdio: "ignore" });
-    ok("Agent core modules import");
-  } catch {
-    warn("Agent modules failed to import — check agent/requirements.txt is installed");
+
+    if (Array.isArray(c.llm_providers) && c.llm_providers.length) {
+      ok(`LLM providers configured: ${c.llm_providers.join(", ")}`);
+    } else {
+      warn(
+        "No LLM key set. Scoring and the readiness report work fully without one — " +
+          "rewrites and the written review do not.",
+      );
+    }
+  } catch (e) {
+    bad(`agent/cli.py could not run: ${String(e).slice(0, 200)}`);
   }
 }
 
-if (betaMode) {
-  console.log("\nBeta release checks\n");
-  const betaRequirements = [
-    [env.GRINDLY_AUTO_APPLY_MODE === "live", "GRINDLY_AUTO_APPLY_MODE=live: verified Tier A sends are enabled"],
-    [env.GRINDLY_AUTOPILOT_ENABLED !== "0", "GRINDLY_AUTOPILOT_ENABLED=1: fleet-wide automation is enabled"],
-    [env.GRINDLY_DIRECT_SUBMIT_ENABLED !== "0", "GRINDLY_DIRECT_SUBMIT_ENABLED=1: approved direct destinations can run"],
-    [env.GRINDLY_BROWSER_EXECUTOR_ENABLED === "1", "GRINDLY_BROWSER_EXECUTOR_ENABLED=1: the paired-browser executor is enabled"],
-    [env.GRINDLY_SEARCH_DISCOVERY_ENABLED === "1", "GRINDLY_SEARCH_DISCOVERY_ENABLED=1: employer-web discovery is enabled"],
-    [env.GRINDLY_ATS_APPLY === "1", "GRINDLY_ATS_APPLY=1: approved ATS destinations can run"],
-    [env.GRINDLY_DAILY_REPORT_ENABLED !== "0", "GRINDLY_DAILY_REPORT_ENABLED=1: report delivery is enabled"],
-    [!!(env.EMAIL_SMTP_HOST && env.EMAIL_SMTP_USER && env.EMAIL_SMTP_PASS), "EMAIL_SMTP_HOST/USER/PASS: daily email reports can be delivered"],
-    [!!env.SENTRY_DSN, "SENTRY_DSN: production errors are captured and actionable"],
-    [!!env.APP_DOMAIN, "APP_DOMAIN: Caddy has a hostname for TLS certificates"],
-    [/^https:\/\//i.test(env.NEXT_PUBLIC_APP_URL || env.NEXT_PUBLIC_BASE_URL || ""), "NEXT_PUBLIC_APP_URL=https://<production-domain>: OAuth and extension pairing use HTTPS"],
-  ];
-  for (const [ready, message] of betaRequirements) {
-    if (ready) ok(message);
-    else bad(message);
-  }
+// ---- optional services ----
+if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) ok("Google sign-in configured");
+else warn("No Google OAuth — email and password sign-in still works");
+
+if (env.EMAIL_SMTP_HOST && env.EMAIL_SMTP_USER && env.EMAIL_SMTP_PASS) ok("SMTP configured");
+else warn("No SMTP — outbound email is written to data/email-outbox.jsonl instead of sent");
+
+if (String(env.PAYMENTS_ENABLED).toLowerCase() === "true") {
+  if (env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET) ok("Razorpay checkout is live");
+  else bad("PAYMENTS_ENABLED=true but RAZORPAY_KEY_ID/SECRET are missing — checkout will fail");
+} else {
+  warn("Payments are in stub mode — passes are granted without money moving");
 }
 
 console.log("");
 if (hard) {
-  console.log(`\x1b[31m${hard} blocking issue(s).\x1b[0m Fix the ✗ items above, then re-run.\n`);
+  console.log(`\x1b[31m${hard} blocking issue(s).\x1b[0m Fix the ✗ lines above, then re-run.\n`);
   process.exit(1);
 }
-console.log(soft ? `\x1b[33mReady with ${soft} warning(s).\x1b[0m\n` : "\x1b[32mAll good — ready to run.\x1b[0m\n");
+console.log(
+  soft ? `\x1b[33mReady, with ${soft} warning(s).\x1b[0m\n` : "\x1b[32mAll good.\x1b[0m\n",
+);

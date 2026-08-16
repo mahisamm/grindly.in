@@ -1,118 +1,152 @@
-// Server-side daily quota — never trust the client for limits.
-// Mirrors agent/db.py:get_plan_cap + todays_applied_count.
+/**
+ * Daily ceilings on the operations that cost real compute.
+ *
+ * A variant batch is several model calls plus up to four headless Chromium
+ * renders. Left uncapped, one script can spend an afternoon's worth of free
+ * provider quota — which everyone else on the instance then does not have — and
+ * pin the box's CPU while doing it.
+ *
+ * Two properties this implementation has that the obvious one does not:
+ *
+ *   * It counts in the USER'S local day. "2 a day" has to mean their day, or
+ *     the window slides for everyone outside UTC and resets at 5:30am in India.
+ *
+ *   * It reserves before the work, and refunds if the work never happened. The
+ *     natural shape — do the work, then increment — lets a user fire twenty
+ *     concurrent requests through the check before any of them has counted.
+ */
+import { prisma } from "@/lib/prisma";
+import { limitsFor, type Limits } from "@/lib/plans";
 
-import { prisma } from "./prisma";
-import { isRateLimited } from "./rateLimit";
-import { localDate, startOfLocalDay } from "./localDay";
+export type Meter = "variantRuns" | "adviceRuns" | "uploads";
 
-// Re-exported so existing `import { planCap } from "@/lib/quota"` call sites keep
-// working; the definition itself lives in lib/plans.ts alongside the prices.
-export { planCap } from "./plans";
-import { normalizePlan, planCap } from "./plans";
-
-/** Midnight of the user's OWN day. This used to be the Node process's local
- * midnight — UTC in the containers — which is 5.5 hours into an Indian user's
- * day, so /api/me's "N of M left today" and the autopilot panel's "sent today"
- * could disagree about the same applications. One boundary now: the user's
- * profile timezone, same as /api/autopilot. */
-async function startOfUsersDay(userId: string): Promise<Date> {
-  const prof = await prisma.profile
-    .findUnique({ where: { userId }, select: { timezone: true } })
-    .catch(() => null);
-  return startOfLocalDay(prof?.timezone || "Asia/Kolkata");
-}
-
-export async function appliedToday(userId: string): Promise<number> {
-  return prisma.application.count({
-    where: {
-      userId,
-      status: "applied",
-      appliedAt: { gte: await startOfUsersDay(userId) },
-    },
-  });
-}
-
-export async function appliedTotal(userId: string): Promise<number> {
-  return prisma.application.count({ where: { userId, status: "applied" } });
-}
-
-export type Quota = {
-  kind: "trial" | "daily";
-  cap: number;
-  used: number;
-  remaining: number;
+const LIMIT_KEY: Record<Meter, keyof Limits> = {
+  variantRuns: "variantRunsPerDay",
+  adviceRuns: "adviceRunsPerDay",
+  uploads: "uploadsPerDay",
 };
 
-export async function getQuota(userId: string, plan?: string | null): Promise<Quota> {
-  const normalized = normalizePlan(plan);
-  const cap = planCap(normalized);
-  // Free beta: every plan — free included — is a DAILY plan now (free = 5/day,
-  // same cap as Plus). There is no lifetime trial any more, so usage is always
-  // today's count and it resets each day. "trial" stays in the Quota type for
-  // legacy callers but is no longer produced here.
-  const kind: Quota["kind"] = "daily";
-  const used = await appliedToday(userId);
-  return { kind, cap, used, remaining: Math.max(0, cap - used) };
+const LABEL: Record<Meter, string> = {
+  variantRuns: "resume rewrites",
+  adviceRuns: "reviews",
+  uploads: "uploads",
+};
+
+/**
+ * The user's local calendar date as YYYY-MM-DD.
+ *
+ * `en-CA` is used because its short date format IS ISO — `toLocaleDateString`
+ * with a timezone is the only way to get "what day is it there" without pulling
+ * in a date library, and every other locale needs reformatting afterwards.
+ */
+export function localDate(timezone = "Asia/Kolkata", now = new Date()): string {
+  try {
+    return now.toLocaleDateString("en-CA", { timeZone: timezone });
+  } catch {
+    // An invalid IANA zone from a tampered profile must not 500 a request.
+    return now.toLocaleDateString("en-CA", { timeZone: "UTC" });
+  }
 }
 
-export async function remainingToday(userId: string, plan?: string | null): Promise<number> {
-  return (await getQuota(userId, plan)).remaining;
-}
+export type QuotaVerdict =
+  | { allowed: true; used: number; limit: number; remaining: number }
+  | { allowed: false; used: number; limit: number; message: string };
 
-/** Rows approved TODAY and not yet submitted — capacity already "spoken for"
- * against today's cap even though they haven't flipped to `applied` yet.
+/**
+ * Reserve one unit of `meter`. Call BEFORE doing the work.
  *
- * The reservation has to expire with the day that granted it. This used to count
- * every approved row for all time, and the failure mode was brutal: hardly
- * anyone comes back to tick "yes, I submitted it", so one day of approvals left
- * `pending === cap` permanently and the user could never approve again — the UI
- * said "your daily limit is reached, try again tomorrow" on every tomorrow,
- * forever. The core loop of the product was bricked by its own safety check.
- *
- * A null `approvedAt` means a row approved before this column existed. Those are
- * deliberately NOT counted: they are exactly the rows that jammed the old
- * counter, and refusing to count them is what unsticks an already-stuck account.
- *
- * Bursting past the cap is still prevented downstream — /api/applications/submitted
- * consumes quota atomically via tryConsumeApplyQuota. */
-export async function pendingApprovedCount(userId: string): Promise<number> {
-  return prisma.application.count({
-    where: {
-      userId,
-      status: "approved",
-      approvedAt: { gte: await startOfUsersDay(userId) },
-    },
+ * The increment and the read are one atomic statement, so concurrent requests
+ * cannot both see "1 used" and both proceed. When the reservation pushes the
+ * count past the limit we roll it back and refuse, which means a rejected
+ * request does not consume the allowance it was refused for.
+ */
+export async function reserve(
+  userId: string,
+  meter: Meter,
+  timezone = "Asia/Kolkata",
+): Promise<QuotaVerdict> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { plan: true, planExpiresAt: true },
   });
-}
+  if (!user) return { allowed: false, used: 0, limit: 0, message: "Account not found." };
 
-/** Remaining capacity for NEW approvals today — today's cap minus what's
- * already applied today minus what's already approved-and-waiting. */
-export async function remainingForApproval(userId: string, plan?: string | null): Promise<number> {
-  const [quota, pending] = await Promise.all([getQuota(userId, plan), pendingApprovedCount(userId)]);
-  return Math.max(0, quota.remaining - pending);
+  const limit = limitsFor(user)[LIMIT_KEY[meter]];
+  const date = localDate(timezone);
+
+  // Atomic: upsert-then-increment in a single round trip. `update` on the
+  // composite unique key maps to one UPDATE ... SET n = n + 1 RETURNING n.
+  const row = await prisma.dailyUsage.upsert({
+    where: { userId_localDate: { userId, localDate: date } },
+    create: { userId, localDate: date, [meter]: 1 },
+    update: { [meter]: { increment: 1 } },
+  });
+
+  const used = (row as unknown as Record<string, number>)[meter] ?? 0;
+  if (used > limit) {
+    // Give it back. Without this, every refused attempt still burns a unit, so
+    // a user who hits the cap at 10am cannot use the product even after the
+    // window they were waiting for — the count keeps climbing.
+    await prisma.dailyUsage
+      .update({
+        where: { userId_localDate: { userId, localDate: date } },
+        data: { [meter]: { decrement: 1 } },
+      })
+      .catch(() => null);
+    return {
+      allowed: false,
+      used: limit,
+      limit,
+      message:
+        limit === 0
+          ? `${LABEL[meter]} are not included on your plan.`
+          : `You have used all ${limit} ${LABEL[meter]} for today. The limit resets at midnight in your timezone.`,
+    };
+  }
+
+  return { allowed: true, used, limit, remaining: Math.max(0, limit - used) };
 }
 
 /**
- * Atomically consume one unit of today's apply-quota for a user, returning
- * true iff it was available. Built on the same DB-backed atomic-increment
- * primitive as rateLimit.ts (see its docstring for the exact guarantee) so
- * that concurrent `/api/applications/submitted` calls for the same user can't
- * all read "quota available" before any of them commits — the class of bug
- * that let a burst of concurrent requests push a user's applied-today count
- * past their plan cap.
+ * Hand a reserved unit back when the work did not happen — a render that failed
+ * on our side, a batch that produced nothing because a provider was down.
+ *
+ * Charging for those is charging for our own outage.
  */
-export async function tryConsumeApplyQuota(userId: string, cap: number): Promise<boolean> {
-  if (cap <= 0) return false;
-  // Key and window both follow the user's day, matching every other "today"
-  // count — a UTC-keyed window reset the allowance at 05:30 IST.
-  const prof = await prisma.profile
-    .findUnique({ where: { userId }, select: { timezone: true } })
+export async function refund(
+  userId: string,
+  meter: Meter,
+  timezone = "Asia/Kolkata",
+): Promise<void> {
+  const date = localDate(timezone);
+  await prisma.dailyUsage
+    .updateMany({
+      where: { userId, localDate: date, [meter]: { gt: 0 } },
+      data: { [meter]: { decrement: 1 } },
+    })
     .catch(() => null);
-  const tz = prof?.timezone || "Asia/Kolkata";
-  const now = new Date();
-  const dayStart = startOfLocalDay(tz, now);
-  const windowMs = dayStart.getTime() + 24 * 60 * 60 * 1000 - now.getTime();
-  const key = `apply_quota:${userId}:${localDate(tz, now)}`;
-  const blocked = await isRateLimited(key, cap, windowMs);
-  return !blocked;
+}
+
+/** Read-only snapshot for the dashboard. Never mutates. */
+export async function usageToday(
+  userId: string,
+  timezone = "Asia/Kolkata",
+): Promise<Record<Meter, { used: number; limit: number }>> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { plan: true, planExpiresAt: true },
+  });
+  const limits = limitsFor(user ?? {});
+  const row = await prisma.dailyUsage.findUnique({
+    where: { userId_localDate: { userId, localDate: localDate(timezone) } },
+  });
+  const meters: Meter[] = ["variantRuns", "adviceRuns", "uploads"];
+  const out = {} as Record<Meter, { used: number; limit: number }>;
+  for (const m of meters) {
+    out[m] = {
+      used: (row as unknown as Record<string, number> | null)?.[m] ?? 0,
+      limit: limits[LIMIT_KEY[m]],
+    };
+  }
+  return out;
 }

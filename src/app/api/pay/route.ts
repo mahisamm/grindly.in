@@ -1,40 +1,81 @@
 import { NextResponse } from "next/server";
-import { getUid } from "@/lib/session";
-import { createOrder, type Plan } from "@/lib/adapters/payment";
+import { prisma } from "@/lib/prisma";
+import { requireUser, badRequest, serverError } from "@/lib/auth";
+import { PRODUCTS, isSku } from "@/lib/plans";
+import { createOrder } from "@/lib/payment";
+import { isRateLimited } from "@/lib/rateLimit";
+import { audit } from "@/lib/audit";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/** Start a purchase. Returns what the browser needs to open checkout. */
 export async function POST(req: Request) {
-  const uid = await getUid();
-  if (!uid) return NextResponse.json({ error: "no session" }, { status: 401 });
+  const auth = await requireUser();
+  if ("error" in auth) return auth.error;
+  const { user } = auth;
 
-  const { plan } = (await req.json().catch(() => ({}))) as { plan?: Plan };
-  const chosen: Plan = plan === "pro" ? "pro" : "plus";
-
-  // Single explicit switch — not an environmental inference. The onboarding
-  // button is labeled "coming soon" but was only ever disabled by
-  // `busy || !tosAck`; without this it still ran a real checkout the moment
-  // Razorpay keys existed in any environment where NODE_ENV wasn't literally
-  // "production" (staging, key rotation, etc).
-  if (process.env.PAYMENTS_ENABLED !== "true") {
-    return NextResponse.json(
-      { error: "Paid plans are coming soon. Your free plan (5 applications/day) stays active." },
-      { status: 503 },
-    );
-  }
-  if (process.env.NODE_ENV === "production" && (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET)) {
-    return NextResponse.json(
-      { error: "Paid plans are coming soon. Your free plan (5 applications/day) stays active." },
-      { status: 503 },
-    );
+  // Keyed by USER, not by IP. Checkout is authenticated, so the account is the
+  // meaningful bucket — and an IP-keyed limit here would let one person on a
+  // shared campus network stop everyone else from paying.
+  if (await isRateLimited(`pay:${user.id}`, 15, 60 * 60 * 1000)) {
+    return NextResponse.json({ error: "Too many checkout attempts. Try again later." }, { status: 429 });
   }
 
+  let body: { sku?: string };
   try {
-    const order = await createOrder({ userId: uid, plan: chosen });
-    return NextResponse.json(order);
-  } catch (e) {
-    console.error("[pay] createOrder failed:", e);
-    return NextResponse.json(
-      { error: "Could not start checkout. Please try again." },
-      { status: 502 }
-    );
+    body = await req.json();
+  } catch {
+    return badRequest("Send a JSON body.");
   }
+
+  const sku = String(body.sku ?? "");
+  if (!isSku(sku)) return badRequest("Unknown product.");
+  const product = PRODUCTS[sku];
+
+  // The order row is created FIRST, carrying the price we decided. The
+  // confirmation path then reads the amount and the product off this row rather
+  // than off the request — a client that posts `{sku: "pass90", amount: 1}` is
+  // sending a number nobody reads.
+  let order;
+  try {
+    order = await prisma.order.create({
+      data: {
+        userId: user.id,
+        sku,
+        amount: product.amount,
+        currency: product.currency,
+        status: "created",
+      },
+      select: { id: true },
+    });
+  } catch (e) {
+    console.error("[pay] order create failed:", e);
+    return serverError("Could not start checkout.");
+  }
+
+  let created;
+  try {
+    created = await createOrder(product, order.id);
+  } catch (e) {
+    console.error("[pay] provider order failed:", e);
+    await prisma.order.update({ where: { id: order.id }, data: { status: "failed" } }).catch(() => null);
+    return serverError("The payment provider did not respond. Try again in a moment.");
+  }
+
+  await prisma.order
+    .update({ where: { id: order.id }, data: { providerOrderId: created.providerOrderId } })
+    .catch(() => null);
+
+  await audit(user.id, "pay_start", order.id, sku);
+  return NextResponse.json({
+    ok: true,
+    orderId: order.id,
+    provider: created.provider,
+    providerOrderId: created.providerOrderId,
+    amount: created.amount,
+    currency: created.currency,
+    keyId: created.keyId ?? null,
+    product: { sku: product.sku, name: product.name, days: product.days },
+  });
 }

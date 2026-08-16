@@ -4,14 +4,14 @@ import Link from "next/link";
 export function NavMenu() {
   return (
     <nav className="flex items-center gap-4 text-[0.72rem] font-medium uppercase tracking-[0.1em]">
-      <Link href="/#features" className="hidden sm:block text-muted hover:text-brand transition">
-        Features
-      </Link>
-      <Link href="/#how" className="hidden sm:block text-muted hover:text-brand transition">
-        How it works
-      </Link>
-      <Link href="/#pricing" className="hidden sm:block text-muted hover:text-brand transition">
+      {/* Real routes, not anchors. These were /#features, /#how and /#pricing —
+          three fragments that match no `id` anywhere on the landing page, so
+          every one of them scrolled nowhere. */}
+      <Link href="/pricing" className="hidden sm:block text-muted hover:text-brand transition">
         Pricing
+      </Link>
+      <Link href="/privacy" className="hidden sm:block text-muted hover:text-brand transition">
+        Privacy
       </Link>
       <Link
         href="/login"

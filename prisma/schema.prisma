@@ -1,616 +1,259 @@
-// Intern-Agent SaaS data model. Owned by Prisma; the Python agent reads/writes
-// the same database (SQLite locally, Postgres in prod) via agent/db.py, which
-// auto-detects the backend from DATABASE_URL.
+// Grindly — resume readiness and company tailoring.
+//
+// This schema replaced a 947-line one built for auto-applying to job boards.
+// Roughly two thirds of it described state that only existed because the agent
+// held accounts on other people's platforms: encrypted board credentials,
+// browser task queues, per-application submission receipts, extension pairing
+// tokens, thirty-odd screening answers collected so a bot could type them into
+// someone else's form. None of that has a place in a product that hands the
+// user a PDF and lets them apply themselves.
+//
+// The shape here is deliberately small. A user has resumes; a resume has a
+// measured report and some variants; a variant may be aimed at a target. That
+// is the whole product.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  // Production backend. DATABASE_URL points at the Postgres server (see
-  // docker-compose.yml / prisma/MIGRATE_POSTGRES.md). For a quick local SQLite
-  // run, set provider = "sqlite" and DATABASE_URL="file:./dev.db".
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-// Enum value sets below are verified against the actual read/write call sites
-// in src/ and agent/ (not just doc comments) — see src/lib/applyState.ts,
-// which is the mirrored single source of truth for ApplyStatus/FailureReason
-// shared with agent/safety.py.
-
-enum ApplyStatus {
-  matched
-  approved
-  submitting
-  applied
-  skipped
-  failed
-  needs_review
-}
-
-enum FailureReason {
-  session_expired
-  selector_missing
-  captcha
-  listing_closed
-  upload_failed
-  firewall_blocked
-  custom_questions
-  timeout
-  exception
-  // The browser never started — provably pre-submit, so the agent may
-  // retry the listing (agent/db.py _PROVABLY_NOT_SENT keys on this).
-  browser_launch
-}
-
-enum Outcome {
-  interview
-  offer
-  rejected
-  // Assessment / coding-test / take-home received — an intermediate progress
-  // signal, auto-detected by agent/email_scanner.py. It is written by the
-  // scanner (raw SQL), never self-reported, so it is intentionally absent from
-  // the user-facing OUTCOMES whitelist in api/applications/outcome/route.ts.
-  test
-  no_response
-}
+// ---------------------------------------------------------------------------
+// identity
+// ---------------------------------------------------------------------------
 
 model User {
-  id                    String   @id @default(cuid())
-  email                 String   @unique
-  name                  String?
-  passwordHash          String?  @map("password_hash")
-  googleId              String?  @unique @map("google_id")
-  phone                 String?  @unique
-  phoneVerified         Boolean  @default(false) @map("phone_verified")
-  createdAt             DateTime @default(now()) @map("created_at")
-  // billing (stubbed, real-ready)
-  paid                  Boolean  @default(false)
-  // Loose strings, not Postgres enums (PlanTier/UserStatus/Role): the live
-  // production `users` table already has plan/status/role as plain `text`
-  // columns (confirmed via \d users) — these enums were declared in schema
-  // but never actually applied to prod, so `prisma db push` was trying to
-  // convert text -> enum, which Postgres can only do via drop-and-recreate
-  // (data loss on every row). Matching what's actually live instead.
-  // free | plus | pro.  "starter" is the legacy name for "plus" and may still be
-  // present on old rows — every read goes through normalizePlan() (src/lib/plans.ts)
-  // / _norm_plan() (agent/db.py) rather than comparing this string directly.
-  plan                  String   @default("free")
-  // slack (stubbed, real-ready)
-  slackUserId           String?  @map("slack_user_id")
-  slackChannel          String?  @map("slack_channel")
-  slackConnected        Boolean  @default(false) @map("slack_connected")
-  // internshala session (persistent browser profile) ready?
-  internshalaConnected  Boolean  @default(false) @map("internshala_connected")
-  // RETIRED 2026-08-01. Was the opt-in waitlist for Gmail interview detection.
-  // That feature only ever ran behind GMAIL_SCAN_ENABLED, which has never been
-  // set on any deploy and cannot be until gmail.readonly clears Google's
-  // restricted-scope review — so the waitlist collected names for a queue that
-  // was never going to move, and the card holding it was the largest thing on
-  // the integrations page. Nothing reads or writes this column any more.
-  //
-  // Declared rather than deleted for the same reason as internshalaBeta below:
-  // deploy runs `prisma db push`, and a column present in the database but
-  // absent from the schema turns every deploy into a destructive one requiring
-  // --accept-data-loss. Drop the column by hand first, then this line.
-  gmailScanInterest     Boolean  @default(false) @map("gmail_scan_interest")
-  // Legacy flag, superseded by internshalaBetaAccess below — unused by any
-  // current code path (verified via grep), but still live with real rows.
-  // Declared here (not dropped) purely so `prisma db push` leaves it alone;
-  // safe to actually drop later via a real migration once confirmed unused
-  // in practice, not just in code.
-  internshalaAccess     Boolean  @default(false) @map("internshala_access")
-  // staged-rollout grant: admin can enable Internshala auto-apply for this user
-  // even when the global beta isn't open. OR'd with email/role/INTERNSHALA_BETA_OPEN.
-  internshalaBetaAccess Boolean  @default(false) @map("internshala_beta_access")
-  // lifecycle: registered -> onboarding -> active -> paused
-  status                String   @default("registered")
-  // access role: user (default) | admin. Admin-only dashboard gates on this
-  // column server-side — never on email or a client flag.
-  role                  String   @default("user")
-  // Session revocation counter. Embedded in the signed session cookie; getUid()
-  // rejects any cookie whose version is below this. Incremented on logout (and
-  // any future force-logout / credential change) so a leaked or already-issued
-  // cookie stops working immediately — a stateless HMAC alone can't be revoked.
-  tokenVersion          Int      @default(0) @map("token_version")
+  id           String  @id @default(cuid())
+  email        String  @unique
+  name         String?
+  // Argon2-style scrypt hash written by lib/password.ts. Null for accounts that
+  // only ever signed in with Google — those must not fall back to a password
+  // path, so the null is load-bearing rather than merely absent.
+  passwordHash String? @map("password_hash")
+  googleId     String? @unique @map("google_id")
 
-  // Access gating (approval-gated beta). A new account is "pending" and sees the
-  // waitlist; only "approved" users reach the app and can run the agent. The
-  // owner email and any pre-allowlisted email are auto-approved at signup. Values:
-  // pending | approved | denied. Existing rows predate this column — because the
-  // live DB was empty when it shipped, the @default backfills them as pending
-  // with no one locked out; on a populated DB you would backfill approved first.
-  accessStatus      String    @default("pending") @map("access_status")
-  // When the user actively tapped "Request access" (vs just signing up and
-  // bouncing) — lets the admin queue surface real intent first.
-  accessRequestedAt DateTime? @map("access_requested_at")
-  accessGrantedAt   DateTime? @map("access_granted_at")
+  // free | pass. There is no monthly subscription on purpose: a placement season
+  // is six to ten weeks, and a recurring charge for a product you need once is
+  // how you earn a chargeback and a bad review from a satisfied customer.
+  // A pass has an expiry; when it passes, the user drops to free and keeps
+  // everything they already made.
+  plan          String    @default("free")
+  planExpiresAt DateTime? @map("plan_expires_at")
 
-  profile         Profile?
-  applications    Application[]
-  reports         Report[]
-  integrations    UserIntegration[]
-  resumeVersions  ResumeVersion[]
-  auditLogs       AuditLog[]
-  notifications   Notification[]
-  agentRuns       AgentRun[]
-  credentials     PlatformCredential[]
-  extensionTokens ExtensionToken[]
-  resumeVariants  ResumeVariant[]
-  supportTickets  SupportTicket[]
-  answers         UserAnswer[]
+  role         String @default("user") // user | admin
+  // Session revocation counter, embedded in the signed cookie. Logout and any
+  // credential change increment it, so an already-issued cookie stops working
+  // immediately — a stateless HMAC cannot otherwise be revoked.
+  tokenVersion Int    @default(0) @map("token_version")
 
+  createdAt DateTime  @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  resumes     Resume[]
+  targets     Target[]
+  orders      Order[]
+  auditLogs   AuditLog[]
+  usage       DailyUsage[]
+  resetTokens PasswordResetToken[]
+
+  @@index([plan])
   @@map("users")
 }
 
-model UserIntegration {
-  id          String    @id @default(cuid())
-  userId      String    @map("user_id")
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  platform    String // linkedin | internshala | naukri | unstop | indeed
-  // Loose string, not a Postgres enum: this session's captcha circuit
-  // breaker added "challenge_detected" as a status value that was never
-  // added to the old IntegrationStatus enum — would have thrown an invalid-
-  // enum-value error the first time it ran against real Postgres (SQLite
-  // tests never caught it, since SQLite doesn't enforce enum constraints).
-  // connected | disconnected | connecting | needs_login | otp_required |
-  // challenge_detected
-  status      String    @default("disconnected")
-  connectedAt DateTime? @map("connected_at")
-  // Credential-login relay (hosted): the worker logs in headless on the server.
-  // When the platform demands a one-time code, it flips otpRequired and waits for
-  // the user to post the code into otpCode; lastError surfaces a failure to the UI.
-  otpRequired Boolean   @default(false) @map("otp_required")
-  otpCode     String?   @map("otp_code")
-  lastError   String?   @map("last_error")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-
-  // Remote-browser connect flow (hosted, headless server — see connect_service.py):
-  // a short-lived, single-use, random token handed to the frontend so it can
-  // open a view of the live login browser over the connect service's
-  // websocket bridge. High-entropy + short expiry is the whole security
-  // model here — never log this value, never expose it outside an
-  // authenticated response to the owning user.
-  connectToken          String?   @map("connect_token")
-  connectTokenExpiresAt DateTime? @map("connect_token_expires_at")
-  connectClaimedBy      String?   @map("connect_claimed_by")
-  connectClaimedAt      DateTime? @map("connect_claimed_at")
-
-  @@unique([userId, platform])
-  @@map("user_integrations")
-}
-
-model Profile {
-  id     String @id @default(cuid())
-  userId String @unique @map("user_id")
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  resumeText      String? @map("resume_text")
-  resumeName      String? @map("resume_name")
-  // Optional LaTeX source of the master resume (data/resume_tex/<uid>.tex).
-  // When present, per-job tailoring edits the .tex in place and recompiles, so
-  // the output is byte-identical to the user's own template. When absent, the
-  // agent sends the master PDF UNTOUCHED — it must never regenerate a resume
-  // from plain text, which is what produced the "patched-looking" output.
-  resumeTexName   String? @map("resume_tex_name")
-  // Result of compiling the UNEDITED .tex the moment it was uploaded:
-  //   ok | no_sections | compile_failed | page_mismatch | no_compiler
-  //
-  // Without this, a .tex that can't be compiled — or whose section headings this
-  // template doesn't recognise — fails silently and forever: compile_pdf() returns
-  // False, the master resume goes out untouched, and the user is never told that
-  // the feature they uploaded a file for is doing nothing. A guard that fails
-  // silently is not a guard. Checked once at upload, not per-application.
-  resumeTexStatus String? @map("resume_tex_status")
-  resumeTexDetail String? @map("resume_tex_detail")
-  skills          String  @default("[]") // JSON array of skills (agent-extracted)
-  education       String?
-  experienceLevel String? @map("experience_level") // student | fresher | 1-2yr
-  phone           String? // for form fill (LinkedIn phone field)
-  gpa             Float?  @default(8.0) // GPA for form fill
-
-  // proff (preference/profile) answers + firewall constraints
-  preferredDomains   String  @default("[]") @map("preferred_domains") // JSON array
-  preferredLocations String  @default("[]") @map("preferred_locations") // JSON array
-  workMode           String  @default("any") @map("work_mode") // remote | onsite | any
-  stipendMin         Int     @default(0) @map("stipend_min")
-  maxPerDay          Int     @default(10) @map("max_per_day")
-  minMatchScore      Int     @default(65) @map("min_match_score") // 0-100 firewall threshold
-  excludedCompanies  String  @default("[]") @map("excluded_companies") // JSON array
-  autoApply          Boolean @default(true) @map("auto_apply")
-
-  resumeScore       Int?    @map("resume_score") // 0-100 quality score
-  resumeSuggestions String? @map("resume_suggestions") // JSON analysis from resume_ai
-  // SHA-256 of the resume text the stored analysis was computed from. The worker
-  // re-analyzes ONLY when this changes. It used to run resume_ai.analyze() on every
-  // single sweep — an LLM call, every day, to re-score a resume that hadn't changed
-  // since yesterday.
-  resumeHash        String? @map("resume_hash")
-
-  // ATS-optimized variant generation (the "3 better resumes" feature). Runs only
-  // on an explicit button click, never on every sweep — it's several LLM calls +
-  // Tectonic compiles. Status drives the dashboard card:
-  //   null/none | generating | ready | failed | no_gain | error
-  // "no_gain" means the rewrites ran and none scored higher than the master, so
-  // we show nothing rather than a worse resume dressed up as an upgrade.
-  // "error" means OUR side broke (compiler, model unavailable) — worded that way
-  // on the card so the user never reads an infrastructure failure as a verdict
-  // on their resume. The actual variants live in resume_variants (ResumeVariant).
-  resumeVariantStatus String? @map("resume_variant_status")
-  resumeVariantDetail String? @map("resume_variant_detail")
-
-  // beta: one-tap "are these matches good?" survey (1-5). null = not yet asked
-  matchQualityRating Int?    @map("match_quality_rating")
-  // beta: surfaced to user when resume parsing produced no skills (manual fallback)
-  resumeParseFailed  Boolean @default(false) @map("resume_parse_failed")
-
-  // explicit consent timestamp for auto-apply (audit trail; null = never consented)
-  autoApplyConsentAt DateTime? @map("auto_apply_consent_at")
-  // Which consent text they agreed to. Bumping lib/readiness.CONSENT_VERSION
-  // un-readies every account that agreed to older wording — consent to v1 is
-  // not consent to v2, so the worker holds their sends until they re-agree.
-  consentVersion     String?   @map("consent_version")
-
-  // ---- eligibility facts (autopilot readiness; null = not yet provided) ----
-  // Screening forms ask these on nearly every application. They are FACTS the
-  // agent may state on the user's behalf, so they come from setup, never from a
-  // model's guess — questions.py refuses to invent exactly this class of answer.
-  gradYear          Int?    @map("grad_year") // expected graduation year, e.g. 2027
-  gradMonth         Int?    @map("grad_month") // 1-12, optional refinement of gradYear
-  // When they can start, as the user phrases it ("immediately", "June 2027").
-  availability      String?
-  // Free-text authorization status for the market they apply in ("Indian
-  // citizen", "OPT", ...). Stated verbatim, never inferred.
-  workAuthorization String? @map("work_authorization")
-  // The rest of what a screening form asks that a resume never carries. Setup
-  // offers a fixed list for each (see lib/proffQuestions) so the stored value is
-  // one the agent can type into a form without interpreting it — "20" hours, not
-  // "around 20-25 depending on my sem". Every one is optional: a fact we do not
-  // hold makes the agent stop and ask, which is the correct failure.
-  // `education` above stays the one-line "B.Tech CSE, VIT Vellore" string that
-  // readiness and older forms read. These two split it, because forms ask for
-  // them in SEPARATE boxes — answering "College name" with the whole course-and-
-  // college string is wrong in a way a recruiter notices.
-  degree            String? // "B.Tech in Computer Science"
-  college           String? // "VIT Vellore"
-  // Asked on nearly every Indian internship form, and NOT answerable from the
-  // college CGPA — a form wanting "Class 12 percentage (%)" wants a different
-  // number entirely, which is why _CGPA in questions.py excludes school-level.
-  class10Percent    Float?  @map("class10_percent")
-  class12Percent    Float?  @map("class12_percent")
-  // Asked as a plain yes/no by every ATS. Kept separate from workAuthorization
-  // because that one is free-phrasing ("Indian citizen") and cannot be mapped
-  // onto a Yes/No dropdown without putting words in the user's mouth.
-  needsSponsorship  String? @map("needs_sponsorship") // "Yes" | "No"
-  hoursPerWeek      Int?    @map("hours_per_week") // "hours a week you can commit"
-  willingToRelocate String? @map("willing_to_relocate") // Yes | No | Depends on the role
-  expectedStipend   Int?    @map("expected_stipend") // ₹/month STATED on forms — not the
-  // stipendMin filter above, which only decides what the agent bothers to open.
-  // The questions that were actually stopping unattended applications, measured
-  // rather than guessed: a dry run of fourteen real application pages stalled
-  // three times, twice on "What's your current salary?" and once on "Do you have
-  // previous internship experience?". Both are facts about the candidate that no
-  // model may supply — so they are collected once here, and the agent then
-  // answers every phrasing of them on every site, forever.
-  currentSalary     String? @map("current_salary")   // "0" for a student — stated as written
-  // "Total Years of Experience *" and "Relevant Years of Experience *" are
-  // required boxes on Keka and Darwinbox, and there was nowhere to keep the
-  // answer. Measured on a real application to Dash Technologies: the agent
-  // correctly refused to guess, and would have refused on every form asking it,
-  // forever. For most students the true answer is 0 — but 0 is a FACT about
-  // them, not a default we may assume, so it is asked once and stored.
-  yearsExperience   String? @map("years_experience")
-  // The year they STARTED their degree. Greenhouse asks it as "Start date
-  // year*" on the education block and will not submit without it. Not derived
-  // from gradYear minus a course length: that is a guess, and a wrong start
-  // year is a false statement about their education under their own name.
-  educationStartYear Int?   @map("education_start_year")
-  previousInternship String? @map("previous_internship") // "Yes" | "No"
-  noticePeriod      String? @map("notice_period")    // "Immediate" for most students
-  currentLocation   String? @map("current_location") // the city they are in now
-  // Required boxes on Indian ATS tenants (Darwinbox, Keka, Zoho) and on the
-  // diversity sections of Greenhouse/Lever. Optional here: a user who would
-  // rather not say leaves them blank, and those applications wait for them
-  // instead of being sent with an invented answer.
-  gender            String?
-  dateOfBirth       String? @map("date_of_birth")    // as the user writes it
-  differentlyAbled  String? @map("differently_abled") // "Yes" | "No"
-  nationality       String?
-  // Its own required box on nearly every applicant tracking system, and NOT
-  // derivable from nationality — "Indian" is not what a country dropdown wants,
-  // and a candidate can hold one and live in the other. Left to a model, it
-  // answered "India" on a real Greenhouse form: plausible, unverified, and
-  // stated under the candidate's name.
-  country           String?
-  // Profile links. Forms ask for these in their own boxes, so parsing them back
-  // out of the resume PDF per application is both slow and lossy.
-  linkedinUrl       String? @map("linkedin_url")
-  githubUrl         String? @map("github_url")
-  portfolioUrl      String? @map("portfolio_url")
-  // IANA zone driving the daily cap window and report timing. India-first
-  // default matches the current user base; changeable in setup.
-  timezone          String  @default("Asia/Kolkata")
-
-  // Where the daily report is delivered: "email" (default) | "slack". Picked in
-  // onboarding, changeable any time from dashboard settings. Before this column
-  // existed the onboarding choice was local React state that was never persisted,
-  // and the worker sent to Slack unconditionally — so a user who chose Email got
-  // nothing, and had no way to change their mind.
-  reportChannel String @default("email") @map("report_channel")
-
-  planJson  String?  @map("plan_json") // agent-generated plan
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  @@map("profiles")
-}
-
-// One AI-generated, ATS-optimized rewrite of the user's master resume, rendered
-// on a clean single-column template and COMPILED so its score is measured, not
-// guessed. We only ever store variants that scored strictly higher than the
-// master (see agent/resume_optimize.py). No fabricated content: a truthfulness
-// gate rejects any variant that introduces a skill/tool/org/degree absent from
-// the source resume before it is ever compiled or stored.
-model ResumeVariant {
+/// A single-use password reset.
+///
+/// Only the HASH of the token is stored. A reset table holding usable tokens is
+/// a table that hands out every account the moment it leaks, and a database
+/// backup or a stray log line is enough — so the emailed value exists in
+/// exactly one place, the user's inbox.
+model PasswordResetToken {
   id     String @id @default(cuid())
   userId String @map("user_id")
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // resume_hash of the master text these were generated from. When the user
-  // uploads a new master (new hash), stale variants are cleared — they describe
-  // a resume that no longer exists.
-  baseHash      String   @map("base_hash")
-  rank          Int // 1..N display order, best score first
-  label         String // short strategy name, e.g. "Keyword-optimized"
-  score         Int // MEASURED ATS score of the compiled variant
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// the evidence ledger
+// ---------------------------------------------------------------------------
+
+/// A resume the user uploaded or built, plus everything measured from it.
+///
+/// `text` is the extracted text, not the file — it is what every downstream
+/// step reads, and storing it means a re-score never needs the original bytes
+/// back. The file itself lives on disk under data/resumes/<id>.<ext>; the row
+/// holds only the name and the extension so a delete can find it.
+model Resume {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  label        String  @default("My resume")
+  originalName String? @map("original_name")
+  ext          String? // ".pdf" | ".docx" | ".txt" — null for built-from-scratch
+  text         String  @default("")
+  chars        Int     @default(0)
+
+  /// JSON. Name, email, phone, GPA, marks — read off the header locally, never
+  /// from a model, because the LLM boundary redacts PII on the way out and a
+  /// model asked for the phone number faithfully returns "[phone redacted]".
+  contactJson String? @map("contact_json")
+  /// JSON array of URLs found in the PDF's link annotations. A resume that
+  /// shows the word "LinkedIn" behind a hyperlink has an address no text
+  /// extractor will ever see, and four real application forms asked for it.
+  linksJson   String? @map("links_json")
+  /// JSON array of the candidate's own skills. This is the allow-list every
+  /// rewrite is checked against, so it is a claim of theirs, never ours.
+  skillsJson  String  @default("[]") @map("skills_json")
+
+  /// Last untargeted readiness score. Denormalised out of reportJson so the
+  /// list page can sort and show it without parsing a blob per row.
+  score      Int?
+  grade      String?
+  /// JSON: the full readiness report — bands, findings, facts.
+  reportJson String? @map("report_json")
+  /// JSON: prose advice from the model. Separate column because it is optional,
+  /// costs an LLM call, and must never be confused with the score.
+  adviceJson String? @map("advice_json")
+
+  /// sha256 of `text`. A re-score is skipped when this has not changed, which
+  /// is what stops the advice call re-running on every page load.
+  textHash String? @map("text_hash")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  variants Variant[]
+  targets  Target[]
+
+  @@index([userId, createdAt])
+  @@map("resumes")
+}
+
+/// What a set of variants was aimed at: a curated company pack, or a pasted
+/// job description. Null target means the untargeted "make this better" run.
+model Target {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  resumeId String @map("resume_id")
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  kind String // company | jd
+  /// companies.py slug, for kind=company.
+  slug String?
+  /// Display name — the company, or the title parsed out of the JD.
+  name String  @default("")
+
+  /// The pasted job description, for kind=jd. Kept because the user will want
+  /// to see what a variant was built against a week later, and because
+  /// re-parsing it is free while re-asking them for it is not.
+  jdText   String? @map("jd_text")
+  /// JSON: parsed requirements — must_have, nice_to_have, skills.
+  specJson String? @map("spec_json")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  variants Variant[]
+
+  @@index([resumeId, createdAt])
+  @@map("targets")
+}
+
+/// One measured rewrite. A variant only exists if it scored at least as high as
+/// the master — `resume_optimize` drops the rest before they reach here, so
+/// there is no "worse" state to filter out at read time.
+model Variant {
+  id       String @id @default(cuid())
+  resumeId String @map("resume_id")
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  targetId String? @map("target_id")
+  target   Target? @relation(fields: [targetId], references: [id], onDelete: Cascade)
+
+  label         String // Keyword-optimized | Impact-focused | ATS-clean | Detail-first
+  score         Int
   grade         String
-  baselineScore Int      @map("baseline_score") // master's score, for the "+N" delta shown to the user
-  // JSON array of plain-English strings: what this variant changed vs the master.
-  // Keeps the (invisible) LaTeX trustworthy — the user sees why the score moved.
-  changes       String
-  // Compiled PDF on disk: data/resume_variants/<uid>/<rank>.pdf (the worker
-  // writes by rank, not row id — worker.optimize_variants). Served only to the
-  // owning user via GET /api/resume/variants/[id]; never a public path.
-  pdfPath       String   @map("pdf_path")
-  createdAt     DateTime @default(now()) @map("created_at")
+  baselineScore Int     @map("baseline_score")
+  beatsBaseline Boolean @default(false) @map("beats_baseline")
+  pages         Int?
 
-  @@index([userId])
-  @@map("resume_variants")
+  /// JSON array of plain-English changes, shown to the user instead of a diff.
+  changesJson  String? @map("changes_json")
+  /// JSON: the full readiness report for THIS variant.
+  reportJson   String? @map("report_json")
+  /// JSON: {total, recovered, lost[], pct} — how much of what we printed
+  /// survived being read back out of the PDF. The headline claim.
+  fidelityJson String? @map("fidelity_json")
+
+  /// Filename under data/variants/<resumeId>/. Not the bytes: a three-variant
+  /// batch is ~300 KB and the web app already shares this filesystem.
+  file  String
+  bytes Int    @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([resumeId, createdAt])
+  @@index([targetId])
+  @@map("variants")
 }
 
-// A listing, held ONCE for the whole fleet.
-//
-// Nothing here is per-user, and that is the point. Discovery, description
-// fetching and apply-route resolution used to happen inside each user's run, so
-// the same posting was crawled, read and resolved again for every user it
-// matched. At one user that is invisible; at a thousand it is a thousand
-// identical HTTP requests to the same employer, which is both wasteful and the
-// fastest way to get the crawler blocked.
-//
-// So the columns below are the shared work, done once and reused:
-//   jdText / jdFetchedAt        the description, fetched once
-//   apply*                      the apply route, resolved once at ingest
-//   lastSeenAt / deadAt         is this posting still real
-//   allocCount                  how many users have been handed this listing
-//
-// See agent/db.upsert_job, which now refreshes an existing row instead of
-// returning early on a hit — without that, none of these ever get filled in for
-// a listing after the first time it was seen.
-model Job {
-  id         String   @id @default(cuid())
-  source     String   @default("internshala")
-  externalId String   @map("external_id")
-  title      String
-  company    String
-  location   String?
-  stipend    String?
-  duration   String?
-  skills     String   @default("[]") // JSON array
-  url        String
-  scrapedAt  DateTime @default(now()) @map("scraped_at")
+// ---------------------------------------------------------------------------
+// billing
+// ---------------------------------------------------------------------------
 
-  // ── Shared description ────────────────────────────────────────────────
-  // The matcher reads this instead of re-fetching the page per user. Capped
-  // when written (see agent/db) because a handful of ATS pages inline their
-  // whole marketing site and would otherwise put ~1MB per row in the index.
-  jdText      String?   @map("jd_text")
-  jdFetchedAt DateTime? @map("jd_fetched_at")
+/// A pass purchase. Razorpay when keys are set, a stub otherwise — the stub is
+/// the default so the whole product is usable locally with no account anywhere.
+model Order {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // ── Shared apply route ────────────────────────────────────────────────
-  // resolver.resolve() answers "how would an application reach this employer",
-  // which depends only on the listing. Stored so it is computed at ingest, not
-  // once per user per run.
-  applyChannel String?   @map("apply_channel")
-  applyTarget  String?   @map("apply_target")
-  applyTier    String?   @map("apply_tier")
-  applyVendor  String?   @map("apply_vendor")
-  resolvedAt   DateTime? @map("resolved_at")
+  /// pass90 | pack1 — see lib/plans.ts. The product bought is recorded on the
+  /// order at creation, not read from the client at confirmation time.
+  sku      String
+  amount   Int // in the smallest unit (paise / cents)
+  currency String @default("INR")
+  status   String @default("created") // created | paid | failed | refunded
 
-  // ── Liveness ──────────────────────────────────────────────────────────
-  // A pool with no expiry silently fills with closed postings, and the agent
-  // spends its daily quota applying to roles that no longer exist. lastSeenAt
-  // is refreshed every time a crawl finds the listing again; deadAt is set when
-  // one is confirmed gone (404 / "no longer accepting").
-  lastSeenAt DateTime  @default(now()) @map("last_seen_at")
-  deadAt     DateTime? @map("dead_at")
+  providerOrderId String? @unique @map("provider_order_id")
+  /// Unique, so one captured payment can only ever settle one order. Without
+  /// the constraint a replayed (order, payment, signature) triple could be
+  /// spent against a second, more expensive order — the signature check alone
+  /// does not stop that, because the HMAC is still valid.
+  providerPaymentId String? @unique @map("provider_payment_id")
 
-  // ── Allocation ────────────────────────────────────────────────────────
-  // One shared pool means every matching user could be handed the same listing
-  // on the same day — which is spam from the employer's side, and burns the
-  // listing for all of them at once. The allocator hands each posting to at
-  // most K users; this is the running count it checks.
-  allocCount Int @default(0) @map("alloc_count")
+  createdAt DateTime  @default(now()) @map("created_at")
+  paidAt    DateTime? @map("paid_at")
 
-  applications Application[]
-
-  @@unique([source, externalId])
-  // "live listings, freshest first" is the pool query the allocator runs every
-  // time; without this it is a full scan that grows with the archive.
-  @@index([deadAt, lastSeenAt])
-  // "which live listings can actually be sent, and to how many more users"
-  @@index([applyTier, deadAt, allocCount])
-  @@map("jobs")
+  @@index([userId, createdAt])
+  @@map("orders")
 }
 
-// Scam-gate Layer 2 cache. One row per company (normalized name), holding the
-// verdict from the LLM reputation check so it's never re-run for the same company
-// inside the TTL. Agent-only — the Next app never reads this; see
-// agent/company_rep.py. Written by the worker, keyed by normalized company name.
-model CompanyReputation {
-  id         String   @id @default(cuid())
-  company    String   @unique // normalized: lowercased, trimmed, legal suffix stripped
-  verdict    String   @default("ok") // ok | caution | scam
-  confidence Float    @default(0)
-  evidence   String? // short human-readable reason for the verdict
-  source     String   @default("llm") // llm | heuristic
-  checkedAt  DateTime @default(now()) @map("checked_at")
+// ---------------------------------------------------------------------------
+// operations
+// ---------------------------------------------------------------------------
 
-  @@map("company_reputation")
-}
-
-model Application {
-  id     String  @id @default(cuid())
-  userId String  @map("user_id")
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  jobId  String? @map("job_id")
-  job    Job?    @relation(fields: [jobId], references: [id])
-
-  jobTitle        String             @map("job_title")
-  company         String
-  url             String?
-  matchScore      Int                @default(0) @map("match_score")
-  // lifecycle: matched | approved | submitting | applied | skipped | failed | needs_review
-  status          ApplyStatus        @default(matched)
-  reason          String? // why matched / why skipped / failure detail
-  // enumerated machine reason on failure — see FailureReason
-  failureReason   FailureReason?     @map("failure_reason")
-  screenshotPath  String?            @map("screenshot_path") // proof image of the submit attempt
-  // The platform's screening questions and the answers submitted under the user's
-  // name: JSON [{q, a, source}], where source is "profile" (a stored fact, e.g. their
-  // real CGPA), "ai" (a model phrasing something their resume supports), or
-  // "fallback". Recorded because an application the user cannot read back is one they
-  // cannot walk into an interview and defend. See agent/questions.py.
-  answersJson     String?            @map("answers_json")
-  // JSON array: what this role asked for that the candidate does not show. The
-  // actionable half of a match score — "you scored 72" tells someone nothing they
-  // can act on; "this role wants Docker and you don't show it" tells them what to
-  // learn, and what they will be asked about if they get the call.
-  missingSkills   String?            @map("missing_skills")
-  // Setup answers this application stopped for, as a JSON array of proff-question
-  // keys ("dateOfBirth", "expectedStipend", "gradMonth" — src/lib/proffQuestions).
-  //
-  // The agent refuses to invent a fact, which is right, and for three real
-  // applications in a row that refusal reached the user as the employer's own
-  // asterisks ("Graduation Month & Year (Completed / Expected) *") next to a
-  // form they had never seen. The prose reason is for reading; this is for the
-  // product to act on — it is what lets the dashboard say "two applications are
-  // waiting on your date of birth" and take them straight to that box.
-  //
-  // Machine-readable on purpose: parsing our own sentence back out would break
-  // the first time anyone rewrote it.
-  blockingFacts   String?            @map("blocking_facts")
-  // Apply Kit: the per-job cover letter, drafted before the user ever opens the
-  // form (worker.py backfills this for every due match — see due_matches_missing_kit
-  // / set_application_kit in agent/db.py). Null until generated or if generation
-  // failed — the dashboard falls back to a plain note, never a blank lie.
-  coverLetterText String?            @map("cover_letter")
-  // immutable snapshot of the exact resume sent for this application
-  resumeVersionId String?            @map("resume_version_id")
-  resumeVersion   ResumeVersion?     @relation(fields: [resumeVersionId], references: [id])
-  events          ApplicationEvent[]
-  // Where this application was actually delivered, and under which risk tier.
-  //
-  // A listing found on a board is usually a cross-post: the real application
-  // lives on the employer's own Google Form, HR mailbox or ATS portal, where the
-  // candidate holds no account and an unattended submit is therefore safe. The
-  // resolver (agent/resolver.py) picks that destination; these three columns are
-  // the record of what it picked, so coverage is measurable per channel and per
-  // vendor rather than guessed at.
-  //
-  //   applyChannel  google_form | email | ats | platform
-  //   applyTier     A (no account at stake) | B (hosted, consented) | C (never server-side)
-  //   applyTarget   the resolved form URL / mailbox / ATS page
-  applyChannel    String?            @map("apply_channel")
-  applyTier       String?            @map("apply_tier")
-  applyTarget     String?            @map("apply_target")
-  // When the user approved this application — i.e. when it started reserving a
-  // slice of that day's cap.
-  //
-  // Without it, remainingForApproval() counted EVERY approved-and-unsubmitted row
-  // for all time. Most people never come back to tick "yes, I submitted it", so
-  // after one full day of approvals the count permanently equalled the cap and
-  // the user could never approve anything again — greeted forever by "your daily
-  // limit is reached, try again tomorrow", on a tomorrow that never arrived.
-  // Dating the reservation lets it expire with the day it belongs to.
-  approvedAt      DateTime?          @map("approved_at")
-  // When this match is due to be surfaced to the user for a one-tap send.
-  //
-  // A single discovery sweep finds ~a month of work (plan cap x 30). Dumping all
-  // of it on the dashboard at once would (a) hand the user a free job board they
-  // could go apply to themselves, and (b) tempt a same-day mass-apply, which is
-  // the single loudest bot signal there is. So matches are filed HIDDEN with a
-  // date, and only the ones due today are ever returned to the client — see
-  // src/app/api/applications/route.ts, which is the enforcement point.
-  //
-  // null = due immediately (legacy rows, and anything the user approved by hand).
-  scheduledFor    DateTime?          @map("scheduled_for")
-  // Set only after Grindly successfully delivers the final application link.
-  notifiedAt      DateTime?          @map("notified_at")
-  appliedAt       DateTime?          @map("applied_at")
-  // user-reported outcome — the single most important beta signal (interview rate)
-  // null (unset) until the user reports one
-  outcome         Outcome?           @map("outcome")
-  outcomeAt       DateTime?          @map("outcome_at")
-  createdAt       DateTime           @default(now()) @map("created_at")
-
-  @@index([userId])
-  @@index([userId, status])
-  @@index([status])
-  @@index([jobId])
-  @@index([resumeVersionId])
-  @@index([createdAt])
-  // The hot query: "what is due for this user right now" (status + scheduledFor).
-  @@index([userId, status, scheduledFor])
-  @@map("applications")
-}
-
-// Immutable record of the exact resume version sent for an application.
-// Answers "which resume did the recruiter see?" — never mutated after create.
-model ResumeVersion {
-  id            String   @id @default(cuid())
-  userId        String   @map("user_id")
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  label         String // human label e.g. "Frontend Dev @ Razorpay"
-  jobTitle      String?  @map("job_title")
-  company       String?
-  text          String // exact tailored resume text sent
-  filePath      String?  @map("file_path") // path to the exact PDF sent
-  skillsClaimed String   @default("[]") @map("skills_claimed") // JSON: skills surfaced for this role
-  baseSkills    String   @default("[]") @map("base_skills") // JSON: master skills at time (truthfulness ref)
-  // false = the master resume went out untouched. The agent only rewrites when
-  // the master genuinely under-sells the candidate for this role (fitScore below
-  // GRINDLY_TAILOR_THRESHOLD); a resume that already fits is left alone, because
-  // every edit is a chance to break a layout the college mandated.
-  tailored      Boolean  @default(false)
-  // 0-100: how well the MASTER resume covered this job before any edit. This is
-  // the number that decided whether to tailor — kept so the choice is auditable.
-  fitScore      Int?     @map("fit_score")
-  createdAt     DateTime @default(now()) @map("created_at")
-
-  applications Application[]
-
-  @@index([userId])
-  @@map("resume_versions")
-}
-
-// Append-only audit trail — reconstruct what the agent/auth did, for disputes.
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String?  @map("user_id")
-  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  action    String // login | otp_issued | otp_throttled | apply | apply_failed | firewall_block | session_expired | consent
-  target    String? // job url / platform / phone-mask / etc
-  detail    String? // freeform or JSON
+  id     String  @id @default(cuid())
+  userId String? @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  action    String // signup | login | logout | resume_upload | variants | tailor | delete | pay
+  target    String?
+  detail    String?
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([userId])
@@ -618,178 +261,6 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-// In-app AI support desk. A signed-in user opens the support chat, describes an
-// issue, and an assistant (src/lib/supportAI.ts) replies AND distils the thread
-// into a subject/category/severity/summary for the admin queue. ONE open ticket
-// per user is reused across the conversation; resolving it lets the next issue
-// start a fresh thread. messagesJson is a serialised [{role,content,at}] array —
-// stored as text to match this schema's JSON-as-string convention (AuditLog.detail,
-// AgentRun.result) and stay SQLite-compatible for the test DB.
-model SupportTicket {
-  id           String   @id @default(cuid())
-  userId       String   @map("user_id")
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status       String   @default("open") // open | resolved
-  subject      String? // AI one-line title for the queue
-  category     String? // bug | account | billing | how_to | feedback | other
-  severity     String   @default("normal") // low | normal | high
-  summary      String? // AI summary shown to the admin
-  messagesJson String   @default("[]") @map("messages_json") // [{role,content,at}]
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-
-  @@index([status, updatedAt])
-  @@index([userId])
-  @@map("support_tickets")
-}
-
-// DB-backed run queue — gives retries, per-user locking, and idempotent resume
-// without needing Redis in the prototype. A worker (`worker.py --drain`) claims
-// queued rows transactionally. Swap for BullMQ/Celery later behind the same shape.
-model AgentRun {
-  id          String    @id @default(cuid())
-  userId      String    @map("user_id")
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  // Loose strings, not Postgres enums — same reasoning as UserIntegration.status
-  // above: "connect_internshala" (credential-login relay job) was never added
-  // to the old RunMode enum. mock is the safe default (every real call site
-  // passes mode explicitly; this only matters if one ever doesn't).
-  mode        String    @default("mock") // mock | live | analyze | connect_internshala
-  status      String    @default("queued") // queued | running | done | failed | cancelled
-  attempts    Int       @default(0)
-  maxAttempts Int       @default(3) @map("max_attempts")
-  // Non-null only while queued/running. The unique key is userId:mode, making
-  // concurrent enqueue requests idempotent without dropping a different mode.
-  activeKey   String?   @unique @map("active_key")
-  // Human-paced runs yield the worker until this time instead of sleeping
-  // inside a scarce browser process for 5-15 minutes.
-  availableAt DateTime? @map("available_at")
-  lockedBy    String?   @map("locked_by") // worker id holding the row
-  lockedAt    DateTime? @map("locked_at")
-  error       String?
-  result      String? // JSON {applied,matched,failed}
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-
-  @@index([status])
-  @@index([userId])
-  @@map("agent_runs")
-}
-
-// Encrypted-at-rest platform credentials. Plaintext NEVER stored — ciphertext is
-// AES-256-GCM (see src/lib/crypto.ts / agent/secret_box.py). Prefer storing
-// session cookies over passwords; both go here encrypted.
-model PlatformCredential {
-  id         String   @id @default(cuid())
-  userId     String   @map("user_id")
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  platform   String
-  ciphertext String // base64(nonce).base64(ciphertext+tag)
-  updatedAt  DateTime @updatedAt @map("updated_at")
-
-  @@unique([userId, platform])
-  @@map("platform_credentials")
-}
-
-// Tiered notification log with delivery tracking + channel fallback.
-model Notification {
-  id        String    @id @default(cuid())
-  userId    String    @map("user_id")
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tier      String    @default("digest") // urgent | digest
-  channel   String // inapp | slack | email | console
-  title     String
-  body      String
-  delivered Boolean   @default(false)
-  // In-app read state. null = unread; drives the dashboard bell's unread badge.
-  // Only the "inapp" channel rows are ever surfaced to the user / marked read.
-  readAt    DateTime? @map("read_at")
-  createdAt DateTime  @default(now()) @map("created_at")
-
-  @@index([userId])
-  @@index([userId, createdAt])
-  @@map("notifications")
-}
-
-// Long-lived, revocable credential for the browser extension. The extension
-// fills application forms inside the USER's own browser (never our servers), so
-// it can't use the httpOnly `ip_uid` session cookie — it needs its own bearer
-// token. We store only a SHA-256 hash: a DB leak can't be replayed against the
-// API, and the raw token is shown exactly once (at pairing) and never again.
-// One row per paired browser; the user can revoke any/all from the dashboard.
-model ExtensionToken {
-  id         String    @id @default(cuid())
-  userId     String    @map("user_id")
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  // sha256(rawToken) hex. The raw token lives only in the extension's storage.
-  tokenHash  String    @unique @map("token_hash")
-  // Human label so the user can tell paired browsers apart when revoking.
-  label      String    @default("Browser extension")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  lastUsedAt DateTime? @map("last_used_at")
-  revokedAt  DateTime? @map("revoked_at")
-
-  @@index([userId])
-  @@map("extension_tokens")
-}
-
-model Report {
-  id           String   @id @default(cuid())
-  userId       String   @map("user_id")
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  date         String // YYYY-MM-DD
-  matchedCount Int      @default(0) @map("matched_count")
-  appliedCount Int      @default(0) @map("applied_count")
-  failedCount  Int      @default(0) @map("failed_count")
-  summary      String   @default("")
-  delivered    Boolean  @default(false) // sent to slack?
-  createdAt    DateTime @default(now()) @map("created_at")
-
-  @@map("reports")
-}
-
-model OtpToken {
-  id        String   @id @default(cuid())
-  phone     String
-  code      String
-  expiresAt DateTime @map("expires_at")
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@index([phone])
-  @@map("otp_tokens")
-}
-
-// DB-backed OTP brute-force counter. Replaces in-process Map in otp.ts.
-// Survives multi-instance / serverless restarts.
-model OtpAttempt {
-  id          String    @id @default(cuid())
-  phone       String    @unique
-  attempts    Int       @default(0)
-  windowEnd   DateTime  @map("window_end")
-  lockedUntil DateTime? @map("locked_until")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-
-  @@index([phone])
-  @@map("otp_attempts")
-}
-
-// DB-backed password reset tokens. 15-minute TTL, single-use.
-// Replaces the in-process Map in passwordReset.ts.
-model PasswordResetToken {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id")
-  tokenHash String   @unique @map("token_hash") // SHA-256 of the raw token
-  expiresAt DateTime @map("expires_at")
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@index([userId])
-  @@map("password_reset_tokens")
-}
-
-// DB-backed rate-limit counters. Replaces in-process Map in rateLimit.ts.
-// key = "forgot:<ip>" | "otp:<phone>" | etc.
 model RateLimitEntry {
   id        String   @id @default(cuid())
   key       String   @unique
@@ -801,232 +272,41 @@ model RateLimitEntry {
   @@map("rate_limit_entries")
 }
 
-// Written by scripts/backup-drill.sh (raw SQL, not Prisma) — declared here
-// purely so `prisma db push` knows this table is intentional and doesn't
-// propose dropping it as "undeclared." @db.Timestamptz matches that
-// script's TIMESTAMPTZ columns exactly (Prisma's DateTime otherwise
-// defaults to timestamp(3) with no time zone — a different underlying
-// Postgres type, which would make db push want to drop+recreate anyway).
-model BackupHealth {
-  id            String    @id @default("singleton")
-  lastDumpAt    DateTime? @map("last_dump_at") @db.Timestamptz
-  lastRestoreAt DateTime? @map("last_restore_at") @db.Timestamptz
-  lastRestoreOk Boolean   @default(false) @map("last_restore_ok")
-  lastRowCount  Int?      @map("last_row_count")
-  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz
-
-  @@map("backup_health")
-}
-
-// Crashes, in our own database.
-//
-// Sentry is wired (sentry.server.config.ts, SENTRY_DSN in compose) and has never
-// been switched on, because switching it on needs an account on someone else's
-// service. Meanwhile a break at 2am for a stranger was something we found out
-// about from a complaint. This is the version that needs nobody's signup: the
-// worker and the web both write here, /admin/errors reads it.
-//
-// Grouped by `fingerprint` rather than stored one row per occurrence. An
-// exception inside a retry loop fires hundreds of times in a minute, and a table
-// that grows a row for each of them is a table nobody can read and a disk nobody
-// budgeted for — so a repeat bumps `count` and `lastSeenAt` on the row that is
-// already there.
 model ErrorEvent {
-  id          String   @id @default(cuid())
-  // sha1 of source+kind+message, computed by the writer. Same bug, same row.
-  fingerprint String   @unique
-  source      String // "worker" | "web" | "browser"
-  kind        String // exception class, HTTP status, or "unhandled"
+  id          String  @id @default(cuid())
+  fingerprint String  @unique
+  source      String // web | agent
+  kind        String
   message     String
-  // Truncated at the writer. A full trace is megabytes and the top frames are
-  // the only part anyone reads.
   stack       String?
-  // Whatever the writer knew: the user, the run, the URL. Never credentials —
-  // redact.py on the worker side, and the web writer never forwards a body.
   context     String?
-  count       Int      @default(1)
-  firstSeenAt DateTime @default(now()) @map("first_seen_at") @db.Timestamptz
-  lastSeenAt  DateTime @default(now()) @map("last_seen_at") @db.Timestamptz
-  // An operator saying "seen it, it's known" — so the page can show what is NEW
-  // since they last looked, which is the only question that matters at 2am.
-  resolvedAt  DateTime? @map("resolved_at") @db.Timestamptz
+  count       Int     @default(1)
+
+  firstSeenAt DateTime  @default(now()) @map("first_seen_at")
+  lastSeenAt  DateTime  @default(now()) @map("last_seen_at")
+  resolvedAt  DateTime? @map("resolved_at")
 
   @@index([lastSeenAt])
   @@index([resolvedAt])
   @@map("error_events")
 }
 
-// Pre-approved emails for the gated beta. An admin can allow an email BEFORE the
-// person has signed up; the Google sign-in callback consults this on account
-// creation and auto-approves a match. Separate from User so a grant can exist
-// with no account yet.
-model AccessAllowlist {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  note      String?
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@map("access_allowlist")
-}
-
-// Anonymous first-party visit log powering the owner analytics dashboard.
-// visitorId is a random first-party cookie value, never an account id — no PII.
-model PageView {
-  id        String   @id @default(cuid())
-  visitorId String   @map("visitor_id")
-  path      String
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@index([createdAt])
-  @@index([visitorId])
-  @@map("page_views")
-}
-
-// The answer vault: screening-question answers the agent may submit under the
-// user's name. Facts only, approved explicitly — an application with a mandatory
-// question that has no approved answer here goes to awaiting_human instead of
-// being sent with a guess in it. `answer` is AES-GCM ciphertext (lib/crypto.ts /
-// agent/secret_box.py, same wire format) — it holds exactly the class of
-// personal fact (grades, addresses, authorizations) that must not sit readable
-// in a database dump, a log line, or a support screenshot.
-model UserAnswer {
-  id          String   @id @default(cuid())
-  userId      String   @map("user_id")
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  // Normalized question identity ("cgpa", "notice_period"), so one stored fact
-  // answers every phrasing of the same question across sites.
-  questionKey String   @map("question_key")
-  answer      String // encrypted
-  // setup = collected in onboarding · user = typed/edited later ·
-  // generated = drafted by the agent, which is precisely why approval exists.
-  source      String   @default("setup")
-  approved    Boolean  @default(false)
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  @@unique([userId, questionKey])
-  @@map("user_answers")
-}
-
-// Append-only timeline of everything that happened to one application. The
-// dashboard renders from this rather than from status alone, because "applied"
-// is a single word that hides whether the agent sent it, the user sent it, or
-// it bounced through three retries first — and a user asking "what did you do
-// on my behalf?" deserves the sequence, not the summary.
-//
-// Never put resume text, answers or contact details in `meta`. This table is
-// read by admin views and shipped into reports; it holds what HAPPENED, while
-// the personal facts stay in the encrypted vault.
-model ApplicationEvent {
-  id            String      @id @default(cuid())
-  applicationId String      @map("application_id")
-  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
-  // queued | leased | filling | submitted | awaiting_human | failed | cancelled ...
-  type          String
-  // worker | extension | user — who caused it. "The agent did X" must be
-  // distinguishable from "you did X" forever after.
-  actor         String      @default("worker")
-  meta          String? // small JSON, no PII
-  createdAt     DateTime    @default(now()) @map("created_at")
-
-  @@index([applicationId, createdAt])
-  @@map("application_events")
-}
-
-// One row per user per local day: the daily cap, enforced as a RESERVATION
-// rather than a count.
-//
-// Counting `applications WHERE applied_at >= midnight` cannot bound concurrency:
-// two workers both read 4-of-5, both decide there is room, and both submit — a
-// sixth application under a limit of five, and an application cannot be
-// recalled. Reserving a slot inside a transaction BEFORE the send makes the
-// database the arbiter: the increment either fits under the cap or it does not.
-//
-// `submitted` counts confirmed sends only. `attempted` counts reservations
-// taken, so a reservation released after a definite non-send leaves a trace.
+/// Per-user daily ceilings on the two operations that cost real compute: a
+/// variant batch (several model calls plus a headless Chromium render) and an
+/// advice call. Counted in the user's local day, because "5 a day" has to mean
+/// their day or the window slides for everyone outside UTC.
 model DailyUsage {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id")
-  // The user's LOCAL calendar date (their timezone), not UTC — "5 a day" has to
-  // mean their day, or the window slides for anyone outside UTC.
-  localDate String   @map("local_date")
-  submitted Int      @default(0)
-  attempted Int      @default(0)
+  id        String @id @default(cuid())
+  userId    String @map("user_id")
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  localDate String @map("local_date")
+
+  variantRuns Int @default(0) @map("variant_runs")
+  adviceRuns  Int @default(0) @map("advice_runs")
+  uploads     Int @default(0)
+
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([userId, localDate])
   @@map("daily_usage")
-}
-
-// One row per (user, job, route) that has been submitted, or is in flight.
-// This is the ledger that stops a DUPLICATE application: a queue message can be
-// redelivered — a crash after the POST but before the status write, a retry of
-// an ambiguous timeout, a run reclaimed as stale — and without a claim the
-// second attempt sends the same application to a real employer under the user's
-// name. That cannot be undone and reads to a recruiter as spam.
-//
-// The primary key IS the lock: the database rejects the second claimant rather
-// than two workers each concluding they were first. Written by agent/db.py
-// (claim_submission / record_submission / release_submission); declared here so
-// Prisma owns the schema and reset-db clears it.
-model SubmissionReceipt {
-  // sha256(user + job url + channel + target), truncated — see db.submission_key.
-  key       String   @id
-  userId    String   @map("user_id")
-  // in_flight | applied | needs_review | exception
-  status    String
-  detail    String?
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@index([userId, createdAt])
-  @@map("submission_receipts")
-}
-
-// One application for the user's OWN browser to complete.
-//
-// This is how a board application gets submitted without our servers ever
-// touching the user's account: the work runs in THEIR browser, in THEIR logged-
-// in session, and nothing of theirs is stored or replayed here. It is also the
-// only honest answer to a CAPTCHA — the extension stops and hands the page back
-// to the person, rather than trying to defeat a control that exists on purpose.
-//
-// A task is LEASED, not assigned: the extension claims it for a short window
-// and heartbeats to keep it. If the browser closes mid-fill the lease simply
-// expires and the task returns to the queue — but only after it is confirmed it
-// did not already submit, because re-running a submitted application is exactly
-// the duplicate this system spends so much effort preventing.
-model BrowserTask {
-  id            String @id @default(cuid())
-  userId        String @map("user_id")
-  applicationId String @map("application_id")
-
-  // Where the extension must go. Scoped to one host so a leaked lease cannot
-  // drive the browser anywhere else.
-  url   String
-  host  String
-  // queued | leased | filling | awaiting_human | submitted | failed | cancelled
-  state String @default("queued")
-
-  // sha256 of the lease token; the raw value is returned once, to one claimant.
-  leaseTokenHash String?   @map("lease_token_hash")
-  leaseExpiresAt DateTime? @map("lease_expires_at")
-  heartbeatAt    DateTime? @map("heartbeat_at")
-  attempts       Int       @default(0)
-
-  // Why it stopped for a human: captcha | otp | login | unknown_question | payment.
-  // Shown to the user verbatim, so it must stay a short reason, never page text.
-  blockedReason String?  @map("blocked_reason")
-  // The user's local date whose daily slot this claim reserved. Stored rather
-  // than recomputed, so a lease that straddles midnight releases the slot it
-  // actually took instead of one from the wrong day.
-  reservedDate  String?  @map("reserved_date")
-  // Proof of submission: portal id / confirmation URL. Never page HTML — that
-  // would drag personal data into a table read by admin views.
-  receipt       String?
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-
-  @@index([userId, state])
-  @@index([state, leaseExpiresAt])
-  @@map("browser_tasks")
 }

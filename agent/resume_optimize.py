@@ -5,19 +5,47 @@ Pipeline (all invisible to the user; they see scores + a plain-English change li
     1. Extract the master resume text into a generic, template-agnostic structure
        (name, contact, sections -> items -> bullets) via one LLM call.
     2. Rewrite that structure three ways, each under a different ATS strategy. The
-       rewrites may reword, reorder, tighten, and surface real keywords. They may
-       NOT invent: three gates run before a variant is ever compiled —
+       rewrites may reword, reorder, tighten, and surface real keywords. Three
+       gates run before a variant is ever rendered —
          * skills:     no tool/technology absent from the source (_fabricated_skills)
-         * grounding:  no company, school, or date whose words aren't in the source
+         * grounding:  no company, school, date, metric or named product whose
+                       words aren't in the source (_title_ungrounded,
+                       ungrounded_in_bullet)
          * provenance: every non-skills item must descend from a real item on the
                        master (a rewrite may reword an entry, never add one)
-    3. Render each surviving structure into a fixed, safe, single-column LaTeX
-       template (ATS-friendly by construction — no columns, tables, or graphics
-       for a parser to mangle) with every field escaped.
-    4. Compile with Tectonic --untrusted, re-extract the text a recruiter's ATS
-       would actually see, and re-score it with the SAME analyzer used on the
-       master. Keep ONLY variants that scored at least as high as the master —
-       the "higher ATS score" claim is measured, never asserted.
+
+       WHAT THESE DO AND DO NOT GUARANTEE. They catch: any technology in the
+       vocabulary (TECH_VOCAB, ~450 names) in any case; any capitalised proper
+       noun mid-sentence; any acronym; any number in any unit; any employer,
+       school or date; and any whole entry with no ancestor on the master.
+       They do NOT catch a lower-case product name that is absent from the
+       vocabulary and reads as an ordinary English word. That is a real hole and
+       it is stated here rather than papered over: this module used to claim
+       invention was "impossible" while an adversarial run walked nine
+       fabrications out of twenty-six straight through it.
+
+       The gates are also tuned against FALSE positives, which matter as much.
+       A gate that rejects an honest rewrite produces nothing and blames the
+       user's resume for it — measured at 56% of truthful rewrites before
+       `_morph_variants` and `_EQUIVALENTS` existed, because "RESTful" did not
+       match "REST" and "API" did not match "APIs". `tests/test_gates.py`
+       measures both directions and is the file to read before touching any of
+       this.
+    3. Render each surviving structure into a fixed, single-column HTML template
+       (parser-friendly by construction — no columns, tables, or graphics for a
+       parser to mangle) with every field escaped, then print it to PDF with
+       headless Chromium. See `render_pdf`.
+    4. Re-extract the text a recruiter's ATS would actually see out of that PDF
+       and score it with `readiness.score` — the SAME deterministic function the
+       master was scored with. Keep ONLY variants that scored at least as high
+       as the master: the "better resume" claim is measured, never asserted.
+
+Step 4 is the whole product. The score is a pure function of the extracted
+bytes, so "this rewrite is 11 points better" is reproducible on any machine, and
+a variant that does not actually beat the master cannot be shown as though it
+did. The previous build scored with an LLM ensemble that returned 70, 76 and 88
+for one unchanged document; every comparison it made was noise dressed as a
+measurement.
 
 Identity (name + contact line) is NEVER taken from the model. Outbound prompts
 are PII-redacted at the LLM boundary (agent/redact.py), so the model literally
@@ -28,12 +56,16 @@ lifted from the raw source text locally and stamped onto every variant after the
 rewrite.
 
 Why a clean rebuild and not a clone of the user's PDF: an LLM cannot faithfully
-reconstruct a multi-column college template's geometry/fonts from extracted text,
-and those very templates are what parsers choke on (see resume_ai.ats_report).
-Rebuilding onto a clean template is both the honest option and the one that
-actually raises the score. When the user has uploaded their own .tex, the
-per-job tailoring path (resume_ai.tailor_latex) already preserves it byte-for-
-byte; this feature is the whole-document, opt-in, "show me better versions" path.
+reconstruct a multi-column college template's geometry and fonts from extracted
+text, and those very templates are exactly what parsers choke on. Rebuilding
+onto a clean single-column template is both the honest option and the one that
+actually raises the score.
+
+Targeting (a company pack, or a pasted job description) rides on the same
+pipeline: `emphasis` lines are appended to each strategy's instruction and
+`target_keywords` are handed to the scorer so the coverage band is live. The
+three gates are untouched and unaware, which is the guarantee — targeting can
+change what a rewrite surfaces and can never buy it a fabricated fact.
 """
 from __future__ import annotations
 
@@ -42,9 +74,9 @@ import os
 import re
 import tempfile
 
-import latex_resume
 import llm as llm_mod
-import resume_ai
+import readiness
+import render_pdf
 import resume_parse
 
 # Keep the whole feature bounded — an intern resume is one page. These caps stop a
@@ -53,7 +85,11 @@ _MAX_SECTIONS = 7
 _MAX_ITEMS = 8
 _MAX_BULLETS = 6
 _MAX_BULLET_CHARS = 240
-_MAX_PAGES = 2  # a variant that spills past this isn't an ATS win, it's a mess
+# A role/project title or its meta line. Long enough for "Software Engineering
+# Intern — Payments Platform"; short enough that a model returning a paragraph
+# in the title field cannot blow out the header of every item on the page.
+_MAX_HEAD_CHARS = 160
+_MAX_PAGES = render_pdf.MAX_PAGES  # a variant that spills past this isn't a win, it's a mess
 # Below this, the extraction didn't understand the resume. Rewriting from it is
 # not "a thin variant" — it is a model being handed an empty document and asked to
 # improve it, which it does by inventing a career. See _extract_struct.
@@ -61,18 +97,19 @@ _MIN_BASE_ITEMS = 3
 # How far below the master a variant may land and still be shown, labelled as
 # level rather than better.
 #
-# Calibrated against measurement, not taste. resume_ai.analyze already pins
-# temperature to 0 and takes a median across providers, yet the SAME master resume
-# re-scored 70, 76 and 88 on three consecutive runs — because which providers
-# answer varies (one of the three errors intermittently), and the models disagree
-# by ~15 points on the same document. So the estimator's own spread is roughly
-# ±9, and any threshold tighter than that discards good rewrites on a coin flip:
-# one run produced 90/87/76 against a 70 baseline, the next 85/78 against an 88.
+# This used to be 6, and the comment here used to explain why: the scorer was
+# resume_ai.analyze(), an LLM ensemble that returned 70, 76 and 88 for the SAME
+# document on three consecutive runs. A ±9 ruler cannot resolve a 6-point
+# improvement, so the tolerance existed purely to stop noise from throwing away
+# good rewrites — and it also meant a variant genuinely 5 points worse than the
+# master was shown as "level".
 #
-# 6 is deliberately inside that spread rather than at its edge: wide enough that a
-# rewrite isn't thrown away over noise, narrow enough that a materially worse
-# document (the 35 against a 76 that started all this) still never appears.
-_SCORE_NOISE = 6
+# readiness.score() is a pure function: identical bytes give an identical number,
+# every time, on every machine. There is no noise left to absorb, so a variant
+# that scores below the master is worse, full stop, and is dropped. 0 is not a
+# tightened threshold; it is the threshold the old one was approximating around
+# a measurement error we no longer have.
+_SCORE_NOISE = 0
 
 # Each strategy is (label, instruction). Order is display order before re-scoring
 # re-sorts by measured score. Three genuinely different levers, none of which
@@ -121,6 +158,41 @@ _EXPAND_STRATEGY = (
 )
 
 
+def _targeted_strategies(
+    strategies: list[tuple[str, str]],
+    emphasis: list[str] | None,
+    target_name: str = "",
+) -> list[tuple[str, str]]:
+    """Fold a company pack's emphasis into every strategy's instruction.
+
+    Targeting changes what a rewrite SURFACES, never what it may claim. The
+    emphasis lines come from `companies.py`, where each one is backed by
+    something the employer published, and they are appended after the strategy
+    so the strategy still sets the shape of the rewrite. The three gates
+    downstream (skills, grounding, provenance) are unchanged and unaware that
+    targeting happened — which is the point: a company pack cannot buy a
+    fabricated bullet past them.
+    """
+    if not emphasis:
+        return strategies
+    block = "\n".join(f"- {line}" for line in emphasis)
+    suffix = (
+        f"\n\nThis resume is being tailored for a role at {target_name}. "
+        f"Apply the following emphasis, which comes from what {target_name} has "
+        f"published about how it hires:\n{block}\n"
+        "Emphasis means reorder, reword and surface what the source already "
+        "contains. It is NEVER permission to add a skill, employer, date, "
+        "metric or achievement the source does not state. If the candidate "
+        "lacks something this role wants, leave it out — a gap is reported to "
+        "them separately and honestly."
+    ) if target_name else (
+        f"\n\nApply the following emphasis when choosing what to surface:\n{block}\n"
+        "Emphasis means reorder, reword and surface what the source already "
+        "contains — never add a fact it does not state."
+    )
+    return [(label, instruction + suffix) for label, instruction in strategies]
+
+
 def _strategies_for(text: str, base_struct: dict | None = None) -> list[tuple[str, str]]:
     """Swap the trim strategy for the expand one when there is nothing to trim.
 
@@ -165,6 +237,9 @@ def generate_variants(
     master_skills: list[str],
     debug_dir: str | None = None,
     contact_fallback: str = "",
+    target_keywords: list[str] | None = None,
+    emphasis: list[str] | None = None,
+    target_name: str = "",
 ) -> dict:
     """Produce up to 3 compiled, measured resume variants + why any were dropped.
 
@@ -194,19 +269,22 @@ def generate_variants(
     Those are different messages to a user and the caller must not conflate them.
     """
     text = (source_text or "").strip()
+    target_keywords = [k for k in (target_keywords or []) if k and k.strip()]
     if len(text) < 200:
         print("[optimize] source too short to rebuild safely")
         return {"variants": [], "baseline": 0, "reasons": [], "aborted": "source_too_short"}
-    if not latex_resume.tectonic_available():
-        print("[optimize] tectonic not installed — cannot compile variants")
-        return {"variants": [], "baseline": 0, "reasons": [], "aborted": "no_compiler"}
+    if not render_pdf.renderer_available():
+        print("[optimize] chromium/playwright unavailable — cannot render variants")
+        return {"variants": [], "baseline": 0, "reasons": [], "aborted": "no_renderer"}
 
-    # Re-score the master NOW, with the same providers this batch will use, so the
-    # ">baseline" comparison is apples-to-apples rather than against a stored score
-    # produced by a different provider mix on a different day.
-    baseline = resume_ai.with_ats(resume_ai.analyze(text), text, master_skills)
-    baseline_score = int(baseline.get("score") or 0)
-    print(f"[optimize] baseline (re-scored) = {baseline_score}")
+    # The master's score, measured on exactly the same ruler every variant will be
+    # measured on. This used to re-run an LLM ensemble "so the comparison is
+    # apples-to-apples rather than against a stored score produced by a different
+    # provider mix on a different day" — a real problem that only existed because
+    # the scorer was a model. readiness.score() has no provider mix and no day.
+    baseline_report = readiness.score(text, target_keywords)
+    baseline_score = int(baseline_report.get("score") or 0)
+    print(f"[optimize] baseline = {baseline_score} ({baseline_report.get('grade')})")
 
     base_struct = _extract_struct(text)
     # An empty (or near-empty) base is a hard stop, not thin input. A rewriter
@@ -241,12 +319,16 @@ def generate_variants(
     allowed = _allowed_tokens(text, master_skills)
     stems = _source_stems(text)
 
+    strategies = _targeted_strategies(
+        _strategies_for(text, base_struct), emphasis, target_name,
+    )
+
     out: list[dict] = []
     reasons: list[str] = []
-    for label, instruction in _strategies_for(text, base_struct):
+    for label, instruction in strategies:
         variant, reason = _one_variant(
             label, instruction, base_struct, allowed, master_skills, baseline_score,
-            identity, stems, debug_dir,
+            identity, stems, debug_dir, target_keywords,
         )
         reasons.append(reason)
         if variant:
@@ -257,6 +339,7 @@ def generate_variants(
     return {
         "variants": out[:3],
         "baseline": baseline_score,
+        "baseline_report": baseline_report,
         "reasons": reasons,
         "aborted": None,
     }
@@ -274,6 +357,7 @@ def _one_variant(
     identity: tuple[str, str],
     stems: set[str],
     debug_dir: str | None = None,
+    target_keywords: list[str] | None = None,
 ) -> tuple[dict | None, str]:
     """Build one variant. Returns (variant_or_None, human-readable reason).
 
@@ -329,35 +413,41 @@ def _one_variant(
         print(f"[optimize] {label}: truthfulness gate rejected invented skill(s): {invented}")
         return None, f"{label}: dropped — it invented skills you don't have ({', '.join(sorted(invented))})"
 
-    tex = _render_latex(struct)
-    if latex_resume.unsafe_commands(tex):
-        print(f"[optimize] {label}: rendered tex tripped the unsafe-command denylist — skipping")
-        return None, f"{label}: dropped by the LaTeX safety check"
+    html_doc = render_pdf.build_html(struct)
 
     with tempfile.TemporaryDirectory(prefix="grindly-opt-") as tmp:
         pdf_path = os.path.join(tmp, "variant.pdf")
-        result = latex_resume.compile_report(tex, pdf_path)
+        result = render_pdf.render_fitted(struct, pdf_path, _MAX_PAGES)
         if not result.ok or not os.path.exists(pdf_path):
-            print(f"[optimize] {label}: compile failed")
-            _dump_debug(debug_dir, label, tex, None)
-            return None, f"{label}: the document didn't compile"
+            print(f"[optimize] {label}: render failed — {result.reason}")
+            _dump_debug(debug_dir, label, html_doc, None)
+            return None, f"{label}: the document didn't render"
         if result.pages and result.pages > _MAX_PAGES:
             print(f"[optimize] {label}: {result.pages} pages — over the {_MAX_PAGES}-page cap")
             return None, f"{label}: came out {result.pages} pages, over the {_MAX_PAGES}-page limit"
 
-        # Score what a parser actually reads off the compiled PDF, not the tex.
-        parsed = resume_parse.extract_text(pdf_path)
+        # Read the rendered PDF back the way an ATS would and score THAT. Scoring
+        # the struct we meant to print would measure our intent; scoring the
+        # extracted text measures the artefact the employer actually receives,
+        # which is the only claim this product is allowed to make.
+        parsed = render_pdf.extract_back(pdf_path)
         n_chars = len((parsed or "").strip())
         if n_chars < 200:
-            # Our bug, not the user's resume. Keep the evidence: without the tex
-            # and the pdf there is no way to tell an empty render from a font
+            # Our bug, not the user's resume. Keep the evidence: without the HTML
+            # and the PDF there is no way to tell an empty render from a font
             # that carries no extractable text.
-            print(f"[optimize] {label}: compiled PDF yields only {n_chars} chars of text — rejecting")
-            _dump_debug(debug_dir, label, tex, pdf_path)
-            return None, f"{label}: the compiled PDF came out unreadable ({n_chars} chars) — a bug on our side"
-        scored = resume_ai.with_ats(resume_ai.analyze(parsed), parsed, master_skills)
-        score = int(scored.get("score") or 0)
+            print(f"[optimize] {label}: rendered PDF yields only {n_chars} chars of text — rejecting")
+            _dump_debug(debug_dir, label, html_doc, pdf_path)
+            return None, f"{label}: the rendered PDF came out unreadable ({n_chars} chars) — a bug on our side"
+
+        report = readiness.score(parsed, target_keywords)
+        score = int(report.get("score") or 0)
         beats = score > baseline_score
+
+        # How much of what we printed survived the round trip. This is the
+        # number the product leads with, and it is only meaningful measured
+        # here — between the struct we rendered and the text we read back.
+        fidelity = readiness.parse_fidelity(_fact_strings(struct), parsed)
 
         with open(pdf_path, "rb") as f:
             pdf_bytes = f.read()
@@ -374,21 +464,44 @@ def _one_variant(
         reason = f"{label}: {score} vs your {baseline_score} — kept"
     else:
         print(f"[optimize] {label}: kept as a tie ({score} vs baseline {baseline_score})")
-        reason = (f"{label}: {score} against your {baseline_score} — level within the scorer's "
-                  f"margin, kept for its cleaner layout")
+        reason = (f"{label}: {score}, level with your {baseline_score} — kept for its "
+                  f"cleaner single-column layout")
     return {
         "label": label,
         "score": score,
-        "grade": scored.get("grade") or resume_ai._grade(score),
+        "grade": report.get("grade") or readiness.grade(score),
         "baseline_score": baseline_score,
         "beats_baseline": beats,
         "changes": changes,
+        "report": report,
+        "fidelity": fidelity,
+        "pages": result.pages,
         "pdf_bytes": pdf_bytes,
     }, reason
 
 
+def _fact_strings(struct: dict) -> list[str]:
+    """Every discrete claim the struct makes, as strings, for fidelity checking.
+
+    Headings are excluded — a heading is our word, not the candidate's fact, and
+    counting it would inflate the recovery rate with text we chose ourselves.
+    """
+    facts: list[str] = []
+    for sec in struct.get("sections") or []:
+        for item in sec.get("items") or []:
+            for key in ("head", "sub"):
+                val = str(item.get(key) or "").strip()
+                if val:
+                    facts.append(val)
+            for b in item.get("bullets") or []:
+                b = str(b or "").strip()
+                if b:
+                    facts.append(b)
+    return facts
+
+
 def _dump_debug(debug_dir: str | None, label: str, tex: str, pdf_path: str | None) -> None:
-    """Save the artefacts of a variant that failed to compile or parse.
+    """Save the artefacts of a variant that failed to render or parse.
 
     Best-effort and silent on failure — a debugging aid must never be able to
     take down the run it is trying to explain.
@@ -398,7 +511,7 @@ def _dump_debug(debug_dir: str | None, label: str, tex: str, pdf_path: str | Non
     try:
         os.makedirs(debug_dir, exist_ok=True)
         slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "variant"
-        with open(os.path.join(debug_dir, f"{slug}.tex"), "w", encoding="utf-8") as f:
+        with open(os.path.join(debug_dir, f"{slug}.html"), "w", encoding="utf-8") as f:
             f.write(tex)
         if pdf_path and os.path.exists(pdf_path):
             with open(pdf_path, "rb") as src, open(os.path.join(debug_dir, f"{slug}.pdf"), "wb") as dst:
@@ -614,20 +727,61 @@ def _allowed_tokens(source_text: str, master_skills: list[str]) -> set[str]:
     return allowed
 
 
+def _tech_vocab() -> frozenset[str]:
+    """Every technology name either module knows, as one lowercase set.
+
+    `_fabricated_skills` used to check `resume_parse.KNOWN_SKILLS` alone — 60
+    strings. Anything outside it ("Kafka", "Terraform", "Snowflake",
+    "Elasticsearch", "Jenkins", "Hadoop", "Spark") could be invented freely, and
+    an adversarial run proved every one of those passed. `jobspec.VOCAB` already
+    lists ~200 more because it has to recognise them in job descriptions; there
+    was no reason for the gate to know less than the parser.
+    """
+    vocab = {s.lower() for s in resume_parse.KNOWN_SKILLS}
+    try:
+        import jobspec
+
+        vocab |= {s.lower() for s in jobspec.VOCAB}
+    except Exception:  # noqa: BLE001 - the gate must work even if that import breaks
+        pass
+    # Multi-word entries are matched by their parts too, since a bullet says
+    # "Kafka" where the vocabulary says "apache kafka".
+    for entry in list(vocab):
+        for part in entry.split():
+            if len(part) > 2:
+                vocab.add(part)
+    return frozenset(vocab)
+
+
+TECH_VOCAB = _tech_vocab()
+
+
 def _fabricated_skills(struct: dict, allowed: set[str]) -> list[str]:
     """Known tech skills that appear in the variant but NOT in the source — i.e.
     invented. Rewording English prose is fine; introducing 'kubernetes' or 'aws'
-    the candidate never listed is not. We check against the curated KNOWN_SKILLS
-    vocabulary so ordinary rewrite words don't trip the gate, only real skills do.
+    the candidate never listed is not. Checked against a technology vocabulary
+    rather than against every word, so ordinary rewrite wording does not trip it.
+
+    The vocabulary is TECH_VOCAB, not the 60-string KNOWN_SKILLS this used to
+    read: anything outside that short list was previously free to invent.
     """
     blob = _flatten(struct).lower()
     bad: list[str] = []
-    for sk in resume_parse.KNOWN_SKILLS:
+    for sk in sorted(TECH_VOCAB):
         present = re.search(r"(?<![a-z])" + re.escape(sk) + r"(?![a-z])", blob)
         if not present:
             continue
         # Is every token of this multi-word skill defensible from the source?
-        if all(tok in allowed for tok in re.findall(r"[a-z0-9+#.]+", sk)):
+        #
+        # Morphology is folded here, not just exact membership. `_allowed_tokens`
+        # records what the source literally wrote — "APIs" — so a rewrite saying
+        # "REST API" was reported as having invented "api" and the WHOLE variant
+        # was rejected with "it invented skills you don't have (api)". The two
+        # halves of one gate disagreed about English plurals.
+        if all(
+            tok in allowed or bool(_morph_variants(tok) & allowed)
+            for tok in re.findall(r"[a-z0-9+#.]+", sk)
+        ):
             continue
         bad.append(sk)
     return bad
@@ -803,6 +957,20 @@ def _source_stems(source_text: str) -> set[str]:
     stems: set[str] = set()
     for raw in _NUM_TOKEN_RE.findall((source_text or "").lower()):
         stems |= _number_aliases(raw)
+        # ...and each half of a slashed figure, because the CHECKER splits on
+        # "/" before asking (`_ungrounded_tokens`) and this side did not.
+        #
+        # "CGPA: 8.4/10" is on essentially every Indian student's resume. It was
+        # registered here only as the single token "8.4/10", while the gate came
+        # back asking whether "8.4" was grounded — it was not, so the Education
+        # entry was deleted as invented from every variant, the documents lost
+        # their degree, and all three then scored below the master and were
+        # discarded. The feature failed completely and silently for the exact
+        # market it was built for, and the audit trail blamed the user's resume:
+        # "not in your resume (8.4)".
+        for part in raw.split("/"):
+            if part:
+                stems |= _number_aliases(part)
     for tok in re.findall(r"[a-z0-9][a-z0-9+#./-]*", (source_text or "").lower()):
         tok = tok.strip("./-")
         if not tok:
@@ -818,11 +986,79 @@ def _source_stems(source_text: str) -> set[str]:
     return stems
 
 
+# Expansions a rewrite is allowed to make because they are the SAME fact
+# written out. Every one of these was rejected as an invented claim by a gate
+# that compared surface tokens: "Bachelor of Technology" against a source
+# saying "B.Tech", "RESTful" against "REST", "August" against "Aug". A user
+# whose truthful rewrite is refused as a fabrication learns not to trust the
+# gate, which is worse than the gate not existing.
+_EQUIVALENTS: dict[str, tuple[str, ...]] = {
+    # `_source_stems` splits "B.Tech" on the dot, so the source contributes "b"
+    # and "tech" — never "btech". The aliases have to name the parts that
+    # actually land in the stem set, or "Bachelor of Technology" is rejected as
+    # an invented degree.
+    "bachelor": ("btech", "tech", "be", "bsc", "bcom", "bca", "ba"),
+    "technology": ("btech", "tech"),
+    "engineering": ("be", "btech", "tech"),
+    "master": ("mtech", "tech", "msc", "mba", "mca"),
+    "convolutional": ("cnn",),
+    "recurrent": ("rnn",),
+    "network": ("cnn", "rnn", "nn", "ann", "networks"),
+    "networks": ("cnn", "rnn", "nn", "ann", "network"),
+    "application": ("api", "app", "apis"),
+    "programming": ("api", "apis"),
+    "interface": ("api", "apis", "ui"),
+    "restful": ("rest",),
+    "convolutional": ("cnn",),
+    "neural": ("cnn", "nn", "ann"),
+    "quality": ("qa",),
+    "assurance": ("qa",),
+    "january": ("jan",), "february": ("feb",), "march": ("mar",),
+    "april": ("apr",), "june": ("jun",), "july": ("jul",),
+    "august": ("aug",), "september": ("sep", "sept"), "october": ("oct",),
+    "november": ("nov",), "december": ("dec",),
+    "bengaluru": ("bangalore",), "bangalore": ("bengaluru",),
+    "mumbai": ("bombay",), "chennai": ("madras",),
+    "postgres": ("postgresql",), "postgresql": ("postgres",),
+    "kubernetes": ("k8s",), "javascript": ("js",), "typescript": ("ts",),
+}
+
+
+def _morph_variants(token: str) -> set[str]:
+    """Forms of one word that mean the same thing.
+
+    Plural/singular folding is the important half. `_allowed_tokens` records
+    exactly what the source wrote — "APIs" — while a rewrite writing "API" was
+    reported as an invented skill and the ENTIRE variant was rejected with
+    "it invented skills you don't have (api)". The two halves of one gate
+    disagreed about English.
+    """
+    t = token.lower().strip("./-")
+    out = {t}
+    if t.endswith("ies") and len(t) > 4:
+        out.add(t[:-3] + "y")
+    if t.endswith("es") and len(t) > 3:
+        out.add(t[:-2])
+    if t.endswith("s") and len(t) > 2:
+        out.add(t[:-1])
+    else:
+        out.add(t + "s")
+    out.update(_EQUIVALENTS.get(t, ()))
+    # And the reverse direction: source "B.Tech", rewrite "Bachelor".
+    for canonical, aliases in _EQUIVALENTS.items():
+        if t in aliases:
+            out.add(canonical)
+    return {v for v in out if v}
+
+
 def _is_grounded(tok: str, stems: set[str]) -> bool:
     """A token is grounded if the master resume can defend it.
 
     Digits are exact-match: a year or a metric is a claim, and "2020" is not
-    supported by "2021". Words match on stem, so rewording stays free.
+    supported by "2021". Words match on stem and on morphology, so rewording
+    stays free — that latitude is what keeps the gate from rejecting honest
+    rewrites, which it did for 56% of a measured sample before the equivalence
+    and plural handling below existed.
     """
     t = tok.strip("./-").lower()
     if not t:
@@ -831,22 +1067,160 @@ def _is_grounded(tok: str, stems: set[str]) -> bool:
         return t in stems
     if t in _FREE_WORDS or len(t) < 4:
         return True
-    return t in stems or (len(t) >= 5 and t[:5] in stems)
+    if t in stems or (len(t) >= 5 and t[:5] in stems):
+        return True
+    return any(
+        v in stems or (len(v) >= 5 and v[:5] in stems)
+        for v in _morph_variants(t)
+    )
+
+
+# A token inside a bullet that must be defensible even though the surrounding
+# prose is free to change. Two independent tells, because each alone leaks:
+#
+#   * Capitalised mid-sentence. "Kafka", "Terraform", "Snowflake", "Jenkins" —
+#     product and company names are proper nouns, and ordinary rewording words
+#     ("owned", "streaming", "pipeline") are not.
+#   * In the technology vocabulary, regardless of case. Catches "kubernetes"
+#     written in lower case, which the capitalisation rule alone would miss.
+#
+# What is deliberately NOT checked is every word: a rewrite exists to reword, and
+# demanding that "spearheaded" appear in the source would reject every honest
+# variant. The line is between rephrasing a fact and naming a new one.
+_SENTENCE_START_RE = re.compile(r"^\W*\w")
+
+
+# Words a rewrite may capitalise without it being a claim about a product or an
+# employer. Sentence-initial capitals are already handled; these are the ones
+# that show up mid-sentence in ordinary resume prose.
+_CAPITALISED_NOT_A_NAME = frozenset("""
+I Built Led Wrote Designed Developed Implemented Reduced Increased Improved
+Automated Managed Created Delivered Achieved Deployed Migrated Optimised
+Optimized Analysed Analyzed Tested Maintained Owned Drove Launched Shipped
+Collaborated Partnered Presented Mentored Trained Researched Engineered
+""".split())
+
+# A run of capitalised words that is a real acronym or product name has at
+# least this many characters. Two- and three-letter tokens are exempt from
+# grounding anyway (see _is_grounded), which is itself a hole — ECS, IAM, SQS,
+# JWT and K8s are freely inventable — so short capitalised tokens that ARE in
+# the technology vocabulary are checked explicitly here instead.
+_SHORT_TECH_MIN = 2
+
+
+def _bullet_claim_tokens(bullet: str) -> list[str]:
+    """Proper nouns and technology names asserted by one bullet.
+
+    Three tells, in order of reliability:
+
+      * the token is in the technology vocabulary, in ANY case — this is what
+        catches "pinecone" and "weaviate" written in lower case, which the
+        capitalisation rule alone misses entirely;
+      * it is capitalised mid-sentence and is not an ordinary resume verb;
+      * it is a short uppercase acronym that the vocabulary knows.
+    """
+    text = str(bullet or "")
+    out: list[str] = []
+    first = True
+    for match in re.finditer(r"[A-Za-z][A-Za-z0-9+#.\-]*", text):
+        tok = match.group(0)
+        is_first_word = first
+        first = False
+        low = tok.lower().strip(".-")
+        if not low or low in _FREE_WORDS:
+            continue
+
+        in_vocab = low in TECH_VOCAB
+        # Short all-caps tokens are acronyms; they slip past the length exemption
+        # in _is_grounded, so they are named as claims here.
+        acronym = len(tok) >= _SHORT_TECH_MIN and tok.isupper() and not tok.isdigit()
+        capitalised = (
+            tok[0].isupper()
+            and not is_first_word
+            and tok not in _CAPITALISED_NOT_A_NAME
+        )
+        if in_vocab or acronym or capitalised:
+            out.append(tok)
+    return out
+
+
+def ungrounded_in_bullet(bullet: str, stems: set[str]) -> list[str]:
+    """Named things and numbers in ONE bullet that the master cannot defend."""
+    bad: list[str] = []
+    seen: set[str] = set()
+
+    def flag(tok: str) -> None:
+        if tok.lower() not in seen:
+            seen.add(tok.lower())
+            bad.append(tok)
+
+    for raw in _bullet_claim_tokens(bullet):
+        for tok in re.split(r"[/]", raw):
+            tok = tok.strip(".-")
+            if tok and not _is_grounded(tok, stems):
+                flag(tok)
+    # Numbers that START a token only. A digit glued behind a word is part of a
+    # tool name — "YOLOv8" is not a claim that something happened eight times.
+    for raw in _NUM_TOKEN_RE.findall(str(bullet)):
+        if not _number_grounded(raw, stems):
+            flag(raw)
+    return bad
+
+
+def _title_ungrounded(item: dict, stems: set[str]) -> list[str]:
+    """Words in an item's head/sub the master cannot defend.
+
+    This is what catches "XYZ Corp" and "University of Technology | 2020" — an
+    employer, school or date the candidate never had. Kept separate from the
+    bullet check because the remedy differs: an invented title means the entry is
+    fiction, an invented bullet means one sentence is.
+    """
+    bad: list[str] = []
+    seen: set[str] = set()
+    for field in ("head", "sub"):
+        value = str(item.get(field) or "")
+        for raw in re.findall(r"[A-Za-z0-9][A-Za-z0-9+#./-]*", value):
+            # "AI/ML" is two tokens. _source_stems splits on the separators, so a
+            # checker that doesn't would flag a word the resume plainly has.
+            for tok in re.split(r"[/]", raw):
+                if not tok:
+                    continue
+                ok = _number_grounded(tok, stems) if tok[0].isdigit() else _is_grounded(tok, stems)
+                if not ok and tok.lower() not in seen:
+                    seen.add(tok.lower())
+                    bad.append(tok)
+    return bad
 
 
 def _ungrounded_tokens(item: dict, stems: set[str], check_title: bool = True) -> list[str]:
-    """Words in an item's title/meta — and NUMBERS anywhere in it — that the master
-    resume cannot defend. This is what catches "XYZ Corp", "University of
-    Technology | 2020" and "Achieved 30 FPS": the skills gate never looked at
-    employers, schools, dates, or metrics, only at tools.
+    """Words in an item's title/meta, plus NUMBERS and NAMED THINGS in its
+    bullets, that the master resume cannot defend.
+
+    This catches "XYZ Corp", "University of Technology | 2020" and "Achieved 30
+    FPS" — and, since the fix below, "Owned the Kafka streaming pipeline".
+
+    Bullet PROSE used to be exempt entirely: only numbers were checked inside a
+    bullet, and only the 60-string KNOWN_SKILLS vocabulary was checked anywhere.
+    An adversarial run walked straight through all three gates with "Owned the
+    Kafka streaming pipeline and the Terraform infrastructure end to end" and a
+    skills group reading "Apache Kafka, Terraform, Snowflake, Elasticsearch,
+    Jenkins, Hadoop, Spark" — none of it in the source, nothing flagged, all of
+    it rendered into the PDF the candidate sends to an employer. The product's
+    entire differentiator is that this cannot happen, so it now cannot.
 
     `check_title=False` for a skills group, whose head is a CATEGORY the rewrite
-    invented for grouping ("Frontend", "Backend", "AI/ML & Vision") and not a claim
-    about the candidate. Checking those cost a live run all three variants: eight
-    grouping labels were deleted as "not in your resume", the documents came out
-    nearly empty, and they scored 20-35 against an 88 master.
+    invented for grouping ("Frontend", "Backend", "AI/ML & Vision") and not a
+    claim about the candidate. Checking those cost a live run all three variants:
+    eight grouping labels were deleted as "not in your resume", the documents
+    came out nearly empty, and they scored 20-35 against an 88 master. Their
+    BULLETS are still checked — those are the skill names themselves.
     """
     bad: list[str] = []
+
+    def flag(tok: str) -> None:
+        if tok.lower() not in {b.lower() for b in bad}:
+            bad.append(tok)
+
     if check_title:
         for field in ("head", "sub"):
             value = str(item.get(field) or "")
@@ -857,8 +1231,12 @@ def _ungrounded_tokens(item: dict, stems: set[str], check_title: bool = True) ->
                     if not tok:
                         continue
                     ok = _number_grounded(tok, stems) if tok[0].isdigit() else _is_grounded(tok, stems)
-                    if not ok and tok.lower() not in {b.lower() for b in bad}:
-                        bad.append(tok)
+                    if not ok:
+                        flag(tok)
+
+    for b in item.get("bullets") or []:
+        bad.extend(t for t in ungrounded_in_bullet(b, stems)
+                   if t.lower() not in {x.lower() for x in bad})
     for b in item.get("bullets") or []:
         # Numbers that START a token only. A digit glued behind a word is part of a
         # tool name — "YOLOv8" is not a claim that something happened eight times,
@@ -932,10 +1310,78 @@ def _ground_struct(
         kept: list[dict] = []
         for item in sec.get("items") or []:
             label = str(item.get("head") or item.get("sub") or "item")[:60]
-            bad = _ungrounded_tokens(item, stems, check_title=not skillsy)
-            if bad:
-                dropped.append(f"{heading}/{label}: not in your resume ({', '.join(bad[:3])})")
+            # Two different remedies, because the two failures mean different
+            # things. An ungrounded EMPLOYER, school or date invalidates the whole
+            # entry — there is no such job. An ungrounded BULLET is one invented
+            # sentence inside a real job, and deleting the job over it would cost
+            # the user the two true bullets beside it. So titles drop the item;
+            # bullets drop only themselves.
+            if not skillsy:
+                bad_title = _title_ungrounded(item, stems)
+                if bad_title:
+                    dropped.append(
+                        f"{heading}/{label}: not in your resume ({', '.join(bad_title[:3])})"
+                    )
+                    continue
+            else:
+                # A skills group's head is a CATEGORY the rewrite invented for
+                # grouping ("Frontend", "Databases"), so it is not grounded as a
+                # whole — but it is not a free-text field either. A rewrite that
+                # wrote `head: "Vector DBs: Pinecone, Weaviate, Milvus"` with no
+                # bullets at all put four technologies the candidate had never
+                # touched onto the page, because only bullets were being checked.
+                head_claims = [
+                    t for t in _bullet_claim_tokens(str(item.get("head") or ""))
+                    if not _is_grounded(t, stems)
+                ]
+                if head_claims:
+                    dropped.append(
+                        f"{heading}/{label}: not in your resume ({', '.join(head_claims[:3])})"
+                    )
+                    continue
+
+            clean_bullets: list[str] = []
+            for b in item.get("bullets") or []:
+                if skillsy:
+                    # A skills group's bullets ARE the claims: each entry is a
+                    # technology the candidate says they know, so every token of
+                    # it has to appear in the source.
+                    tokens = [
+                        t for raw in re.split(r"[,;/]", str(b))
+                        for t in re.findall(r"[A-Za-z0-9][A-Za-z0-9+#.\-]*", raw)
+                    ]
+                    # Short tokens are exempt from _is_grounded's length rule,
+                    # which made "ECS", "IAM", "SQS", "JWT" and "K8s" freely
+                    # inventable in a skills list. In a skills group every entry
+                    # is a claim regardless of length, so they are checked
+                    # directly against the source's own tokens.
+                    bad_bullet = [
+                        t for t in tokens
+                        if t and (
+                            not _is_grounded(t, stems)
+                            or (
+                                len(t.strip("./-")) < 4
+                                and t.lower().strip("./-") not in _FREE_WORDS
+                                and not any(v in stems for v in _morph_variants(t))
+                            )
+                        )
+                    ]
+                else:
+                    bad_bullet = ungrounded_in_bullet(b, stems)
+                if bad_bullet:
+                    dropped.append(
+                        f"{heading}/{label}: not in your resume ({', '.join(bad_bullet[:3])})"
+                    )
+                else:
+                    clean_bullets.append(b)
+
+            had_bullets = bool(item.get("bullets"))
+            if had_bullets and not clean_bullets:
+                # Every bullet was invented. Whatever this entry was, it is not
+                # something the master resume supports.
                 continue
+            item = {**item, "bullets": clean_bullets}
+
             if not skillsy and base_index and not _has_ancestor(item, base_index):
                 dropped.append(f"{heading}/{label}: no matching entry on your resume")
                 continue
@@ -959,121 +1405,6 @@ def _factual_item_count(struct: dict) -> int:
     )
 
 
-# ---------------- LaTeX render (fixed, safe template) ----------------
-
-_ESCAPE = {
-    "\\": r"\textbackslash{}",
-    "&": r"\&", "%": r"\%", "$": r"\$", "#": r"\#",
-    "_": r"\_", "{": r"\{", "}": r"\}",
-    "~": r"\textasciitilde{}", "^": r"\textasciicircum{}",
-}
-
-
-def _esc(s: object) -> str:
-    """Escape arbitrary user text for LaTeX. Backslash is handled first (it's the
-    escape char itself) via the ordered single-pass replace below."""
-    out = []
-    for ch in str(s or ""):
-        out.append(_ESCAPE.get(ch, ch))
-    return "".join(out)
-
-
-_PREAMBLE = (
-    "\\documentclass[11pt]{article}\n"
-    "\\usepackage[margin=0.65in]{geometry}\n"
-    "\\setlength{\\parindent}{0pt}\n"
-    "\\pagestyle{empty}\n"
-    "\\begin{document}\n"
-)
-
-
-def _render_latex(struct: dict) -> str:
-    """Render the structured resume into single-column LaTeX using only the core
-    `geometry` package. No columns, tables, tikz, or custom fonts — the layout an
-    ATS parses cleanly, by construction. All content is escaped via _esc()."""
-    name = _esc(struct.get("name") or "")
-    contact = _esc(struct.get("contact_line") or "")
-
-    lines = [_PREAMBLE]
-    # Header: name + contact, centered. The \par inside each group is what applies
-    # the centering to that line.
-    lines.append("{\\centering \\LARGE \\textbf{" + name + "}\\par}")
-    if contact:
-        lines.append("{\\centering \\small " + contact + "\\par}")
-    lines.append("\\vspace{6pt}")
-
-    for sec in (struct.get("sections") or [])[:_MAX_SECTIONS]:
-        raw_heading = str(sec.get("heading") or "").strip()
-        heading = _esc(raw_heading)
-        if not heading:
-            continue
-        # Heading + full-width rule. \hrulefill is horizontal-mode safe (unlike a
-        # bare \hrule, which needs vertical mode); \par ends each line cleanly so a
-        # rewrite can never leave the compiler mid-paragraph.
-        lines.append("\\vspace{8pt}\\noindent{\\large \\textbf{" + heading + "}}\\par")
-        lines.append("\\vspace{1pt}\\noindent\\hrulefill\\par")
-        lines.append("\\vspace{3pt}")
-        items = (sec.get("items") or [])[:_MAX_ITEMS]
-        # Decided once for the whole section, not per item: a rewrite that returns
-        # one terse group and one wordy one would otherwise render half the section
-        # as lines and half as bullets. Long entries mean the model wrote prose
-        # where it was asked for a keyword list — bullets stay readable there,
-        # a paragraph of joined sentences does not.
-        inline_skills = bool(_SKILLS_SECTION_RE.search(raw_heading)) and all(
-            len(str(b)) <= 120 for it in items for b in (it.get("bullets") or [])
-        )
-        for item in items:
-            head = _esc(item.get("head") or "")
-            sub = _esc(item.get("sub") or "")
-            # A skills group is a LIST OF WORDS, not a list of achievements. Given
-            # one \item per word it renders as a column of single terms — seven
-            # groups became thirty bullets and pushed a one-page intern resume onto
-            # two, which is exactly the "column of nouns" a user looked at and
-            # called unusable. Recruiters and parsers both read "Frontend: Next.js,
-            # React" fine, and it costs six lines instead of thirty.
-            short = [b for b in (item.get("bullets") or []) if str(b).strip()][:_MAX_BULLETS]
-            if inline_skills and short:
-                # Every group inline, not just the ones whose entries are single
-                # words: a section that renders "Programming & Frameworks: Python,
-                # TypeScript" as a line and "AI/ML & Vision" as a bulleted column
-                # right under it looks broken, and that mixture is what shipped.
-                sep = "; " if any("," in str(b) for b in short) else ", "
-                joined = sep.join(_esc(str(b).strip()[:_MAX_BULLET_CHARS]) for b in short)
-                if head:
-                    lines.append("\\noindent\\textbf{" + head + ":} " + joined + "\\par")
-                else:
-                    lines.append("\\noindent " + joined + "\\par")
-                lines.append("\\vspace{2pt}")
-                continue
-            if head or sub:
-                if head and sub:
-                    # One left-to-right run, NOT \hfill. Right-aligning the meta
-                    # looks tidy to a human and breaks the reading order a parser
-                    # sees: the two runs sit at different x-positions, so the text
-                    # layer can emit them out of order. Observed on a rebuilt
-                    # resume — "B.Sc in Computer Science, 2026 (CGPA 8.1)" was
-                    # extracted BEFORE the "EDUCATION" heading it belongs under.
-                    # Being read correctly by a machine is the entire point of this
-                    # document, so the dates lose their right margin.
-                    lines.append("\\noindent\\textbf{" + head + "} \\textemdash{} " + sub + "\\par")
-                elif head:
-                    lines.append("\\noindent\\textbf{" + head + "}\\par")
-                else:
-                    lines.append("\\noindent " + sub + "\\par")
-            bullets = [b for b in (item.get("bullets") or []) if str(b).strip()][:_MAX_BULLETS]
-            if bullets:
-                lines.append("\\begin{itemize}")
-                lines.append("\\setlength{\\itemsep}{1pt}\\setlength{\\parskip}{0pt}\\setlength{\\topsep}{2pt}")
-                for b in bullets:
-                    lines.append("\\item " + _esc(str(b)[:_MAX_BULLET_CHARS]))
-                lines.append("\\end{itemize}")
-            else:
-                lines.append("\\vspace{2pt}")
-
-    lines.append("\\end{document}\n")
-    return "\n".join(lines)
-
-
 # ---------------- sanitizers ----------------
 
 def _coerce_bullets(raw: object) -> list[str]:
@@ -1084,15 +1415,25 @@ def _coerce_bullets(raw: object) -> list[str]:
     emits one \\item per letter, which still compiles, still clears the length
     check, and reaches the user as a resume of single characters.
     """
+    # Length capping happens HERE, not in the renderer. The LaTeX renderer used
+    # to truncate every bullet to _MAX_BULLET_CHARS on its way out, so the cap
+    # silently lived in the one function that has now been replaced. Moving it
+    # into the sanitizer keeps it on the path every consumer shares — the PDF
+    # render, the fidelity check, and the JSON the API returns — instead of
+    # applying to the PDF alone and letting a 4,000-character bullet through to
+    # everything else.
     if isinstance(raw, str):
         text = raw.strip()
         if not text:
             return []
         # Models often pack several bullets into one string.
         parts = [p.strip(" -•\t") for p in re.split(r"[\r\n]+|(?<=[.;])\s{2,}", text)]
-        return [p for p in parts if p][:_MAX_BULLETS]
+        return [p[:_MAX_BULLET_CHARS] for p in parts if p][:_MAX_BULLETS]
     if isinstance(raw, list):
-        return [str(b).strip() for b in raw if str(b).strip()][:_MAX_BULLETS]
+        return [
+            str(b).strip()[:_MAX_BULLET_CHARS]
+            for b in raw if str(b).strip()
+        ][:_MAX_BULLETS]
     return []
 
 
@@ -1113,8 +1454,8 @@ def _coerce_items(raw: object) -> list[dict]:
         if not isinstance(it, dict):
             continue
         items.append({
-            "head": str(it.get("head") or it.get("title") or "").strip(),
-            "sub": str(it.get("sub") or it.get("subtitle") or "").strip(),
+            "head": str(it.get("head") or it.get("title") or "").strip()[:_MAX_HEAD_CHARS],
+            "sub": str(it.get("sub") or it.get("subtitle") or "").strip()[:_MAX_HEAD_CHARS],
             # "content"/"points" are the aliases seen most often after "bullets".
             "bullets": _coerce_bullets(
                 it.get("bullets") if it.get("bullets") is not None
@@ -1126,7 +1467,7 @@ def _coerce_items(raw: object) -> list[dict]:
 
 
 def _sanitize_struct(struct: dict) -> dict | None:
-    """Coerce an LLM struct into the exact shape _render_latex expects.
+    """Coerce an LLM struct into the exact shape render_pdf.build_html expects.
 
     Tolerant on purpose. Strictly dropping every off-shape response meant a
     model that returned items as plain strings, bullets as one string, or

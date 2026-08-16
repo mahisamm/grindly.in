@@ -3,13 +3,10 @@ import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { baseUrl } from "@/lib/baseUrl";
 import { loginClient } from "@/lib/googleOAuth";
-import { readAdminSettings } from "@/lib/adminSettings";
+
+export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  if (!readAdminSettings().featureFlags.googleAuth) {
-    return NextResponse.json({ error: "Sign-in is temporarily disabled." }, { status: 503 });
-  }
-
   const client = loginClient();
   if (!client) {
     return NextResponse.json({ error: "Google OAuth not configured" }, { status: 503 });

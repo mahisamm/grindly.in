@@ -1,26 +1,15 @@
 {
-  "name": "Grindly — AI Internship Agent",
+  "name": "Grindly — resume readiness",
   "short_name": "Grindly",
-  "description": "Your AI applies to internships while you sleep. Upload your resume, set preferences, and let the agent auto-apply to matching internships daily.",
-  "start_url": "/dashboard",
+  "description": "See what a machine actually recovers from your resume, rebuild it clean, and tailor it per company.",
+  "start_url": "/app",
+  "scope": "/",
   "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#f2ece1",
-  "theme_color": "#e3402a",
-  "categories": ["productivity", "education", "utilities"],
+  "theme_color": "#f2ece1",
+  "orientation": "portrait-primary",
   "icons": [
-    {
-      "src": "/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
-  ],
-  "prefer_related_applications": false
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/apple-touch-icon.svg", "sizes": "180x180", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
 }

@@ -1,279 +1,203 @@
 import Link from "next/link";
-import { Nav, Logo } from "@/components/Brand";
-import { PLANS } from "@/lib/adapters/payment";
-import { Reveal, CountUp } from "@/components/Motion";
-import { Target, Bolt, Doc, Clock, Slack, Sparkle } from "@/components/Doodles";
-import ParticleHero from "@/components/ParticleHero";
+import { Logo } from "@/components/Brand";
+import { runAgent, type CompanyPack } from "@/lib/agent";
+import { PRODUCTS, formatAmount } from "@/lib/plans";
 
-const STEPS = [
-  ["01", "Drop your resume", "Create an account and upload your resume. That's the only homework you do."],
-  ["02", "Answer a few profile questions", "Domains, locations, stipend, daily limits. These become the agent's firewall — what it may and may not apply to."],
-  ["03", "Start free & see updates", "Activate the free plan — up to 5 prepared matches a day — and follow every result in your dashboard."],
-  ["04", "You stay in control", "It reads listings and scores each against your resume. It can send only to approved employer-owned forms after you explicitly opt in; job-board applications stay ready for your final submit."],
-  ["05", "Track your progress", "Your dashboard records what it prepared, match scores, and what it skipped (and why). Mark submitted applications and outcomes to track your interview rate."],
-] as const;
+export const revalidate = 300;
 
-const FEATURES = [
-  ["Resume-aware matching", "Skills extracted from your resume score every role 0–100. Only real fits get an application.", Target],
-  ["You set the firewall", "Min match score, max/day, excluded companies, stipend floor — hard constraints the agent can't cross.", Bolt],
-  ["Applications, not a list of links", "Opens each listing and writes the whole application — tailored resume, cover letter, screening answers — then sends it.", Doc],
-  ["Your accounts stay safe", "The agent applies at companies' own forms and hiring inboxes, where you hold no account and nothing of yours is at risk. Connect Internshala and it applies there too, from your account, with your consent.", Clock],
-  ["Progress you can audit", "See every prepared match, skip reason, submission status, and outcome in one dashboard. Optional delivery integrations appear only when enabled for your beta cohort.", Slack],
-  ["Private by design", "Resume analysis uses only the AI providers configured for this service and degrades safely if they're unavailable. Your data is never sold.", Sparkle],
-] as const;
+/**
+ * The landing page.
+ *
+ * It leads with the claim nobody else in this category can make and everybody
+ * else in this category contradicts: there is no such thing as an ATS score.
+ * That is a strange thing to open with — it is a product page opening by
+ * disowning its own market's headline metric — and it is the point. Every
+ * competitor sells a number no applicant tracking system computes. Saying so,
+ * and then showing what we measure instead, is both the honest position and the
+ * only differentiator that cannot be copied in an afternoon.
+ */
+export default async function Home() {
+  const packs = await runAgent<{ packs: CompanyPack[]; disclaimer: string }>("companies");
+  const companies = packs.ok ? packs.packs : [];
 
-const MOCK_ROWS = [
-  ["Frontend Developer Intern", "Razorpay", 86, "ready"],
-  ["Data Science Intern", "Swiggy", 81, "ready"],
-  ["ML Research Intern", "Sarvam AI", 74, "ready"],
-  ["Sales Intern", "LocalBiz", 38, "skipped"],
-] as const;
-
-export default function Home() {
   return (
     <>
-      <Nav />
-
-      <main>
-      {/* ══════════ HERO ══════════ */}
-      <section className="grid-bg relative overflow-hidden">
-        <div className="mesh" aria-hidden />
-        <div className="relative z-[2] mx-auto grid max-w-6xl grid-cols-1 items-center gap-12 px-5 pb-24 pt-14 lg:grid-cols-[1.05fr_0.95fr] lg:pt-20">
-          {/* copy */}
-          <div className="animate-in">
-            <div className="inline-flex items-center gap-2.5 rounded-full border border-[var(--line-2)] bg-[rgba(250,246,238,0.6)] px-3.5 py-1.5 text-[0.82rem] text-[var(--ink-soft)]">
-              <span className="size-[7px] rounded-full bg-brand pulse-dot" />
-              Your AI preps applications while you <em className="font-display not-italic text-ink italic">sleep</em>
-            </div>
-
-            <h1 className="display mt-4 text-[clamp(2.5rem,5.8vw,4.1rem)] tracking-[-0.02em]">
-              <span className="block">Stop hunting</span>
-              <span className="block">internships by hand.</span>
-              <span className="block accent-italic">let an agent do it.</span>
-            </h1>
-
-            <p className="mt-4 max-w-[44ch] text-[var(--ink-soft)] leading-relaxed">
-              Grindly reads your resume, finds internships that actually match your
-              skills, and applies inside the limits you set — to companies&apos; own
-              application forms and hiring inboxes, and to Internshala if you connect
-              it. It never invents a fact about you: anything it can&apos;t answer
-              honestly, it hands back instead of guessing.
-            </p>
-
-            <div className="mt-6 flex flex-wrap items-center gap-2.5">
-              <Link
-                href="/login"
-                className="press inline-flex items-center gap-2 rounded-full bg-brand px-6 py-3 text-[0.8rem] font-semibold uppercase tracking-[0.08em] text-[var(--paper)] transition hover:bg-ink"
-              >
-                Get started free
-              </Link>
-              <a
-                href="#how"
-                className="press inline-flex items-center gap-2 rounded-full border border-[var(--line-2)] px-6 py-3 text-[0.8rem] font-semibold uppercase tracking-[0.08em] transition hover:bg-ink hover:text-[var(--paper)] hover:border-ink"
-              >
-                See how it works
-              </a>
-            </div>
-
-            <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[0.78rem] text-[var(--ink-mute)]">
-              <span className="inline-flex items-center gap-2">
-                <span className="tracking-[0.18em] text-brand">✦✦✦✦✦</span>
-                Built for the intern grind across 5 platforms
-              </span>
-            </div>
+      <header className="border-border border-b">
+        <nav className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-5">
+          <Logo />
+          <div className="flex items-center gap-3">
+            <Link href="/pricing" className="text-muted hover:text-ink text-sm">
+              Pricing
+            </Link>
+            <Link href="/login" className="text-muted hover:text-ink text-sm">
+              Sign in
+            </Link>
+            <Link href="/signup" className="btn btn-primary text-sm">
+              Start free
+            </Link>
           </div>
+        </nav>
+      </header>
 
-          {/* interactive particle letterform — the proto's living specimen */}
-          <Reveal className="relative">
-            <ParticleHero />
-          </Reveal>
-        </div>
-      </section>
+      <main className="flex-1">
+        {/* hero */}
+        <section className="mx-auto max-w-6xl px-6 pt-16 pb-14 sm:pt-24">
+          <p className="text-brand mb-5 font-mono text-xs tracking-[0.16em] uppercase">
+            Resume readiness, measured
+          </p>
+          <h1 className="font-display max-w-4xl text-4xl leading-[1.05] font-bold text-balance sm:text-6xl">
+            There is no such thing as an ATS score.
+          </h1>
+          <div className="mt-7 grid gap-10 md:grid-cols-[1.3fr_1fr]">
+            <div>
+              <p className="text-lg leading-relaxed">
+                Workday, Greenhouse and Taleo do not grade your resume and reject it. They
+                parse it into database fields and let a recruiter search. So every tool
+                selling you an &ldquo;82/100 ATS score&rdquo; is selling a number no system
+                anywhere computes.
+              </p>
+              <p className="mt-4 text-lg leading-relaxed">
+                Grindly measures something you can check: <b>what a machine actually
+                recovers from your file</b>. We rebuild your resume as a clean
+                single-column PDF, read it back with the same extractor a parser uses, and
+                count what survived.
+              </p>
+              <div className="mt-8 flex flex-wrap items-center gap-3">
+                <Link href="/signup" className="btn btn-primary">
+                  Check my resume — free
+                </Link>
+                <Link href="/pricing" className="btn">
+                  See pricing
+                </Link>
+              </div>
+              <p className="text-muted mt-4 text-sm">
+                No card. Your first resume, the full report and one company pack are free.
+              </p>
+            </div>
 
-      {/* ══════════ MARQUEE ══════════ */}
-      <section className="relative z-[5] overflow-hidden border-y border-ink bg-ink py-5 text-[var(--paper)]" aria-hidden>
-        <div className="marquee-track">
-          {[0, 1].map((k) => (
-            <span key={k} className="flex items-center">
-              {["THE AGENT THAT GROWS WITH YOU", "PREPARES WHILE YOU SLEEP", "ATS-TUNED RESUMES"].map((t) => (
-                <span key={t} className="flex items-center">
-                  <span className="px-[clamp(18px,2.6vw,34px)] font-display text-[clamp(1.9rem,4vw,3rem)] tracking-[-0.01em]">{t}</span>
-                  <span className="text-brand">✦</span>
-                </span>
-              ))}
-            </span>
-          ))}
-        </div>
-        <div className="marquee-track-rev mt-2.5 text-[rgba(242,236,225,0.55)]">
-          {[0, 1].map((k) => (
-            <span key={k} className="flex items-center">
-              {["resume-aware matching", "you set the firewall", "auditable progress", "you control every send"].map((t) => (
-                <span key={t} className="px-[clamp(18px,2.6vw,34px)] font-display text-[clamp(1rem,1.8vw,1.35rem)] italic font-light">{t} ·</span>
-              ))}
-            </span>
-          ))}
-        </div>
-      </section>
+            <aside className="bg-surface border-border rounded-xl border p-6">
+              <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">
+                What we score
+              </p>
+              <dl className="mt-4 flex flex-col gap-4 text-sm">
+                {[
+                  ["Machine-readable", "30", "Does any text survive extraction? An image-only export looks perfect to you and is empty to a parser."],
+                  ["Contact & dates", "20", "Can a parser fill in your name, email, phone and dates? A truncated address is one nobody can reply to."],
+                  ["Structure", "15", "Standard headings, real bullets, one column."],
+                  ["Evidence of impact", "20", "Bullets that lead with an action and state an outcome."],
+                  ["Role coverage", "15", "Skills the job asks for that your page actually shows."],
+                ].map(([name, weight, blurb]) => (
+                  <div key={name}>
+                    <dt className="flex items-baseline justify-between gap-3 font-medium">
+                      <span>{name}</span>
+                      <span className="text-muted font-mono text-xs tabular-nums">{weight} pts</span>
+                    </dt>
+                    <dd className="text-muted mt-0.5 text-xs leading-snug">{blurb}</dd>
+                  </div>
+                ))}
+              </dl>
+              <p className="text-muted mt-5 border-t pt-4 text-xs leading-snug" style={{ borderColor: "var(--border)" }}>
+                The rubric is published because it is ours. Same file, same score, every
+                time — it is arithmetic, not an opinion.
+              </p>
+            </aside>
+          </div>
+        </section>
 
-      {/* ══════════ 01 — FEATURES ══════════ */}
-      <section id="features" className="relative z-[5] border-t border-[var(--line-2)] px-[clamp(18px,5vw,80px)] py-[clamp(60px,9vw,120px)]">
-        <div className="mb-[clamp(40px,6vw,72px)] grid grid-cols-1 items-center gap-[clamp(20px,4vw,60px)] lg:grid-cols-[1.05fr_0.95fr]">
-          <Reveal>
-            <span className="text-[0.72rem] font-medium uppercase tracking-[0.16em] text-brand">01 — Features</span>
-            <h2 className="mt-2.5 text-[clamp(2.2rem,5vw,3.6rem)] leading-[1.06] tracking-[-0.02em]">
-              Everything an intern-hunter <span className="accent-italic">wishes</span> they had.
+        {/* the promise we refuse to break */}
+        <section className="border-border border-y" style={{ background: "var(--surface-2)" }}>
+          <div className="mx-auto grid max-w-6xl gap-8 px-6 py-14 md:grid-cols-3">
+            {[
+              {
+                h: "It is built not to invent",
+                p: "Three gates run before a rewrite is rendered: no technology absent from your resume, no employer, date or metric whose words are not in your source, and every entry must descend from a real one. A rewrite may reword and reorder. Read what it produces before you send it — the document goes out under your name.",
+              },
+              {
+                h: "Three versions, measured",
+                p: "You get up to three rebuilds under different strategies, each scored against your original. Any version that does not beat your resume is thrown away rather than shown to you behind a tempting button.",
+              },
+              {
+                h: "Tailored to a real company",
+                p: "Amazon publishes 16 Leadership Principles. Google publishes the bullet form it wants. We surface what you already have to match — every claim linked to the company's own page, never scraped, never guessed.",
+              },
+            ].map((c) => (
+              <div key={c.h}>
+                <h2 className="font-display text-xl font-semibold">{c.h}</h2>
+                <p className="text-muted mt-2 leading-relaxed">{c.p}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* companies */}
+        {companies.length > 0 && (
+          <section className="mx-auto max-w-6xl px-6 py-16">
+            <h2 className="font-display text-3xl font-bold text-balance">
+              Company packs, with the sources attached
             </h2>
-            <p className="mt-3.5 max-w-[44ch] text-[var(--ink-soft)]">
-              The agent drives job platforms like a human would — reads listings,
-              scores them against your resume, and drafts each application ready for
-              you to submit. You watch it happen from one dashboard.
+            <p className="text-muted mt-3 max-w-2xl leading-relaxed">
+              Each pack is what an employer has published about how it hires — with the
+              link, so you can check it yourself. Not insider knowledge, not a prediction,
+              and never scraped from a job board.
             </p>
-          </Reveal>
-          {/* dashboard mock — proto panel (relocated here from the hero) */}
-          <Reveal delay={80} className="relative">
-            <div className="rounded-[6px] border border-[var(--line-2)] bg-surface p-4 sm:p-6 shadow-[8px_8px_0_rgba(23,20,15,0.08)]">
-              <div className="mb-4 flex items-center justify-between gap-3 border-b border-dashed border-[var(--line-2)] pb-3 text-[0.78rem]">
-                <span className="inline-flex items-center gap-2 font-semibold">
-                  <span className="size-[7px] rounded-full bg-brand pulse-dot" /> Agent active · Free plan
-                </span>
-                <span className="text-[0.68rem] uppercase tracking-[0.12em] text-[var(--ink-mute)]">Today</span>
-              </div>
-              <div className="mb-4 grid grid-cols-3 gap-2.5">
-                {[["Prepared", 5, "brand"], ["Avg match", 78, ""], ["Ready", 3, "mute"]].map(([label, n, kind]) => (
-                  <div key={label as string} className="rounded-[6px] border border-[var(--line)] bg-[var(--paper)] px-3 py-2.5">
-                    <b className={`block font-display text-[1.9rem] leading-none tabular-nums ${kind === "brand" ? "text-brand" : kind === "mute" ? "text-[var(--ink-mute)]" : ""}`}>
-                      <CountUp value={n as number} />
-                    </b>
-                    <span className="text-[0.66rem] uppercase tracking-[0.1em] text-[var(--ink-mute)]">{label}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-col gap-2">
-                {MOCK_ROWS.map(([title, company, score, tag]) => (
-                  <div key={title} className="flex items-center justify-between gap-3 rounded-[6px] border border-[var(--line)] bg-[var(--paper)] px-3 py-2 text-[0.82rem]">
-                    <div>
-                      <b className="block font-semibold leading-tight">{title}</b>
-                      <small className="text-[0.72rem] text-[var(--ink-mute)]">{company}</small>
-                    </div>
-                    <div className="flex flex-none items-center gap-2.5">
-                      <span className="font-display font-black tabular-nums" style={{ color: tag === "skipped" ? "var(--ink-mute)" : "var(--vermilion)" }}>{score}</span>
-                      <span className={`rounded-full border px-2 py-0.5 text-[0.6rem] font-semibold uppercase tracking-[0.1em] ${
-                        tag === "skipped"
-                          ? "border-[var(--line-2)] text-[var(--ink-mute)]"
-                          : "border-brand bg-[rgba(227,64,42,0.07)] text-brand"
-                      }`}>{tag}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </Reveal>
-        </div>
-
-        <div className="grid grid-cols-1 border-l border-t border-[var(--line)] sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map(([title, body, Icon], i) => (
-            <Reveal key={title} delay={(i % 3) * 70} className="group border-b border-r border-[var(--line)] p-[clamp(20px,2.6vw,34px)] transition-colors hover:bg-surface">
-              <span className="mb-3.5 inline-grid size-11 place-items-center rounded-xl border border-[var(--line-2)] text-ink transition-colors group-hover:border-brand group-hover:bg-brand group-hover:text-[var(--paper)]">
-                <Icon size={20} />
-              </span>
-              <h3 className="text-[1.25rem] font-black">{title}</h3>
-              <p className="mt-1.5 text-[0.86rem] leading-relaxed text-[var(--ink-soft)]">{body}</p>
-            </Reveal>
-          ))}
-        </div>
-      </section>
-
-      {/* ══════════ 02 — HOW IT WORKS ══════════ */}
-      <section id="how" className="relative z-[5] border-t border-[var(--line-2)] px-[clamp(18px,5vw,80px)] py-[clamp(60px,9vw,120px)]">
-        <Reveal className="mb-[clamp(30px,5vw,60px)]">
-          <span className="text-[0.72rem] font-medium uppercase tracking-[0.16em] text-brand">02 — How it works</span>
-          <h2 className="mt-2.5 text-[clamp(2.2rem,5vw,3.6rem)] tracking-[-0.02em]">How it works</h2>
-          <p className="mt-3.5 text-[var(--ink-soft)]">From signup to your first prepared matches in minutes.</p>
-        </Reveal>
-
-        <div className="border-t border-[var(--line)]">
-          {STEPS.map(([n, title, body]) => (
-            <Reveal key={n} className="group grid grid-cols-[90px_1fr] items-center gap-5 border-b border-[var(--line)] py-[clamp(14px,2vw,26px)] transition-all hover:bg-surface hover:pl-3.5 md:grid-cols-[120px_1fr_minmax(0,380px)]">
-              <span className="text-[0.72rem] uppercase tracking-[0.1em] tabular-nums text-[var(--ink-mute)]">Step · {n}</span>
-              <span className="font-display text-[clamp(1.5rem,3.2vw,2.6rem)] leading-tight tracking-[-0.01em] transition-colors group-hover:text-brand">{title}</span>
-              <span className="col-start-2 text-[0.84rem] leading-relaxed text-[var(--ink-soft)] md:col-start-3">{body}</span>
-            </Reveal>
-          ))}
-        </div>
-      </section>
-
-      {/* ══════════ 03 — PRICING (dark) ══════════ */}
-      <section id="pricing" className="relative z-[5] bg-ink px-[clamp(18px,5vw,80px)] py-[clamp(60px,9vw,120px)] text-[var(--paper)]">
-        <Reveal className="flex items-baseline gap-4">
-          <span className="text-[0.72rem] font-medium uppercase tracking-[0.16em] text-brand">03 — Pricing</span>
-        </Reveal>
-        <Reveal>
-          <h2 className="mt-2 text-[clamp(2.6rem,6vw,5rem)] tracking-[-0.02em] text-[var(--paper)]">Free while we&apos;re in beta</h2>
-          <p className="mt-3 text-[0.95rem] text-[rgba(242,236,225,0.6)]">No card, no catch. Paid plans come later.</p>
-        </Reveal>
-
-        <div className="mt-[clamp(32px,5vw,56px)] grid grid-cols-1 justify-center gap-[clamp(16px,2vw,26px)] md:grid-cols-[repeat(3,minmax(0,340px))]">
-          {/* Free — the only pickable plan */}
-          <Reveal className="relative flex flex-col gap-4 rounded-[4px] border border-[rgba(242,236,225,0.3)] bg-[rgba(242,236,225,0.04)] p-[clamp(24px,2.6vw,34px)] transition-all hover:-translate-y-1 hover:border-brand">
-            <span className="absolute -top-2.5 left-[clamp(24px,2.6vw,34px)] rounded-full bg-brand px-2.5 py-1 text-[0.62rem] font-medium uppercase tracking-[0.14em] text-[var(--paper)]">✦ Free during beta</span>
-            <div className="flex items-baseline justify-between gap-2.5 border-b border-[rgba(242,236,225,0.16)] pb-4">
-              <h3 className="font-display text-[clamp(1.6rem,2.6vw,2.2rem)] text-[var(--paper)]">Free</h3>
-              <span className="whitespace-nowrap font-display text-[clamp(1.4rem,2.2vw,1.9rem)] text-brand">₹0<small className="text-[0.8rem] font-normal text-[rgba(242,236,225,0.55)]"> /mo</small></span>
-            </div>
-            <p className="text-[0.9rem] leading-relaxed text-[rgba(242,236,225,0.7)]">Up to 5 prepared matches a day, every day.</p>
-            <ul className="flex flex-col gap-2.5">
-              {["5 prepared matches / day", "Resume-aware matching", "Daily in-app progress reports", "Community support"].map((f) => (
-                <li key={f} className="relative pl-4.5 text-[0.82rem] text-[rgba(242,236,225,0.82)] before:absolute before:left-0 before:top-[0.5em] before:size-1.5 before:rounded-full before:bg-brand">{f}</li>
+            <ul className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {companies.map((c) => (
+                <li key={c.slug} className="bg-surface border-border rounded-xl border p-5">
+                  <h3 className="font-display text-lg font-semibold">{c.name}</h3>
+                  <p className="text-muted mt-1.5 text-sm leading-snug">{c.summary}</p>
+                  <p className="text-muted mt-3 font-mono text-[10px] tracking-[0.1em] uppercase">
+                    {c.sources.length} cited source{c.sources.length === 1 ? "" : "s"}
+                  </p>
+                </li>
               ))}
             </ul>
-            <Link href="/login" className="press mt-auto block rounded-full bg-brand px-4 py-3 text-center text-[0.78rem] font-medium uppercase tracking-[0.1em] text-[var(--paper)] transition hover:bg-[var(--paper)] hover:text-ink">
-              Get started free
-            </Link>
-          </Reveal>
+            <p className="text-muted mt-6 max-w-3xl text-xs leading-relaxed">
+              {packs.ok ? packs.disclaimer : ""}
+            </p>
+          </section>
+        )}
 
-          {/* Plus / Pro — coming soon, no checkout */}
-          {(Object.entries(PLANS) as [keyof typeof PLANS, (typeof PLANS)[keyof typeof PLANS]][]).map(([key, p], i) => (
-            <Reveal key={key} delay={(i + 1) * 80} className="relative flex flex-col gap-4 rounded-[4px] border border-[rgba(242,236,225,0.18)] p-[clamp(24px,2.6vw,34px)] opacity-80">
-              <span className="absolute -top-2.5 left-[clamp(24px,2.6vw,34px)] rounded-full border border-[rgba(242,236,225,0.3)] bg-ink px-2.5 py-1 text-[0.62rem] font-medium uppercase tracking-[0.14em] text-[rgba(242,236,225,0.7)]">Coming soon</span>
-              <div className="flex items-baseline justify-between gap-2.5 border-b border-[rgba(242,236,225,0.16)] pb-4">
-                <h3 className="font-display text-[clamp(1.6rem,2.6vw,2.2rem)] text-[var(--paper)]">{p.name}</h3>
-                <span className="whitespace-nowrap font-display text-[clamp(1.4rem,2.2vw,1.9rem)] text-brand">₹{p.price}<small className="text-[0.8rem] font-normal text-[rgba(242,236,225,0.55)]"> /mo</small></span>
+        {/* pricing teaser */}
+        <section className="border-border border-t">
+          <div className="mx-auto max-w-6xl px-6 py-16">
+            <h2 className="font-display text-3xl font-bold">Priced for a placement season</h2>
+            <p className="text-muted mt-3 max-w-2xl leading-relaxed">
+              Not a subscription. A season runs six to ten weeks, so you buy a pass that
+              ends on its own — and you keep everything you made. The comparable tools
+              charge {formatAmount(250000)}–{formatAmount(410000)} a month.
+            </p>
+            <div className="mt-8 flex flex-wrap gap-4">
+              <div className="bg-surface border-border min-w-[220px] flex-1 rounded-xl border p-6">
+                <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">Free</p>
+                <p className="font-display mt-2 text-3xl font-bold">₹0</p>
+                <p className="text-muted mt-2 text-sm">
+                  Full report, one resume, one company pack. No watermark.
+                </p>
               </div>
-              <p className="text-[0.9rem] leading-relaxed text-[rgba(242,236,225,0.7)]">{p.blurb}</p>
-              <ul className="flex flex-col gap-2.5">
-                {[`${p.perDay} applications / day`, "Resume-aware matching", "Daily reports your way", key === "pro" ? "Dedicated email support" : "Community support"].map((f) => (
-                  <li key={f} className="relative pl-4.5 text-[0.82rem] text-[rgba(242,236,225,0.82)] before:absolute before:left-0 before:top-[0.5em] before:size-1.5 before:rounded-full before:bg-brand">{f}</li>
-                ))}
-              </ul>
-              <div className="mt-auto block cursor-default rounded-full border border-dashed border-[rgba(242,236,225,0.4)] px-4 py-3 text-center text-[0.78rem] font-medium uppercase tracking-[0.1em] text-[rgba(242,236,225,0.6)]">
-                Coming soon
-              </div>
-            </Reveal>
-          ))}
-        </div>
-      </section>
-
-      {/* ══════════ CTA BAND ══════════ */}
-      <section className="relative z-[5] border-t border-[var(--line-2)] px-[clamp(18px,5vw,80px)] py-[clamp(60px,8vw,110px)]">
-        <Reveal className="relative mx-auto max-w-[1000px] overflow-hidden rounded-lg bg-brand px-[clamp(20px,4vw,60px)] py-[clamp(44px,6vw,90px)] text-center text-[var(--paper)]">
-          <span aria-hidden className="pointer-events-none absolute bottom-[-0.34em] left-1/2 -translate-x-1/2 whitespace-nowrap font-display text-[clamp(5rem,16vw,13rem)] tracking-[-0.02em] text-[rgba(23,20,15,0.10)]">GRINDLY</span>
-          <h2 className="relative z-[1] text-[clamp(2.2rem,5.4vw,4.2rem)] tracking-[-0.02em] text-[var(--paper)]">Your next internship is<br />one signup away.</h2>
-          <p className="relative z-[1] mx-auto mt-3.5 max-w-[46ch] text-[0.96rem] text-[rgba(242,236,225,0.85)]">Let the agent grind the applications. You focus on the interviews.</p>
-          <Link href="/login" className="press relative z-[1] mt-7 inline-flex items-center gap-2 rounded-full bg-ink px-7 py-3.5 text-[0.8rem] font-semibold uppercase tracking-[0.1em] text-[var(--paper)] transition hover:bg-[var(--paper)] hover:text-ink">
-            Get started free →
-          </Link>
-        </Reveal>
-      </section>
+              {(["pass90", "pack1"] as const).map((sku) => (
+                <div key={sku} className="bg-surface border-border min-w-[220px] flex-1 rounded-xl border p-6">
+                  <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">
+                    {PRODUCTS[sku].name}
+                  </p>
+                  <p className="font-display mt-2 text-3xl font-bold">
+                    {formatAmount(PRODUCTS[sku].amount)}
+                  </p>
+                  <p className="text-muted mt-2 text-sm">{PRODUCTS[sku].blurb}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
       </main>
 
-      {/* ══════════ FOOTER ══════════ */}
-      <footer className="relative z-[5] flex flex-wrap items-center justify-between gap-5 border-t border-[var(--line-2)] px-[clamp(18px,5vw,80px)] py-[clamp(28px,4vw,44px)] text-[0.82rem] text-[var(--ink-soft)]">
-        <Logo size={26} withWordmark />
-        <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
-          <Link href="/help" className="hover:text-brand transition">Help</Link>
-          <Link href="/privacy" className="hover:text-brand transition">Privacy</Link>
-          <Link href="/terms" className="hover:text-brand transition">Terms</Link>
-          <span className="text-[var(--ink-mute)]">© {new Date().getFullYear()} Grindly · Built for the intern grind.</span>
+      <footer className="border-border border-t">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-sm">
+          <Logo size={24} />
+          <nav className="text-muted flex flex-wrap gap-5">
+            <Link href="/pricing" className="hover:text-ink">Pricing</Link>
+            <Link href="/privacy" className="hover:text-ink">Privacy</Link>
+            <Link href="/terms" className="hover:text-ink">Terms</Link>
+          </nav>
         </div>
       </footer>
     </>

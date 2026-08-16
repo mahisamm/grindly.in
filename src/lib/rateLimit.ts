@@ -56,7 +56,7 @@ export async function isRateLimited(key: string, limit: number, windowMs: number
  * Taking the first entry let anyone bypass every IP-keyed rate limit by
  * sending a fake x-forwarded-for header.
  */
-export function getIp(req: Request): string {
+export function getIp(req: Request): string | null {
   if (process.env.TRUST_PROXY === "1") {
     const xff = req.headers.get("x-forwarded-for");
     if (xff) {
@@ -66,16 +66,40 @@ export function getIp(req: Request): string {
     const xri = req.headers.get("x-real-ip");
     if (xri) return xri;
   }
-  // Untrusted deployment: read NO client-supplied header. This used to return
-  // `x-real-ip` under a comment claiming it was "not spoofable" — but any client
-  // can set that header, so rotating it defeated every IP-keyed limit here,
-  // including the OAuth callback abuse cap. x-real-ip is only trustworthy when a
-  // proxy we control writes it, which is precisely the TRUST_PROXY branch above.
+  // Untrusted deployment: read NO client-supplied header. Any client can set
+  // `x-real-ip` or `x-forwarded-for`, so honouring either without a proxy in
+  // front means rotating one value defeats every IP-keyed limit.
   //
-  // Everything untrusted therefore shares one bucket. That is deliberately
-  // conservative: a shared limit throttles honest traffic in an unusual
-  // deployment, while a spoofable one protects nothing anywhere. Production sets
-  // TRUST_PROXY=1 (docker-compose.yml, behind Caddy) and never reaches this.
-  return "unknown";
+  // NULL, not a constant. This returned the string "unknown", which looks like
+  // a safe fallback and is the opposite of one: every caller shares that
+  // bucket, so `login:unknown` becomes a GLOBAL cap and one attacker
+  // exhausting it locks every user out of signing in. That is a trivially
+  // triggerable authentication denial of service, and it was the default on
+  // any deploy not behind the bundled Caddy — Vercel, Fly, a bare `npm start`.
+  //
+  // Next's Web `Request` exposes no peer address, so there is nothing honest to
+  // fall back to. Callers must therefore SKIP the IP-keyed limit when this is
+  // null and lean on the account-keyed one (`login:acct:<email>`), which bounds
+  // password guessing regardless of where it comes from and cannot be used to
+  // lock out a third party.
+  return null;
+}
+
+/**
+ * Rate-limit by IP, but only when the IP is real.
+ *
+ * Returns false (not limited) when there is no trustworthy address, because a
+ * shared bucket is worse than no bucket: it cannot stop a determined attacker
+ * and it CAN be used by one to deny service to everybody else.
+ */
+export async function isRateLimitedByIp(
+  req: Request,
+  action: string,
+  limit: number,
+  windowMs: number,
+): Promise<boolean> {
+  const ip = getIp(req);
+  if (!ip) return false;
+  return isRateLimited(`${action}:${ip}`, limit, windowMs);
 }
 

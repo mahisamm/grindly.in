@@ -19,10 +19,22 @@ vi.mock("@/lib/prisma", () => ({ prisma: { user: {} } }));
 vi.mock("@/lib/session", () => ({ setUid: vi.fn() }));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
 vi.mock("@/lib/baseUrl", () => ({ baseUrl: () => "http://localhost" }));
-vi.mock("@/lib/googleOAuth", () => ({ loginClient: mockLoginClient }));
-vi.mock("@/lib/proffQuestions", () => ({ DEFAULTS: {} }));
+vi.mock("@/lib/googleOAuth", () => ({
+  loginClient: mockLoginClient,
+  // Declared so the module factory is complete; these cases never reach the
+  // Google round-trip, and a missing export would fail at import rather than in
+  // the assertion.
+  exchangeCode: vi.fn(),
+  fetchProfile: vi.fn(),
+}));
+// The route now calls isRateLimitedByIp, which skips the limit entirely when
+// there is no trustworthy client address — a shared "unknown" bucket was a
+// global lockout waiting to be triggered. The assertions below are unchanged in
+// meaning: they still check that the limiter is consulted, and that it is
+// consulted only AFTER the cheap CSRF check.
 vi.mock("@/lib/rateLimit", () => ({
   isRateLimited: mockIsRateLimited,
+  isRateLimitedByIp: mockIsRateLimited,
   getIp: mockGetIp,
 }));
 
@@ -46,7 +58,9 @@ describe("google callback rate limiting", () => {
     expect(res.status).toBe(307); // NextResponse.redirect default
     expect(res.headers.get("location")).toBe("http://localhost/login?error=rate_limited");
     // Keyed per IP, capped over an hour (kept high for shared campus/CGNAT IPs).
-    expect(mockIsRateLimited).toHaveBeenCalledWith("oauth_cb:1.2.3.4", 100, 60 * 60 * 1000);
+    expect(mockIsRateLimited).toHaveBeenCalledWith(
+      expect.anything(), "oauth_cb", 100, 60 * 60 * 1000,
+    );
     // Blocked before Google is ever contacted.
     expect(mockLoginClient).not.toHaveBeenCalled();
   });

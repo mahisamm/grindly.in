@@ -113,9 +113,13 @@ describe("getIp", () => {
     expect(getIp(req)).toBe("9.9.9.9");
   });
 
-  it("returns unknown when no IP header present", () => {
+  it("returns null — not a shared constant — when the IP is unknowable", () => {
+    // This asserted `"unknown"` and was wrong to. Every caller then shared one
+    // bucket, so `login:unknown` was a GLOBAL cap and one attacker exhausting
+    // it locked every user out of signing in. Callers now skip the IP-keyed
+    // limit on null and rely on the account-keyed one.
     delete process.env.TRUST_PROXY;
     const req = new Request("http://localhost");
-    expect(getIp(req)).toBe("unknown");
+    expect(getIp(req)).toBeNull();
   });
 });
