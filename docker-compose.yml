@@ -36,8 +36,24 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # One-shot: create the schema, promote ADMIN_EMAIL if that account exists,
-  # then exit. web waits for it to complete successfully.
+  # One-shot: bring the schema up to date, promote ADMIN_EMAIL if that account
+  # exists, then exit. web waits for it to complete successfully.
+  #
+  # THERE IS NO `--accept-data-loss` HERE, ON PURPOSE.
+  #
+  # This runs automatically on every `docker compose up -d`. An automated deploy
+  # must never be allowed to drop a column or a table: without the flag, Prisma
+  # refuses a destructive change, and with no TTY in the container it cannot
+  # prompt, so it errors and `web` never starts. That is the correct outcome —
+  # the deploy fails loudly instead of quietly deleting production.
+  #
+  # A migration that IS destructive is therefore a deliberate, human-run step
+  # BEFORE the stack comes up, not something compose does on your behalf. See
+  # docs/PIVOT-DEPLOY.md. Once the schema has been changed by hand, this service
+  # finds it already in sync and exits 0 without touching anything.
+  #
+  # If you are reading this because a deploy just failed here: that is the guard
+  # working. Do not "fix" it by adding the flag.
   migrate:
     build: { context: ., dockerfile: Dockerfile }
     image: grindly-web
