@@ -128,7 +128,15 @@ _STRATEGIES: list[tuple[str, str]] = [
         "Rewrite every bullet to lead with a strong past-tense action verb and to "
         "state the outcome. Keep any real numbers from the source and make them "
         "prominent. NEVER invent a metric, percentage, user count, or result that "
-        "the source does not state — a fabricated number is a failed interview.",
+        "the source does not state — a fabricated number is a failed interview.\n"
+        "This applies to outcomes WITHOUT numbers too, and that is the rule most "
+        "often broken. Do not append consequences the source does not claim: no "
+        "'ensuring a seamless transition', no 'providing actionable insights', no "
+        "'enhancing decision-making', no 'improving efficiency'. Those read as "
+        "impact and are unverifiable padding — the candidate has to defend every "
+        "word of this document in an interview. If the source states no outcome "
+        "for a bullet, the rewrite states no outcome for it either: put the verb "
+        "first, name the tool, and stop.",
     ),
     (
         "ATS-clean",
@@ -760,7 +768,11 @@ _EXTRACT_SYS = (
     + "\nRules: 'contact_line' is one line joining email, phone, location, and any "
     "GitHub/LinkedIn/portfolio URLs with ' | '. Group content into standard "
     "sections (Education, Experience, Projects, Technical Skills, and any others "
-    "the resume clearly has). For a skills section, put each skill group as one "
+    "the resume clearly has). If the resume opens with a summary, profile or "
+    "objective paragraph, keep it as its own section headed 'Professional "
+    "Summary', with the paragraph as a single bullet — do not drop it and do not "
+    "fold it into another section. It is the first thing a human reads and it "
+    "was going missing. For a skills section, put each skill group as one "
     "bullet like 'Languages: Python, Java, SQL'. 'head' is a title (role, project "
     "name, or degree); 'sub' is the right-aligned meta (dates, company, tech, "
     "CGPA) or an empty string. Copy facts verbatim — do not add, embellish, or "
