@@ -59,7 +59,7 @@ services:
     image: grindly-web
     command: sh -c "npx prisma db push --skip-generate && node scripts/seed-admin.mjs"
     environment:
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_URLENCODED:?POSTGRES_PASSWORD_URLENCODED must be set}@postgres:5432/grindly
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
     depends_on:
       postgres: { condition: service_healthy }
@@ -72,7 +72,7 @@ services:
     environment:
       # connection_limit lifts Prisma's default (num_cpu*2+1 = 3 on one vCPU) so
       # dashboard polling doesn't queue on the pool.
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly?connection_limit=15&pool_timeout=15
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_URLENCODED:?POSTGRES_PASSWORD_URLENCODED must be set}@postgres:5432/grindly?connection_limit=15&pool_timeout=15
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:?APP_ENCRYPTION_KEY must be set}
       NODE_ENV: production
       # The image ships its own interpreter with the agent deps installed.
@@ -144,7 +144,7 @@ services:
   backup:
     image: postgres:16-alpine
     environment:
-      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly
+      DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_URLENCODED:?POSTGRES_PASSWORD_URLENCODED must be set}@postgres:5432/grindly
     entrypoint: []
     command: ["sh", "/scripts/backup-drill.sh"]
     volumes:
