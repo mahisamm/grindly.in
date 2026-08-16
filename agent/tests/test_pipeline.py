@@ -436,6 +436,52 @@ def test_a_variant_under_the_floor_says_which_one_thing_is_missing(model):
 # ---------------------------------------------------------------------------
 
 @requires_chromium
+def test_a_rewrite_that_tightens_away_half_the_content_is_dropped(model):
+    """Compression is not cleanup.
+
+    Measured on production: two of three rewrites of a strong 1,035-character
+    resume came back at 790 characters, having deleted the Professional Summary
+    and pared every bullet past the point where it named a tool. They scored
+    below the master and were discarded — correctly, but only after a full
+    render each, and the user was told "nothing beat your resume" when what had
+    actually happened is that their summary was thrown away.
+    """
+    gutted = json.loads(json.dumps(EXTRACTED))
+    gutted["sections"] = [s for s in gutted["sections"]
+                          if s["heading"] != "Professional Summary"]
+    for section in gutted["sections"]:
+        for item in section["items"]:
+            if item["bullets"] and section["heading"] != "Technical Skills":
+                item["bullets"] = item["bullets"][:1]
+    model(rewrites=gutted)
+
+    out = ro.generate_variants(SENIOR_RESUME, SENIOR_SKILLS)
+    assert not out["variants"], "a rewrite that deleted half the bullets was shipped"
+    assert any("lost" in r and "bullet" in r for r in out["reasons"]), out["reasons"]
+
+
+@requires_chromium
+def test_regrouping_the_skills_block_is_not_content_loss(model):
+    """The false positive the guard has to avoid.
+
+    Six one-word bullets under "Languages" legitimately become one line reading
+    "Languages: Python, SQL, Java". Counting skills bullets would read every
+    good skills rewrite as content loss and drop it.
+    """
+    regrouped = json.loads(json.dumps(EXTRACTED))
+    regrouped["sections"][3]["items"] = [{
+        "head": "", "sub": "",
+        "bullets": ["Languages: Java, Python, SQL",
+                    "Platform: AWS, Docker, Kubernetes, Kafka, PostgreSQL, Redis"],
+    }]
+    model(rewrites=regrouped)
+
+    out = ro.generate_variants(SENIOR_RESUME, SENIOR_SKILLS)
+    assert out["variants"], out["reasons"]
+    assert not any("lost" in r and "bullet" in r for r in out["reasons"]), out["reasons"]
+
+
+@requires_chromium
 def test_targeting_scores_coverage_without_adding_anything(model):
     model()
     wanted = ["java", "kafka", "kubernetes", "rust", "scala", "erlang"]

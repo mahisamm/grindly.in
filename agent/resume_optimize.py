@@ -134,7 +134,15 @@ _STRATEGIES: list[tuple[str, str]] = [
         "ATS-clean",
         "Tighten and de-clutter: remove filler words, fix inconsistent tense, use "
         "plain standard section headings, and make each bullet a single scannable "
-        "line. Preserve every fact; change only wording and structure.",
+        "line. Preserve every fact; change only wording and structure.\n"
+        "HARD LIMITS ON WHAT 'TIGHTEN' MEANS. Keep every section the input has, "
+        "including a summary or profile. Keep every role, project, qualification "
+        "and bullet — the output must have the same number of bullets as the "
+        "input, or more. Tightening is fewer words inside a bullet, never fewer "
+        "bullets. Keep every tool name, every number and every date; those are "
+        "the words a recruiter searches for and the shortest bullet on the page "
+        "is worth nothing if it no longer says what you built. Aim to remove at "
+        "most a fifth of the words.",
     ),
 ]
 
@@ -412,6 +420,28 @@ def _one_variant(
         print(f"[optimize] {label}: drift — kept {kept_items}/{base_items} real items; dropped {dropped[:3]}")
         return None, (f"{label}: dropped — the rewrite drifted from your resume "
                       f"(kept {kept_items} of your {base_items} real entries)")
+    # Compression is not cleanup, and the difference is measurable.
+    #
+    # "Tighten and de-clutter" is a real strategy and it is also the one that
+    # quietly deletes things. Measured on a strong 1,035-character resume: two
+    # of three rewrites came back at 790 characters of extracted text, under the
+    # thin-resume threshold, having dropped the Professional Summary and pared
+    # every bullet past the point where it named a tool. Both scored 85 against
+    # the master's 91 and were discarded — correctly, but only after two full
+    # renders, and the user was told "nothing beat your resume" when what
+    # actually happened is that we threw their summary away.
+    #
+    # Judged on bullets rather than characters, because bullets are the unit of
+    # content: shorter wording is the point of this strategy, fewer facts is
+    # not. The gate before rendering saves the render and, more importantly,
+    # gives the user a true reason instead of an ambiguous one.
+    base_bullets = _bullet_count(base_struct)
+    kept_bullets = _bullet_count(struct)
+    if base_bullets >= 4 and kept_bullets < base_bullets * 0.7:
+        print(f"[optimize] {label}: content loss — {kept_bullets}/{base_bullets} bullets")
+        return None, (f"{label}: dropped — tightening went too far and lost "
+                      f"{base_bullets - kept_bullets} of your {base_bullets} bullet points")
+
     if dropped:
         print(f"[optimize] {label}: removed {len(dropped)} ungrounded item(s): {dropped[:3]}")
 
@@ -742,6 +772,24 @@ def _item_count(struct: dict | None) -> int:
     if not struct:
         return 0
     return sum(len(sec.get("items") or []) for sec in struct.get("sections") or [])
+
+
+def _bullet_count(struct: dict | None) -> int:
+    """Bullets outside the skills block.
+
+    Skills are excluded because a rewrite regroups them freely — six one-word
+    bullets under "Languages" legitimately become one line reading "Languages:
+    Python, SQL, Java" — so counting them would read every good skills rewrite
+    as content loss.
+    """
+    if not struct:
+        return 0
+    return sum(
+        len(item.get("bullets") or [])
+        for sec in struct.get("sections") or []
+        if not _SKILLS_SECTION_RE.search(str(sec.get("heading") or ""))
+        for item in sec.get("items") or []
+    )
 
 
 def _extract_struct(text: str) -> dict | None:
