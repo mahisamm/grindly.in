@@ -251,6 +251,41 @@ def test_the_contact_separator_does_not_eat_the_fields(back):
 
 @pytest.mark.slow
 @requires_chromium
+def test_a_contact_field_never_breaks_across_lines():
+    """A URL split by a line wrap is a dead link.
+
+    Chromium treats a hyphen as a break opportunity, so a header wide enough to
+    wrap broke "github.com/priya-r" after the hyphen. The PDF looked fine; the
+    text layer carried "github.com/priya-" and a stray "r", so a recruiter
+    copying the address got a 404 and the scorer reported no profile link on a
+    resume that had one. Each field is nowrap and the line breaks between them.
+    """
+    import tempfile
+
+    struct = _struct(contact_line=(
+        "+91 90000 00000 | priya.ramanathan@example.com | Bengaluru, India | "
+        "linkedin.com/in/priya-ramanathan-b1234 | github.com/priya-r | "
+        "priya-ramanathan.dev"
+    ))
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "wide.pdf")
+        assert render_pdf.render_fitted(struct, out).ok
+        text = render_pdf.extract_back(out)
+
+    links = " ".join(readiness.find_links(text))
+    for url in ("linkedin.com/in/priya-ramanathan-b1234", "github.com/priya-r"):
+        assert url in links, f"{url} was broken by a line wrap: {links!r}"
+    # A bare portfolio domain is not something `find_links` recognises — its
+    # pattern is deliberately narrow so "Next.js" and "React.js" in a skills
+    # line are not read as web addresses. It still has to survive intact in the
+    # text, because a human reads this line too.
+    flat = " ".join(text.split())
+    assert "priya-ramanathan.dev" in flat
+    assert readiness.find_emails(text) == ["priya.ramanathan@example.com"]
+
+
+@pytest.mark.slow
+@requires_chromium
 def test_a_summary_renders_as_prose_not_as_a_bullet(back):
     """A one-line Professional Summary set as a lone bullet under its own
     heading is the clearest possible tell that a document was assembled from a
@@ -268,6 +303,87 @@ def test_our_own_output_is_not_flagged_as_two_column(back):
     """The layout detector must not fire on the layout we ship."""
     lines = [ln for ln in back.splitlines() if ln.strip()]
     assert not readiness.detect_two_column(lines)["is_two_column"]
+
+
+@pytest.mark.slow
+@requires_chromium
+def test_the_page_has_margins(rendered):
+    """Text must not run into the paper edge.
+
+    We print with prefer_css_page_size=True, which makes the @page rule win over
+    Chromium's defaults — for the size AND for the margin. With `margin: 0` in
+    that rule, the margin dict handed to page.pdf() was silently ignored and
+    every resume this product rendered had its text flush against all four
+    edges. Nothing failed, nothing warned, and it is invisible on screen beside
+    white browser chrome.
+
+    Asserted against the actual glyph positions rather than against the CSS, so
+    it measures the artefact instead of the intent. 10mm is the floor, well
+    under the 15mm we ask for, because the point is to catch zero.
+    """
+    from pdfminer.high_level import extract_pages
+    from pdfminer.layout import LTChar, LTTextContainer
+
+    MM = 72 / 25.4  # PDF points per millimetre
+    page = next(iter(extract_pages(rendered)))
+    width, height = page.width, page.height
+
+    xs, ys = [], []
+    for element in page:
+        if not isinstance(element, LTTextContainer):
+            continue
+        for line in element:
+            for ch in line:
+                if isinstance(ch, LTChar) and ch.get_text().strip():
+                    xs.extend((ch.x0, ch.x1))
+                    ys.extend((ch.y0, ch.y1))
+
+    assert xs, "no glyphs on the page"
+    for name, gap in (
+        ("left", min(xs)),
+        ("right", width - max(xs)),
+        ("top", height - max(ys)),
+        ("bottom", min(ys)),
+    ):
+        assert gap >= 10 * MM, (
+            f"only {gap / MM:.1f}mm of {name} margin — the text is running into "
+            f"the edge of the paper"
+        )
+
+
+@pytest.mark.slow
+@requires_chromium
+def test_a_skills_block_keeps_one_category_per_line(back):
+    """Both shapes of skills section must print as "Category: a, b, c" lines.
+
+    A model asked for a skills section returns its groups as BULLETS —
+    ["Languages: Python, SQL", "Cloud: AWS, Docker"] — which is exactly what the
+    extraction prompt asks for. Joining those with commas produced a single
+    run-on line with every category label buried mid-sentence, on the one block
+    a recruiter scans for keywords.
+    """
+    struct = _struct()
+    struct["sections"] = [
+        s for s in struct["sections"] if s["heading"] != "Technical Skills"
+    ] + [{
+        "heading": "Technical Skills",
+        "items": [{"head": "", "sub": "", "bullets": [
+            "Languages: Java, Python, SQL",
+            "Platform: AWS, Docker, Kubernetes",
+            "Data: Kafka, PostgreSQL, Redis",
+        ]}],
+    }]
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "skills.pdf")
+        assert render_pdf.render_fitted(struct, out).ok
+        text = render_pdf.extract_back(out)
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    for label in ("Languages:", "Platform:", "Data:"):
+        starts = [ln for ln in lines if ln.startswith(label)]
+        assert starts, f"{label} does not start a line of its own: {lines[-6:]}"
 
 
 @pytest.mark.slow

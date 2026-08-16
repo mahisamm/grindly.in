@@ -179,8 +179,18 @@ def _css(density: float = 1.0) -> str:
     made the document read as a form to be filled in.
     """
     base = BASE_PT
+    # The page margin is declared HERE, in CSS, and not only in the argument to
+    # page.pdf().
+    #
+    # We print with prefer_css_page_size=True so the @page size wins over
+    # Chromium's default letter/A4 guess. That flag also makes the @page MARGIN
+    # win, and this rule used to say `margin: 0` — so the margin dict passed to
+    # page.pdf() was silently ignored and every resume this product has ever
+    # rendered had its text running into all four paper edges. It is invisible
+    # on screen next to a white browser chrome and obvious the moment anyone
+    # prints one or opens it beside another PDF.
     return f"""
-      @page {{ size: {PAGE_FORMAT}; margin: 0; }}
+      @page {{ size: {PAGE_FORMAT}; margin: {MARGIN_MM["top"]} {MARGIN_MM["right"]} {MARGIN_MM["bottom"]} {MARGIN_MM["left"]}; }}
       * {{ box-sizing: border-box; }}
       html, body {{ margin: 0; padding: 0; }}
       body {{
@@ -228,6 +238,13 @@ def _css(density: float = 1.0) -> str:
         margin: 0;
         line-height: 1.4;
       }}
+      /* Each contact field is unbreakable; the line wraps BETWEEN fields.
+         Chromium treats a hyphen as a break opportunity, so a header ending in
+         "github.com/priya-r" broke after the hyphen and the extracted text
+         carried "github.com/priya-" on one line and "r" on the next. A
+         recruiter copying that gets a dead link, and `readiness` scores the
+         profile link as missing — on a resume that has one. */
+      p.contact .f {{ white-space: nowrap; }}
       /* The separator between contact fields, dimmed so the fields themselves
          read as the content. It is real text in the PDF, not a border, so an
          extractor still sees the delimiter it needs to split the header on. */
@@ -412,6 +429,10 @@ _PROSE_HEADING_RE = re.compile(
 _SKILLS_HEADING_RE = re.compile(
     r"skill|tool|technolog|language|framework|competenc|stack|interest|hobb", re.I,
 )
+# "Languages: Python, SQL" — a skills bullet that carries its own category
+# label. The label is capped at 40 characters so a sentence containing a colon
+# ("Built a pipeline in Python: 40 jobs a night") is not mistaken for one.
+_SKILL_GROUP_RE = re.compile(r"^[^:]{2,40}:\s*\S")
 
 
 def build_html(struct: dict, density: float = 1.0) -> str:
@@ -444,7 +465,7 @@ def build_html(struct: dict, density: float = 1.0) -> str:
         if fields:
             sep = f'<span class="sep">{CONTACT_SEP}</span>'
             parts.append('<p class="contact">'
-                         + sep.join(_esc(f) for f in fields)
+                         + sep.join(f'<span class="f">{_esc(f)}</span>' for f in fields)
                          + "</p>")
         parts.append("</header>")
 
@@ -470,6 +491,29 @@ def build_html(struct: dict, density: float = 1.0) -> str:
             bullets = [b for b in bullets if b]
 
             if skills_like:
+                # A skills section arrives in one of two shapes and both have to
+                # come out as "Category: a, b, c" lines.
+                #
+                #   head="Languages", bullets=["Python","SQL"]   — grouped item
+                #   head="",  bullets=["Languages: Python, SQL",
+                #                      "Cloud: AWS, Docker"]     — grouped bullets
+                #
+                # The second is what the extraction prompt actually asks a model
+                # for, and joining those bullets with commas — which is what
+                # this did — produced one run-on line reading "Languages:
+                # Python, SQL, Java, Data: Airflow, Snowflake, Cloud: AWS,
+                # Docker, Git". Every category label buried mid-sentence, on the
+                # block a recruiter scans first.
+                labelled = [b for b in bullets if _SKILL_GROUP_RE.match(b)]
+                if not head and len(labelled) == len(bullets) and bullets:
+                    for bullet in bullets:
+                        label, _, rest = bullet.partition(":")
+                        parts.append(
+                            f'<p class="skills-line"><span class="cat">{_esc(label.strip())}:</span> '
+                            f"{_esc(rest.strip())}</p>"
+                        )
+                    continue
+
                 # "Languages: Python, C++, SQL" on one line. A bulleted skills
                 # list wastes a third of the page and reads worse.
                 body = ", ".join(bullets)
