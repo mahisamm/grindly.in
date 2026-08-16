@@ -63,6 +63,20 @@ if (/^[0-9a-fA-F]{64}$/.test(env.APP_ENCRYPTION_KEY ?? "")) {
 }
 
 // ---- python + the agent ----
+//
+// Skipped entirely when the configuration above is already broken. Probing the
+// agent spawns an interpreter and imports Chromium's bindings, which is several
+// seconds of work to answer a question that does not matter yet — nothing can
+// run without a database and a signing key. Failing fast also keeps the output
+// readable: three ✗ lines you can act on beat three ✗ lines buried under a
+// dependency report.
+if (hard) {
+  console.log("");
+  console.log(`\x1b[31m${hard} blocking issue(s).\x1b[0m Fix the ✗ lines above, then re-run.`);
+  console.log("  (skipped the Python/renderer checks until the basics are set)\n");
+  process.exit(1);
+}
+
 const py = env.PYTHON_BIN || "python";
 let pythonOk = false;
 try {
