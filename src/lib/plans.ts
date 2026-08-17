@@ -20,7 +20,32 @@
  * seeing that the product works.
  */
 
-export type PlanId = "free" | "pack" | "pass";
+export type PlanId = "free" | "pack" | "pass" | "admin";
+
+/**
+ * The stand-in for "no cap".
+ *
+ * A real number rather than `Infinity`, because these values are counted
+ * against, arithmetic'd, and serialised to the browser — and `JSON.stringify`
+ * turns `Infinity` into `null`, which would reach the dashboard as "1 of null
+ * used on your plan". A million rewrites a day is not reachable by a person,
+ * so the cap still exists and still bounds a runaway loop; it just never fires
+ * for someone using the product.
+ *
+ * Anything at or above this is DISPLAYED as "unlimited" — see `formatLimit`.
+ * Never print the number.
+ */
+export const UNLIMITED = 1_000_000;
+
+/** A limit as a person should read it. */
+export function formatLimit(n: number): string {
+  return n >= UNLIMITED ? "unlimited" : String(n);
+}
+
+/** True when this limit is effectively no limit, so the UI can drop the counter. */
+export function isUnlimited(n: number): boolean {
+  return n >= UNLIMITED;
+}
 
 export type Limits = {
   /** Resumes stored at once. */
@@ -60,6 +85,22 @@ export const LIMITS: Record<PlanId, Limits> = {
     adviceRunsPerDay: 60,
     uploadsPerDay: 40,
     targetsPerResume: 40,
+  },
+  // Not a tier anyone can buy. It is granted by `role = 'admin'` on the user
+  // row, which only `scripts/seed-admin.mjs` sets and only from the ADMIN_EMAIL
+  // environment variable — so it cannot be reached by signing up, by paying, or
+  // by anything a request can do.
+  //
+  // It exists because the person running this has to be able to exercise the
+  // product to see whether it works, and hitting "you have used all 2 rewrites
+  // for today" while testing a rewrite is a bad way to find out. Quotas here
+  // are about bounding cost from strangers, and the operator is not a stranger.
+  admin: {
+    resumes: UNLIMITED,
+    variantRunsPerDay: UNLIMITED,
+    adviceRunsPerDay: UNLIMITED,
+    uploadsPerDay: UNLIMITED,
+    targetsPerResume: UNLIMITED,
   },
 };
 
@@ -123,14 +164,22 @@ export function formatAmount(paise: number, currency = "INR"): string {
 export function effectivePlan(user: {
   plan?: string | null;
   planExpiresAt?: Date | null;
+  role?: string | null;
 }): PlanId {
+  // Role first, and it does not expire. An admin whose pass ran out is still
+  // the operator; billing state has nothing to say about that.
+  if (user.role === "admin") return "admin";
   const plan = user.plan;
   if (plan !== "pass" && plan !== "pack") return "free";
   if (!user.planExpiresAt) return "free";
   return user.planExpiresAt.getTime() > Date.now() ? plan : "free";
 }
 
-export function limitsFor(user: { plan?: string | null; planExpiresAt?: Date | null }): Limits {
+export function limitsFor(user: {
+  plan?: string | null;
+  planExpiresAt?: Date | null;
+  role?: string | null;
+}): Limits {
   return LIMITS[effectivePlan(user)];
 }
 
@@ -138,8 +187,11 @@ export function limitsFor(user: { plan?: string | null; planExpiresAt?: Date | n
 export function daysRemaining(user: {
   plan?: string | null;
   planExpiresAt?: Date | null;
+  role?: string | null;
 }): number | null {
-  if (effectivePlan(user) === "free" || !user.planExpiresAt) return null;
+  const plan = effectivePlan(user);
+  // An admin's access has no end date, so there is no countdown to show.
+  if (plan === "free" || plan === "admin" || !user.planExpiresAt) return null;
   const ms = user.planExpiresAt.getTime() - Date.now();
   return Math.max(0, Math.ceil(ms / 86_400_000));
 }

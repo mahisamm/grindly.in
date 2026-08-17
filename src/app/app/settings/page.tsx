@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/auth";
-import { daysRemaining, effectivePlan, limitsFor } from "@/lib/plans";
+import { daysRemaining, effectivePlan, formatLimit, limitsFor } from "@/lib/plans";
 import { usageToday } from "@/lib/quota";
 import { DeleteAccount } from "./DeleteAccount";
 
@@ -34,7 +34,13 @@ export default async function SettingsPage() {
           <dd>{user.email}</dd>
           <dt className="text-muted">Plan</dt>
           <dd>
-            {plan === "pass" ? `Season Pass · ${left} day${left === 1 ? "" : "s"} left` : "Free"}
+            {plan === "admin"
+              ? "Admin · no limits"
+              : plan === "pass"
+                ? `Season Pass · ${left} day${left === 1 ? "" : "s"} left`
+                : plan === "pack"
+                  ? "Company pack"
+                  : "Free"}
             {plan === "free" && (
               <>
                 {" · "}
@@ -43,14 +49,14 @@ export default async function SettingsPage() {
             )}
           </dd>
           <dt className="text-muted">Resumes</dt>
-          <dd className="tabular-nums">{counts} of {limits.resumes}</dd>
+          <dd className="tabular-nums">{counts} of {formatLimit(limits.resumes)}</dd>
           <dt className="text-muted">Rewrites today</dt>
           <dd className="tabular-nums">
-            {usage.variantRuns.used} of {usage.variantRuns.limit}
+            {usage.variantRuns.used} of {formatLimit(usage.variantRuns.limit)}
           </dd>
           <dt className="text-muted">Reviews today</dt>
           <dd className="tabular-nums">
-            {usage.adviceRuns.used} of {usage.adviceRuns.limit}
+            {usage.adviceRuns.used} of {formatLimit(usage.adviceRuns.limit)}
           </dd>
         </dl>
 

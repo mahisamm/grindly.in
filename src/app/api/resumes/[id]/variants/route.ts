@@ -260,7 +260,10 @@ async function resolveTarget(
   const limit = limitsFor(
     (await prisma.user.findUnique({
       where: { id: userId },
-      select: { plan: true, planExpiresAt: true },
+      // `role` is part of the plan calculation — omitting it here would cap an
+      // admin at the free tier on the one path that actually enforces it,
+      // while every page around it showed no limit.
+      select: { plan: true, planExpiresAt: true, role: true },
     })) ?? {},
   ).targetsPerResume;
   const existing = await prisma.target.count({ where: { resumeId } });

@@ -23,7 +23,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const left = daysRemaining(user);
 
   const planChip =
-    plan === "pass" ? (
+    // An admin is not a prospect. Showing the operator of the site an upgrade
+    // link on every page is the kind of small wrongness that makes a product
+    // feel like it does not know who it is talking to.
+    plan === "admin" ? (
+      <span className="text-muted font-mono text-[11px] tracking-[0.1em] whitespace-nowrap uppercase">
+        Admin
+      </span>
+    ) : plan === "pass" ? (
       <span className="text-muted font-mono text-[11px] tracking-[0.1em] whitespace-nowrap uppercase">
         Season Pass · {left} day{left === 1 ? "" : "s"} left
       </span>

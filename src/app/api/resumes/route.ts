@@ -5,7 +5,7 @@ import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { requireUser, badRequest, serverError } from "@/lib/auth";
 import { runAgent, RESUME_DIR, type Report } from "@/lib/agent";
-import { limitsFor } from "@/lib/plans";
+import { formatLimit, limitsFor } from "@/lib/plans";
 import { reserve, refund } from "@/lib/quota";
 import { audit } from "@/lib/audit";
 
@@ -84,7 +84,7 @@ export async function POST(req: Request) {
     await giveBack();
     return NextResponse.json(
       {
-        error: `Your plan holds ${limitsFor(user).resumes} resumes. Delete one, or get a Season Pass.`,
+        error: `Your plan holds ${formatLimit(limitsFor(user).resumes)} resumes. Delete one, or get a Season Pass.`,
         code: "plan_limit",
       },
       { status: 402 },

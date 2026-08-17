@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/auth";
-import { limitsFor } from "@/lib/plans";
+import { formatLimit, isUnlimited, limitsFor } from "@/lib/plans";
 import { Uploader } from "./Uploader";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +31,9 @@ export default async function WorkspacePage() {
           <p className="text-muted mt-1.5 text-sm">
             {resumes.length === 0
               ? "Upload the PDF you have been sending to employers. In about a second you will see exactly what a parser reads off it — which is usually not what you think."
-              : `${resumes.length} of ${limit} used on your plan.`}
+              : isUnlimited(limit)
+                ? `${resumes.length} stored · no limit on this account.`
+                : `${resumes.length} of ${formatLimit(limit)} used on your plan.`}
           </p>
         </div>
       </div>

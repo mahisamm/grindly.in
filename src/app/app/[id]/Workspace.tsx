@@ -6,6 +6,7 @@ import type {
   Advice, CompanyPack, CompanyResearch, Fidelity, Report,
 } from "@/lib/reportTypes";
 import { SHIPPABLE_FLOOR } from "@/lib/reportTypes";
+import { isUnlimited } from "@/lib/plans";
 import { FidelityLine, Findings, ReportPanel, ScoreDial } from "@/components/Score";
 
 type VariantView = {
@@ -491,6 +492,7 @@ function TargetTab({
   // Said up front rather than discovered by hitting a 402. Aiming at a company
   // the resume is already aimed at reuses that target and costs nothing more,
   // so the count is of NEW targets left, not of clicks left.
+  const unlimited = isUnlimited(targetLimit);
   const used = resume.targets.length;
   const left = Math.max(0, targetLimit - used);
 
@@ -504,7 +506,11 @@ function TargetTab({
           add a skill, a date or a number you did not already have.
         </p>
         <p className="mt-3 max-w-2xl text-sm">
-          {left > 0 ? (
+          {unlimited ? (
+            <span className="text-muted">
+              No limit on targets for this account.
+            </span>
+          ) : left > 0 ? (
             <span className="text-muted">
               {left} of {targetLimit} target{targetLimit === 1 ? "" : "s"} left on this
               resume. Re-running one you have already set up is free.

@@ -67,7 +67,10 @@ export async function reserve(
 ): Promise<QuotaVerdict> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { plan: true, planExpiresAt: true },
+    // `role` is part of the plan calculation — see `effectivePlan`. Selecting
+    // only plan/planExpiresAt here would silently hand an admin the free tier
+    // while every page around them showed unlimited.
+    select: { plan: true, planExpiresAt: true, role: true },
   });
   if (!user) return { allowed: false, used: 0, limit: 0, message: "Account not found." };
 
@@ -134,7 +137,7 @@ export async function usageToday(
 ): Promise<Record<Meter, { used: number; limit: number }>> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { plan: true, planExpiresAt: true },
+    select: { plan: true, planExpiresAt: true, role: true },
   });
   const limits = limitsFor(user ?? {});
   const row = await prisma.dailyUsage.findUnique({
