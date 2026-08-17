@@ -168,30 +168,42 @@ export function ResumeWorkspace({
         </p>
       )}
 
-      <div className="py-8" role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
-        {tab === "report" && (
-          <ReportTab resume={resume} busy={busy} onAdvice={() => post(`/api/resumes/${resume.id}/advice`, undefined, "advice")} />
-        )}
-        {tab === "rewrite" && (
-          <RewriteTab
-            resume={resume}
-            busy={busy}
-            onRun={(targetId) =>
-              post(`/api/resumes/${resume.id}/variants`, targetId ? { targetId } : {}, "rewrite")
-            }
-          />
-        )}
-        {tab === "target" && (
-          <TargetTab
-            resume={resume}
-            packs={packs}
-            disclaimer={disclaimer}
-            targetLimit={targetLimit}
-            busy={busy}
-            onTarget={(body) => post(`/api/resumes/${resume.id}/variants`, body, "rewrite")}
-          />
-        )}
-        {tab === "raw" && <RawTab resume={resume} />}
+      {/* All four panels exist; the inactive ones are `hidden`.
+          Rendering only the selected panel left three of the four `aria-controls`
+          on the tab row pointing at element ids that were not in the document.
+          A screen reader announces those as tabs that control nothing, and the
+          relationship the whole ARIA tabs pattern is built on is simply absent
+          for three quarters of the row. `hidden` keeps them out of the
+          accessibility tree and out of the tab order while keeping the id
+          reachable. */}
+      <div className="py-8" role="tabpanel" id="panel-report" aria-labelledby="tab-report" hidden={tab !== "report"}>
+        <ReportTab
+          resume={resume}
+          busy={busy}
+          onAdvice={() => post(`/api/resumes/${resume.id}/advice`, undefined, "advice")}
+        />
+      </div>
+      <div className="py-8" role="tabpanel" id="panel-rewrite" aria-labelledby="tab-rewrite" hidden={tab !== "rewrite"}>
+        <RewriteTab
+          resume={resume}
+          busy={busy}
+          onRun={(targetId) =>
+            post(`/api/resumes/${resume.id}/variants`, targetId ? { targetId } : {}, "rewrite")
+          }
+        />
+      </div>
+      <div className="py-8" role="tabpanel" id="panel-target" aria-labelledby="tab-target" hidden={tab !== "target"}>
+        <TargetTab
+          resume={resume}
+          packs={packs}
+          disclaimer={disclaimer}
+          targetLimit={targetLimit}
+          busy={busy}
+          onTarget={(body) => post(`/api/resumes/${resume.id}/variants`, body, "rewrite")}
+        />
+      </div>
+      <div className="py-8" role="tabpanel" id="panel-raw" aria-labelledby="tab-raw" hidden={tab !== "raw"}>
+        <RawTab resume={resume} />
       </div>
     </div>
   );
@@ -630,7 +642,13 @@ function TargetTab({
           For any role not in the list. We read the requirements out of it, score your
           resume against them, and tell you what is missing — we never add it for you.
         </p>
+        {/* A placeholder is not a label: it disappears on first keystroke and
+            screen readers are inconsistent about announcing it at all. */}
+        <label htmlFor="jd-text" className="sr-only">
+          Job description
+        </label>
         <textarea
+          id="jd-text"
           value={jd}
           onChange={(e) => setJd(e.target.value)}
           rows={8}
@@ -991,7 +1009,11 @@ function SupplyEvidence({
         )}
       </p>
 
+      <label htmlFor="evidence-text" className="sr-only">
+        {kind === "jd" ? "Their job posting" : "What you know about them"}
+      </label>
       <textarea
+        id="evidence-text"
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={6}

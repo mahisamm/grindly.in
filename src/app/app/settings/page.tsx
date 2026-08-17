@@ -22,7 +22,13 @@ export default async function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-8 sm:px-6 sm:py-10">
-      <Link href="/app" className="text-muted hover:text-ink text-sm">
+      <Link
+        href="/app"
+        // min-h-6 + inline-flex: a standalone navigation link needs a target a
+        // thumb can hit. WCAG 2.2 exempts links inside a sentence; this is not
+        // one, it is the only way back on a phone.
+        className="text-muted hover:text-ink inline-flex min-h-6 items-center text-sm"
+      >
         ← All resumes
       </Link>
       <h1 className="font-display mt-4 text-3xl font-bold">Account</h1>
@@ -44,7 +50,12 @@ export default async function SettingsPage() {
             {plan === "free" && (
               <>
                 {" · "}
-                <Link href="/pricing" className="text-brand underline">upgrade</Link>
+                <Link
+                  href="/pricing"
+                  className="text-brand inline-flex min-h-6 items-center underline"
+                >
+                  upgrade
+                </Link>
               </>
             )}
           </dd>

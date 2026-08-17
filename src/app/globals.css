@@ -37,13 +37,29 @@
   --foreground: var(--ink);
   --muted: #4a443b;              /* ink-soft — AA on paper */
 
-  --brand: #e3402a;             /* vermilion — links, brand, hero accent */
-  --brand-2: #c22e1c;           /* vermilion-deep — gradients/scores */
-  --cta: #e3402a;               /* primary action = vermilion fill */
-  --cta-2: #c22e1c;
-  --accent: #e3402a;            /* success/applied = vermilion (monochrome) */
+  /* TWO vermilions, and the split is a contrast requirement rather than a
+     taste one.
+
+     --vermilion (#e3402a) is the identity: the hero accent, the panel washes,
+     the selection colour, the rules. It measures 3.55:1 on paper, which clears
+     the 3:1 that WCAG asks of large text and of graphics, and misses the 4.5:1
+     it asks of body text.
+
+     So everything set at reading size uses --brand instead, which is the deep
+     vermilion at 4.83:1 on paper and 5.26:1 on panel. Before this split, every
+     link, every button label and every "Get a Season Pass" in the product sat
+     at 3.55:1 — an audit of fourteen screens returned the same failure on all
+     of them.
+
+     Buttons moved too: paper text on #e3402a is 3.55:1 and white text on it is
+     only 4.17:1, so the fill itself had to darken. */
+  --brand: #c22e1c;             /* text, links, scores — 4.83:1 on paper */
+  --brand-2: #a82616;           /* hover / gradient end */
+  --cta: #c22e1c;               /* primary action fill — paper on it is 4.83:1 */
+  --cta-2: #a82616;
+  --accent: #c22e1c;
   --danger: #b3271a;
-  --warn: #9a6b1f;              /* ochre — sits on paper */
+  --warn: #8a5e17;              /* ochre — paper text on it is 4.83:1 */
 }
 
 @theme inline {
@@ -575,7 +591,7 @@ textarea.field { resize: vertical; min-height: 6rem; }
   text-decoration: none;
   transition: color 0.12s var(--ease), background 0.12s var(--ease);
 }
-.mobile-nav__link[data-active] { color: var(--vermilion); background: var(--paper-2); }
+.mobile-nav__link[data-active] { color: var(--brand-2); background: var(--paper-2); }
 .mobile-nav__link:active { background: var(--paper-2); }
 .mobile-nav__link:focus-visible {
   outline: 2px solid var(--vermilion);

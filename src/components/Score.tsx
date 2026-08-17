@@ -97,14 +97,14 @@ export function Findings({ findings }: { findings: Finding[] }) {
           className="bg-surface border-border rounded-lg border p-4"
           style={{
             borderLeftWidth: 3,
-            borderLeftColor: f.severity === "critical" ? "#a3271b" : "#a8730f",
+            borderLeftColor: f.severity === "critical" ? "var(--danger)" : "var(--warn)",
           }}
         >
           <div className="flex flex-wrap items-center gap-2">
             <span
               className="rounded px-1.5 py-0.5 font-mono text-[10px] tracking-[0.1em] uppercase"
               style={{
-                background: f.severity === "critical" ? "#a3271b" : "#a8730f",
+                background: f.severity === "critical" ? "var(--danger)" : "var(--warn)",
                 color: "var(--paper)",
               }}
             >
@@ -177,11 +177,14 @@ export function ReportPanel({ report }: { report: Report }) {
         </div>
       </div>
       <div>
-        <h3 className="font-display mb-3 text-lg font-semibold">
+        {/* h2, not h3. The page heading is the resume's name (h1) and this is
+            the next level down; an h3 here made a screen reader announce a
+            level-two heading that does not exist. */}
+        <h2 className="font-display mb-3 text-lg font-semibold">
           {report.findings.length === 0
             ? "Nothing found"
             : `${report.findings.length} thing${report.findings.length === 1 ? "" : "s"} to fix`}
-        </h3>
+        </h2>
         <Findings findings={report.findings} />
       </div>
     </div>

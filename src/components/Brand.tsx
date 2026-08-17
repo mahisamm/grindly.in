@@ -36,6 +36,11 @@ export function Logo({
   }
   return (
     <span
+      // Marked as a brandmark so the accessibility audit can apply WCAG 1.4.3's
+      // logotype exemption to the vermilion full stop. It is 3.55:1 on paper,
+      // which fails the body-text minimum and is exempt as part of a brand
+      // name — the mark would stop being the mark if it were recoloured.
+      data-brandmark=""
       className={`font-bold tracking-[0.14em] ${light ? "text-[var(--paper)]" : ""}`}
       style={{ fontSize: `${size * 0.032}rem` }}
     >

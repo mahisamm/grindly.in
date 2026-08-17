@@ -95,7 +95,13 @@ export function BrandPanel() {
       </div>
 
       <p className="relative z-[2] text-sm" style={{ color: "rgba(242,236,225,0.7)" }}>
-        <span className="text-brand tracking-[0.18em]">✦✦✦✦✦</span>{" "}
+        {/* Ornament, not content — it says nothing the sentence beside it does
+            not. Hidden from the accessibility tree and set in the identity
+            vermilion, which is 3.24:1 on ink: fine for decoration, short of the
+            4.5:1 that would be required if it carried meaning. */}
+        <span aria-hidden="true" className="tracking-[0.18em]" style={{ color: "var(--vermilion)" }}>
+          ✦✦✦✦✦
+        </span>{" "}
         The rubric is published. Same file, same score, every time.
       </p>
     </aside>

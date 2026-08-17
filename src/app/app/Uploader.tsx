@@ -111,6 +111,10 @@ export function Uploader({ canUpload, limit }: { canUpload: boolean; limit: numb
           ref={inputRef}
           type="file"
           accept={ACCEPT}
+          // Visually hidden and driven by the button above, but still a real
+          // form control in the accessibility tree — without a name a screen
+          // reader announces "file upload button" and nothing else.
+          aria-label="Choose a resume file to upload"
           className="sr-only"
           onChange={(e) => {
             const file = e.target.files?.[0];
