@@ -3,7 +3,7 @@
 `companies.py` holds hand-curated packs: every claim in one was read off the
 employer's own published page by a person, and carries the URL and the date they
 read it. That is the strong version of this feature and it does not scale — there
-are a few million employers and ten packs.
+are a few million employers and a couple of dozen packs.
 
 This module is the weak version, and the whole design problem is being honest
 about the difference. A user types "Freshworks" or "Zetwerk" or the name of a
@@ -70,7 +70,7 @@ _GENERIC_RE = re.compile(
 )
 
 DISCLAIMER_GENERATED = (
-    "This one is not curated. Grindly has ten company packs where a person read "
+    "This one is not curated. Grindly's company packs are ones where a person read "
     "the employer's own published pages and linked them; this is not one of "
     "those. What you see below is a language model's summary of publicly "
     "discussed hiring practice, with no citation behind it and no verification "
@@ -83,11 +83,11 @@ NOT_REQUIRED_NOTE = (
     "We don't have anything specific and checkable about how {name} screens "
     "resumes, and we would rather say so than invent it. That is usually good "
     "news: at a company this size your resume is read by a person — often the "
-    "founder or the hiring manager — not filtered by keyword first. Use the "
-    "general rebuild, which is already tuned for a human reader and a clean "
-    "parse. If you have the job posting, paste it instead: a real job "
-    "description is better targeting than anything we could tell you about the "
-    "company."
+    "founder or the hiring manager — not filtered by keyword first, so the "
+    "general rebuild is already tuned for the reader you actually have. If you "
+    "have their job posting, or you know something about them first-hand, use "
+    "the box below — either is better evidence than anything we could have told "
+    "you about the company."
 )
 
 _SYSTEM = (

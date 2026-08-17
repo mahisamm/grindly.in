@@ -244,6 +244,121 @@ PACKS: list[CompanyPack] = [
         ],
         best_for=["software", "consulting", "it services"],
     ),
+    # ---- added 2026-08-17 ------------------------------------------------
+    # Every URL below was fetched on that date and the claim beside it is what
+    # that page actually said. A pack whose source 404s is worse than no pack:
+    # the whole reason this file exists is that the user can open the link and
+    # check. If one of these goes dead, delete the pack rather than leaving a
+    # citation nobody can follow.
+    CompanyPack(
+        slug="adobe",
+        name="Adobe",
+        summary="Publishes a five-stage hiring process and tells applicants in as many words to make sure their resume shows every relevant qualification.",
+        emphasis=[
+            "Make the qualifications the posting names findable on the first read — Adobe's own guidance is to ensure the resume highlights all of them.",
+            "Give each role a concrete example of something you delivered, since later rounds ask you to talk through past work with the hiring manager and the team.",
+            "Name the craft tools your work actually used; assessments here are role-specific rather than one standard test.",
+        ],
+        keywords=["product design", "creative cloud", "javascript", "java", "python", "c++", "machine learning", "adobe experience manager", "ux", "prototyping"],
+        sources=[
+            Source("Adobe publishes a five-step hiring process — profile, talent partner conversation, hiring manager interview, role-specific assessment, offer — and advises applicants to 'ensure your resume highlights all of your relevant qualifications'.", "https://careers.adobe.com/us/en/hiring-process", "2026-08-17"),
+        ],
+        best_for=["software", "design", "product", "data"],
+    ),
+    CompanyPack(
+        slug="netflix",
+        name="Netflix",
+        summary="Screens against a published culture document rather than a competency grid; it names the behaviours it selects for and expects people to work with unusual autonomy.",
+        emphasis=[
+            "Lead with work you drove yourself with little supervision — the culture document is explicit about autonomy and thin process.",
+            "Show judgement: why you chose an approach, not only what you built.",
+            "Where the source already shows it, surface the moment you told someone something they did not want to hear, or handed work to whoever was best placed to do it.",
+            "Keep the page short and unpadded; the same document is blunt about preferring substance to volume.",
+        ],
+        keywords=["judgment", "selflessness", "candor", "ownership", "distributed systems", "java", "python", "scala", "microservices", "streaming"],
+        sources=[
+            Source("Netflix publishes its culture document, which names judgment, selflessness and candor among the behaviours it selects for and describes an environment of high autonomy with minimal process.", "https://jobs.netflix.com/culture", "2026-08-17"),
+        ],
+        best_for=["software", "data", "product", "content"],
+    ),
+    CompanyPack(
+        slug="uber",
+        name="Uber",
+        summary="Publishes a six-step hiring process, and states what each stage is assessing — experience, problem solving, technical skill and how you work with other people.",
+        emphasis=[
+            "Structure each bullet so the problem and your approach are both visible; problem solving is named as a separate thing they assess.",
+            "Put the collaboration explicitly on the page where the source shows it — who you worked with, and on what.",
+            "Keep the technical detail concrete for engineering roles: the stack, the scale, the part you owned.",
+        ],
+        keywords=["distributed systems", "go", "java", "python", "kotlin", "swift", "microservices", "system design", "data engineering", "scalability"],
+        sources=[
+            Source("Uber publishes a six-step hiring process and states that it assesses experience, problem-solving, technical ability for technical roles, job-related competencies and collaboration.", "https://jobs.uber.com/en/what-moves-us/how-we-hire/", "2026-08-17"),
+        ],
+        best_for=["software", "data", "operations", "product"],
+    ),
+    CompanyPack(
+        slug="wipro",
+        name="Wipro",
+        summary="Recruits along two clearly separated tracks — early careers and experienced professionals — into delivery work on global client projects.",
+        emphasis=[
+            "Make it obvious in the first three lines which track you are: graduation year and degree for early careers, years and domain for experienced.",
+            "Name the client-facing part of your work where the source shows it — delivery, not only build.",
+            "State the standard skill vocabulary plainly in a Technical Skills block; large-scale screening reads literally.",
+            "Keep formatting conventional: one column, standard headings, no graphics.",
+        ],
+        keywords=["java", "python", "sql", "cloud", "aws", "azure", "devops", "testing", "agile", "sap", "servicenow", "cybersecurity"],
+        sources=[
+            Source("Wipro's careers site organises hiring into early-careers and experienced-professional tracks across global client projects.", "https://careers.wipro.com/", "2026-08-17"),
+        ],
+        best_for=["software", "it services", "consulting", "support"],
+    ),
+    CompanyPack(
+        slug="cognizant",
+        name="Cognizant",
+        summary="Separates its hiring into students and new graduates, experienced professionals, alumni and consulting — the track you apply through shapes what the screen looks for.",
+        emphasis=[
+            "Match the page to the track: coursework, projects and graduation year for a new graduate; domain, client and duration for a professional.",
+            "Name the industry you worked in, not only the technology — this is consulting-shaped hiring and the domain is part of the match.",
+            "Give each engagement a one-line statement of what was delivered and over what period.",
+        ],
+        keywords=["java", "python", "sql", "cloud", "aws", "azure", "salesforce", "sap", "data engineering", "agile", "healthcare", "banking"],
+        sources=[
+            Source("Cognizant's careers site presents distinct hiring tracks for students and new graduates, professionals, alumni and consulting professionals.", "https://careers.cognizant.com/global-en/", "2026-08-17"),
+        ],
+        best_for=["software", "it services", "consulting", "analytics"],
+    ),
+    CompanyPack(
+        slug="razorpay",
+        name="Razorpay",
+        summary="Publishes an 'Outgrow Ordinary' careers philosophy and describes compensation as merit-based and tied to output, which puts the weight on what you shipped.",
+        emphasis=[
+            "Lead with what you shipped and what it did, rather than with the role you held — the stated philosophy ties reward to output.",
+            "Surface fintech, payments or high-throughput work where the source already shows it.",
+            "Keep the numbers you have: volume, latency, uptime, users. This is a payments company and scale is the vocabulary.",
+            "Show the part you owned end to end rather than a list of contributions.",
+        ],
+        keywords=["payments", "fintech", "golang", "java", "python", "kubernetes", "aws", "kafka", "system design", "api", "microservices"],
+        sources=[
+            Source("Razorpay's careers site publishes an 'Outgrow Ordinary' philosophy built on Build, Grow and Live Extraordinary, and describes merit-based compensation tied to output.", "https://razorpay.com/jobs/", "2026-08-17"),
+        ],
+        best_for=["software", "fintech", "product", "data"],
+    ),
+    CompanyPack(
+        slug="samsung",
+        name="Samsung",
+        summary="Organises openings by job field and hires heavily into its R&D centres, so the field you are applying into matters more than a general engineering profile.",
+        emphasis=[
+            "Put the specialisation first — embedded, semiconductor, mobile, display, AI — since openings are organised by field rather than by seniority.",
+            "Name the hardware, protocols and toolchains your projects used; an R&D screen searches for specific technology names.",
+            "Surface any thesis, publication or patent, which is ordinary currency in an R&D organisation.",
+            "Keep device and platform work above general web work unless the role is explicitly software.",
+        ],
+        keywords=["embedded", "c", "c++", "android", "linux kernel", "device drivers", "semiconductor", "signal processing", "computer vision", "machine learning", "rtos", "verilog"],
+        sources=[
+            Source("Samsung India's careers site organises its openings by job field and names its R&D centres among its business areas.", "https://www.samsung.com/in/careers/", "2026-08-17"),
+        ],
+        best_for=["embedded", "hardware", "research", "software"],
+    ),
 ]
 
 BY_SLUG = {p.slug: p for p in PACKS}

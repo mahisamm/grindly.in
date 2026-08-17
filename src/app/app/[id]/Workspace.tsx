@@ -28,7 +28,11 @@ type TargetView = {
   kind: string;
   name: string;
   slug: string | null;
-  spec: { skills?: string[]; must_have?: string[]; nice_to_have?: string[] } | null;
+  spec: {
+    skills?: string[]; must_have?: string[]; nice_to_have?: string[];
+    /** "user" when the text came from the candidate rather than an employer. */
+    source?: string;
+  } | null;
 };
 
 type ResumeView = {
@@ -649,7 +653,10 @@ function TargetTab({
         </div>
 
         {resume.targets
-          .filter((t) => t.kind === "jd")
+          // Notes sit here too: both are "text someone pasted, parsed for
+          // requirements", and the only difference is who wrote it — which the
+          // panel says out loud rather than hiding by keeping them apart.
+          .filter((t) => t.kind === "jd" || t.kind === "notes")
           .map((t) => {
             const variants = resume.variants.filter((v) => v.targetId === t.id);
             const required = t.spec?.skills ?? [];
@@ -663,7 +670,24 @@ function TargetTab({
             );
             return (
               <div key={t.id} className="bg-surface border-border mt-6 rounded-xl border p-5">
-                <h3 className="font-display text-lg font-semibold">{t.name}</h3>
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h3 className="font-display text-lg font-semibold">{t.name}</h3>
+                  {t.kind === "notes" && (
+                    <span
+                      className="rounded px-2 py-0.5 font-mono text-[10px] tracking-[0.12em] uppercase"
+                      style={{ background: "var(--surface-2)", color: "var(--muted)" }}
+                    >
+                      from you · not verified
+                    </span>
+                  )}
+                </div>
+                {t.kind === "notes" && (
+                  <p className="text-muted mt-1.5 text-xs leading-relaxed">
+                    Read out of what you wrote about {t.name}. We have not checked any
+                    of it and we are not treating it as something the company published
+                    — it decides which of your own skills get surfaced, nothing more.
+                  </p>
+                )}
                 {required.length > 0 && (
                   <p className="text-muted mt-2 text-sm">
                     Requirements read: {required.join(", ")}
@@ -763,7 +787,7 @@ function AnyCompany({
     <section className="border-border border-t pt-10">
       <h2 className="font-display text-2xl font-semibold">Any other company</h2>
       <p className="text-muted mt-2 max-w-2xl leading-relaxed">
-        Type a name — the ten packs above are the ones a person has read the sources
+        Type a name — the packs above are the ones a person has read the sources
         for, not the only companies you can aim at. We will tell you what we actually
         know about how they screen, and when the honest answer is &ldquo;nothing
         specific&rdquo;, you will get that instead of a paragraph we made up.
@@ -826,10 +850,16 @@ function AnyCompany({
           {found.tailoring === "not_required" ? (
             <>
               <p className="text-muted mt-3 text-sm leading-relaxed">{found.note}</p>
-              <p className="mt-4 text-sm">
-                Use <b>Rewrites</b> for the general rebuild, or paste their job posting
-                below — a real posting beats anything we could guess about the company.
-              </p>
+              {/* The next step, here, rather than a sentence pointing at one.
+                  "Paste their posting below" meant scrolling past ten company
+                  cards to find the box — so the honest answer read as a dead
+                  end, which is exactly what it is not. */}
+              <SupplyEvidence
+                company={found.name}
+                busy={busy}
+                disabled={!existing && targetsLeft === 0}
+                onTarget={onTarget}
+              />
             </>
           ) : (
             <>
@@ -882,6 +912,122 @@ function AnyCompany({
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Two ways to target a company we know nothing about, offered where the
+ * "we know nothing" answer is given.
+ *
+ * The first is their job posting, which is strictly better evidence than
+ * anything we could have said: the employer wrote it, it is current, and it is
+ * about the role rather than the company.
+ *
+ * The second is what the USER knows — a conversation with someone who works
+ * there, a Glassdoor thread, an alumni tip. It is stored and labelled as
+ * theirs, never as ours, and that distinction is the whole design. Reading
+ * forum threads ourselves and presenting the result as knowledge would make
+ * every "each claim links to the company's own page" promise on this page
+ * untrue. Their own anecdote is their risk to weigh; the same anecdote
+ * laundered through us would be a claim we cannot stand behind.
+ */
+function SupplyEvidence({
+  company,
+  busy,
+  disabled,
+  onTarget,
+}: {
+  company: string;
+  busy: string | null;
+  disabled: boolean;
+  onTarget: (body: Record<string, string>) => void;
+}) {
+  const [kind, setKind] = useState<"jd" | "notes">("jd");
+  const [text, setText] = useState("");
+
+  const min = kind === "jd" ? 60 : 40;
+  const short = text.trim().length < min;
+
+  return (
+    <div className="border-border mt-5 border-t pt-5">
+      <p className="text-sm font-medium">Give it something to work with</p>
+
+      <div className="mt-3 flex flex-wrap gap-2" role="radiogroup" aria-label="What you have">
+        {([
+          ["jd", "Their job posting"],
+          ["notes", "What you know about them"],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={kind === value}
+            onClick={() => setKind(value)}
+            className="cursor-pointer rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors"
+            style={{
+              borderColor: kind === value ? "var(--vermilion)" : "var(--line-2)",
+              background: kind === value ? "var(--vermilion)" : "transparent",
+              color: kind === value ? "var(--paper)" : "var(--muted)",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <p className="text-muted mt-3 text-xs leading-relaxed">
+        {kind === "jd" ? (
+          <>
+            The posting is better evidence than anything we could tell you about{" "}
+            {company} — they wrote it, and it is about the actual role.
+          </>
+        ) : (
+          <>
+            Anything you have heard: what someone who works there told you, a review
+            you read, what a friend was asked at interview. We will read the skills out
+            of it and label it <b>from you</b> — we are not treating it as something we
+            checked, and we will not add anything to your resume from it.
+          </>
+        )}
+      </p>
+
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={6}
+        placeholder={
+          kind === "jd"
+            ? "Paste the full job posting here…"
+            : `e.g. a friend there said the team is mostly Java and Kafka, and they ask about system design…`
+        }
+        className="field mt-3 w-full font-mono text-sm"
+      />
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button
+          onClick={() =>
+            onTarget(
+              kind === "jd"
+                ? { jd: text }
+                : { notes: text, companyName: company },
+            )
+          }
+          disabled={busy !== null || short || disabled}
+          className="btn btn-primary text-sm"
+        >
+          {busy === "rewrite"
+            ? "Working…"
+            : disabled
+              ? "No targets left on this resume"
+              : `Tailor for ${company}`}
+        </button>
+        <span className="text-muted text-xs">
+          {short
+            ? `At least ${min} characters.`
+            : `${text.trim().length.toLocaleString()} characters`}
+        </span>
+      </div>
+    </div>
   );
 }
 

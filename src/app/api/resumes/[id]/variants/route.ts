@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser, notFound, serverError, badRequest } from "@/lib/auth";
 import { runAgent, VARIANT_DIR, type Report, type Fidelity } from "@/lib/agent";
 import { reserve, refund } from "@/lib/quota";
-import { limitsFor } from "@/lib/plans";
+import { formatLimit, limitsFor } from "@/lib/plans";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -63,7 +63,10 @@ export async function POST(req: Request, { params }: Ctx) {
     );
   }
 
-  let body: { targetId?: string; company?: string; companyName?: string; jd?: string } = {};
+  let body: {
+    targetId?: string; company?: string; companyName?: string;
+    jd?: string; notes?: string;
+  } = {};
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -234,7 +237,10 @@ type ResolvedTarget = {
 async function resolveTarget(
   userId: string,
   resumeId: string,
-  body: { targetId?: string; company?: string; companyName?: string; jd?: string },
+  body: {
+    targetId?: string; company?: string; companyName?: string;
+    jd?: string; notes?: string;
+  },
 ): Promise<ResolvedTarget | { error: NextResponse }> {
   const none: ResolvedTarget = { id: null, name: "", keywords: [], emphasis: [] };
 
@@ -246,7 +252,7 @@ async function resolveTarget(
     return targetToResolved(t);
   }
 
-  if (!body.company && !body.companyName && !body.jd) return none;
+  if (!body.company && !body.companyName && !body.jd && !body.notes) return none;
 
   // Validate the INPUT before checking the plan limit. The other order tells a
   // user with a two-word job description to buy a Season Pass — the request was
@@ -255,6 +261,10 @@ async function resolveTarget(
   const jdText = String(body.jd ?? "").slice(0, 20000);
   if (body.jd && jdText.trim().length < 60) {
     return { error: badRequest("Paste the full job description — that is too short to read anything from.") };
+  }
+  const notesText = String(body.notes ?? "").slice(0, 20000);
+  if (body.notes && notesText.trim().length < 40) {
+    return { error: badRequest("Write a little more — that is too short to read anything from.") };
   }
 
   const limit = limitsFor(
@@ -271,7 +281,7 @@ async function resolveTarget(
     return {
       error: NextResponse.json(
         {
-          error: `Your plan allows ${limit} target${limit === 1 ? "" : "s"} per resume. Get a Season Pass for more.`,
+          error: `Your plan allows ${formatLimit(limit)} target${limit === 1 ? "" : "s"} per resume. Get a Season Pass for more.`,
           code: "plan_limit",
         },
         { status: 402 },
@@ -297,6 +307,41 @@ async function resolveTarget(
       name: pack.pack.name,
       keywords: pack.pack.keywords ?? [],
       emphasis: pack.pack.emphasis ?? [],
+    };
+  }
+
+  // What the USER knows about an employer — a conversation, a review they read,
+  // what a friend was asked at interview.
+  //
+  // Parsed by exactly the same reader as a job description, because the useful
+  // content is the same shape: skills the role wants. Stored under its own
+  // `kind` so the UI can label it as theirs. That label is the point. We will
+  // not read forum threads ourselves and present the result as knowledge —
+  // every company pack on this page promises a link to the employer's own words,
+  // and an anecdote laundered through us would make that promise false. Their
+  // own anecdote is theirs to weigh.
+  //
+  // It buys exactly what a JD buys: coverage scoring and keyword surfacing. It
+  // grants NO emphasis, so it cannot instruct a rewrite to do anything.
+  if (body.notes) {
+    const parsed = await runAgent<{ spec: { title: string; company: string; skills: string[] } }>(
+      "jd", { text: notesText },
+    );
+    if (!parsed.ok) return { error: serverError("We could not read that.") };
+
+    const name = String(body.companyName ?? "").trim() || parsed.spec.company || "Your notes";
+    const created = await prisma.target.create({
+      data: {
+        userId, resumeId, kind: "notes", name: name.slice(0, 120),
+        jdText: notesText,
+        specJson: JSON.stringify({ skills: parsed.spec.skills ?? [], source: "user" }),
+      },
+    });
+    return {
+      id: created.id,
+      name,
+      keywords: parsed.spec.skills ?? [],
+      emphasis: [],
     };
   }
 
