@@ -17,7 +17,7 @@ export default async function PricingPage() {
   return (
     <>
       <header className="border-border border-b">
-        <nav className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-5">
+        <nav className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-4 sm:px-6 sm:py-5">
           <Link href="/"><Logo /></Link>
           <Link href={user ? "/app" : "/signup"} className="btn btn-primary text-sm">
             {user ? "Your resumes" : "Start free"}
@@ -25,7 +25,7 @@ export default async function PricingPage() {
         </nav>
       </header>
 
-      <main className="mx-auto max-w-5xl flex-1 px-6 py-16">
+      <main className="mx-auto max-w-5xl flex-1 px-5 py-12 sm:px-6 sm:py-16">
         <h1 className="font-display text-4xl font-bold text-balance sm:text-5xl">
           A pass, not a subscription
         </h1>
@@ -125,7 +125,7 @@ export default async function PricingPage() {
       </main>
 
       <footer className="border-border border-t">
-        <div className="text-muted mx-auto flex max-w-6xl flex-wrap gap-5 px-6 py-8 text-sm">
+        <div className="text-muted mx-auto flex max-w-6xl flex-wrap gap-5 px-5 py-8 sm:px-6 text-sm">
           <Link href="/privacy" className="hover:text-ink">Privacy</Link>
           <Link href="/terms" className="hover:text-ink">Terms</Link>
         </div>

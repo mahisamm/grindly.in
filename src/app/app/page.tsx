@@ -24,30 +24,30 @@ export default async function WorkspacePage() {
   const limit = limitsFor(user).resumes;
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-10">
+    <div className="mx-auto max-w-6xl px-5 py-8 sm:px-6 sm:py-10">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-display text-3xl font-bold">Your resumes</h1>
+          <h1 className="font-display text-2xl font-bold sm:text-3xl">Your resumes</h1>
           <p className="text-muted mt-1.5 text-sm">
-            {resumes.length} of {limit} used on your plan.
+            {resumes.length === 0
+              ? "Upload the PDF you have been sending to employers. In about a second you will see exactly what a parser reads off it — which is usually not what you think."
+              : `${resumes.length} of ${limit} used on your plan.`}
           </p>
         </div>
       </div>
 
-      <div className="mt-8">
+      {/* One dashed box, not two.
+          An empty account showed the drop zone and then a second, identical
+          dashed panel headed "Nothing here yet" directly underneath it —
+          telling someone there is nothing here, immediately below the control
+          that exists because there is nothing here. The sentence that was worth
+          keeping moved up under the heading. */}
+      <div className="mt-6 sm:mt-8">
         <Uploader canUpload={resumes.length < limit} limit={limit} />
       </div>
 
-      {resumes.length === 0 ? (
-        <div className="border-border mt-10 rounded-xl border border-dashed p-10 text-center">
-          <h2 className="font-display text-xl font-semibold">Nothing here yet</h2>
-          <p className="text-muted mx-auto mt-2 max-w-md text-sm leading-relaxed">
-            Upload the PDF you have been sending to employers. In about a second you will
-            see exactly what a parser reads off it — which is usually not what you think.
-          </p>
-        </div>
-      ) : (
-        <ul className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {resumes.length > 0 && (
+        <ul className="mt-8 grid gap-4 sm:grid-cols-2 sm:mt-10 lg:grid-cols-3">
           {resumes.map((r) => (
             <li key={r.id}>
               <Link

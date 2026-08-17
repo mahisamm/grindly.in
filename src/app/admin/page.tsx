@@ -60,7 +60,7 @@ export default async function AdminPage() {
   const median = medianRows[0]?.median ?? null;
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-10">
+    <div className="mx-auto max-w-6xl px-5 py-8 sm:px-6 sm:py-10">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="font-display text-3xl font-bold">Admin</h1>
         <Link href="/app" className="text-muted hover:text-ink text-sm">

@@ -97,11 +97,13 @@ export function ResumeWorkspace({
 
   return (
     <div className="mt-4">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="font-display text-3xl font-bold">{resume.label}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <h1 className="font-display min-w-0 text-2xl font-bold break-words sm:text-3xl">
+          {resume.label}
+        </h1>
         <div className="flex items-center gap-4">
           {resume.report && (
-            <span className="text-muted font-mono text-[11px] tracking-[0.1em] uppercase">
+            <span className="text-muted font-mono text-[11px] tracking-[0.1em] whitespace-nowrap uppercase">
               {resume.chars.toLocaleString()} characters read
             </span>
           )}
@@ -109,7 +111,11 @@ export function ResumeWorkspace({
         </div>
       </div>
 
-      <div className="border-border mt-6 flex flex-wrap gap-1 border-b" role="tablist">
+      {/* A strip that scrolls sideways below `sm`, and wraps above it.
+          Four tabs do not fit across 390px: they wrapped onto three ragged
+          lines with the selected underline stranded on the first, and the row
+          stopped reading as one control at all. */}
+      <div className="tab-strip border-border mt-6 border-b" role="tablist">
         {tabs.map(([key, label]) => (
           <button
             key={key}
@@ -132,7 +138,7 @@ export function ResumeWorkspace({
               }
             }}
             onClick={() => setTab(key)}
-            className="-mb-px border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
+            className="-mb-px cursor-pointer border-b-2 px-3.5 py-2.5 text-sm font-medium whitespace-nowrap transition-colors sm:px-4"
             style={{
               borderColor: tab === key ? "var(--brand)" : "transparent",
               color: tab === key ? "var(--ink-color)" : "var(--muted)",
@@ -292,7 +298,14 @@ function ReportTab({
               <AdviceList title="Do this" items={resume.advice.suggestions} />
             </div>
           ) : (
-            <button onClick={onAdvice} disabled={busy !== null} className="btn mt-4 w-full justify-center">
+            // Capped, not full-bleed: in the one-column layout below `lg` this
+            // aside spans the whole page, and a button stretched across 700px
+            // of tablet reads as a banner rather than a control.
+            <button
+              onClick={onAdvice}
+              disabled={busy !== null}
+              className="btn mt-4 w-full justify-center sm:w-auto sm:min-w-52"
+            >
               {busy === "advice" ? "Reading…" : "Ask for a review"}
             </button>
           )}

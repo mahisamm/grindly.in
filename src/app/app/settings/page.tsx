@@ -21,7 +21,7 @@ export default async function SettingsPage() {
   const left = daysRemaining(user);
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-10">
+    <div className="mx-auto max-w-3xl px-5 py-8 sm:px-6 sm:py-10">
       <Link href="/app" className="text-muted hover:text-ink text-sm">
         ← All resumes
       </Link>
@@ -53,7 +53,29 @@ export default async function SettingsPage() {
             {usage.adviceRuns.used} of {usage.adviceRuns.limit}
           </dd>
         </dl>
+
+        {/* Sign out lives here as well as in the desktop header, because below
+            `lg` that header is only the wordmark and the plan — the rest of the
+            navigation moved to the bottom bar, and a bottom bar is for
+            destinations, not for an action that ends the session. */}
+        <form action="/api/logout" method="post" className="mt-6">
+          <button type="submit" className="btn w-full justify-center sm:w-auto">
+            Sign out
+          </button>
+        </form>
       </section>
+
+      {user.role === "admin" && (
+        <section className="bg-surface border-border mt-6 rounded-xl border p-6">
+          <h2 className="font-display text-lg font-semibold">Admin</h2>
+          <p className="text-muted mt-2 text-sm">
+            You have an admin account on this server.
+          </p>
+          <Link href="/admin" className="btn mt-4 inline-flex">
+            Open the admin page
+          </Link>
+        </section>
+      )}
 
       <section className="bg-surface mt-6 rounded-xl border p-6" style={{ borderColor: "#a3271b" }}>
         <h2 className="font-display text-lg font-semibold">Delete your account</h2>

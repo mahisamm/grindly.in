@@ -11,13 +11,13 @@ export default function TermsPage() {
   return (
     <>
       <header className="border-border border-b">
-        <nav className="mx-auto flex max-w-4xl items-center justify-between px-6 py-5">
+        <nav className="mx-auto flex max-w-4xl items-center justify-between px-5 py-4 sm:px-6 sm:py-5">
           <Link href="/"><Logo /></Link>
           <Link href="/privacy" className="text-muted hover:text-ink text-sm">Privacy</Link>
         </nav>
       </header>
 
-      <main className="mx-auto max-w-3xl flex-1 px-6 py-14">
+      <main className="mx-auto max-w-3xl flex-1 px-5 py-10 sm:px-6 sm:py-14">
         <h1 className="font-display text-4xl font-bold">Terms</h1>
         <p className="text-muted mt-2 text-sm">Last updated {UPDATED}</p>
 
@@ -139,7 +139,7 @@ export default function TermsPage() {
       </main>
 
       <footer className="border-border border-t">
-        <div className="text-muted mx-auto flex max-w-4xl gap-5 px-6 py-8 text-sm">
+        <div className="text-muted mx-auto flex max-w-4xl gap-5 px-5 py-8 sm:px-6 text-sm">
           <Link href="/" className="hover:text-ink">Home</Link>
           <Link href="/privacy" className="hover:text-ink">Privacy</Link>
         </div>

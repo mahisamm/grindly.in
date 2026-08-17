@@ -163,9 +163,16 @@ export function FidelityLine({
 export function ReportPanel({ report }: { report: Report }) {
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center gap-6">
+      {/* items-start, not items-center.
+          Centred, the dial sits halfway down a four-bar stack that is much
+          taller than it is, so on a tablet it floated in the middle of an empty
+          left column with the bars starting well below its top edge. Aligned to
+          the top, the score and the first band share a line and the block reads
+          as one object. Below `sm` the dial goes above the bars entirely —
+          side by side at 390px leaves the bars about 180px wide. */}
+      <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-start sm:gap-6">
         <ScoreDial score={report.score} grade={report.grade} />
-        <div className="min-w-[200px] flex-1">
+        <div className="w-full min-w-0 flex-1">
           <BandBars bands={report.bands} />
         </div>
       </div>

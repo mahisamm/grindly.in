@@ -23,16 +23,19 @@ export default async function Home() {
   return (
     <>
       <header className="border-border border-b">
-        <nav className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-5">
+        <nav className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-5 py-4 sm:px-6 sm:py-5">
           <Logo />
-          <div className="flex items-center gap-3">
-            <Link href="/pricing" className="text-muted hover:text-ink text-sm">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Pricing is hidden on the narrowest screens rather than allowed to
+                push "Start free" off the row — the pricing teaser and the
+                footer both link to it further down the same page. */}
+            <Link href="/pricing" className="text-muted hover:text-ink hidden text-sm sm:inline">
               Pricing
             </Link>
-            <Link href="/login" className="text-muted hover:text-ink text-sm">
+            <Link href="/login" className="text-muted hover:text-ink text-sm whitespace-nowrap">
               Sign in
             </Link>
-            <Link href="/signup" className="btn btn-primary text-sm">
+            <Link href="/signup" className="btn btn-primary text-sm whitespace-nowrap">
               Start free
             </Link>
           </div>
@@ -41,7 +44,7 @@ export default async function Home() {
 
       <main className="flex-1">
         {/* hero */}
-        <section className="mx-auto max-w-6xl px-6 pt-16 pb-14 sm:pt-24">
+        <section className="mx-auto max-w-6xl px-5 pt-12 pb-12 sm:px-6 sm:pt-24 sm:pb-14">
           <p className="text-brand mb-5 font-mono text-xs tracking-[0.16em] uppercase">
             Resume readiness, measured
           </p>
@@ -110,7 +113,7 @@ export default async function Home() {
 
         {/* the promise we refuse to break */}
         <section className="border-border border-y" style={{ background: "var(--surface-2)" }}>
-          <div className="mx-auto grid max-w-6xl gap-8 px-6 py-14 md:grid-cols-3">
+          <div className="mx-auto grid max-w-6xl gap-8 px-5 py-12 sm:px-6 sm:py-14 md:grid-cols-3">
             {[
               {
                 h: "It is built not to invent",
@@ -135,7 +138,7 @@ export default async function Home() {
 
         {/* companies */}
         {companies.length > 0 && (
-          <section className="mx-auto max-w-6xl px-6 py-16">
+          <section className="mx-auto max-w-6xl px-5 py-12 sm:px-6 sm:py-16">
             <h2 className="font-display text-3xl font-bold text-balance">
               Company packs, with the sources attached
             </h2>
@@ -163,7 +166,7 @@ export default async function Home() {
 
         {/* pricing teaser */}
         <section className="border-border border-t">
-          <div className="mx-auto max-w-6xl px-6 py-16">
+          <div className="mx-auto max-w-6xl px-5 py-12 sm:px-6 sm:py-16">
             <h2 className="font-display text-3xl font-bold">Priced for a job search</h2>
             <p className="text-muted mt-3 max-w-2xl leading-relaxed">
               Not a subscription. A search runs weeks, not years, so you buy a pass that
@@ -195,7 +198,7 @@ export default async function Home() {
       </main>
 
       <footer className="border-border border-t">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-8 text-sm">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-5 py-8 text-sm sm:px-6">
           <Logo size={24} />
           <nav className="text-muted flex flex-wrap gap-5">
             <Link href="/pricing" className="hover:text-ink">Pricing</Link>

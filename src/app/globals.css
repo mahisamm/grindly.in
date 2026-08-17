@@ -524,3 +524,100 @@ textarea.field { resize: vertical; min-height: 6rem; }
   outline: 2px solid var(--vermilion);
   outline-offset: 2px;
 }
+
+/* ── The phone shell ─────────────────────────────────────────
+   A floating bottom bar for the signed-in app, plus the two
+   patterns that make a wide desktop layout survive a 390px
+   screen: a tab strip that scrolls instead of wrapping, and
+   content that is not hidden underneath the bar.
+   ─────────────────────────────────────────────────────────── */
+
+.mobile-nav {
+  position: fixed;
+  /* Floating, not welded to the edge: a bar flush with the bottom of the
+     viewport sits underneath the iOS home indicator and Android's gesture
+     pill, so its right-hand item is the one that stops being tappable. */
+  left: 50%;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 60;
+  width: min(calc(100vw - 24px), 30rem);
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: 0 1px 0 rgba(23, 20, 15, 0.04), 4px 5px 0 rgba(23, 20, 15, 0.10);
+  /* Clips the active item's fill to the bar's own corners. Without it the
+     first and last cells square off the rounding they sit inside. */
+  overflow: hidden;
+}
+
+.mobile-nav__list {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mobile-nav__link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  /* 56px tall including padding — comfortably over the 44px minimum a
+     fingertip needs, and the whole cell is the target rather than the icon. */
+  min-height: 56px;
+  padding: 8px 4px;
+  border-radius: 14px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  transition: color 0.12s var(--ease), background 0.12s var(--ease);
+}
+.mobile-nav__link[data-active] { color: var(--vermilion); background: var(--paper-2); }
+.mobile-nav__link:active { background: var(--paper-2); }
+.mobile-nav__link:focus-visible {
+  outline: 2px solid var(--vermilion);
+  outline-offset: -2px;
+}
+
+.mobile-nav__label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+/* Room for the bar to float over. Without it the last card on every page is
+   half-covered and looks like a rendering bug rather than a fixed element. */
+.has-mobile-nav { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+@media (min-width: 1024px) {
+  .has-mobile-nav { padding-bottom: 0; }
+}
+
+/* A tab row that scrolls sideways instead of wrapping.
+   Four tabs at 390px wrapped onto three ragged lines with the underline
+   indicator stranded on the first — the row stopped reading as one control. */
+.tab-strip {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+}
+.tab-strip::-webkit-scrollbar { display: none; }
+.tab-strip > * { flex: 0 0 auto; scroll-snap-align: start; }
+/* The scroll hint. A strip with a hard right edge reads as a row that simply
+   ends, so the fourth tab looks like it does not exist rather than like it is
+   one swipe away. The fade only exists where the strip actually scrolls. */
+@media (max-width: 639px) {
+  .tab-strip {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+}
+@media (min-width: 640px) {
+  .tab-strip { flex-wrap: wrap; overflow-x: visible; }
+}
