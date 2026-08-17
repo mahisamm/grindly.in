@@ -174,6 +174,12 @@ def _verdict(data: dict, name: str) -> dict:
     except (TypeError, ValueError):
         confidence = 0.0
 
+    # The name we print back. The model corrects spelling, so someone who typed
+    # "telsa" is answered about Tesla, Inc. — including in the decline, which
+    # used the raw input and produced a card headed "Tesla, Inc." above a
+    # sentence about how "telsa" screens resumes.
+    display = str(data.get("canonical_name") or name).strip()[:120] or name
+
     # Every one of these is a reason to decline, and they are checked
     # independently of what the model said about itself. A model that answers
     # "known": true and then produces two generic lines and no vocabulary has
@@ -188,8 +194,8 @@ def _verdict(data: dict, name: str) -> dict:
     if declined:
         return {
             "tailoring": "not_required",
-            "name": str(data.get("canonical_name") or name).strip()[:120] or name,
-            "note": NOT_REQUIRED_NOTE.format(name=name),
+            "name": display,
+            "note": NOT_REQUIRED_NOTE.format(name=display),
             "emphasis": [],
             "keywords": [],
             "summary": "",
@@ -198,7 +204,7 @@ def _verdict(data: dict, name: str) -> dict:
 
     return {
         "tailoring": "generated",
-        "name": str(data.get("canonical_name") or name).strip()[:120] or name,
+        "name": display,
         "summary": summary[:400],
         "emphasis": emphasis,
         "keywords": keywords,
@@ -232,29 +238,66 @@ def research(name: str, role_hint: str = "") -> dict:
             }
 
     role_line = f"Role the candidate is applying for: {role_hint}\n" if role_hint else ""
+    prompt = _PROMPT.format(name=typed, role_line=role_line)
+
+    # WHOLE responses, judged one at a time. NOT chat_json_ensemble.
+    #
+    # That helper merges the N answers, and `llm._merge_lists` keeps only the
+    # list items a majority of providers produced VERBATIM. Two models asked how
+    # Tesla screens resumes both answer well and neither writes the same
+    # sentence as the other, so the merged `emphasis` and `keywords` come back
+    # empty every time. `_verdict` then sees no emphasis and no vocabulary and
+    # declines — correctly, given what it was handed.
+    #
+    # Measured on production: provider A returned known=true, confidence 0.8, 4
+    # emphasis lines and 10 keywords; provider B returned known=true, confidence
+    # 1.0, 3 lines and 10 keywords; the merge returned 0 and 0. So every company
+    # without a curated pack answered "we know nothing specific about them",
+    # including Tesla, Netflix and Apple. The feature had never worked outside
+    # its tests, which stubbed the merge helper and so never exercised the merge.
+    #
+    # This is the same trap documented at length in `resume_optimize._rewrite_
+    # struct`, and the same fix: take un-merged responses and keep the best one.
+    # Consensus is the wrong tool for a question whose answer is prose.
     try:
-        data = llm_mod.chat_json_ensemble(
-            _PROMPT.format(name=typed, role_line=role_line),
-            system=_SYSTEM,
-            n=2,
-            # Low temperature: this is a recall question, and sampling variety
-            # here is sampling variety in what we are willing to assert.
-            temperature=0.1,
-            validator=_validator,
-        )
+        raws = llm_mod.chat_ensemble(prompt, system=_SYSTEM, n=2, timeout=90,
+                                     temperature=0.1)
     except Exception as e:  # noqa: BLE001
         print(f"[research] {typed}: lookup failed ({e})")
-        data = None
+        raws = []
 
-    if not isinstance(data, dict):
-        # No model configured, or every provider failed. Declining is the right
-        # answer and it is the same answer the user would get for a small
-        # company, so nothing here has to explain an outage to them.
-        return {
-            "ok": True, "tailoring": "not_required", "name": typed,
-            "note": NOT_REQUIRED_NOTE.format(name=typed),
-            "emphasis": [], "keywords": [], "summary": "", "confidence": 0.0,
-            "disclaimer": companies.DISCLAIMER,
-        }
+    best: dict | None = None
+    declined: dict | None = None
+    for raw in raws:
+        parsed = llm_mod._extract_json(raw) if raw else None
+        if not _validator(parsed):
+            continue
+        verdict = _verdict(parsed, typed)
+        if verdict["tailoring"] != "generated":
+            # Kept so a decline still answers about the company the model
+            # recognised rather than about the string that was typed.
+            declined = declined or verdict
+            continue
+        # Richest surviving answer wins — most emphasis lines and vocabulary
+        # AFTER the filters, so a model that pads with generic resume advice
+        # does not out-score one that answered the question.
+        if best is None or (
+            len(verdict["emphasis"]) + len(verdict["keywords"])
+            > len(best["emphasis"]) + len(best["keywords"])
+        ):
+            best = verdict
 
-    return {"ok": True, **_verdict(data, typed), "disclaimer": companies.DISCLAIMER}
+    if best:
+        return {"ok": True, **best, "disclaimer": companies.DISCLAIMER}
+
+    # Nothing survived: no model configured, every provider failed, or every
+    # answer was a guess. All three are the same answer to the user, and it is a
+    # true one — so nothing here has to explain an outage to them.
+    if declined:
+        return {"ok": True, **declined, "disclaimer": companies.DISCLAIMER}
+    return {
+        "ok": True, "tailoring": "not_required", "name": typed,
+        "note": NOT_REQUIRED_NOTE.format(name=typed),
+        "emphasis": [], "keywords": [], "summary": "", "confidence": 0.0,
+        "disclaimer": companies.DISCLAIMER,
+    }

@@ -62,18 +62,46 @@ def advise(resume_text: str) -> dict:
         f"Resume:\n\"\"\"\n{text[:6000]}\n\"\"\"\n\n"
         "Review this resume. Return valid JSON only."
     )
+    # WHOLE responses, richest one wins. NOT chat_json_ensemble.
+    #
+    # That helper merges the N answers, and `llm._merge_lists` keeps only the
+    # list items a majority of providers produced VERBATIM. Skill lists survive
+    # that — three models asked for technologies all write "python" — but this
+    # function asks for ADVICE, and three models never write the same sentence.
+    #
+    # Measured on production against a real resume: the providers returned 3, 3
+    # and 4 strengths, 3, 4 and 4 issues, and 5 suggestions each. The merge
+    # returned {"strengths": [], "issues": [], "suggestions": []}, so this
+    # function fell through to `_fallback_advice` every single time. The panel
+    # it feeds is titled "A recruiter's read" and tells the user it is a model's
+    # opinion on their writing; they were reading a canned heuristic instead.
+    #
     # temperature=0.0 because the same resume should get the same advice twice;
     # a reviewer whose opinion changes between refreshes is not a reviewer.
-    result = llm_mod.chat_json_ensemble(
-        prompt, system=_ADVISE_SYS, n=3, timeout=60, temperature=0.0)
-    if result and isinstance(result, dict) and (
-        result.get("suggestions") or result.get("issues")
-    ):
+    try:
+        raws = llm_mod.chat_ensemble(
+            prompt, system=_ADVISE_SYS, n=3, timeout=60, temperature=0.0)
+    except Exception as e:  # noqa: BLE001
+        print(f"[advise] providers unavailable: {e}")
+        raws = []
+
+    best: dict | None = None
+    best_weight = 0
+    for raw in raws:
+        parsed = llm_mod._extract_json(raw) if raw else None
+        if not isinstance(parsed, dict):
+            continue
+        if not (parsed.get("suggestions") or parsed.get("issues")):
+            continue
         try:
-            return _coerce_advice(result)
+            advice = _coerce_advice(parsed)
         except (ValueError, TypeError):
-            pass
-    return _fallback_advice(text)
+            continue
+        weight = len(advice["strengths"]) + len(advice["issues"]) + len(advice["suggestions"])
+        if weight > best_weight:
+            best, best_weight = advice, weight
+
+    return best or _fallback_advice(text)
 
 
 # ---------- ATS: what a machine actually reads off the page ----------
@@ -383,8 +411,8 @@ def _fallback_advice(text: str) -> dict:
 
     if not re.search(r"\b(award|winner|rank|hackathon|scholarship|patent|publication)\b", low):
         suggestions.append(
-            "If you have a rank, award, hackathon result or publication, add it — "
-            "it is the fastest credibility signal on a fresher resume"
+            "If you have a rank, award, hackathon result, patent or publication, "
+            "add it — it is the fastest credibility signal on the page"
         )
     if re.search(r"\bresponsible for\b|\bworked on\b", low):
         issues.append("Some bullets describe duties rather than outcomes")

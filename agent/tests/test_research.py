@@ -10,6 +10,8 @@ not know.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import company_research
@@ -18,16 +20,32 @@ import llm as llm_mod
 
 @pytest.fixture
 def answer(monkeypatch):
-    """Pin the model's reply so these tests measure our filtering, not its mood."""
-    def _set(payload):
-        monkeypatch.setattr(
-            llm_mod, "chat_json_ensemble",
-            lambda *a, **k: payload,
-        )
-        monkeypatch.setattr(
-            company_research.llm_mod, "chat_json_ensemble",
-            lambda *a, **k: payload,
-        )
+    """Pin the providers' replies so these tests measure our filtering.
+
+    Stubbed at `chat_ensemble`, which returns RAW STRINGS — the same boundary
+    the real code calls — rather than at a helper that hands back a finished
+    dict. That distinction is the whole reason this fixture looks like this.
+
+    The first version stubbed `chat_json_ensemble`, which merges the providers'
+    answers before returning. Every test passed and the feature was broken in
+    production for every company: the merge keeps only list items a majority of
+    models produce verbatim, so `emphasis` and `keywords` came back empty and
+    every lookup declined. The stub had replaced the exact code that was
+    failing. A test double belongs at the edge of the system, not in the middle
+    of the logic under test.
+
+    `payloads` may be one dict or a list of them, so a test can give the two
+    providers different answers — which is the real situation and the one that
+    broke.
+    """
+    def _set(payloads):
+        answers = payloads if isinstance(payloads, list) else [payloads, payloads]
+
+        def fake(prompt, system="", n=2, timeout=60, **kw):
+            return [json.dumps(a) for a in answers[:max(1, n)]]
+
+        monkeypatch.setattr(llm_mod, "chat_ensemble", fake)
+        monkeypatch.setattr(company_research.llm_mod, "chat_ensemble", fake)
     return _set
 
 
@@ -54,7 +72,7 @@ GOOD = {
 def test_a_curated_pack_wins_and_never_reaches_the_model(monkeypatch):
     def explode(*a, **k):
         raise AssertionError("the model was called for a company we have a pack for")
-    monkeypatch.setattr(company_research.llm_mod, "chat_json_ensemble", explode)
+    monkeypatch.setattr(company_research.llm_mod, "chat_ensemble", explode)
 
     for typed in ("amazon", "Amazon", "AMAZON", "Tata Consultancy Services"):
         out = company_research.research(typed)
@@ -90,7 +108,7 @@ def test_declining_is_a_successful_answer_not_an_error(answer):
 def test_no_model_configured_declines_rather_than_erroring(monkeypatch):
     def dead(*a, **k):
         raise RuntimeError("no provider configured")
-    monkeypatch.setattr(company_research.llm_mod, "chat_json_ensemble", dead)
+    monkeypatch.setattr(company_research.llm_mod, "chat_ensemble", dead)
 
     out = company_research.research("Some Company Ltd")
     assert out["ok"] is True
@@ -99,6 +117,82 @@ def test_no_model_configured_declines_rather_than_erroring(monkeypatch):
     # would have produced anyway, which is the truthful one either way.
     assert "outage" not in out["note"].lower()
     assert "error" not in out["note"].lower()
+
+
+# ---------------------------------------------------------------------------
+# two providers, two different answers — the case that shipped broken
+# ---------------------------------------------------------------------------
+
+def test_providers_that_word_it_differently_still_produce_a_pack(answer):
+    """The regression test for the bug that made this feature never work.
+
+    Two models asked how Tesla screens resumes both answer well and neither
+    writes the same sentence as the other. Merging their answers by majority
+    vote — which is what `chat_json_ensemble` does — keeps only the list items
+    they produced VERBATIM, so `emphasis` and `keywords` came back empty and
+    every company declined. Measured live: provider A gave 4 lines and 10
+    keywords, provider B gave 3 and 10, the merge gave 0 and 0.
+
+    Consensus is the wrong tool for a question whose answer is prose. Whole
+    responses, best one wins.
+    """
+    a = {
+        "known": True, "confidence": 0.8, "canonical_name": "Tesla, Inc.",
+        "summary": "Hires heavily into powertrain, autonomy and manufacturing software.",
+        "emphasis": [
+            "Lead with embedded or control-systems work over general web experience.",
+            "Name the languages your firmware and tooling used, especially C++ and Python.",
+            "Surface anything that shipped into a physical product or a factory.",
+        ],
+        "keywords": ["c++", "python", "embedded", "autonomy", "manufacturing"],
+    }
+    b = {
+        "known": True, "confidence": 1.0, "canonical_name": "Tesla",
+        "summary": "Screens for hands-on engineering depth and shipped hardware or vehicle software.",
+        "emphasis": [
+            "Put vehicle, battery or energy work at the top of the page.",
+            "Show ownership of something that reached production rather than a prototype.",
+            "State the scale you worked at — units, vehicles, sites.",
+            "Name the simulation and test tooling your projects used.",
+        ],
+        "keywords": ["electric vehicles", "battery", "c++", "simulation", "controls"],
+    }
+    answer([a, b])
+
+    out = company_research.research("telsa")
+    assert out["tailoring"] == "generated", (
+        "two good answers that disagree on wording must not cancel each other out"
+    )
+    # The richest SURVIVING answer wins — b has four lines to a's three.
+    assert len(out["emphasis"]) == 4
+    assert "battery" in out["keywords"]
+
+
+def test_the_typo_is_answered_about_the_real_company(answer):
+    """Someone types "telsa". The card said "Tesla, Inc." over a sentence about
+    how "telsa" screens resumes — two names for one company on one card."""
+    answer({"known": False, "confidence": 0.0, "canonical_name": "Tesla, Inc."})
+    out = company_research.research("telsa")
+    assert out["name"] == "Tesla, Inc."
+    assert "Tesla, Inc." in out["note"]
+    assert "telsa" not in out["note"]
+
+
+def test_one_junk_response_does_not_sink_a_good_one(answer):
+    """Providers fail independently. One returning nothing usable must not stop
+    the other's answer from being used."""
+    answer([{"known": False, "confidence": 0.0}, GOOD])
+    assert company_research.research("Freshworks")["tailoring"] == "generated"
+
+
+def test_unparseable_output_is_skipped_not_crashed_on(monkeypatch):
+    monkeypatch.setattr(
+        company_research.llm_mod, "chat_ensemble",
+        lambda *a, **k: ["not json at all", None, json.dumps(GOOD)],
+    )
+    out = company_research.research("Freshworks")
+    assert out["ok"] is True
+    assert out["tailoring"] == "generated"
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +275,7 @@ def test_an_absurdly_long_name_is_rejected():
 
 def test_whitespace_is_normalised_before_matching(monkeypatch):
     monkeypatch.setattr(
-        company_research.llm_mod, "chat_json_ensemble",
+        company_research.llm_mod, "chat_ensemble",
         lambda *a, **k: pytest.fail("should have matched the curated pack"),
     )
     out = company_research.research("  amazon  ")
