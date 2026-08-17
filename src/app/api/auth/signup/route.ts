@@ -38,8 +38,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Send a JSON body." }, { status: 400 });
   }
 
-  const email = normalizeEmail(body.email ?? "");
-  const password = body.password ?? "";
+  const email = normalizeEmail(body.email);
+  // Narrowed here rather than cast later: a non-string becomes "", which
+  // fails the length rule and produces the same message a two-character
+  // password gets. `validatePassword` guards this too, for callers that
+  // do not narrow first.
+  const password = typeof body.password === "string" ? body.password : "";
   const name = (body.name ?? "").trim().slice(0, 80) || null;
 
   if (!isValidEmail(email)) {

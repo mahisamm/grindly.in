@@ -44,8 +44,21 @@ export const MIN_PASSWORD_LENGTH = 10;
  * A password long enough and not obviously one of the handful everyone picks.
  * Returns null when acceptable, or a message written for the person typing it.
  */
-export function validatePassword(password: string): string | null {
-  const value = password ?? "";
+export function validatePassword(password: unknown): string | null {
+  // `unknown`, not `string`, and that is the point. These helpers sit directly
+  // behind `await req.json()`, whose result is whatever the client sent — an
+  // array, an object, a number. Typed as `string` they compiled fine and then
+  // called `.toLowerCase()` on an object at runtime, so POSTing
+  // `{"password": {"a": 1}}` to /api/auth/signup returned a 500 with a stack
+  // trace instead of "that does not look like a password".
+  //
+  // A non-string is REJECTED rather than coerced. `String(["a@b.com"])` is
+  // "a@b.com", so coercing would have accepted an array as an email address —
+  // quietly wrong is worse than loudly wrong.
+  if (typeof password !== "string") {
+    return `Use at least ${MIN_PASSWORD_LENGTH} characters — length matters more than symbols.`;
+  }
+  const value = password;
   if (value.length < MIN_PASSWORD_LENGTH) {
     return `Use at least ${MIN_PASSWORD_LENGTH} characters — length matters more than symbols.`;
   }
@@ -53,12 +66,42 @@ export function validatePassword(password: string): string | null {
     return "That password is longer than 200 characters.";
   }
   const flat = value.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // Keyboard walks are on this list in their own right, not just as prefixes.
+  // The ten-character minimum above is what actually does the work here, and it
+  // has a side effect worth naming: it forces people past the short classics
+  // and straight into the long ones. "qwertyuiop" is exactly ten characters and
+  // sits in the global top twenty of every breach corpus, and it sailed through
+  // — "qwerty" is a prefix of it, but the window below stopped four characters
+  // short of reaching it.
   const COMMON = [
-    "password", "12345678", "qwerty", "letmein", "welcome", "admin",
-    "iloveyou", "abc123", "1234567890", "grindly", "resume", "changeme",
+    "password", "12345678", "1234567890", "123456789",
+    "qwerty", "qwertyuiop", "qwerty123", "asdfghjkl", "zxcvbnm",
+    "1qaz2wsx", "qazwsxedc",
+    "letmein", "welcome", "admin", "iloveyou", "abc123", "monkey",
+    "sunshine", "princess", "football", "trustno1", "dragon",
+    "grindly", "resume", "changeme", "passw0rd", "p@ssword",
   ];
-  if (COMMON.some((c) => flat === c || flat.startsWith(c) && flat.length <= c.length + 3)) {
+
+  // Four characters of suffix, not three, and this is the difference between
+  // catching "letmein1234" and not. Someone padding a known password to clear a
+  // length rule is the case this exists for, and they pad it by exactly as much
+  // as the rule demands — a ten-character floor turns "letmein" into
+  // "letmein123" or "letmein1234". A wider window would start rejecting real
+  // passphrases that happen to open with a common word.
+  const SUFFIX_ALLOWANCE = 4;
+  const isCommon = COMMON.some(
+    (c) => flat === c || (flat.startsWith(c) && flat.length <= c.length + SUFFIX_ALLOWANCE),
+  );
+  if (isCommon) {
     return "That password is one of the most commonly used ones. Pick something else.";
+  }
+
+  // A single character repeated, or a straight run up or down the digits.
+  // "aaaaaaaaaa" and "0123456789" both clear ten characters and neither is a
+  // password.
+  if (/^(.)\1+$/.test(flat)) {
+    return "That is one character repeated. Pick something else.";
   }
   return null;
 }
@@ -110,13 +153,16 @@ export async function verifyPassword(password: string, stored: string | null): P
  * differing only in capitalisation is a support ticket and a security question
  * ("which one did the password reset go to?") rather than a feature.
  */
-export function normalizeEmail(email: string): string {
-  return (email ?? "").trim().toLowerCase();
+export function normalizeEmail(email: unknown): string {
+  // Total by construction — see validatePassword for why these take `unknown`.
+  // Anything that is not a string normalises to "", which every caller already
+  // treats as "no email".
+  return typeof email === "string" ? email.trim().toLowerCase() : "";
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-export function isValidEmail(email: string): boolean {
+export function isValidEmail(email: unknown): boolean {
   const value = normalizeEmail(email);
   return value.length <= 254 && EMAIL_RE.test(value);
 }

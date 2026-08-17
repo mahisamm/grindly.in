@@ -35,7 +35,11 @@ export async function POST(req: Request) {
   }
 
   const token = (body.token ?? "").trim();
-  const password = body.password ?? "";
+  // Narrowed here rather than cast later: a non-string becomes "", which
+  // fails the length rule and produces the same message a two-character
+  // password gets. `validatePassword` guards this too, for callers that
+  // do not narrow first.
+  const password = typeof body.password === "string" ? body.password : "";
   if (!token) {
     return NextResponse.json({ error: "That reset link is incomplete." }, { status: 400 });
   }

@@ -39,7 +39,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Send a JSON body." }, { status: 400 });
   }
 
-  const email = normalizeEmail(body.email ?? "");
+  const email = normalizeEmail(body.email);
   const sameAnswer = NextResponse.json({
     ok: true,
     message: "If that address has an account, a reset link is on its way.",

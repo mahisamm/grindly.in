@@ -70,7 +70,7 @@ export async function GET(req: Request) {
     return back("google_failed");
   }
 
-  const email = normalizeEmail(profile.email ?? "");
+  const email = normalizeEmail(profile.email);
   if (!email) return back("google_no_email");
   if (profile.email_verified === false) {
     // An unverified Google address can be one the holder does not control, so

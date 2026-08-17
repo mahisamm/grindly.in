@@ -41,7 +41,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Send a JSON body." }, { status: 400 });
   }
 
-  const email = normalizeEmail(body.email ?? "");
+  const email = normalizeEmail(body.email);
   const password = body.password ?? "";
   if (!email || !password) {
     return NextResponse.json({ error: "Enter your email and password." }, { status: 400 });

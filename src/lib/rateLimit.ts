@@ -34,11 +34,25 @@ const SWEEP_ONE_IN = 50;
 
 async function sweepExpired(now: Date): Promise<void> {
   if (Math.random() * SWEEP_ONE_IN >= 1) return;
-  // Never allowed to fail a request: this is housekeeping, and a rate-limit
-  // check that throws because a cleanup lost a race is a self-inflicted outage.
-  await prisma.rateLimitEntry
-    .deleteMany({ where: { windowEnd: { lt: now } } })
-    .catch((e) => console.error("[rateLimit] sweep failed:", e));
+  // try/catch around the WHOLE body, not `.catch()` on the query.
+  //
+  // `.catch()` only handles a rejected promise. It does nothing about a
+  // synchronous throw while building the call — `prisma.rateLimitEntry` being
+  // undefined, the client not yet initialised — and that throw escapes into a
+  // promise nobody is holding, because the caller deliberately does not await
+  // this. Node treats an unhandled rejection as fatal by default, so a
+  // housekeeping task that cannot possibly matter would take the process down
+  // and every signed-in user with it.
+  //
+  // Caught by a test, in the least dramatic way possible: the rate-limit suite
+  // mocks prisma without a `rateLimitEntry.deleteMany`, so the sweep threw
+  // synchronously and vitest reported an unhandled rejection beside ten passing
+  // assertions.
+  try {
+    await prisma.rateLimitEntry.deleteMany({ where: { windowEnd: { lt: now } } });
+  } catch (e) {
+    console.error("[rateLimit] sweep failed:", e);
+  }
 }
 
 export async function isRateLimited(key: string, limit: number, windowMs: number): Promise<boolean> {
