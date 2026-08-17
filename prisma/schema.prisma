@@ -314,3 +314,26 @@ model DailyUsage {
   @@unique([userId, localDate])
   @@map("daily_usage")
 }
+
+/// Written by scripts/backup-drill.sh, never by the app — and declared here
+/// anyway, because `prisma db push` manages the whole `public` schema and
+/// treats anything it does not know about as something to drop.
+///
+/// It did. A deploy failed with "you are about to drop the `backup_health`
+/// table, which is not empty", `migrate` exited 1, and `web` — which waits for
+/// migrate to complete successfully — never started. Compose had already
+/// stopped the old container by then, so the site returned 502 until someone
+/// intervened. The guard was right to refuse; the table simply should not have
+/// been invisible to it.
+///
+/// Nothing reads this through Prisma. It is here so Prisma leaves it alone.
+model BackupHealth {
+  id            String    @id @default("singleton")
+  lastDumpAt    DateTime? @map("last_dump_at") @db.Timestamptz(6)
+  lastRestoreAt DateTime? @map("last_restore_at") @db.Timestamptz(6)
+  lastRestoreOk Boolean?  @default(false) @map("last_restore_ok")
+  lastRowCount  Int?      @map("last_row_count")
+  updatedAt     DateTime? @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("backup_health")
+}

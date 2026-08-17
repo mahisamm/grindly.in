@@ -37,24 +37,34 @@ services:
     restart: unless-stopped
 
   # One-shot: bring the schema up to date, promote ADMIN_EMAIL if that account
-  # exists, then exit. web waits for it to complete successfully.
+  # exists, then exit.
   #
-  # THERE IS NO `--accept-data-loss` HERE, ON PURPOSE.
+  # RUN IT YOURSELF, BEFORE `up -d`. It is behind a profile, so a plain
+  # `docker compose up -d` does not touch it:
   #
-  # This runs automatically on every `docker compose up -d`. An automated deploy
-  # must never be allowed to drop a column or a table: without the flag, Prisma
-  # refuses a destructive change, and with no TTY in the container it cannot
-  # prompt, so it errors and `web` never starts. That is the correct outcome —
-  # the deploy fails loudly instead of quietly deleting production.
+  #     docker compose run --rm migrate     # must exit 0
+  #     docker compose up -d                # only then
   #
-  # A migration that IS destructive is therefore a deliberate, human-run step
-  # BEFORE the stack comes up, not something compose does on your behalf. See
-  # docs/PIVOT-DEPLOY.md. Once the schema has been changed by hand, this service
-  # finds it already in sync and exits 0 without touching anything.
+  # It used to be a dependency of `web` — `service_completed_successfully` —
+  # which sounded safe and was the opposite. `up -d` stops the running web
+  # container before it evaluates dependencies, so when migrate failed there was
+  # nothing left serving: the site returned 502 until a human noticed. A refused
+  # migration should fail the DEPLOY and leave the CURRENT version running, and
+  # that is only true if migrate is a separate step whose failure stops you from
+  # taking the next one.
   #
-  # If you are reading this because a deploy just failed here: that is the guard
-  # working. Do not "fix" it by adding the flag.
+  # It failed for real: `backup_health`, created by scripts/backup-drill.sh
+  # outside Prisma's knowledge, looked to `db push` like a table to drop. It is
+  # declared in schema.prisma now, and the ordering above is what stops the next
+  # unmanaged table being an outage instead of a red line in a terminal.
+  #
+  # THERE IS NO `--accept-data-loss` HERE, ON PURPOSE. Without it Prisma refuses
+  # a destructive change, and with no TTY it cannot prompt, so it errors. That
+  # is the correct outcome — the deploy fails loudly instead of quietly deleting
+  # production. If you are reading this because a migration just failed: that is
+  # the guard working. Do not "fix" it by adding the flag.
   migrate:
+    profiles: ["migrate"]
     build: { context: ., dockerfile: Dockerfile }
     image: grindly-web
     command: sh -c "npx prisma db push --skip-generate && node scripts/seed-admin.mjs"
@@ -119,7 +129,6 @@ services:
     logging: *default-logging
     depends_on:
       postgres: { condition: service_healthy }
-      migrate: { condition: service_completed_successfully }
     restart: unless-stopped
 
   caddy:
