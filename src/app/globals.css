@@ -768,3 +768,44 @@ textarea.field { resize: vertical; min-height: 6rem; }
 @media (min-width: 640px) {
   .tab-strip { flex-wrap: wrap; overflow-x: visible; }
 }
+
+/* ── Report a problem — the floating beta feedback control ───────────
+   Fixed to the bottom-right, and lifted clear of the mobile navigation bar
+   rather than sitting on top of it: that bar is fixed too, and a report button
+   overlapping "Account" would make both unusable with a thumb.
+   env(safe-area-inset-bottom) keeps it off the iOS home indicator. */
+.report-problem {
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+@media (max-width: 1023px) {
+  /* Above the thumb bar. */
+  .report-problem { bottom: calc(86px + env(safe-area-inset-bottom, 0px)); }
+}
+
+.report-problem__trigger {
+  cursor: pointer;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  color: var(--muted);
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  transition: color 0.2s var(--ease), border-color 0.2s var(--ease), transform 0.2s var(--ease);
+}
+.report-problem__trigger:hover {
+  color: var(--ink-color);
+  border-color: var(--ink-color);
+  transform: translateY(-1px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .report-problem__trigger { transition: none; }
+  .report-problem__trigger:hover { transform: none; }
+}

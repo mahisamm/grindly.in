@@ -5,6 +5,7 @@ import { currentUser, isApproved } from "@/lib/auth";
 import { Logo } from "@/components/Brand";
 import { ExportData } from "@/app/app/settings/AccountForms";
 import { DeleteAccount } from "@/app/app/settings/DeleteAccount";
+import { ReportProblem } from "@/components/ReportProblem";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
@@ -100,6 +101,7 @@ export default async function PendingPage() {
         Nothing you do here costs anything, and no card is involved at any point in the
         beta.
       </p>
+      <ReportProblem />
     </main>
   );
 }
