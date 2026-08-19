@@ -11,6 +11,15 @@
  *   * It counts in the USER'S local day. "2 a day" has to mean their day, or
  *     the window slides for everyone outside UTC and resets at 5:30am in India.
  *
+ *     That was a promise the code did not keep for a while. Every function here
+ *     took a `timezone` parameter with an Asia/Kolkata default and not one
+ *     caller ever passed it, so every account on the instance was counted in
+ *     IST while the refusal message told them the limit resets at midnight in
+ *     their timezone. The zone is now a column on the user, captured from the
+ *     browser at sign-in, and read here rather than passed in — a default
+ *     parameter that every caller silently accepts is not a default, it is the
+ *     only behaviour.
+ *
  *   * It reserves before the work, and refunds if the work never happened. The
  *     natural shape — do the work, then increment — lets a user fire twenty
  *     concurrent requests through the check before any of them has counted.
@@ -19,6 +28,14 @@ import { prisma } from "@/lib/prisma";
 import { limitsFor, type Limits } from "@/lib/plans";
 
 export type Meter = "variantRuns" | "adviceRuns" | "uploads";
+
+/**
+ * Where a user is counted when we have not been told otherwise.
+ *
+ * India, because that is who this is built for — not UTC, which would be a
+ * neutral-looking choice that is wrong for almost every actual user.
+ */
+export const DEFAULT_TIMEZONE = "Asia/Kolkata";
 
 const LIMIT_KEY: Record<Meter, keyof Limits> = {
   variantRuns: "variantRunsPerDay",
@@ -39,7 +56,7 @@ const LABEL: Record<Meter, string> = {
  * with a timezone is the only way to get "what day is it there" without pulling
  * in a date library, and every other locale needs reformatting afterwards.
  */
-export function localDate(timezone = "Asia/Kolkata", now = new Date()): string {
+export function localDate(timezone = DEFAULT_TIMEZONE, now = new Date()): string {
   try {
     return now.toLocaleDateString("en-CA", { timeZone: timezone });
   } catch {
@@ -60,22 +77,18 @@ export type QuotaVerdict =
  * count past the limit we roll it back and refuse, which means a rejected
  * request does not consume the allowance it was refused for.
  */
-export async function reserve(
-  userId: string,
-  meter: Meter,
-  timezone = "Asia/Kolkata",
-): Promise<QuotaVerdict> {
+export async function reserve(userId: string, meter: Meter): Promise<QuotaVerdict> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     // `role` is part of the plan calculation — see `effectivePlan`. Selecting
     // only plan/planExpiresAt here would silently hand an admin the free tier
     // while every page around them showed unlimited.
-    select: { plan: true, planExpiresAt: true, role: true },
+    select: { plan: true, planExpiresAt: true, role: true, timezone: true },
   });
   if (!user) return { allowed: false, used: 0, limit: 0, message: "Account not found." };
 
   const limit = limitsFor(user)[LIMIT_KEY[meter]];
-  const date = localDate(timezone);
+  const date = localDate(user.timezone ?? DEFAULT_TIMEZONE);
 
   // Atomic: upsert-then-increment in a single round trip. `update` on the
   // composite unique key maps to one UPDATE ... SET n = n + 1 RETURNING n.
@@ -116,12 +129,15 @@ export async function reserve(
  *
  * Charging for those is charging for our own outage.
  */
-export async function refund(
-  userId: string,
-  meter: Meter,
-  timezone = "Asia/Kolkata",
-): Promise<void> {
-  const date = localDate(timezone);
+export async function refund(userId: string, meter: Meter): Promise<void> {
+  // The user is re-read for one column. A refund has to decrement the SAME row
+  // the reservation incremented, and which row that is depends on which day it
+  // is where they are — so guessing the zone here would, at midnight, hand the
+  // unit back into tomorrow and leave today's count permanently one too high.
+  const user = await prisma.user
+    .findUnique({ where: { id: userId }, select: { timezone: true } })
+    .catch(() => null);
+  const date = localDate(user?.timezone ?? DEFAULT_TIMEZONE);
   await prisma.dailyUsage
     .updateMany({
       where: { userId, localDate: date, [meter]: { gt: 0 } },
@@ -133,15 +149,16 @@ export async function refund(
 /** Read-only snapshot for the dashboard. Never mutates. */
 export async function usageToday(
   userId: string,
-  timezone = "Asia/Kolkata",
 ): Promise<Record<Meter, { used: number; limit: number }>> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { plan: true, planExpiresAt: true, role: true },
+    select: { plan: true, planExpiresAt: true, role: true, timezone: true },
   });
   const limits = limitsFor(user ?? {});
   const row = await prisma.dailyUsage.findUnique({
-    where: { userId_localDate: { userId, localDate: localDate(timezone) } },
+    where: {
+      userId_localDate: { userId, localDate: localDate(user?.timezone ?? DEFAULT_TIMEZONE) },
+    },
   });
   const meters: Meter[] = ["variantRuns", "adviceRuns", "uploads"];
   const out = {} as Record<Meter, { used: number; limit: number }>;
@@ -152,4 +169,27 @@ export async function usageToday(
     };
   }
   return out;
+}
+
+/**
+ * Is this a timezone the runtime will accept?
+ *
+ * The value arrives from `Intl.DateTimeFormat().resolvedOptions().timeZone` in
+ * a browser, which means it arrives from a request body and is worth exactly as
+ * much trust as anything else that does. An unknown zone stored on a user makes
+ * every later `toLocaleDateString` throw — caught in `localDate`, but a caught
+ * exception on every quota check for one account is a bug that hides.
+ *
+ * Checked by asking the platform rather than by matching a pattern: the IANA
+ * database gains and loses zones, and a regex over `Region/City` accepts
+ * `Nonsense/Nowhere` while rejecting `UTC`.
+ */
+export function isValidTimezone(value: unknown): value is string {
+  if (typeof value !== "string" || !value || value.length > 64) return false;
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
 }

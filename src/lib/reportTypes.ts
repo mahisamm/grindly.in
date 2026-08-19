@@ -127,3 +127,130 @@ export function scoreColor(score: number): string {
   if (score >= 40) return "#a8730f";
   return "#a3271b";
 }
+
+// ---------------------------------------------------------------------------
+// Reading what the database holds
+//
+// These columns are `jsonb` and Prisma types them as `JsonValue` — which is
+// honest, because nothing about the column guarantees the shape. They were
+// `String` until the migration that made them jsonb, and every reader did its
+// own `JSON.parse` inside its own try/catch, returning `any` on success. Five
+// copies of that helper existed across the app, two of them subtly different,
+// and all of them agreed to trust whatever came back.
+//
+// The value is written by a Python subprocess and survives a schema change, a
+// pipeline change and a restored backup. Parsing it is the boundary where it
+// stops being data of unknown shape and starts being a Report — so that is
+// where it gets checked, once, rather than being cast and hoped for.
+//
+// Every parser below returns null rather than throwing. A resume whose report
+// is unreadable must still render its page: the product's answer to "we could
+// not read this" is a sentence on screen, never a 500.
+// ---------------------------------------------------------------------------
+
+import { z } from "zod";
+
+const severity = z.enum(["critical", "warning"]);
+
+export const FindingSchema = z.object({
+  severity,
+  band: z.string(),
+  problem: z.string(),
+  fix: z.string(),
+});
+
+export const BandSchema = z.object({
+  score: z.number(),
+  weight: z.number(),
+  points: z.number(),
+});
+
+export const AdviceSchema = z.object({
+  strengths: z.array(z.string()).default([]),
+  issues: z.array(z.string()).default([]),
+  suggestions: z.array(z.string()).default([]),
+});
+
+export const ReportSchema = z.object({
+  score: z.number(),
+  grade: z.string(),
+  bands: z.record(z.string(), BandSchema).default({}),
+  findings: z.array(FindingSchema).default([]),
+  // `facts` is a bag of whatever each band chose to record about the document.
+  // Deliberately unconstrained: it is diagnostic detail that the pipeline adds
+  // to freely, and a schema that had to be widened every time a band learned to
+  // measure something new would be a schema people route around.
+  facts: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
+  targeted: z.boolean().default(false),
+  advice: AdviceSchema.nullish(),
+});
+
+export const FidelitySchema = z.object({
+  total: z.number(),
+  recovered: z.number(),
+  lost: z.array(z.string()).default([]),
+  pct: z.number(),
+});
+
+export const JobSpecSchema = z.object({
+  title: z.string().default(""),
+  company: z.string().default(""),
+  must_have: z.array(z.string()).default([]),
+  nice_to_have: z.array(z.string()).default([]),
+  skills: z.array(z.string()).default([]),
+  source_chars: z.number().default(0),
+  llm_added: z.array(z.string()).default([]),
+});
+
+/** What a Target stores about what it was aimed at. */
+export const TargetSpecSchema = z.object({
+  skills: z.array(z.string()).default([]),
+  must_have: z.array(z.string()).default([]),
+  nice_to_have: z.array(z.string()).default([]),
+  emphasis: z.array(z.string()).default([]),
+  tailoring: z.string().optional(),
+  /** "user" when the text came from the candidate rather than an employer. */
+  source: z.string().optional(),
+});
+export type TargetSpec = z.infer<typeof TargetSpecSchema>;
+
+/** Contact details read off the resume header, locally, never from a model. */
+export const ContactSchema = z.object({
+  name: z.string().optional(),
+  email: z.string().optional(),
+  phone: z.string().optional(),
+  contact_line: z.string().optional(),
+}).loose();
+export type Contact = z.infer<typeof ContactSchema>;
+
+const StringArraySchema = z.array(z.string());
+
+/**
+ * Parse one jsonb column, or null.
+ *
+ * Logs a mismatch rather than swallowing it: a report that stopped parsing
+ * means the Python side changed shape without the TypeScript side hearing about
+ * it, and the visible symptom — a resume page with no score on it — gives no
+ * hint of that. The user still gets a page; the operator gets a line.
+ */
+function parseColumn<T>(schema: z.ZodType<T>, value: unknown, what: string): T | null {
+  if (value === null || value === undefined) return null;
+  const result = schema.safeParse(value);
+  if (result.success) return result.data;
+  console.error(`[reportTypes] ${what} did not match its schema:`, result.error.issues.slice(0, 3));
+  return null;
+}
+
+export const readReport = (v: unknown): Report | null => parseColumn(ReportSchema, v, "report");
+export const readAdvice = (v: unknown): Advice | null => parseColumn(AdviceSchema, v, "advice");
+export const readFidelity = (v: unknown): Fidelity | null => parseColumn(FidelitySchema, v, "fidelity");
+export const readTargetSpec = (v: unknown): TargetSpec | null => parseColumn(TargetSpecSchema, v, "target spec");
+export const readContact = (v: unknown): Contact => parseColumn(ContactSchema, v, "contact") ?? {};
+
+/**
+ * A list of strings, always. Used for skills, links and the plain-English
+ * changes on a variant — three columns whose readers all wanted "an array, or
+ * an empty one" and each wrote their own version of that.
+ */
+export const readStrings = (v: unknown): string[] =>
+  parseColumn(StringArraySchema, v, "string list") ?? [];

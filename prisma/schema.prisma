@@ -22,6 +22,63 @@ datasource db {
 }
 
 // ---------------------------------------------------------------------------
+// closed vocabularies
+// ---------------------------------------------------------------------------
+//
+// These were `String` columns with the legal values written in a comment beside
+// them. A comment does not stop a typo, and the typo that matters here is not a
+// crash: `plan = "Pass"` reads as an unknown plan, `limitsFor` falls through to
+// the free tier, and a paying customer is quietly capped at two resumes with no
+// error anywhere. Postgres refuses the write instead.
+//
+// Deliberately NOT enums: `Variant.label` (strategy names come from Python and
+// change with the pipeline), `AuditLog.action` (an append-only log should never
+// reject a new kind of event), `ErrorEvent.kind`.
+
+/// What a user has bought. `admin` is not here on purpose — it is derived from
+/// `role` at read time by lib/plans.ts and must never be a purchasable state.
+enum Plan {
+  free
+  pack
+  pass
+}
+
+enum Role {
+  user
+  admin
+}
+
+enum OrderStatus {
+  created
+  paid
+  failed
+  refunded
+}
+
+/// The two things that can be bought. Mirrors PRODUCTS in lib/plans.ts.
+enum Sku {
+  pass90
+  pack1
+}
+
+/// What a set of variants was aimed at. `notes` is the user's own hearsay about
+/// an employer, kept apart from `company` precisely so the UI can label it as
+/// theirs rather than as something we checked.
+enum TargetKind {
+  company
+  jd
+  notes
+}
+
+/// Why a score was recorded, for the history on a resume.
+enum ScoreSource {
+  upload
+  rescore
+  variant
+  edit
+}
+
+// ---------------------------------------------------------------------------
 // identity
 // ---------------------------------------------------------------------------
 
@@ -40,15 +97,21 @@ model User {
   // how you earn a chargeback and a bad review from a satisfied customer.
   // A pass has an expiry; when it passes, the user drops to free and keeps
   // everything they already made.
-  plan          String    @default("free")
+  plan          Plan      @default(free)
   planExpiresAt DateTime? @map("plan_expires_at")
 
-  role         String @default("user") // user | admin
+  role         Role   @default(user)
   // Session revocation counter, embedded in the signed cookie. Logout and any
   // credential change increment it, so an already-issued cookie stops working
   // immediately — a stateless HMAC cannot otherwise be revoked.
   tokenVersion Int    @default(0) @map("token_version")
 
+  /// IANA zone, captured from the browser at sign-in. Daily quotas are counted
+  /// in the user's own day — see lib/quota.ts — and before this column existed
+  /// every account was counted in Asia/Kolkata regardless of where they were,
+  /// while the refusal message told them the window resets at midnight in their
+  /// timezone. Null means we have not been told yet and the default applies.
+  timezone  String?
   createdAt DateTime  @default(now()) @map("created_at")
   deletedAt DateTime? @map("deleted_at")
 
@@ -104,28 +167,33 @@ model Resume {
   ext          String? // ".pdf" | ".docx" | ".txt" — null for built-from-scratch
   text         String  @default("")
   chars        Int     @default(0)
+  /// True when the extracted text hit the 60 000-character ceiling and the tail
+  /// was dropped. Everything downstream — the score, the rewrite, the fidelity
+  /// count — then describes a fragment of the document, and the report says so
+  /// rather than presenting a partial reading as a complete one.
+  truncated    Boolean @default(false)
 
   /// JSON. Name, email, phone, GPA, marks — read off the header locally, never
   /// from a model, because the LLM boundary redacts PII on the way out and a
   /// model asked for the phone number faithfully returns "[phone redacted]".
-  contactJson String? @map("contact_json")
+  contactJson Json?   @map("contact_json")
   /// JSON array of URLs found in the PDF's link annotations. A resume that
   /// shows the word "LinkedIn" behind a hyperlink has an address no text
   /// extractor will ever see, and four real application forms asked for it.
-  linksJson   String? @map("links_json")
+  linksJson   Json?   @map("links_json")
   /// JSON array of the candidate's own skills. This is the allow-list every
   /// rewrite is checked against, so it is a claim of theirs, never ours.
-  skillsJson  String  @default("[]") @map("skills_json")
+  skillsJson  Json    @default("[]") @map("skills_json")
 
   /// Last untargeted readiness score. Denormalised out of reportJson so the
   /// list page can sort and show it without parsing a blob per row.
   score      Int?
   grade      String?
   /// JSON: the full readiness report — bands, findings, facts.
-  reportJson String? @map("report_json")
+  reportJson Json?   @map("report_json")
   /// JSON: prose advice from the model. Separate column because it is optional,
   /// costs an LLM call, and must never be confused with the score.
-  adviceJson String? @map("advice_json")
+  adviceJson Json?   @map("advice_json")
 
   /// sha256 of `text`. A re-score is skipped when this has not changed, which
   /// is what stops the advice call re-running on every page load.
@@ -136,9 +204,40 @@ model Resume {
 
   variants Variant[]
   targets  Target[]
+  scores   ScoreEvent[]
 
   @@index([userId, createdAt])
   @@map("resumes")
+}
+
+/// Every score this resume has ever been given, in order.
+///
+/// `Resume.score` is the latest one and nothing else — it is overwritten on
+/// every re-read, so the question a user most wants answered ("did the thing I
+/// changed help?") had no data behind it at all. The product measures a document
+/// on a fixed ruler; a ruler with no history can tell you where you are and
+/// never that you are moving.
+///
+/// Append-only. Nothing updates a row here, and a delete only happens with the
+/// resume it belongs to.
+model ScoreEvent {
+  id       String @id @default(cuid())
+  resumeId String @map("resume_id")
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  score  Int
+  grade  String
+  source ScoreSource
+
+  /// The variant this score came from, when it came from one. Deliberately not
+  /// a relation: a variant is superseded and deleted on every re-run, and the
+  /// history of what was measured must outlive the document that was measured.
+  variantLabel String? @map("variant_label")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([resumeId, createdAt])
+  @@map("score_events")
 }
 
 /// What a set of variants was aimed at: a curated company pack, or a pasted
@@ -151,7 +250,7 @@ model Target {
   resumeId String @map("resume_id")
   resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
 
-  kind String // company | jd
+  kind TargetKind
   /// companies.py slug, for kind=company.
   slug String?
   /// Display name — the company, or the title parsed out of the JD.
@@ -162,7 +261,7 @@ model Target {
   /// re-parsing it is free while re-asking them for it is not.
   jdText   String? @map("jd_text")
   /// JSON: parsed requirements — must_have, nice_to_have, skills.
-  specJson String? @map("spec_json")
+  specJson Json?   @map("spec_json")
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -191,12 +290,12 @@ model Variant {
   pages         Int?
 
   /// JSON array of plain-English changes, shown to the user instead of a diff.
-  changesJson  String? @map("changes_json")
+  changesJson  Json?   @map("changes_json")
   /// JSON: the full readiness report for THIS variant.
-  reportJson   String? @map("report_json")
+  reportJson   Json?   @map("report_json")
   /// JSON: {total, recovered, lost[], pct} — how much of what we printed
   /// survived being read back out of the PDF. The headline claim.
-  fidelityJson String? @map("fidelity_json")
+  fidelityJson Json?   @map("fidelity_json")
 
   /// Filename under data/variants/<resumeId>/. Not the bytes: a three-variant
   /// batch is ~300 KB and the web app already shares this filesystem.
@@ -223,10 +322,10 @@ model Order {
 
   /// pass90 | pack1 — see lib/plans.ts. The product bought is recorded on the
   /// order at creation, not read from the client at confirmation time.
-  sku      String
+  sku      Sku
   amount   Int // in the smallest unit (paise / cents)
-  currency String @default("INR")
-  status   String @default("created") // created | paid | failed | refunded
+  currency String      @default("INR")
+  status   OrderStatus @default(created)
 
   providerOrderId String? @unique @map("provider_order_id")
   /// Unique, so one captured payment can only ever settle one order. Without
@@ -239,6 +338,9 @@ model Order {
   paidAt    DateTime? @map("paid_at")
 
   @@index([userId, createdAt])
+  /// The admin page sums every paid order on load. Without this that is a
+  /// sequential scan of the table, growing with revenue.
+  @@index([status])
   @@map("orders")
 }
 
@@ -258,6 +360,9 @@ model AuditLog {
 
   @@index([userId])
   @@index([action])
+  /// Both the retention sweep and every "what happened around 3pm" question
+  /// filter on time. This is also the index the sweep's DELETE uses.
+  @@index([createdAt])
   @@map("audit_logs")
 }
 

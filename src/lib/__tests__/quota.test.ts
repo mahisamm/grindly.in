@@ -18,7 +18,9 @@ vi.mock("@/lib/prisma", () => ({
   prisma: { user: mockUser, dailyUsage: mockUsage },
 }));
 
-import { localDate, refund, reserve, usageToday } from "@/lib/quota";
+import {
+  DEFAULT_TIMEZONE, isValidTimezone, localDate, refund, reserve, usageToday,
+} from "@/lib/quota";
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -95,11 +97,50 @@ describe("reserve", () => {
   });
 
   it("keys the row by user AND local date", async () => {
+    mockUser.findUnique.mockResolvedValue({ plan: "free", timezone: "UTC" });
     mockUsage.upsert.mockResolvedValue({ uploads: 1 });
-    await reserve("u1", "uploads", "UTC");
+    await reserve("u1", "uploads");
     const where = mockUsage.upsert.mock.calls[0][0].where;
     expect(where.userId_localDate.userId).toBe("u1");
     expect(where.userId_localDate.localDate).toBe(localDate("UTC"));
+  });
+
+  // The regression this file exists to prevent from coming back. Every function
+  // in quota.ts used to take `timezone = "Asia/Kolkata"` and no caller passed
+  // it, so a user in Los Angeles had their day roll over at 10:30 the previous
+  // morning while the refusal told them it resets at their midnight.
+  it("counts in the user's OWN day, not the server's default", async () => {
+    mockUser.findUnique.mockResolvedValue({ plan: "free", timezone: "America/Los_Angeles" });
+    mockUsage.upsert.mockResolvedValue({ uploads: 1 });
+    await reserve("u1", "uploads");
+    const key = mockUsage.upsert.mock.calls[0][0].where.userId_localDate.localDate;
+    expect(key).toBe(localDate("America/Los_Angeles"));
+  });
+
+  it("falls back to the default zone for an account that has not told us", async () => {
+    mockUser.findUnique.mockResolvedValue({ plan: "free", timezone: null });
+    mockUsage.upsert.mockResolvedValue({ uploads: 1 });
+    await reserve("u1", "uploads");
+    const key = mockUsage.upsert.mock.calls[0][0].where.userId_localDate.localDate;
+    expect(key).toBe(localDate(DEFAULT_TIMEZONE));
+  });
+});
+
+describe("isValidTimezone", () => {
+  it("accepts what a browser actually reports", () => {
+    for (const zone of ["Asia/Kolkata", "America/Los_Angeles", "UTC", "Europe/London"]) {
+      expect(isValidTimezone(zone), zone).toBe(true);
+    }
+  });
+
+  it("rejects anything the runtime cannot use", () => {
+    // Each of these would be stored happily by a regex check and would then
+    // throw on every quota call for that one account.
+    expect(isValidTimezone("Nonsense/Nowhere")).toBe(false);
+    expect(isValidTimezone("")).toBe(false);
+    expect(isValidTimezone(null)).toBe(false);
+    expect(isValidTimezone(42)).toBe(false);
+    expect(isValidTimezone("A".repeat(200))).toBe(false);
   });
 });
 

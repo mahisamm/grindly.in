@@ -98,10 +98,16 @@ def cmd_ingest(payload: dict) -> dict:
     except Exception as e:  # noqa: BLE001
         print(f"[cli] contact extraction failed: {e}", file=sys.stderr)
 
+    # `chars` counts the WHOLE document; `text` is capped. Those two disagreeing
+    # is the only signal that anything was dropped, and the caller should not
+    # have to rediscover the constant to work it out — a resume longer than the
+    # cap is scored, rewritten and fidelity-checked on a fragment, and the
+    # product has to be able to say so.
     return {
         "ok": True,
         "text": text[:MAX_TEXT],
         "chars": len(text.strip()),
+        "truncated": len(text) > MAX_TEXT,
         "links": links[:12],
         "contact": contact,
     }

@@ -4,6 +4,9 @@ import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { requireUser, notFound, serverError } from "@/lib/auth";
 import { RESUME_DIR, VARIANT_DIR } from "@/lib/agent";
+import {
+  readAdvice, readContact, readFidelity, readReport, readStrings, readTargetSpec,
+} from "@/lib/reportTypes";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -33,19 +36,20 @@ export async function GET(_req: Request, { params }: Ctx) {
     ok: true,
     resume: {
       ...resume,
-      // Parsed here so every client does not repeat the same JSON.parse guard.
-      report: safeParse(resume.reportJson),
-      advice: safeParse(resume.adviceJson),
-      contact: safeParse(resume.contactJson) ?? {},
-      links: safeParse(resume.linksJson) ?? [],
-      skills: safeParse(resume.skillsJson) ?? [],
+      // Validated here, once, so no client repeats the guard and none of them
+      // has to decide what to do with a column that does not hold what it says.
+      report: readReport(resume.reportJson),
+      advice: readAdvice(resume.adviceJson),
+      contact: readContact(resume.contactJson),
+      links: readStrings(resume.linksJson),
+      skills: readStrings(resume.skillsJson),
       variants: resume.variants.map((v) => ({
         ...v,
-        changes: safeParse(v.changesJson) ?? [],
-        report: safeParse(v.reportJson),
-        fidelity: safeParse(v.fidelityJson),
+        changes: readStrings(v.changesJson),
+        report: readReport(v.reportJson),
+        fidelity: readFidelity(v.fidelityJson),
       })),
-      targets: resume.targets.map((t) => ({ ...t, spec: safeParse(t.specJson) })),
+      targets: resume.targets.map((t) => ({ ...t, spec: readTargetSpec(t.specJson) })),
     },
   });
 }
@@ -103,13 +107,4 @@ export async function PATCH(req: Request, { params }: Ctx) {
   });
   if (updated.count === 0) return notFound();
   return NextResponse.json({ ok: true, label });
-}
-
-function safeParse(value: string | null): unknown {
-  if (!value) return null;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
 }

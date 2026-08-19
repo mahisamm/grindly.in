@@ -39,6 +39,8 @@ type ResumeView = {
   id: string;
   label: string;
   chars: number;
+  /** The document was longer than we read. Everything below describes a part of it. */
+  truncated: boolean;
   text: string;
   report: Report | null;
   advice: Advice | null;
@@ -298,6 +300,23 @@ function ReportTab({
   return (
     <div className="grid gap-10 lg:grid-cols-[1.4fr_1fr]">
       <div>
+        {/* Said before the score, not after it. Every number on this page
+            describes the first 60 000 characters of a longer document, and a
+            partial reading presented as a complete one is the one thing this
+            product cannot do. */}
+        {resume.truncated && (
+          <div
+            className="mb-6 rounded-lg border p-3 text-sm leading-snug"
+            style={{ borderColor: "var(--warn)", background: "var(--surface-2)" }}
+          >
+            <p className="font-medium">This resume is longer than we read.</p>
+            <p className="text-muted mt-1">
+              We measure the first 60,000 characters — about fifteen pages. Everything
+              below describes that much of it. If your file is that long, the more
+              useful fact is that no recruiter reads past page two either.
+            </p>
+          </div>
+        )}
         <ReportPanel report={resume.report} />
       </div>
       <aside>

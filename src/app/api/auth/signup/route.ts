@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { setUid } from "@/lib/session";
 import { isRateLimitedByIp } from "@/lib/rateLimit";
 import { audit } from "@/lib/audit";
+import { isValidTimezone } from "@/lib/quota";
 import { adminEmail } from "@/lib/config";
 import {
   hashPassword,
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: { email?: string; password?: string; name?: string };
+  let body: { email?: string; password?: string; name?: string; timezone?: string };
   try {
     body = await req.json();
   } catch {
@@ -77,7 +78,17 @@ export async function POST(req: Request) {
   let user;
   try {
     user = await prisma.user.create({
-      data: { email, name, passwordHash, role },
+      data: {
+        email,
+        name,
+        passwordHash,
+        role,
+        // Validated, not trusted: this comes off a request body, and an
+        // unusable zone stored here makes every later quota check for this one
+        // account throw. Null when the browser would not say — quota.ts falls
+        // back to the default rather than guessing.
+        timezone: isValidTimezone(body.timezone) ? body.timezone : null,
+      },
       select: { id: true, email: true, name: true, role: true },
     });
   } catch (e) {

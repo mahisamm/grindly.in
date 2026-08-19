@@ -4,7 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/auth";
 import { runAgent } from "@/lib/agent";
 import { limitsFor } from "@/lib/plans";
-import type { Advice, CompanyPack, Fidelity, Report } from "@/lib/reportTypes";
+import type { CompanyPack } from "@/lib/reportTypes";
+import {
+  readAdvice, readFidelity, readReport, readStrings, readTargetSpec,
+} from "@/lib/reportTypes";
 import { ResumeWorkspace } from "./Workspace";
 
 export const dynamic = "force-dynamic";
@@ -41,10 +44,11 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
           id: resume.id,
           label: resume.label,
           chars: resume.chars,
+          truncated: resume.truncated,
           text: resume.text,
-          report: parse<Report>(resume.reportJson),
-          advice: parse<Advice>(resume.adviceJson),
-          skills: parse<string[]>(resume.skillsJson) ?? [],
+          report: readReport(resume.reportJson),
+          advice: readAdvice(resume.adviceJson),
+          skills: readStrings(resume.skillsJson),
           variants: resume.variants.map((v) => ({
             id: v.id,
             label: v.label,
@@ -54,18 +58,16 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
             beatsBaseline: v.beatsBaseline,
             pages: v.pages,
             targetId: v.targetId,
-            changes: parse<string[]>(v.changesJson) ?? [],
-            report: parse<Report>(v.reportJson),
-            fidelity: parse<Fidelity>(v.fidelityJson),
+            changes: readStrings(v.changesJson),
+            report: readReport(v.reportJson),
+            fidelity: readFidelity(v.fidelityJson),
           })),
           targets: resume.targets.map((t) => ({
             id: t.id,
             kind: t.kind,
             name: t.name,
             slug: t.slug,
-            spec: parse<{ skills: string[]; must_have: string[]; nice_to_have: string[] }>(
-              t.specJson,
-            ),
+            spec: readTargetSpec(t.specJson),
           })),
         }}
         packs={packs.ok ? packs.packs : []}
@@ -79,13 +81,4 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
       />
     </div>
   );
-}
-
-function parse<T>(value: string | null): T | null {
-  if (!value) return null;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return null;
-  }
 }

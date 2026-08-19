@@ -5,6 +5,8 @@ import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { requireUser, notFound, serverError, badRequest } from "@/lib/auth";
 import { runAgent, VARIANT_DIR, type Report, type Fidelity } from "@/lib/agent";
+import { readContact, readStrings, readTargetSpec } from "@/lib/reportTypes";
+import { toJsonColumn } from "@/lib/jsonColumn";
 import { reserve, refund } from "@/lib/quota";
 import { formatLimit, limitsFor } from "@/lib/plans";
 import { audit } from "@/lib/audit";
@@ -98,8 +100,8 @@ export async function POST(req: Request, { params }: Ctx) {
   // they were shown is the worst failure this product can have.
   const runId = crypto.randomUUID();
   const outDir = path.join(VARIANT_DIR, resume.id, runId);
-  const skills = parseArray(resume.skillsJson);
-  const contact = (safeParse(resume.contactJson) ?? {}) as Record<string, unknown>;
+  const skills = readStrings(resume.skillsJson);
+  const contact = readContact(resume.contactJson);
 
   const result = await runAgent<{
     variants: AgentVariant[];
@@ -113,14 +115,14 @@ export async function POST(req: Request, { params }: Ctx) {
     text: resume.text,
     skills,
     out_dir: outDir,
-    contact_fallback: typeof contact.contact_line === "string" ? contact.contact_line : "",
+    contact_fallback: contact.contact_line ?? "",
     target_keywords: target.keywords,
     emphasis: target.emphasis,
     target_name: target.name,
     // Link annotations off the uploaded PDF. A LinkedIn address hidden behind
     // the word "LinkedIn" is invisible to every text extractor, so the rebuild
     // prints it out — see _merge_profile_links in resume_optimize.py.
-    links: parseArray(resume.linksJson),
+    links: readStrings(resume.linksJson),
   });
 
   if (!result.ok) {
@@ -190,9 +192,9 @@ export async function POST(req: Request, { params }: Ctx) {
             baselineScore: v.baseline_score,
             beatsBaseline: Boolean(v.beats_baseline),
             pages: v.pages ?? null,
-            changesJson: JSON.stringify(v.changes ?? []),
-            reportJson: JSON.stringify(v.report ?? null),
-            fidelityJson: JSON.stringify(v.fidelity ?? null),
+            changesJson: toJsonColumn(v.changes ?? []),
+            reportJson: toJsonColumn(v.report),
+            fidelityJson: toJsonColumn(v.fidelity),
             // Run-scoped, so this row can only ever resolve to its own document.
             file: `${runId}/${v.file}`,
             bytes: v.bytes ?? 0,
@@ -204,6 +206,21 @@ export async function POST(req: Request, { params }: Ctx) {
     console.error("[variants] persist failed:", e);
     return serverError("We built the rewrites but could not save them.");
   }
+
+  // One history point per rebuild that was kept. `variantLabel` rather than a
+  // relation on purpose: a variant is superseded and deleted on the next run,
+  // and the record of what was measured has to outlive the document.
+  await prisma.scoreEvent
+    .createMany({
+      data: created.map((v) => ({
+        resumeId: resume.id,
+        score: v.score,
+        grade: v.grade,
+        source: "variant" as const,
+        variantLabel: v.label,
+      })),
+    })
+    .catch((e) => console.error("[variants] score history write failed:", e));
 
   await audit(user.id, "variants", resume.id, target.name || "untargeted");
   return NextResponse.json({
@@ -299,7 +316,7 @@ async function resolveTarget(
       data: {
         userId, resumeId, kind: "company",
         slug: body.company, name: pack.pack.name,
-        specJson: JSON.stringify({ skills: pack.pack.keywords }),
+        specJson: toJsonColumn({ skills: pack.pack.keywords }),
       },
     });
     return {
@@ -334,7 +351,7 @@ async function resolveTarget(
       data: {
         userId, resumeId, kind: "notes", name: name.slice(0, 120),
         jdText: notesText,
-        specJson: JSON.stringify({ skills: parsed.spec.skills ?? [], source: "user" }),
+        specJson: toJsonColumn({ skills: parsed.spec.skills ?? [], source: "user" }),
       },
     });
     return {
@@ -378,7 +395,7 @@ async function resolveTarget(
         // re-read it from later.
         slug: found.slug ?? null,
         name: found.name.slice(0, 120),
-        specJson: JSON.stringify({
+        specJson: toJsonColumn({
           skills: found.keywords ?? [],
           emphasis: found.slug ? [] : (found.emphasis ?? []),
           tailoring: found.tailoring,
@@ -401,27 +418,27 @@ async function resolveTarget(
   const created = await prisma.target.create({
     data: {
       userId, resumeId, kind: "jd", name: name.slice(0, 120),
-      jdText: jd, specJson: JSON.stringify(parsed.spec),
+      jdText: jd, specJson: toJsonColumn(parsed.spec),
     },
   });
   return { id: created.id, name, keywords: parsed.spec.skills ?? [], emphasis: [] };
 }
 
 async function targetToResolved(t: {
-  id: string; name: string; kind: string; slug: string | null; specJson: string | null;
+  id: string; name: string; kind: string; slug: string | null; specJson: unknown;
 }): Promise<ResolvedTarget> {
-  const spec = (safeParse(t.specJson) ?? {}) as { skills?: string[]; emphasis?: string[] };
+  const spec = readTargetSpec(t.specJson);
   // A curated pack is re-read from `companies.py` every time, so editing a pack
   // and deploying updates every target pointing at it. A generated one has no
   // pack to re-read, so its emphasis was stored on the target — and is used
   // verbatim rather than re-generated, because re-running the model on every
   // rebuild would silently change what a saved target means.
-  let emphasis: string[] = Array.isArray(spec.emphasis) ? spec.emphasis : [];
+  let emphasis: string[] = spec?.emphasis ?? [];
   if (t.kind === "company" && t.slug) {
     const pack = await runAgent<{ pack: { emphasis: string[] } }>("companies", { slug: t.slug });
     if (pack.ok) emphasis = pack.pack.emphasis ?? [];
   }
-  return { id: t.id, name: t.name, keywords: spec.skills ?? [], emphasis };
+  return { id: t.id, name: t.name, keywords: spec?.skills ?? [], emphasis };
 }
 
 function abortMessage(code: string): string {
@@ -434,19 +451,5 @@ function abortMessage(code: string): string {
       return "We could not read a clear structure out of this resume. Try uploading the original PDF rather than a scan.";
     default:
       return "The rewrite could not be completed.";
-  }
-}
-
-function parseArray(value: string | null): string[] {
-  const parsed = safeParse(value);
-  return Array.isArray(parsed) ? parsed.map(String) : [];
-}
-
-function safeParse(value: string | null): unknown {
-  if (!value) return null;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
   }
 }
