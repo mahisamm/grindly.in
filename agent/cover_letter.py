@@ -83,23 +83,57 @@ _NUMBER_RE = re.compile(r"\b\d+(?:\.\d+)?%?\b")
 _MIN_CHARS = 200
 _MAX_CHARS = 2200
 
-# Vocabulary entries that are also ordinary English.
+# Vocabulary entries that are ordinary English even when capitalised.
 #
-# The technology check works well on a resume struct, where a bullet is
-# telegraphic and "data" almost always means the tool. It does not survive
-# contact with prose: "I took one data path from forty minutes down to six"
-# trips on `data` and `six`, and a gate that rejects an honest letter for using
-# the word "data" has not made the product safer, it has removed the feature.
+# The technology check works on a resume struct, where a bullet is telegraphic
+# and "data" almost always means the tool. It does not survive contact with
+# prose. Measured against the live site: a perfectly honest draft was rejected
+# for "names a technology that is not on the resume: systems" and
+# "...: processing". Both are real entries in a 301-word vocabulary that also
+# contains system, data, testing, design, cloud, api, analytics, vision,
+# learning and automation — twelve ordinary words found in one quick check, so
+# a blocklist alone is whack-a-mole.
 #
-# Every word here is a real vocabulary entry that a person writing English
-# cannot avoid. The trade is explicit: a letter claiming Go or R specifically
-# gets through unchecked by THIS rule, and is still caught by the proper-noun
-# rule when capitalised and by nothing when not. That is a narrow miss against
-# a gate that would otherwise fire on almost every honest draft.
+# This list therefore backs up the CASING rule below rather than carrying the
+# work: it covers the words that stay ordinary even capitalised, because they
+# appear inside job titles — "the Data Engineer role", "Cloud Systems".
 _AMBIGUOUS_IN_PROSE = frozenset({
     "c", "r", "go", "six", "data", "deep", "face", "user", "rest", "boot",
-    "sem", "node", "dart", "solr", "api",
+    "sem", "node", "dart", "solr", "api", "systems", "system", "processing",
+    "testing", "design", "cloud", "analytics", "vision", "learning",
+    "automation", "search", "mobile", "web", "model", "models",
 })
+
+# A token in a letter is a technology CLAIM only if it is written like one.
+#
+# This is the rule that makes the gate usable. A technology named in prose is a
+# proper noun — "I have used Kubernetes", "on AWS", "in Node.js" — while the
+# ordinary-English collisions appear lowercase: "the data path", "processing
+# time", "systems I have worked on". So a vocabulary hit is flagged only when
+# the way it is WRITTEN marks it as a name:
+#
+#   * an internal capital that is not just the start of a sentence, or
+#   * all caps (AWS, SQL, ETL), which is a name even sentence-initial, or
+#   * punctuation or digits that only appear in tool names (C++, .NET, S3).
+#
+# The miss this accepts, stated plainly: someone who writes "i have used
+# kubernetes" entirely in lower case is not caught by this rule. The
+# proper-noun rule does not catch it either. That is a narrow hole against a
+# gate that otherwise rejects almost every honest letter — and a gate that
+# rejects everything is not a safe gate, it is a removed feature.
+_TECHY_SHAPE_RE = re.compile(r"[0-9+#.]")
+
+
+def _looks_like_a_name(word: str, sentence_initial: bool) -> bool:
+    if _TECHY_SHAPE_RE.search(word):
+        return True
+    if word.isupper() and len(word) > 1:
+        return True
+    if sentence_initial:
+        # "Systems that scale..." is a sentence opening, not a claim about a
+        # product called Systems.
+        return any(ch.isupper() for ch in word[1:])
+    return any(ch.isupper() for ch in word)
 
 
 def _numbers_in(text: str) -> list[str]:
@@ -134,7 +168,7 @@ def _proper_nouns(text: str) -> list[str]:
     return out
 
 
-def check(letter: str, source_text: str, company: str = "") -> list[str]:
+def check(letter: str, source_text: str, company: str = "", role: str = "") -> list[str]:
     """Every reason this letter cannot be handed over. Empty means it passed.
 
     Exported so the tests can hand it a deliberately fabricated letter and see
@@ -145,9 +179,12 @@ def check(letter: str, source_text: str, company: str = "") -> list[str]:
     stems = resume_optimize._source_stems(source_text)
     allowed = resume_optimize._allowed_tokens(source_text, [])
     lower_source = (source_text or "").lower()
+    # The company being applied to, and the role being applied for, are the two
+    # things a letter legitimately names that the resume does not.
     company_tokens = {t.lower() for t in re.findall(r"[A-Za-z0-9]+", company or "")}
+    company_tokens |= {t.lower() for t in re.findall(r"[A-Za-z0-9]+", role or "")}
 
-    # 1. Technology
+    # 1. Technology — see _looks_like_a_name for why casing decides this.
     #
     # `flagged` is keyed on the offending TOKEN rather than on the message, so a
     # word caught by both this rule and the proper-noun rule below — which is
@@ -155,11 +192,18 @@ def check(letter: str, source_text: str, company: str = "") -> list[str]:
     # and a list that says the same thing twice reads as two problems.
     flagged: set[str] = set()
     vocab = resume_optimize._tech_vocab()
-    for token in re.findall(r"[a-z0-9+#.]+", (letter or "").lower()):
-        token = token.strip(".")
-        if not token or token in allowed or token in _AMBIGUOUS_IN_PROSE:
-            continue
-        if token in vocab:
+    for sentence in re.split(r"(?<=[.!?])\s+", letter or ""):
+        for position, raw in enumerate(sentence.split()):
+            word = raw.strip(".,;:()'\"")
+            if not word:
+                continue
+            token = re.sub(r"[^a-z0-9+#.]", "", word.lower()).strip(".")
+            if not token or token in allowed or token in _AMBIGUOUS_IN_PROSE:
+                continue
+            if token not in vocab:
+                continue
+            if not _looks_like_a_name(word, sentence_initial=(position == 0)):
+                continue
             flagged.add(token)
             problems.append(f"names a technology that is not on the resume: {token}")
 
@@ -175,6 +219,13 @@ def check(letter: str, source_text: str, company: str = "") -> list[str]:
             continue
         # Ordinary English that happens to be capitalised mid-sentence.
         if low in {"i", "my", "the", "a", "an", "and", "monday", "friday"}:
+            continue
+        # The same ambiguity list the technology rule uses. "I am applying for
+        # the Data Engineer role" capitalises an ordinary word inside a job
+        # title, and reporting that as an invented proper noun refuses an honest
+        # letter — which is the failure mode this gate has to avoid above all,
+        # because a gate that rejects everything is a removed feature.
+        if low in _AMBIGUOUS_IN_PROSE:
             continue
         if low in flagged:
             continue  # already reported as an invented technology
@@ -245,7 +296,7 @@ def write(
         if not (_MIN_CHARS <= len(letter) <= _MAX_CHARS):
             continue
 
-        problems = check(letter, text, company)
+        problems = check(letter, text, company, role)
         if problems:
             last_problems = problems
             print(f"[cover] rejected a draft: {problems[:3]}")

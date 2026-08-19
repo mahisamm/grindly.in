@@ -211,3 +211,63 @@ def _json(value: str) -> str:
     import json
 
     return json.dumps(value)
+
+
+# ---------------------------------------------------------------------------
+# the false positives that broke the feature on the live site
+# ---------------------------------------------------------------------------
+
+def test_ordinary_english_that_happens_to_be_in_the_vocabulary():
+    """The bug this section exists for.
+
+    On production, a perfectly honest first draft was rejected with "names a
+    technology that is not on the resume: systems" and "...: processing". Both
+    are real entries in a vocabulary that also holds system, data, testing,
+    design, cloud, api, analytics, vision, learning and automation. The feature
+    refused nearly every letter — and a gate that rejects everything is not a
+    safe gate, it is a removed feature.
+    """
+    letter = (
+        "I have built systems for data processing at Freshworks, with a focus on "
+        "testing and automation. The design work there covered a cloud migration "
+        "of 14 services onto shared authentication, and I did the load testing "
+        "that caught a connection-pool leak."
+    )
+    assert cover_letter.check(letter, RESUME) == []
+
+
+def test_a_capitalised_word_inside_a_job_title_is_not_a_claim():
+    letter = (
+        "I am applying for the Data Engineer role. At Freshworks I cut a Postgres "
+        "import path from 40 minutes to 6, and moved 14 services onto a shared "
+        "auth library without downtime."
+    )
+    assert cover_letter.check(letter, RESUME) == []
+
+
+def test_a_sentence_opening_with_an_ordinary_word_is_not_a_claim():
+    letter = (
+        "Systems work is most of what I do. Processing pipelines were my focus at "
+        "Freshworks, where I took one import from 40 minutes to 6 and moved 14 "
+        "services onto a shared auth library."
+    )
+    assert cover_letter.check(letter, RESUME) == []
+
+
+def test_an_invented_tool_written_as_a_name_is_still_caught():
+    """The casing rule must not have opened the door it was narrowing."""
+    for letter, expected in [
+        ("At Freshworks I moved 14 services. I have also run Kubernetes at scale.", "kubernetes"),
+        ("I have deep AWS experience beyond my work at Freshworks.", "aws"),
+        ("I built the pipeline in Terraform while at Freshworks.", "terraform"),
+    ]:
+        problems = cover_letter.check(letter, RESUME)
+        assert any(expected in p.lower() for p in problems), f"{expected} slipped through"
+
+
+def test_a_technology_that_is_on_the_resume_is_never_flagged():
+    letter = (
+        "I work in Python and SQL, with Postgres and Docker, and I use Git daily. "
+        "At Freshworks that meant moving 14 services onto a shared auth library."
+    )
+    assert cover_letter.check(letter, RESUME) == []
