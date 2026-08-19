@@ -58,7 +58,20 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: "/(.*)",
+        // Everything EXCEPT the rendered PDFs.
+        //
+        // The exclusion is load-bearing rather than tidy. Next applies every
+        // matching rule, so with a bare "/(.*)" the variant-file route received
+        // the global `X-Frame-Options: DENY` on top of its own
+        // `frame-ancestors 'self'`, and the browser refused to frame the very
+        // document the compare panel exists to show. Verified against the live
+        // site, which was sending both headers at once.
+        //
+        // Two CSP headers would be no better: browsers intersect them, so a
+        // global `frame-ancestors` would override the route's more permissive
+        // one no matter which order they arrive in. The only fix that works is
+        // for exactly one rule to match.
+        source: "/((?!api/variants/[^/]+/file).*)",
         headers: securityHeaders,
       },
       {
