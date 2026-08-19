@@ -35,6 +35,8 @@ _PROVIDER_KEYS = (
     "GEMINI_API_KEY",
     "CEREBRAS_API_KEY",
     "MISTRAL_API_KEY",
+    "OPENROUTER_API_KEY",
+    "XAI_API_KEY",
     # The paid fallback. Absolutely must be pinned off: an unpinned key here
     # would mean the test suite spends money, which is a worse version of the
     # flake problem this fixture already exists to prevent.

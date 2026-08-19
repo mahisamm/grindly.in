@@ -105,6 +105,9 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
       MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      XAI_MODEL: ${XAI_MODEL:-}
       GRINDLY_REDACT_PII: ${GRINDLY_REDACT_PII:-1}
       # Explicit switch — see lib/config.ts. Keys alone must never mean "live".
       PAYMENTS_ENABLED: ${PAYMENTS_ENABLED:-false}

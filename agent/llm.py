@@ -63,6 +63,16 @@ class Provider:
     #: property of list order means a future edit to PROVIDERS cannot quietly
     #: promote a paid backend to the default path.
     paid: bool = False
+    #: True when the provider is free but on a HARD DAILY CAP rather than a
+    #: rate limit that merely slows you down. Ordered after the uncapped free
+    #: tiers and before the paid ones, so an allowance that resets once a day
+    #: is spent covering an outage rather than serving the steady state.
+    #:
+    #: OpenRouter's free models are the case: 50 requests a day on an account
+    #: with no credits. That is a real reserve for a closed beta and it is not a
+    #: primary — a single busy afternoon would exhaust it and the failure would
+    #: look like a dead provider rather than a spent allowance.
+    metered: bool = False
 
 
 _health_lock = threading.Lock()
@@ -261,6 +271,54 @@ def _groq_gptoss(messages: list, timeout: int, temperature: float = 0.3) -> str 
 
 
 
+def _openrouter(model: str):
+    """One OpenRouter model, as a provider function.
+
+    OpenRouter is an aggregator: one key reaches models from a dozen vendors, so
+    it is the cheapest redundancy available to a project whose free tiers keep
+    being retired underneath it — when Groq drops a model, this does not care.
+
+    It is `metered` because the free tier is a HARD 50 requests a day on an
+    account with no credits, not a rate limit that recovers in a minute.
+
+    Both model ids were chosen by measurement rather than by reputation, against
+    the one thing every caller here needs: a reply that is JSON and only JSON.
+    Of the 17 free models the account can see on 20 Aug 2026, five returned
+    clean parseable JSON and the rest returned an empty string, a bare `{`,
+    an internal monologue, or `User Safety: safe`.
+    """
+    def call(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
+        return _openai_compat(
+            "https://openrouter.ai/api/v1",
+            os.environ.get("OPENROUTER_API_KEY", ""),
+            model,
+            messages,
+            timeout,
+            temperature,
+        )
+    return call
+
+
+def _xai(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
+    """Grok, over the OpenAI-compatible endpoint.
+
+    THE MODEL ID HERE IS UNVERIFIED, and that is worth saying out loud in a file
+    whose whole history is model ids rotting silently. The key on hand belongs to
+    a team with no credits, so `/v1/models` answers 403 and there was no way to
+    read the authoritative list — see the note in the provider-rot memory about
+    never guessing names. `XAI_MODEL` overrides it without a code change, so the
+    first thing to do after adding credits is list the models and set that.
+    """
+    return _openai_compat(
+        "https://api.x.ai/v1",
+        os.environ.get("XAI_API_KEY", ""),
+        os.environ.get("XAI_MODEL", "grok-4-fast-non-reasoning"),
+        messages,
+        timeout,
+        temperature,
+    )
+
+
 def _anthropic(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
     """Claude, as a paid last resort.
 
@@ -347,6 +405,16 @@ PROVIDERS: list[Provider] = [
     Provider("mistral-small", _mistral, "MISTRAL_API_KEY", "mistral"),
     Provider("groq-gpt-oss-120b", _groq_gptoss, "GROQ_API_KEY", "groq"),
     Provider("gemini-3.6-flash", _gemini, "GEMINI_API_KEY", "gemini"),
+    Provider("xai-grok", _xai, "XAI_API_KEY", "xai"),
+    # Free but rationed, and therefore ordered after the uncapped free tiers
+    # whatever this list says — see `metered` above. Two models on one backend:
+    # `_select_providers` takes one provider per backend on its first pass, so
+    # the pair is depth for when the ensemble needs more than one, not two slots
+    # out of the daily allowance on every call.
+    Provider("openrouter-gemma-4-26b", _openrouter("google/gemma-4-26b-a4b-it:free"),
+             "OPENROUTER_API_KEY", "openrouter", metered=True),
+    Provider("openrouter-nemotron-3-super-120b", _openrouter("nvidia/nemotron-3-super-120b-a12b:free"),
+             "OPENROUTER_API_KEY", "openrouter", metered=True),
     # Paid, and therefore last whatever this list says — see `paid` above.
     Provider("claude-opus-5", _anthropic, "ANTHROPIC_API_KEY", "anthropic", paid=True),
 ]
@@ -424,7 +492,9 @@ def _select_providers(n: int) -> list[Provider]:
     # so this changes nothing on a deployment with no paid key set — and on one
     # that has a key, the paid provider is reached only when the free tiers
     # cannot fill the request.
-    candidates = sorted(candidates, key=lambda provider: provider.paid)
+    # Uncapped free, then capped free, then paid. Tuple ordering does the work:
+    # (False, False) < (False, True) < (True, False).
+    candidates = sorted(candidates, key=lambda provider: (provider.paid, provider.metered))
     selected: list[Provider] = []
     used_backends: set[str] = set()
     for provider in candidates:

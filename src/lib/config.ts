@@ -53,6 +53,8 @@ export function llmProviders(): string[] {
       ["GEMINI_API_KEY", "gemini"],
       ["CEREBRAS_API_KEY", "cerebras"],
       ["MISTRAL_API_KEY", "mistral"],
+      ["OPENROUTER_API_KEY", "openrouter"],
+      ["XAI_API_KEY", "xai"],
       // The optional paid fallback (agent/llm.py). It belongs in this list for
       // one specific reason: a deployment configured with ONLY this key is
       // fully able to rewrite, and without the entry the admin page and the
