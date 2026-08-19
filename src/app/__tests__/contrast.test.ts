@@ -98,6 +98,16 @@ const PAIRS: [string, string, string][] = [
   ["paper", "danger", "text on a critical chip"],
   ["paper", "warn", "text on a warning chip"],
   ["paper", "brand", "the score chip on the resume list"],
+  // The reverse direction, which this list used to omit entirely. Every token
+  // above appears as a BACKGROUND with paper on it; these are the same tokens
+  // used as TEXT on the sunken fill, which is a different measurement and the
+  // one the account page actually renders. --warn failed it at 4.37:1 and
+  // nothing here noticed, because nothing here looked.
+  ["warn", "surface-2", "a warning label on a sunken fill"],
+  ["danger", "surface-2", "a critical label on a sunken fill"],
+  ["brand", "surface-2", "a link or a good label on a sunken fill"],
+  ["muted", "surface-2", "secondary text on a sunken fill"],
+  ["foreground", "surface-2", "body text on a sunken fill"],
 ];
 
 describe.each([

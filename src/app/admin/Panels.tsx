@@ -75,7 +75,12 @@ export function Funnel({ steps }: { steps: { label: string; count: number; note:
               <span className="text-sm font-medium">{s.label}</span>
               <span className="text-muted font-mono text-xs tabular-nums">
                 {s.count}
-                {i > 0 && <span className="opacity-60"> · {share}%</span>}
+                {/* No second dimming. This span is already inside `text-muted`,
+                    so `opacity-60` on top of it computed to #8d877d on paper —
+                    3.03:1, under the 4.5 that 12px text needs. The percentage
+                    is secondary because of where it sits and what it says, not
+                    because it is faded twice. */}
+                {i > 0 && <span> · {share}%</span>}
               </span>
             </div>
             <div className="bg-surface-2 mt-1.5 h-2 w-full overflow-hidden rounded-full">

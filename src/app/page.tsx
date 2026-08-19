@@ -30,7 +30,10 @@ export default async function Home() {
       <ParticleField />
 
       <header className="border-border relative z-10 border-b">
-        <nav className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-5 py-4 sm:px-6 sm:py-5">
+        <nav
+          aria-label="Main"
+          className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-5 py-4 sm:px-6 sm:py-5"
+        >
           <Logo />
           <div className="flex items-center gap-2 sm:gap-3">
             {/* Pricing is hidden on the narrowest screens rather than allowed to
@@ -223,7 +226,7 @@ export default async function Home() {
       <footer className="border-border relative z-10 border-t">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-5 py-8 text-sm sm:px-6">
           <Logo size={24} />
-          <nav className="text-muted flex flex-wrap items-center gap-5">
+          <nav aria-label="Footer" className="text-muted flex flex-wrap items-center gap-5">
             <Link href="/pricing" className="hover:text-ink">Pricing</Link>
             <Link href="/privacy" className="hover:text-ink">Privacy</Link>
             <Link href="/terms" className="hover:text-ink">Terms</Link>

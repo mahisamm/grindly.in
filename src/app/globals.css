@@ -53,7 +53,13 @@
 
      Buttons moved too: paper text on #e3402a is 3.55:1 and white text on it is
      only 4.17:1, so the fill itself had to darken. */
-  --brand: #c22e1c;             /* text, links, scores — 4.83:1 on paper */
+  /* Measured against the SUNKEN fill as well as the page. #c22e1c cleared
+     4.83:1 on --paper and 4.37:1 on --surface-2, so a link inside one of the
+     inset panels would have been the accent colour and unreadable at the
+     same time. The shift is about four percent of lightness and is not
+     visible side by side; --cta keeps the original value, because that one
+     is a fill carrying paper text and was already measured for that. */
+  --brand: #b92b1a;             /* text, links, scores — 5.22:1 on paper, 4.72:1 on surface-2 */
   --brand-2: #a82616;           /* hover / gradient end */
   --cta: #c22e1c;               /* primary action fill — paper on it is 4.83:1 */
   --cta-2: #a82616;
@@ -71,7 +77,11 @@
   --shadow-hard: rgba(23, 20, 15, 0.10);
   --accent: #c22e1c;
   --danger: #b3271a;
-  --warn: #8a5e17;              /* ochre — paper text on it is 4.83:1 */
+  /* Ochre. Dark enough to be read AS TEXT on the sunken fill, not only to
+     carry paper text on top of it. #8a5e17 cleared 4.5:1 on --paper and
+     measured 4.37:1 on --surface-2, which is where the account page prints
+     "not confirmed" — a real 10px label, failing by a tenth. */
+  --warn: #815816;              /* 5.35:1 on paper, 4.84:1 on surface-2 */
 }
 
 @theme inline {

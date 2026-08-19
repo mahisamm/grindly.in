@@ -28,3 +28,13 @@ playwright>=1.44.0       # headless Chromium: struct -> HTML -> PDF (agent/rende
 #   pip install anthropic
 #
 # Optional (email outcome scanner): google-auth google-auth-httplib2 google-api-python-client
+
+# OPTIONAL — the accessibility half of scripts/browser_check.py.
+#
+#   pip install axe-playwright-python
+#
+# Not required to run or to deploy anything. The script skips the axe pass with
+# a note when the package is absent, so a production box carrying only what the
+# renderer needs does not have to install it. Worth having wherever the checks
+# are actually run: the first pass found a 3.03:1 contrast failure, a page with
+# no main landmark and two unlabelled navigation landmarks.
