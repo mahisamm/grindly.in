@@ -174,6 +174,23 @@ _EXPAND_STRATEGY = (
 )
 
 
+
+def _progress(message: str) -> None:
+    """Report what the pipeline is doing, for a human who is waiting.
+
+    A batch is minutes long, and until now the only thing the person who pressed
+    the button saw was a spinner and a sentence guessing at the duration. These
+    lines go to stdout, which cli.py has already pointed at stderr for the whole
+    run, so they cannot corrupt the single JSON object on the real stdout — and
+    lib/agent.ts reads them off the stderr pipe as they arrive.
+
+    Written in the user's terms, not the pipeline's: "Writing the keyword-first
+    rebuild", never "[optimize] variant 2/3". The prefix is the only machine-read
+    part.
+    """
+    print(f"[progress] {message}")
+
+
 def _targeted_strategies(
     strategies: list[tuple[str, str]],
     emphasis: list[str] | None,
@@ -302,6 +319,7 @@ def generate_variants(
     baseline_report = readiness.score(text, target_keywords)
     baseline_score = int(baseline_report.get("score") or 0)
     print(f"[optimize] baseline = {baseline_score} ({baseline_report.get('grade')})")
+    _progress("Measured your resume — reading its structure")
 
     base_struct = _extract_struct(text)
     # An empty (or near-empty) base is a hard stop, not thin input. A rewriter
@@ -342,11 +360,14 @@ def generate_variants(
 
     out: list[dict] = []
     reasons: list[str] = []
-    for label, instruction in strategies:
+    total = len(strategies)
+    for index, (label, instruction) in enumerate(strategies, start=1):
+        _progress(f"Writing the {label.lower()} rebuild ({index} of {total})")
         variant, reason = _one_variant(
             label, instruction, base_struct, allowed, master_skills, baseline_score,
             identity, stems, debug_dir, target_keywords,
         )
+        _progress(f"Rendered and re-measured {index} of {total}")
         reasons.append(reason)
         if variant:
             out.append(variant)
@@ -354,6 +375,7 @@ def generate_variants(
     # Wins first, then ties. Losers never reach this list (_one_variant drops them).
     out.sort(key=lambda v: (v["beats_baseline"], v["score"]), reverse=True)
     shipped = out[:3]
+    _progress("Finishing up")
     return {
         "variants": shipped,
         "baseline": baseline_score,

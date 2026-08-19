@@ -8,6 +8,7 @@ import type {
 import { SHIPPABLE_FLOOR } from "@/lib/reportTypes";
 import { isUnlimited } from "@/lib/plans";
 import { FidelityLine, Findings, ReportPanel, ScoreDial } from "@/components/Score";
+import { RunBanner, useRunStatus } from "./RunProgress";
 
 type VariantView = {
   id: string;
@@ -69,6 +70,11 @@ export function ResumeWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
+  // The rebuild is a row on the server now, so this is the page catching up
+  // with it rather than the page owning it. On a cold load it finds a batch
+  // that was started before the tab was closed.
+  const { run, isRunning, refresh: refreshRun, cancel: cancelRun } = useRunStatus(resume.id);
+
   async function post(url: string, body?: unknown, label = "working") {
     setBusy(label);
     setError(null);
@@ -82,10 +88,17 @@ export function ResumeWorkspace({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data?.error ?? "That did not work.");
+        // A 409 means a batch is already in flight — usually a double click.
+        // Picking the run up is more useful than the refusal message.
+        if (res.status === 409) void refreshRun();
         return null;
       }
       if (data?.message) setNote(data.message);
-      router.refresh();
+      // A 202 hands back a run id rather than results: the work has only just
+      // started. Begin watching it instead of refreshing a page that has
+      // nothing new on it yet.
+      if (data?.runId) void refreshRun();
+      else router.refresh();
       return data;
     } catch {
       setError("We could not reach the server.");
@@ -94,6 +107,10 @@ export function ResumeWorkspace({
       setBusy(null);
     }
   }
+
+  // One flag for "a rebuild is happening", whether this tab started it or found
+  // it. Every button that would start another one reads this.
+  const rebuilding = busy === "rewrite" || isRunning;
 
   const tabs: [Tab, string][] = [
     ["report", "Readiness"],
@@ -156,6 +173,8 @@ export function ResumeWorkspace({
         ))}
       </div>
 
+      <RunBanner run={run} onCancel={cancelRun} />
+
       {(error || note) && (
         <p
           role="alert"
@@ -189,6 +208,7 @@ export function ResumeWorkspace({
         <RewriteTab
           resume={resume}
           busy={busy}
+          rebuilding={rebuilding}
           onRun={(targetId) =>
             post(`/api/resumes/${resume.id}/variants`, targetId ? { targetId } : {}, "rewrite")
           }
@@ -200,6 +220,7 @@ export function ResumeWorkspace({
           packs={packs}
           disclaimer={disclaimer}
           targetLimit={targetLimit}
+          rebuilding={rebuilding}
           busy={busy}
           onTarget={(body) => post(`/api/resumes/${resume.id}/variants`, body, "rewrite")}
         />
@@ -388,10 +409,13 @@ function AdviceList({ title, items }: { title: string; items: string[] }) {
 function RewriteTab({
   resume,
   busy,
+  rebuilding,
   onRun,
 }: {
   resume: ResumeView;
   busy: string | null;
+  /** A batch is in flight — this tab's, another tab's, or one from before. */
+  rebuilding: boolean;
   onRun: (targetId: string | null) => void;
 }) {
   const untargeted = resume.variants.filter((v) => !v.targetId);
@@ -416,16 +440,10 @@ function RewriteTab({
             we will never do to reach the number is write a fact you did not.
           </p>
         </div>
-        <button onClick={() => onRun(null)} disabled={busy !== null} className="btn btn-primary">
-          {busy === "rewrite" ? "Rebuilding…" : untargeted.length ? "Run again" : "Rebuild my resume"}
+        <button onClick={() => onRun(null)} disabled={busy !== null || rebuilding} className="btn btn-primary">
+          {rebuilding ? "Rebuilding…" : untargeted.length ? "Run again" : "Rebuild my resume"}
         </button>
       </div>
-
-      {busy === "rewrite" && (
-        <p className="text-muted mt-6 text-sm">
-          This takes a minute or two — several rewrites, each rendered and re-measured.
-        </p>
-      )}
 
       {untargeted.length === 0 ? (
         <p className="text-muted mt-8 text-sm">No rewrites yet.</p>
@@ -512,6 +530,7 @@ function TargetTab({
   disclaimer,
   targetLimit,
   busy,
+  rebuilding,
   onTarget,
 }: {
   resume: ResumeView;
@@ -519,6 +538,7 @@ function TargetTab({
   disclaimer: string;
   targetLimit: number;
   busy: string | null;
+  rebuilding: boolean;
   onTarget: (body: Record<string, string>) => void;
 }) {
   const [jd, setJd] = useState("");
@@ -633,11 +653,11 @@ function TargetTab({
                     // Disabled rather than allowed-and-then-refused. Setting up
                     // a NEW target is what the plan caps; re-running one that
                     // already exists is always available.
-                    disabled={busy !== null || (!existing && left === 0)}
+                    disabled={busy !== null || rebuilding || (!existing && left === 0)}
                     title={!existing && left === 0 ? "No targets left on this resume" : undefined}
                     className="btn w-full justify-center text-sm"
                   >
-                    {busy === "rewrite"
+                    {rebuilding
                       ? "Working…"
                       : variants.length
                         ? "Rebuild"
@@ -653,7 +673,13 @@ function TargetTab({
         <p className="text-muted mt-6 max-w-3xl text-xs leading-relaxed">{disclaimer}</p>
       </section>
 
-      <AnyCompany resume={resume} busy={busy} onTarget={onTarget} targetsLeft={left} />
+      <AnyCompany
+        resume={resume}
+        busy={busy}
+        rebuilding={rebuilding}
+        onTarget={onTarget}
+        targetsLeft={left}
+      />
 
       <section className="border-border border-t pt-10">
         <h2 className="font-display text-2xl font-semibold">Or paste a job description</h2>
@@ -677,10 +703,10 @@ function TargetTab({
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button
             onClick={() => onTarget({ jd })}
-            disabled={busy !== null || jd.trim().length < 60}
+            disabled={busy !== null || rebuilding || jd.trim().length < 60}
             className="btn btn-primary"
           >
-            {busy === "rewrite" ? "Working…" : "Tailor to this role"}
+            {rebuilding ? "Working…" : "Tailor to this role"}
           </button>
           <span className="text-muted text-xs">
             {jd.trim().length < 60
@@ -777,11 +803,13 @@ function TargetTab({
 function AnyCompany({
   resume,
   busy,
+  rebuilding,
   onTarget,
   targetsLeft,
 }: {
   resume: ResumeView;
   busy: string | null;
+  rebuilding: boolean;
   onTarget: (body: Record<string, string>) => void;
   /** New company targets this plan still allows on this resume. */
   targetsLeft: number;
@@ -894,6 +922,7 @@ function AnyCompany({
               <SupplyEvidence
                 company={found.name}
                 busy={busy}
+                rebuilding={rebuilding}
                 disabled={!existing && targetsLeft === 0}
                 onTarget={onTarget}
               />
@@ -928,10 +957,10 @@ function AnyCompany({
                     existing ? { targetId: existing.id } : { companyName: found.name },
                   )
                 }
-                disabled={busy !== null || (!existing && targetsLeft === 0)}
+                disabled={busy !== null || rebuilding || (!existing && targetsLeft === 0)}
                 className="btn btn-primary mt-5"
               >
-                {busy === "rewrite"
+                {rebuilding
                   ? "Working…"
                   : !existing && targetsLeft === 0
                     ? "No targets left on this resume"
@@ -971,11 +1000,13 @@ function AnyCompany({
 function SupplyEvidence({
   company,
   busy,
+  rebuilding,
   disabled,
   onTarget,
 }: {
   company: string;
   busy: string | null;
+  rebuilding: boolean;
   disabled: boolean;
   onTarget: (body: Record<string, string>) => void;
 }) {
@@ -1053,10 +1084,10 @@ function SupplyEvidence({
                 : { notes: text, companyName: company },
             )
           }
-          disabled={busy !== null || short || disabled}
+          disabled={busy !== null || rebuilding || short || disabled}
           className="btn btn-primary text-sm"
         >
-          {busy === "rewrite"
+          {rebuilding
             ? "Working…"
             : disabled
               ? "No targets left on this resume"

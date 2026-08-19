@@ -70,6 +70,20 @@ enum TargetKind {
   notes
 }
 
+/// Where a rewrite batch got to.
+///
+/// `empty` is a success, not a failure: the rewrites ran and none of them beat
+/// the user's own resume, which is a real and good answer. Conflating it with
+/// `failed` would tell someone their resume is broken when what happened is
+/// that it is already good.
+enum RunStatus {
+  running
+  done
+  empty
+  failed
+  cancelled
+}
+
 /// Why a score was recorded, for the history on a resume.
 enum ScoreSource {
   upload
@@ -244,6 +258,7 @@ model Resume {
   variants Variant[]
   targets  Target[]
   scores   ScoreEvent[]
+  runs     VariantRun[]
 
   @@index([userId, createdAt])
   @@map("resumes")
@@ -277,6 +292,52 @@ model ScoreEvent {
 
   @@index([resumeId, createdAt])
   @@map("score_events")
+}
+
+/// One rewrite batch, from the button press to the documents.
+///
+/// A batch is several model calls plus up to four headless Chromium renders —
+/// minutes, not seconds. It used to run inside the POST that started it, which
+/// meant the browser held a request open for the whole thing and the work
+/// existed nowhere else. Close the tab, lose the connection, or let a phone
+/// sleep, and the server finished the job and wrote the rows while the person
+/// who asked for it saw nothing and had no way to find out.
+///
+/// The row is the fix. The POST creates it and returns immediately; the work
+/// runs after the response and reports its progress here; the page polls it and
+/// finds it again on a cold load. What the user waited for is now a thing that
+/// exists rather than a connection that has to be held.
+model VariantRun {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+
+  resumeId String @map("resume_id")
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  /// Null for the untargeted "just make this better" run. Not a relation: a
+  /// target can be deleted while a run that referenced it is still worth
+  /// reading, and a failed run's history should not vanish with it.
+  targetId   String? @map("target_id")
+  targetName String  @default("") @map("target_name")
+
+  status RunStatus @default(running)
+  /// What it is doing right now, in the user's words rather than the
+  /// pipeline's — "Rendering the second rebuild", not "[optimize] variant 2/3".
+  stage  String    @default("Starting")
+  /// Why it stopped, when it stopped badly. Shown to the user, so it is a
+  /// sentence rather than a stack.
+  error  String?
+
+  /// How many rewrites were kept. Zero with status `empty` is the honest
+  /// "nothing beat your resume" outcome.
+  variantsMade Int @default(0) @map("variants_made")
+
+  startedAt  DateTime  @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+
+  @@index([resumeId, startedAt])
+  @@index([status])
+  @@map("variant_runs")
 }
 
 /// What a set of variants was aimed at: a curated company pack, or a pasted

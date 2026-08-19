@@ -60,6 +60,7 @@ async function main() {
   // through then leaves a consistent database rather than parents whose
   // children are already gone.
   await prisma.variant.deleteMany();
+  await prisma.variantRun.deleteMany();
   await prisma.scoreEvent.deleteMany();
   await prisma.target.deleteMany();
   await prisma.resume.deleteMany();

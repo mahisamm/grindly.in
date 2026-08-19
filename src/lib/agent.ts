@@ -64,6 +64,24 @@ function pythonBin(): string {
   return process.env.PYTHON_BIN || "python";
 }
 
+export type RunOptions = {
+  /**
+   * Called with each `[progress] ...` line the pipeline writes while it works.
+   *
+   * The variant pipeline is minutes long, and its stderr already narrated what
+   * it was doing to a log nobody was reading. This is that narration, delivered
+   * to whoever is waiting. Never awaited and never allowed to throw: a progress
+   * callback that fails must not take the run down with it.
+   */
+  onProgress?: (message: string) => void;
+  /**
+   * Called once with a function that kills the subprocess, so a caller holding
+   * a long run can stop it. Handed out rather than returned because the run
+   * itself is the thing being awaited.
+   */
+  onStart?: (kill: () => void) => void;
+};
+
 /**
  * Run one agent command.
  *
@@ -74,6 +92,7 @@ function pythonBin(): string {
 export async function runAgent<T = Record<string, unknown>>(
   cmd: string,
   payload: Record<string, unknown> = {},
+  options: RunOptions = {},
 ): Promise<AgentResult<T>> {
   const timeout = TIMEOUTS[cmd] ?? DEFAULT_TIMEOUT;
   const cli = path.join(process.cwd(), "agent", "cli.py");
@@ -102,6 +121,12 @@ export async function runAgent<T = Record<string, unknown>>(
     let err = "";
     let outBytes = 0;
     let settled = false;
+
+    try {
+      options.onStart?.(() => child.kill("SIGKILL"));
+    } catch {
+      /* a caller that cannot hold the handle does not get to stop the run */
+    }
 
     const finish = (result: AgentResult<T>) => {
       if (settled) return;
@@ -140,6 +165,22 @@ export async function runAgent<T = Record<string, unknown>>(
       // Keep only the tail: a traceback's last frames are the part anyone reads,
       // and an unbounded buffer here is a memory leak with a stack trace.
       err = (err + chunk).slice(-MAX_STDERR_KEPT);
+
+      if (!options.onProgress) return;
+      // Progress lines are read off the raw chunk rather than the kept tail, so
+      // a long traceback later in the run cannot push earlier progress out of
+      // the buffer before it has been seen. A chunk can split a line, which
+      // costs at most one missed update — not worth a reassembly buffer for a
+      // label that is replaced seconds later anyway.
+      for (const line of chunk.split(/\r?\n/)) {
+        const match = line.match(/^\[progress\]\s+(.*)$/);
+        if (!match) continue;
+        try {
+          options.onProgress(match[1].trim().slice(0, 200));
+        } catch {
+          /* never let a progress listener break the run it is watching */
+        }
+      }
     });
 
     child.on("error", (e) => {
