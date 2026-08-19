@@ -329,22 +329,34 @@ def cmd_struct(payload: dict) -> dict:
 
     struct = _strip_redaction_markers(struct)
 
-    # IDENTITY COMES FROM THE SOURCE, NOT FROM THE MODEL.
+    # IDENTITY COMES FROM THE SOURCE, NOT FROM THE MODEL — via the same function
+    # the rewrite path uses, which is why that path never had this bug.
     #
-    # The rule resume_optimize already follows — it stamps the header on after
-    # the rewrite via `_identity_from_source`, which is exactly why the rewrite
-    # path never had this bug and this one did. The contact line is read off the
-    # document locally at upload, before anything is sent anywhere, so it is the
-    # only copy that still has the email and phone in it.
+    # `_identity_from_source` reads the name and contact line off the RAW resume
+    # text, before redaction, and its own docstring says why: everything a model
+    # returns for these two fields is placeholder text, because the LLM boundary
+    # replaced the email and phone before the prompt left this process.
     #
-    # This USED to be conditional on the model returning nothing, and that was
-    # the bug: the model returns something, it is just wrong, so the fallback
-    # never fired. Measured on the live site — an uploaded resume came back with
-    # "[email redacted] | [phone redacted] | Bengaluru" as its contact line,
-    # which the editor would have saved and the next build would have printed.
-    contact_fallback = str(payload.get("contact_fallback") or "").strip()
-    if contact_fallback:
-        struct["contact_line"] = contact_fallback
+    # Two earlier versions of this were wrong, both found by testing the live
+    # site. The first applied a fallback only when the model returned nothing —
+    # but it returns something, it is just wrong, so the fallback never fired and
+    # production handed back "[email redacted] | [phone redacted] | Bengaluru".
+    # The second stamped the caller's `contact_fallback`, which is always empty:
+    # it comes from `resume_ai.extract_contact`, which returns name/phone/gpa/urls
+    # and has no `contact_line` key at all — so the header came back with the
+    # email and phone simply missing instead.
+    #
+    # Calling the proven function deletes the second implementation rather than
+    # fixing it again.
+    name, contact_line = resume_optimize._identity_from_source(
+        text,
+        str(payload.get("contact_fallback") or ""),
+        _str_list(payload.get("links"), limit=24),
+    )
+    if name:
+        struct["name"] = name
+    if contact_line:
+        struct["contact_line"] = contact_line
 
     return {"ok": True, "struct": struct}
 

@@ -194,30 +194,63 @@ class TestStructIdentity:
             "[email redacted] | [phone redacted] | Bengaluru"
         ) == "Bengaluru"
 
-    def test_the_local_contact_line_wins_over_the_model(self, monkeypatch):
-        """The whole fix. The model returns SOMETHING — it is just wrong — so a
-        fallback that only fires on an empty answer never fires at all."""
+    def test_the_header_is_read_from_the_source_not_the_model(self, monkeypatch):
+        """The whole fix, and it took three attempts to get right.
+
+        v1 applied a fallback only when the model returned nothing - but it
+        returns something, it is just wrong, so the fallback never fired.
+        v2 stamped the callers `contact_fallback`, which is ALWAYS empty: it
+        comes from resume_ai.extract_contact, which returns name/phone/gpa/urls
+        and has no `contact_line` key at all, so the header came back with the
+        email and phone simply missing instead of redacted.
+        v3, this one, calls the function the rewrite path has always used.
+        """
         import cli
         import resume_optimize
+
+        source = chr(10).join([
+            "Priya Sharma",
+            "",
+            "priya@example.com | +91 98765 43210 | Bengaluru",
+            "",
+            "EXPERIENCE",
+            "",
+            "Backend Engineer",
+            "Freshworks, Jan 2024 - Present",
+            "- Cut a Postgres import path from 40 minutes to 6.",
+            "- Led the migration of 14 services onto a shared auth library.",
+            "- Wrote the load tests that caught a connection-pool leak.",
+            "",
+            "EDUCATION",
+            "",
+            "B.E. Computer Science",
+            "MIET, 2020 - 2024",
+        ])
 
         monkeypatch.setattr(
             resume_optimize,
             "_extract_struct",
             lambda text: {
-                "name": "Priya Sharma",
+                "name": "A Model Guess",
                 "contact_line": "[email redacted] | [phone redacted] | Bengaluru",
                 "sections": [
-                    {"heading": "EXPERIENCE", "items": [{"head": "Engineer", "sub": "", "bullets": ["Did a thing"]}]}
+                    {"heading": "EXPERIENCE", "items": [
+                        {"head": "Engineer", "sub": "", "bullets": ["b"]}]}
                 ],
             },
         )
 
-        real = "priya@example.com | +91 98765 43210 | Bengaluru"
-        out = cli.cmd_struct({"text": "x" * 400, "contact_fallback": real})
+        out = cli.cmd_struct({"text": source})
         assert out["ok"] is True
-        assert out["struct"]["contact_line"] == real
+        line = out["struct"]["contact_line"]
+        # The two values a model can never return, because redaction removed
+        # them before the prompt left this process.
+        assert "priya@example.com" in line
+        assert "98765" in line
+        # And the name off the document, not the model guess at one.
+        assert out["struct"]["name"] == "Priya Sharma"
 
-    def test_without_a_fallback_it_still_never_returns_a_placeholder(self, monkeypatch):
+    def test_a_placeholder_never_survives_into_the_header(self, monkeypatch):
         import cli
         import resume_optimize
 
@@ -228,9 +261,11 @@ class TestStructIdentity:
                 "name": "Priya",
                 "contact_line": "[email redacted] | Bengaluru",
                 "sections": [
-                    {"heading": "X", "items": [{"head": "Engineer", "sub": "", "bullets": ["b"]}]}
+                    {"heading": "X", "items": [
+                        {"head": "Engineer", "sub": "", "bullets": ["b"]}]}
                 ],
             },
         )
-        out = cli.cmd_struct({"text": "x" * 400})
-        assert "redacted" not in out["struct"]["contact_line"]
+        source = chr(10).join(["Priya Sharma", "", "Bengaluru", ""]) + ("x " * 300)
+        out = cli.cmd_struct({"text": source})
+        assert "redacted" not in json.dumps(out["struct"])

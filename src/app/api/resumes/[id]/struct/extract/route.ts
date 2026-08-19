@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser, notFound, badRequest, serverError } from "@/lib/auth";
 import { runAgent } from "@/lib/agent";
 import { toJsonColumn } from "@/lib/jsonColumn";
-import { readContact } from "@/lib/reportTypes";
+import { readContact, readStrings } from "@/lib/reportTypes";
 import { readStruct, sanitizeStruct } from "@/lib/resumeStruct";
 import { reserve, refund } from "@/lib/quota";
 import { audit } from "@/lib/audit";
@@ -37,7 +37,9 @@ export async function POST(req: Request, { params }: Ctx) {
 
   const resume = await prisma.resume.findFirst({
     where: { id, userId: auth.user.id },
-    select: { id: true, text: true, structJson: true, contactJson: true },
+    select: {
+      id: true, text: true, structJson: true, contactJson: true, linksJson: true,
+    },
   });
   if (!resume) return notFound();
 
@@ -76,6 +78,11 @@ export async function POST(req: Request, { params }: Ctx) {
   const extracted = await runAgent<{ struct: unknown }>("struct", {
     text: resume.text,
     contact_fallback: contact.contact_line ?? "",
+    // The PDF's link annotations. A LinkedIn address hidden behind the word
+    // "LinkedIn" is invisible to every text extractor, so the header the editor
+    // opens with would silently lose it — the same reason the rewrite path
+    // passes these through.
+    links: readStrings(resume.linksJson),
   });
 
   if (!extracted.ok) {
