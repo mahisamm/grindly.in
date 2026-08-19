@@ -39,6 +39,31 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Send a JSON body." }, { status: 400 });
   }
 
+  // No mail server, no promise.
+  //
+  // In production without SMTP, `sendEmail` writes to a file on the server and
+  // reports success, and this route answered "a reset link is on its way" —
+  // which is untrue, and untrue in the one place a user has no way to check. A
+  // product that opens by refusing to quote a number no system computes cannot
+  // then tell someone their mail is coming when it is not.
+  //
+  // Answered BEFORE the account lookup on purpose: this is a fact about the
+  // server, not about whether the address is registered, so it cannot become an
+  // account-existence oracle.
+  if (process.env.NODE_ENV === "production" && !smtpConfigured()) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "email_unavailable",
+        error:
+          "This server has no mail set up yet, so we cannot send you a reset link — " +
+          "and telling you one was on its way would be a lie. If you signed in with " +
+          "Google, use the Google button. Otherwise contact whoever runs this site.",
+      },
+      { status: 503 },
+    );
+  }
+
   const email = normalizeEmail(body.email);
   const sameAnswer = NextResponse.json({
     ok: true,

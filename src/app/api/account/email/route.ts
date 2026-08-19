@@ -46,6 +46,28 @@ export async function POST(req: Request) {
     return badRequest("Send a JSON body.");
   }
 
+  // Same rule as the forgot route: no mail server, no promise. Without SMTP the
+  // confirmation link is written to a file on the server, and answering
+  // "Confirmation sent" would be telling someone to go and check an inbox that
+  // will never receive anything.
+  //
+  // The CHANGE is refused as well as the resend, and that is deliberate: the
+  // new address only becomes real when its link is opened, so starting a change
+  // nobody can complete would strand the account between two addresses.
+  if (process.env.NODE_ENV === "production" && !smtpConfigured()) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: "email_unavailable",
+        error:
+          "This server has no mail set up yet, so we cannot send a confirmation — " +
+          "and nothing here will pretend otherwise. Your account and your address " +
+          "are unchanged.",
+      },
+      { status: 503 },
+    );
+  }
+
   const requested = normalizeEmail(body.email);
   const target = requested || normalizeEmail(user.email);
   const isChange = target !== normalizeEmail(user.email);

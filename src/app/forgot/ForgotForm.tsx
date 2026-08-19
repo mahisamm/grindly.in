@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
 
-export function ForgotForm() {
+export function ForgotForm({ mailAvailable = true }: { mailAvailable?: boolean }) {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<{ message: string; devLink?: string } | null>(null);
@@ -57,6 +57,31 @@ export function ForgotForm() {
           )}
           <Link href="/login" className="text-muted hover:text-ink mt-8 text-sm">
             ← Back to sign in
+          </Link>
+        </>
+      ) : !mailAvailable ? (
+        /* Said before they type anything.
+           Without SMTP the reset link is written to a file on the server, and
+           the old copy here promised mail that was never going to arrive — in
+           the one place a user cannot check for themselves. */
+        <>
+          <div
+            role="status"
+            className="mt-4 rounded-lg border p-4 text-sm leading-relaxed"
+            style={{ borderColor: "var(--warn)", background: "var(--surface-2)" }}
+          >
+            <p className="font-medium">We cannot email you yet.</p>
+            <p className="text-muted mt-1">
+              This server has no mail set up, so a reset link cannot reach you — and
+              saying one was on its way would not be true.
+            </p>
+          </div>
+          <p className="text-muted mt-4 text-sm leading-relaxed">
+            If you signed up with Google, nothing is lost: use the Google button on the
+            sign-in page. Otherwise ask whoever runs this site to reset it for you.
+          </p>
+          <Link href="/login" className="btn btn-primary mt-8 justify-center">
+            Back to sign in
           </Link>
         </>
       ) : (
