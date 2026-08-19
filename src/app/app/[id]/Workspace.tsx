@@ -11,6 +11,7 @@ import { isUnlimited } from "@/lib/plans";
 import { FidelityLine, Findings, ReportPanel, ScoreDial } from "@/components/Score";
 import { RunBanner, useRunStatus } from "./RunProgress";
 import { Compare } from "./Compare";
+import { CoverLetter } from "./CoverLetter";
 
 type VariantView = {
   id: string;
@@ -866,6 +867,11 @@ function TargetTab({
             );
           })}
       </section>
+
+      <CoverLetter
+        resumeId={resume.id}
+        targets={resume.targets.map((t) => ({ id: t.id, name: t.name }))}
+      />
     </div>
   );
 }

@@ -57,6 +57,8 @@ const TIMEOUTS: Record<string, number> = {
   // Local rendering only — no model, no Chromium. If this takes 30s something
   // is wrong that a longer timeout will not fix.
   export: 30_000,
+  // Several drafts, each checked independently against the gates.
+  cover: 150_000,
   variants: 420_000,
 };
 const DEFAULT_TIMEOUT = 60_000;

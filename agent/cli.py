@@ -340,6 +340,42 @@ def cmd_export(payload: dict) -> dict:
     return _fail(f"unknown format: {fmt}")
 
 
+
+def cmd_cover(payload: dict) -> dict:
+    """A cover letter, under the same rules as everything else here.
+
+    See cover_letter.py: the gates are stricter than the resume's, because a
+    cover letter is prose ABOUT the candidate rather than a rearrangement of
+    what they wrote, and the genre is built out of exactly the claims they
+    cannot defend.
+    """
+    import cover_letter
+
+    result = cover_letter.write(
+        str(payload.get("text") or "")[:MAX_TEXT],
+        company=str(payload.get("company") or "")[:120],
+        role=str(payload.get("role") or "")[:120],
+        requirements=_str_list(payload.get("requirements"), limit=20),
+    )
+
+    # A refusal is reported as a SUCCESSFUL call that produced no letter, the
+    # same shape `variants` uses for `aborted`. The distinction matters on the
+    # other side of the pipe: lib/agent.ts records every {ok:false} as an error
+    # event, and "the drafts all made claims the resume does not support" is a
+    # product outcome rather than a fault. Filing it as one would bury the real
+    # faults under it.
+    if result.get("ok"):
+        return {"ok": True, "refused": None, "letter": result["letter"],
+                "used": result.get("used") or []}
+    return {
+        "ok": True,
+        "refused": result.get("error") or "No letter could be produced.",
+        "problems": result.get("problems") or [],
+        "letter": "",
+        "used": [],
+    }
+
+
 def cmd_health(payload: dict) -> dict:
     """What this process can actually do, for /api/health and preflight."""
     import render_pdf
@@ -372,6 +408,7 @@ COMMANDS = {
     "struct": cmd_struct,
     "render": cmd_render,
     "export": cmd_export,
+    "cover": cmd_cover,
     "health": cmd_health,
 }
 
