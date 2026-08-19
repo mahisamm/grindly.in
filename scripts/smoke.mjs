@@ -94,6 +94,7 @@ async function main() {
   const password = "a-long-enough-password";
   let userRow = null;
   let adminRow = null;
+  let otherRow = null;
   let resumeId = null;
 
   try {
@@ -257,6 +258,79 @@ async function main() {
     check("the resume list marks the primary", listing.includes("Sending this one"));
     check("the resume list offers the swap", listing.includes("Send this one instead"));
 
+    // ---- the properties that must never regress --------------------------
+    //
+    // Ownership, payment and the share link. These are the three places where a
+    // mistake is not a bug report but an incident: someone else's resume,
+    // someone else's pass, someone's phone number on a public page. They are
+    // cheap to check and nothing else checks them.
+    const otherEmail = `smoke-other-${stamp}@example.invalid`;
+    const other = session();
+    await other.call("/api/auth/signup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: otherEmail, password, name: "Somebody Else" }),
+    });
+    otherRow = await prisma.user.findUnique({ where: { email: otherEmail } });
+    await prisma.user.update({ where: { id: otherRow.id }, data: { accessStatus: "approved" } });
+
+    for (const [what, path, init] of [
+      ["read it", `/api/resumes/${source.id}`, {}],
+      ["export it", `/api/resumes/${source.id}/export?format=txt`, {}],
+      ["share it", `/api/resumes/${source.id}/share`, { method: "POST" }],
+      ["make it primary", `/api/resumes/${source.id}/primary`, { method: "POST" }],
+      ["promote its rebuild", `/api/variants/${variant.id}/promote`, { method: "POST" }],
+      ["download its rebuild", `/api/variants/${variant.id}/file`, {}],
+      ["delete it", `/api/resumes/${source.id}`, { method: "DELETE" }],
+    ]) {
+      const res2 = await other.call(path, init);
+      check(`a stranger cannot ${what}`, res2.status === 404 || res2.status === 403, `status ${res2.status}`);
+    }
+    check("and the resume is still there", (await prisma.resume.count({ where: { id: source.id } })) === 1);
+
+    // A share link exposes the MEASUREMENT, not the person.
+    res = await user.call(`/api/resumes/${source.id}/share`, { method: "POST" });
+    const shared = await res.json().catch(() => ({}));
+    if (shared.token) {
+      const publicPage = await (await fetch(`${BASE}/r/${shared.token}`)).text();
+      check("a shared report does not carry the owner's email", !publicPage.includes("priya@example.com"));
+      check("a shared report does not carry the owner's phone", !publicPage.includes("98765"));
+      await user.call(`/api/resumes/${source.id}/share`, { method: "DELETE" });
+      check("revoking a share link kills it", (await fetch(`${BASE}/r/${shared.token}`)).status === 404);
+    }
+
+    // Money: one order, granted once, to its owner only.
+    const order = await (
+      await user.call("/api/pay", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sku: "pass90" }),
+      })
+    ).json();
+    res = await other.call("/api/pay/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ orderId: order.orderId }),
+    });
+    const thief = await prisma.user.findUnique({ where: { id: otherRow.id } });
+    check("a stranger cannot confirm somebody else's order", res.status === 404 && thief.plan === "free");
+    await user.call("/api/pay/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ orderId: order.orderId }),
+    });
+    const paid = await prisma.user.findUnique({ where: { id: userRow.id } });
+    await user.call("/api/pay/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ orderId: order.orderId }),
+    });
+    const replayed = await prisma.user.findUnique({ where: { id: userRow.id } });
+    check(
+      "confirming the same order twice does not credit it twice",
+      paid.plan === "pass" && replayed.planExpiresAt?.getTime() === paid.planExpiresAt?.getTime(),
+    );
+
     // ---- blocking, and what survives it ---------------------------------
     await admin.call(`/api/admin/access/${userRow.id}`, {
       method: "POST",
@@ -305,6 +379,7 @@ async function main() {
     // Fixtures go even when an assertion threw, or the next run inherits them.
     if (userRow) await prisma.user.delete({ where: { id: userRow.id } }).catch(() => {});
     if (adminRow) await prisma.user.delete({ where: { id: adminRow.id } }).catch(() => {});
+    if (otherRow) await prisma.user.delete({ where: { id: otherRow.id } }).catch(() => {});
     if (resumeId) {
       await fs
         .rm(path.join(process.cwd(), "data", "variants", resumeId), { recursive: true, force: true })
