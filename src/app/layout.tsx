@@ -109,7 +109,13 @@ export default function RootLayout({
         {/* Keyboard/screen-reader users: jump straight past the nav to content. */}
         <a href="#main-content" className="skip-link">Skip to main content</a>
         <div className="grain-fixed" aria-hidden="true" />
-        <div id="main-content" tabIndex={-1} className="flex min-h-full flex-col outline-none">
+        {/* The `min-w-0` here and the `#main-content > *` rule in globals.css
+            are one fix; see the note there for what it is for. */}
+        <div
+          id="main-content"
+          tabIndex={-1}
+          className="flex min-h-full min-w-0 flex-col outline-none"
+        >
           {children}
         </div>
       </body>

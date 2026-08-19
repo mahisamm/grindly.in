@@ -35,15 +35,36 @@ export default async function AdminPage() {
 
   const caps = describe();
 
-  const [stats, signups, queue, recentErrors, problems, recent] = await Promise.all([
+  const [stats, signups, pending, decided, recentErrors, problems, recent] = await Promise.all([
     adminStats(),
     signupsByDay(30),
-    // Pending first and oldest first — the queue is a queue. Recently decided
-    // accounts follow, so an approval can be undone without hunting for it.
+    // The queue is a queue: oldest request first, because the person who has
+    // been waiting longest is the person to answer next.
     prisma.user.findMany({
-      where: { role: { not: "admin" } },
-      orderBy: [{ accessStatus: "asc" }, { createdAt: "asc" }],
+      where: { role: { not: "admin" }, accessStatus: "pending" },
+      orderBy: { createdAt: "asc" },
       take: 50,
+      select: {
+        id: true, email: true, name: true, accessStatus: true,
+        createdAt: true, approvedAt: true,
+      },
+    }),
+    // Decided accounts, so a decision can be undone without hunting for it.
+    //
+    // A SEPARATE query, and both parts of that matter. It used to be one
+    // findMany of 50 sorted by status then createdAt, which meant the "already
+    // decided" list showed the OLDEST accounts on the site — the exact opposite
+    // of the one thing it exists for — and rendered every one of the 48 rows
+    // the pending filter left over, turning this page into a seven-thousand
+    // pixel scroll on an account base of eighty-seven.
+    //
+    // Ordered by when the decision was made, nulls last so a blocked account —
+    // which has its approvedAt cleared — falls back to its signup date rather
+    // than to the top.
+    prisma.user.findMany({
+      where: { role: { not: "admin" }, accessStatus: { not: "pending" } },
+      orderBy: [{ approvedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
+      take: 8,
       select: {
         id: true, email: true, name: true, accessStatus: true,
         createdAt: true, approvedAt: true,
@@ -68,8 +89,6 @@ export default async function AdminPage() {
     recentSignups(7),
   ]);
 
-  const pending = queue.filter((u) => u.accessStatus === "pending");
-  const decided = queue.filter((u) => u.accessStatus !== "pending");
   const runs = stats.work.runsByStatus;
   const runTotal = Object.values(runs).reduce((a, b) => a + b, 0);
   const failed = (runs.failed ?? 0) + (runs.cancelled ?? 0);
@@ -346,8 +365,8 @@ export default async function AdminPage() {
 
       {decided.length > 0 && (
         <Section
-          title="Already decided"
-          note="Reversible. Revoking keeps everything the account has made."
+          title="Recently decided"
+          note="The last eight decisions, newest first. Reversible — revoking keeps everything the account has made."
         >
           <AccessQueue users={decided.map(serialiseUser)} emptyNote="" />
         </Section>

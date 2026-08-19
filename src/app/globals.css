@@ -219,6 +219,31 @@ html, body {
   color: var(--foreground);
 }
 
+/* Every page's outer container is a flex item of #main-content, and almost all
+   of them are centred with `mx-auto`. Those two facts together are a trap.
+
+   A flex item with an AUTO margin on the cross axis is not stretched — the auto
+   margin wins over `align-self: stretch` — so the item is sized to fit-content
+   instead of to the line, and fit-content grows with whatever is inside it.
+   /admin holds two tables, so on a 412px phone its container laid out at 600px,
+   the `overflow-x: clip` below hid the surplus, and the Approve buttons in the
+   beta access queue sat off the right edge of the screen with no way to reach
+   them. `scrollWidth` read 412 and nothing reported a problem, because the
+   overflow was clipped rather than scrolled — which is exactly why it survived
+   being looked at.
+
+   `width: 100%` puts the item back on the line. It does not fight `max-w-*`:
+   that is a different property, so on a wide screen the container still caps at
+   its own maximum and the auto margins still centre it. `min-width: 0` covers
+   the other half of the same failure, where an item does have a definite width
+   and still refuses to shrink under its content.
+
+   Fixed on the shell rather than on the admin page, because the failure belongs
+   to the shell: any page that grows a wide table inherits it, and inherits it
+   invisibly. Tables keep their own `overflow-x: auto` wrappers, and those are
+   what make them scrollable now the container no longer grows to fit. */
+#main-content > * { width: 100%; min-width: 0; }
+
 /* Prevent horizontal page scroll from wide children. */
 html { overflow-x: clip; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-behavior: smooth; }
 body {
