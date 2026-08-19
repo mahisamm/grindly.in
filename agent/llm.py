@@ -164,9 +164,17 @@ def _gemini(messages: list, timeout: int, temperature: float = 0.3) -> str | Non
         }
         if system_text:
             payload["systemInstruction"] = {"parts": [{"text": system_text}]}
+        # gemini-2.0-flash was retired and answered 404 on production, which is
+        # the third provider in this file found dead the same afternoon.
+        #
+        # NOT `gemini-flash-latest`, the alias that would never rot: it timed
+        # out at 45s on the probe, because whatever currently sits behind it
+        # thinks for longer than this pipeline is willing to wait. NOT
+        # `gemini-2.5-flash` either — it wraps JSON in ```json fences, and every
+        # caller here parses the answer.
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.0-flash:generateContent?key={api_key}"
+            f"gemini-3.6-flash:generateContent?key={api_key}"
         )
         req = urllib.request.Request(
             url,
@@ -338,7 +346,7 @@ PROVIDERS: list[Provider] = [
     Provider("cerebras-gpt-oss-120b", _cerebras_gptoss, "CEREBRAS_API_KEY", "cerebras"),
     Provider("mistral-small", _mistral, "MISTRAL_API_KEY", "mistral"),
     Provider("groq-gpt-oss-120b", _groq_gptoss, "GROQ_API_KEY", "groq"),
-    Provider("gemini-2.0-flash", _gemini, "GEMINI_API_KEY", "gemini"),
+    Provider("gemini-3.6-flash", _gemini, "GEMINI_API_KEY", "gemini"),
     # Paid, and therefore last whatever this list says — see `paid` above.
     Provider("claude-opus-5", _anthropic, "ANTHROPIC_API_KEY", "anthropic", paid=True),
 ]
