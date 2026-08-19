@@ -139,6 +139,11 @@ export async function POST(_req: Request, { params }: Ctx) {
           linkStyle: variant.resume.linkStyle,
           fromVariantId: variant.id,
           parentResumeId: variant.resume.id,
+          // Copied, not looked up later. The variant this came from is deleted
+          // the next time the same target is rebuilt, so a resume that resolved
+          // its employer through `fromVariantId` would lose the company out of
+          // its own filename the second time someone pressed the button.
+          targetName: targetName,
         },
         select: { id: true, label: true },
       });

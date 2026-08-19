@@ -584,7 +584,7 @@ function VariantCard({
         <FidelityLine fidelity={variant.fidelity} />
       </div>
 
-      <div className="mt-auto flex gap-2 pt-5">
+      <div className="mt-auto flex flex-wrap gap-2 pt-5">
         <a
           href={`/api/variants/${variant.id}/file`}
           target="_blank"
@@ -592,6 +592,18 @@ function VariantCard({
           className="btn btn-primary flex-1 justify-center text-sm"
         >
           Open PDF
+        </a>
+        {/* Separate from "Open PDF", because they are different intentions and
+            the file arrives named differently depending on which one you meant.
+            Opening is for looking; saving is the one that lands in a folder and
+            gets attached to an email, so it is the one that has to come out as
+            Zoho-Your-Name-Resume.pdf. */}
+        <a
+          href={`/api/variants/${variant.id}/file?download=1`}
+          download
+          className="btn justify-center text-sm"
+        >
+          Download
         </a>
         <button
           onClick={() => setComparing((v) => !v)}

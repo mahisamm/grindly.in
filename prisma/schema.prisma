@@ -355,6 +355,20 @@ model Resume {
   fromVariantId  String? @map("from_variant_id")
   parentResumeId String? @map("parent_resume_id")
 
+  /// The company this document was rebuilt for, copied at promotion time.
+  ///
+  /// Denormalised for the same reason `VariantRun.targetName` is: the row it
+  /// came from does not last. A rebuild is superseded — row and file deleted —
+  /// the moment the same target is run again, so resolving the employer through
+  /// `fromVariantId` works until the user presses the button a second time and
+  /// then quietly stops. It is the first word of the downloaded filename, and a
+  /// filename that silently loses the company is worse than one that never had
+  /// it, because nobody notices.
+  ///
+  /// Empty for an uploaded resume, which may have several targets and belongs
+  /// to none of them.
+  targetName String @default("") @map("target_name")
+
   /// A random token that makes the readiness report readable without an
   /// account, at /r/<token>.
   ///

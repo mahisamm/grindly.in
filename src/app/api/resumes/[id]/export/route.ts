@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { requireApprovedUser, notFound, badRequest, serverError } from "@/lib/auth";
 import { runAgent } from "@/lib/agent";
 import { readStruct } from "@/lib/resumeStruct";
-import { safeEntryName } from "@/lib/zip";
+import { readContact } from "@/lib/reportTypes";
+import { contentDisposition, resumeFileStem } from "@/lib/downloadName";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -44,7 +45,10 @@ export async function GET(req: Request, { params }: Ctx) {
 
   const resume = await prisma.resume.findFirst({
     where: { id, userId: auth.user.id },
-    select: { id: true, label: true, structJson: true, linkStyle: true },
+    select: {
+      id: true, label: true, structJson: true, linkStyle: true,
+      contactJson: true, targetName: true,
+    },
   });
   if (!resume) return notFound();
 
@@ -73,14 +77,19 @@ export async function GET(req: Request, { params }: Ctx) {
 
   if (!result.ok) return serverError(result.error, `export:${resume.id}`);
 
-  const stem = safeEntryName(resume.label, "resume");
+  // A promoted rebuild IS a company-specific resume — that is what promotion
+  // makes — so the .docx a campus portal demands carries the employer's name
+  // exactly as the PDF does. Empty for an uploaded resume, which may have
+  // several targets and belongs to none of them.
+  const person = struct.name || readContact(resume.contactJson).name || auth.user.name;
+  const stem = resumeFileStem(person, resume.targetName);
   await audit(auth.user.id, "resume_export", resume.id, format);
 
   if (format === "txt") {
     return new NextResponse(result.text ?? "", {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${stem}.txt"`,
+        "Content-Disposition": contentDisposition("attachment", `${stem}.txt`),
         "Cache-Control": "no-store, private",
       },
     });
@@ -95,7 +104,7 @@ export async function GET(req: Request, { params }: Ctx) {
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "Content-Disposition": `attachment; filename="${stem}.docx"`,
+      "Content-Disposition": contentDisposition("attachment", `${stem}.docx`),
       "Content-Length": String(bytes.length),
       // Never cached: a resume is a document full of someone's personal details
       // and a shared machine is the normal case for this audience.

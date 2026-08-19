@@ -4,6 +4,9 @@ import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { requireApprovedUser, notFound } from "@/lib/auth";
 import { VARIANT_DIR } from "@/lib/agent";
+import { readContact } from "@/lib/reportTypes";
+import { readStruct } from "@/lib/resumeStruct";
+import { contentDisposition, resumeFileStem } from "@/lib/downloadName";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,8 +29,12 @@ export async function GET(req: Request, { params }: Ctx) {
   const variant = await prisma.variant.findFirst({
     where: { id, resume: { userId: auth.user.id } },
     select: {
-      id: true, file: true, label: true, score: true,
-      resumeId: true, resume: { select: { label: true } },
+      id: true, file: true, label: true, score: true, structJson: true,
+      resumeId: true,
+      // The target is what makes this document company-specific, and its name
+      // is the first word of the filename.
+      target: { select: { name: true } },
+      resume: { select: { label: true, contactJson: true } },
     },
   });
   if (!variant) return notFound();
@@ -55,15 +62,33 @@ export async function GET(req: Request, { params }: Ctx) {
     );
   }
 
-  const download = `${slug(variant.resume.label)}-${slug(variant.label)}.pdf`;
+  // The name printed ON the document, preferred over anything stored beside it:
+  // this file is about to be opened by somebody who will read that header, and
+  // a filename that disagrees with it looks like the wrong attachment. Falls
+  // back to the contact block read off the original upload, then to the account
+  // name, then to nothing — `resumeFileStem` handles the empty case.
+  const printed = readStruct(variant.structJson)?.name;
+  const person = printed || readContact(variant.resume.contactJson).name || auth.user.name;
+  const download = `${resumeFileStem(person, variant.target?.name)}.pdf`;
   return new NextResponse(new Uint8Array(bytes), {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Length": String(bytes.byteLength),
-      // `inline` so the browser's PDF viewer opens it — the user wants to LOOK
-      // at the rewrite before deciding, and forcing a download makes comparing
-      // three variants a trip through the file manager.
-      "Content-Disposition": `${req.headers.get("x-download") ? "attachment" : "inline"}; filename="${download}"`,
+      // `inline` by default so the browser's PDF viewer opens it — the user
+      // wants to LOOK at a rewrite before deciding, and forcing a download
+      // makes comparing three of them a trip through the file manager.
+      // `?download=1` is the explicit save.
+      //
+      // A query parameter and not a request header, which is what this used to
+      // read. A header cannot be set on a plain link or on a <a download>, so
+      // the attachment branch was unreachable from any page in this
+      // application: every "download" in the product was in fact an inline
+      // open, and the filename this route works to get right only ever appeared
+      // if someone saved from inside the PDF viewer.
+      "Content-Disposition": contentDisposition(
+        new URL(req.url).searchParams.get("download") === "1" ? "attachment" : "inline",
+        download,
+      ),
       "Cache-Control": "private, no-store",
       // No sniffing games. Framing policy is NOT set here — it is in
       // next.config.ts, which allows this one route to be framed by us and by
@@ -72,12 +97,4 @@ export async function GET(req: Request, { params }: Ctx) {
       "X-Content-Type-Options": "nosniff",
     },
   });
-}
-
-function slug(value: string): string {
-  return (value || "resume")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 40) || "resume";
 }
