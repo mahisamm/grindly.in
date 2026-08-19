@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { recordError } from "@/lib/errors";
-import { isRateLimitedByIp } from "@/lib/rateLimit";
+import { isRateLimited, isRateLimitedByIp } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,9 +26,23 @@ export const dynamic = "force-dynamic";
  *     nothing can forge a row that looks like a server-side or agent fault.
  */
 export async function POST(req: Request) {
-  // Generous, because one broken deploy can legitimately produce a burst from
-  // every open tab, and tight enough that a script cannot write all night.
-  if (await isRateLimitedByIp(req, "client-error", 30, 10 * 60 * 1000)) {
+  // TWO limits, and the second is the one that matters.
+  //
+  // Per IP is the right shape — one broken deploy legitimately produces a burst
+  // from every open tab — but `isRateLimitedByIp` returns "not limited" when it
+  // cannot identify the caller, which is every deployment without TRUST_PROXY=1.
+  // That left this route, which is unauthenticated and inserts rows, with no
+  // ceiling whatsoever. Deduplication bounds the row COUNT for one repeated
+  // fault; it does nothing about a caller that varies the message.
+  //
+  // So there is also a global bucket. It is crude — a flood from one source
+  // silences honest reports from everyone else for the window — and that is the
+  // correct trade for an endpoint whose legitimate volume is a handful of rows
+  // a day and whose failure mode is a database filled by a stranger.
+  const refused =
+    (await isRateLimitedByIp(req, "client-error", 30, 10 * 60 * 1000)) ||
+    (await isRateLimited("client-error:global", 500, 10 * 60 * 1000));
+  if (refused) {
     // 204, not 429. The caller is an error screen; there is nothing useful it
     // can do with a refusal, and it must not render a second error because the
     // first one could not be reported.

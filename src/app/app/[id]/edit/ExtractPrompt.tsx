@@ -26,7 +26,9 @@ export function ExtractPrompt({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/resumes/${resumeId}/struct`);
+      const res = await fetch(`/api/resumes/${resumeId}/struct/extract`, {
+        method: "POST",
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data?.error ?? "We could not read this resume into fields.");

@@ -129,8 +129,45 @@ export async function POST(req: Request, { params }: Ctx) {
       targetName: target.name,
       stage: "Starting",
     },
-    select: { id: true },
+    select: { id: true, startedAt: true },
   });
+
+  // The check above has a window: two requests can both read "nothing running"
+  // before either has inserted a row, and then both spend a quota unit, both
+  // render on a one-vCPU box, and race to supersede each other's variants — so
+  // the user is charged twice and shown whichever finished last. A double click
+  // is exactly how that happens.
+  //
+  // Closed by checking AFTER the insert instead of only before it: whoever
+  // started first wins, and anyone who finds an older running row stands down.
+  // The comparison is on `startedAt` with the id breaking ties, so both sides
+  // of a genuine tie reach the same verdict and exactly one survives.
+  const rival = await prisma.variantRun.findFirst({
+    where: { resumeId: resume.id, status: "running", id: { not: run.id } },
+    orderBy: [{ startedAt: "asc" }, { id: "asc" }],
+    select: { id: true, startedAt: true },
+  });
+  const lost =
+    rival &&
+    (rival.startedAt < run.startedAt ||
+      (rival.startedAt.getTime() === run.startedAt.getTime() && rival.id < run.id));
+  if (lost) {
+    await prisma.variantRun
+      .update({
+        where: { id: run.id },
+        data: { status: "cancelled", stage: "Superseded", finishedAt: new Date() },
+      })
+      .catch(() => null);
+    await refund(user.id, "variantRuns");
+    return NextResponse.json(
+      {
+        error: "This resume is already being rebuilt. Wait for that to finish.",
+        code: "already_running",
+        runId: rival.id,
+      },
+      { status: 409 },
+    );
+  }
 
   // The work runs AFTER this response.
   //

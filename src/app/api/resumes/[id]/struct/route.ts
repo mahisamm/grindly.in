@@ -1,85 +1,51 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser, notFound, badRequest, serverError } from "@/lib/auth";
-import { runAgent } from "@/lib/agent";
 import { toJsonColumn } from "@/lib/jsonColumn";
-import { readContact } from "@/lib/reportTypes";
 import { readStruct, sanitizeStruct } from "@/lib/resumeStruct";
-import { reserve, refund } from "@/lib/quota";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Extraction is model calls, and a cold interpreter in front of them.
-export const maxDuration = 180;
 
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
- * The resume as editable fields.
+ * The saved fields, if there are any.
  *
- * Cached on the row after the first read, because extraction costs model calls
- * and the editor would otherwise pay for it on every page load. `?refresh=1`
- * re-extracts — for the case where someone has replaced the underlying file and
- * wants the fields to catch up, which is rare enough to be explicit and
- * expensive enough not to be automatic.
+ * READ ONLY. Extraction — which reserves quota, spawns an interpreter and
+ * writes to the database — used to live here, on the GET, and that was wrong in
+ * a way that costs users money: HTTP says a GET is safe and idempotent, and
+ * browsers, mail-client link scanners and proxies all act on that. It is a POST
+ * to ./extract now.
+ *
+ * 404 when nothing has been extracted yet, so the caller knows which door to
+ * go through rather than being handed an empty structure that looks like an
+ * empty resume.
  */
-export async function GET(req: Request, { params }: Ctx) {
+export async function GET(_req: Request, { params }: Ctx) {
   const auth = await requireUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 
   const resume = await prisma.resume.findFirst({
     where: { id, userId: auth.user.id },
-    select: { id: true, text: true, structJson: true, contactJson: true },
+    select: { structJson: true },
   });
   if (!resume) return notFound();
 
-  const refresh = new URL(req.url).searchParams.get("refresh") === "1";
-  const cached = refresh ? null : readStruct(resume.structJson);
-  if (cached) return NextResponse.json({ ok: true, struct: cached, cached: true });
-
-  if (!resume.text || resume.text.trim().length < 200) {
-    return badRequest(
-      "There is not enough readable text in this resume to turn into fields. " +
-        "Upload the original PDF rather than a scan.",
-    );
-  }
-
-  // Extraction is metered against the advice allowance rather than being free.
-  // It is the same shape of cost — several model calls on demand — and an
-  // unmetered endpoint that spawns them is how one script exhausts the free
-  // tier everyone on the instance shares.
-  const quota = await reserve(auth.user.id, "adviceRuns");
-  if (!quota.allowed) {
-    return NextResponse.json({ error: quota.message, code: "quota" }, { status: 429 });
-  }
-
-  const contact = readContact(resume.contactJson);
-  const extracted = await runAgent<{ struct: unknown }>("struct", {
-    text: resume.text,
-    contact_fallback: contact.contact_line ?? "",
-  });
-
-  if (!extracted.ok) {
-    await refund(auth.user.id, "adviceRuns");
-    return serverError(extracted.error, `struct:${resume.id}`);
-  }
-
-  const struct = sanitizeStruct(extracted.struct);
+  const struct = readStruct(resume.structJson);
   if (!struct) {
-    await refund(auth.user.id, "adviceRuns");
-    return serverError(
-      "We could not read a clear structure out of this resume.",
-      `struct:${resume.id}`,
+    return NextResponse.json(
+      {
+        error: "This resume has not been read into fields yet.",
+        code: "no_struct",
+      },
+      { status: 404 },
     );
   }
 
-  await prisma.resume
-    .update({ where: { id: resume.id }, data: { structJson: toJsonColumn(struct) } })
-    .catch((e) => console.error("[struct] cache write failed:", e));
-
-  return NextResponse.json({ ok: true, struct, cached: false });
+  return NextResponse.json({ ok: true, struct });
 }
 
 /**
