@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Report } from "@/lib/reportTypes";
 import {
+  scrubContact,
+  toPublicReport,
   readAdvice,
   readContact,
   readFidelity,
@@ -143,5 +146,77 @@ describe("readContact", () => {
 describe("readAdvice", () => {
   it("defaults all three lists", () => {
     expect(readAdvice({})).toEqual({ strengths: [], issues: [], suggestions: [] });
+  });
+});
+
+describe("toPublicReport", () => {
+  /**
+   * The share link promises to expose the measurement and not the person, and
+   * it did not. Caught by fetching a real share URL off production and grepping
+   * the HTML for the test account's contact details — both were in it, inside
+   * report.facts.fields, which nothing renders and everything serialises.
+   */
+  const WITH_PII: Report = {
+    score: 78,
+    grade: "B",
+    bands: { readable: { score: 75, weight: 35, points: 26 } },
+    findings: [
+      {
+        severity: "warning",
+        band: "fields",
+        problem: "We could not read a phone number.",
+        fix: "Write it as +91 98765 43210 rather than behind an icon.",
+      },
+    ],
+    facts: {
+      fields: {
+        emails: ["priya@example.com"],
+        phones: ["+91 98765 43210"],
+        links: ["github.com/priya-r"],
+        date_ranges: 2,
+      },
+      impact: { bullets: 4 },
+    },
+    targeted: false,
+  };
+
+  it("carries no contact details at all", () => {
+    const blob = JSON.stringify(toPublicReport(WITH_PII));
+    expect(blob).not.toContain("priya@example.com");
+    expect(blob).not.toContain("98765");
+    expect(blob).not.toContain("github.com/priya-r");
+  });
+
+  it("keeps the measurement, which is the whole point of sharing", () => {
+    const publicReport = toPublicReport(WITH_PII);
+    expect(publicReport.score).toBe(78);
+    expect(publicReport.grade).toBe("B");
+    expect(publicReport.bands.readable.points).toBe(26);
+    expect(publicReport.findings).toHaveLength(1);
+    expect(publicReport.findings[0].problem).toContain("could not read a phone number");
+  });
+
+  it("drops facts wholesale, because nothing renders them", () => {
+    expect(toPublicReport(WITH_PII).facts).toEqual({});
+  });
+
+  it("scrubs a finding that quotes contact details", () => {
+    // Findings are generated sentences today. The scorer is free to change, and
+    // a share link is the wrong place to discover that one started quoting the
+    // header.
+    expect(toPublicReport(WITH_PII).findings[0].fix).not.toContain("98765");
+  });
+});
+
+describe("scrubContact", () => {
+  it("removes emails and phone numbers in the shapes this audience uses", () => {
+    expect(scrubContact("write to priya.r+jobs@example.co.in today")).not.toContain("@example");
+    expect(scrubContact("call +91 98765 43210")).not.toContain("98765");
+    expect(scrubContact("call 098765-43210")).not.toContain("43210");
+  });
+
+  it("leaves ordinary sentences alone", () => {
+    const sentence = "Only 50% of bullets start with an action verb.";
+    expect(scrubContact(sentence)).toBe(sentence);
   });
 });

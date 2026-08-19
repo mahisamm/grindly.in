@@ -254,3 +254,51 @@ export const readContact = (v: unknown): Contact => parseColumn(ContactSchema, v
  */
 export const readStrings = (v: unknown): string[] =>
   parseColumn(StringArraySchema, v, "string list") ?? [];
+
+/**
+ * A report safe to show someone who is not its owner.
+ *
+ * The share link promises to expose the measurement and not the person. It did
+ * not. `report.facts` carries each band's diagnostic detail, and the `fields`
+ * band records exactly what a parser recovered — which is the candidate's email
+ * address, phone number and profile links. The whole report object was
+ * serialised into the shared page, so anyone with the URL had them.
+ *
+ * Caught by fetching a real share link off production and grepping the HTML for
+ * the test account's contact details. Both were there.
+ *
+ * Two things happen here:
+ *
+ *   * `facts` is dropped entirely. Nothing renders it — ReportPanel reads score,
+ *     bands and findings and never touches it — so on the shared page it was
+ *     pure payload, and payload containing an email address.
+ *   * Findings are scrubbed anyway. They are generated sentences rather than
+ *     quoted document text, but they are written by a scorer that is free to
+ *     change, and a share link is the wrong place to find out that one of them
+ *     started quoting the header.
+ */
+export function toPublicReport(report: Report): Report {
+  return {
+    ...report,
+    facts: {},
+    findings: report.findings.map((f) => ({
+      ...f,
+      problem: scrubContact(f.problem),
+      fix: scrubContact(f.fix),
+    })),
+  };
+}
+
+/**
+ * Remove anything that looks like a way to contact a person.
+ *
+ * Deliberately blunt and deliberately over-eager: this runs on text that is
+ * about to be shown to a stranger, so a mangled sentence is a far better
+ * outcome than a leaked phone number. The patterns mirror agent/redact.py,
+ * which does the same job at the model boundary.
+ */
+export function scrubContact(text: string): string {
+  return text
+    .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "[email]")
+    .replace(/\+?\d[\d\s().-]{7,}\d/g, "[phone]");
+}

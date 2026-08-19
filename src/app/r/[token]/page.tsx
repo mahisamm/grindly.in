@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
-import { readReport } from "@/lib/reportTypes";
+import { readReport, toPublicReport } from "@/lib/reportTypes";
 import { Logo } from "@/components/Brand";
 import { ReportPanel } from "@/components/Score";
 
@@ -46,8 +46,13 @@ export default async function SharedReportPage({
   });
   if (!resume) notFound();
 
-  const report = readReport(resume.reportJson);
-  if (!report) notFound();
+  const stored = readReport(resume.reportJson);
+  if (!stored) notFound();
+
+  // Never hand the raw report to a stranger — see toPublicReport. The select
+  // above is narrow on purpose, but the report itself carries the contact
+  // details a parser recovered, so narrowing the columns was not enough.
+  const report = toPublicReport(stored);
 
   return (
     <>
