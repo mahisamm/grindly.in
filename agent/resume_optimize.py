@@ -274,6 +274,7 @@ def generate_variants(
     emphasis: list[str] | None = None,
     target_name: str = "",
     source_links: list[str] | None = None,
+    link_style: str = "url",
 ) -> dict:
     """Produce up to 3 compiled, measured resume variants + why any were dropped.
 
@@ -350,6 +351,12 @@ def generate_variants(
     # that is indistinguishable from a bad rewrite.
     print(f"[optimize] extracted {len(base_struct['sections'])} section(s), "
           f"{sum(len(s['items']) for s in base_struct['sections'])} item(s)")
+
+    # How addresses print, carried on the struct every variant is built from.
+    # Set once here rather than at each render site: a rebuild that printed its
+    # links differently from the resume it came from would be a difference the
+    # user did not ask for.
+    base_struct["link_style"] = "label" if link_style == "label" else "url"
 
     allowed = _allowed_tokens(text, master_skills)
     stems = _source_stems(text)

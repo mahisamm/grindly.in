@@ -405,3 +405,72 @@ def test_a_clean_rebuild_clears_the_shippable_floor(back):
             + "; ".join(f["problem"] for f in report["findings"] if f["band"] == band)
         )
     assert report["score"] >= readiness.SHIPPABLE_FLOOR, report["findings"]
+
+
+# ---------------------------------------------------------------------------
+# profile links: what a parser can read
+# ---------------------------------------------------------------------------
+
+def test_a_printed_address_is_clickable_and_still_readable():
+    """The default, and the reason it is not a trade-off.
+
+    An extractor reads the text layer, so wrapping the address in an anchor
+    changes nothing it recovers — while a human opening the PDF gets a link.
+    """
+    html = render_pdf.contact_field_html("github.com/priya-r")
+    assert "<a href=" in html
+    assert "github.com/priya-r</a>" in html
+
+
+def test_an_email_becomes_a_mailto():
+    assert 'href="mailto:priya@example.com"' in render_pdf.contact_field_html("priya@example.com")
+
+
+def test_a_city_is_not_turned_into_a_link():
+    """Conservative on purpose: a spurious anchor around someone's city is worse
+    than a missing one around their portfolio."""
+    for plain in ["Bengaluru", "+91 98765 43210", "Priya Sharma"]:
+        assert "<a" not in render_pdf.contact_field_html(plain), plain
+
+
+def test_the_label_style_replaces_the_address_with_the_site_name():
+    html = render_pdf.contact_field_html("linkedin.com/in/priya-r", "label")
+    assert ">LinkedIn</a>" in html
+    assert 'href="https://linkedin.com/in/priya-r"' in html
+
+
+@pytest.mark.slow
+@requires_chromium
+def test_the_label_style_removes_the_address_from_the_text_layer(tmp_path):
+    """The measurement behind the warning in the editor.
+
+    This is the practice the whole product exists to argue against, so the cost
+    of it is asserted rather than described: with `label`, the URL survives only
+    in the PDF's link annotation, which every text extractor ignores.
+    """
+    struct = {
+        "name": "Priya Sharma",
+        "contact_line": "priya@example.com | Bengaluru | github.com/priya-r",
+        "sections": [
+            {
+                "heading": "EXPERIENCE",
+                "items": [{"head": "Engineer", "sub": "Freshworks, 2024", "bullets": ["Did a thing."]}],
+            }
+        ],
+    }
+
+    as_url = dict(struct, link_style="url")
+    as_label = dict(struct, link_style="label")
+    url_pdf = str(tmp_path / "url.pdf")
+    label_pdf = str(tmp_path / "label.pdf")
+    assert render_pdf.render_fitted(as_url, url_pdf).ok
+    assert render_pdf.render_fitted(as_label, label_pdf).ok
+
+    url_text = render_pdf.extract_back(url_pdf)
+    label_text = render_pdf.extract_back(label_pdf)
+
+    # The default keeps the address where a parser will find it.
+    assert "github.com/priya-r" in url_text
+    # The tidy option does not. This is the whole warning, measured.
+    assert "github.com/priya-r" not in label_text
+    assert "GitHub" in label_text

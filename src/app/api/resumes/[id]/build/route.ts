@@ -48,7 +48,7 @@ export async function POST(_req: Request, { params }: Ctx) {
 
   const resume = await prisma.resume.findFirst({
     where: { id, userId: user.id },
-    select: { id: true, structJson: true, score: true },
+    select: { id: true, structJson: true, score: true, linkStyle: true },
   });
   if (!resume) return notFound();
 
@@ -72,6 +72,7 @@ export async function POST(_req: Request, { params }: Ctx) {
   const rendered = await runAgent<{ pages: number; chars: number; report: Report }>("render", {
     struct,
     out: outPath,
+    link_style: resume.linkStyle,
   });
 
   if (!rendered.ok) {

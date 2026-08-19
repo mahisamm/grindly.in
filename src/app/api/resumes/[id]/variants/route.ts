@@ -55,7 +55,7 @@ export async function POST(req: Request, { params }: Ctx) {
     where: { id, userId: user.id },
     select: {
       id: true, text: true, chars: true,
-      skillsJson: true, contactJson: true, linksJson: true,
+      skillsJson: true, contactJson: true, linksJson: true, linkStyle: true,
     },
   });
   if (!resume) return notFound();
@@ -225,6 +225,7 @@ async function executeRun({
     skillsJson: unknown;
     contactJson: unknown;
     linksJson: unknown;
+    linkStyle: string;
   };
   target: ResolvedTarget;
 }): Promise<void> {
@@ -283,6 +284,7 @@ async function executeRun({
         // behind the word "LinkedIn" is invisible to every text extractor, so
         // the rebuild prints it out — see _merge_profile_links.
         links: readStrings(resume.linksJson),
+        link_style: resume.linkStyle,
       },
       {
         onProgress: setStage,

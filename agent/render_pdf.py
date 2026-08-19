@@ -245,6 +245,11 @@ def _css(density: float = 1.0) -> str:
          recruiter copying that gets a dead link, and `readiness` scores the
          profile link as missing — on a resume that has one. */
       p.contact .f {{ white-space: nowrap; }}
+      /* An anchor that looks exactly like the text around it. The link is for
+         clicking, not for decorating: browser-default blue and an underline in
+         a printed resume read as a mistake, and neither changes what an
+         extractor recovers. */
+      a {{ color: inherit; text-decoration: none; }}
       /* The separator between contact fields, dimmed so the fields themselves
          read as the content. It is real text in the PDF, not a border, so an
          extractor still sees the delimiter it needs to split the header on. */
@@ -435,6 +440,76 @@ _SKILLS_HEADING_RE = re.compile(
 _SKILL_GROUP_RE = re.compile(r"^[^:]{2,40}:\s*\S")
 
 
+# Hosts whose profile URLs get a short human label when link_style="label".
+_LINK_LABELS = (
+    ("linkedin.com", "LinkedIn"),
+    ("github.com", "GitHub"),
+    ("gitlab.com", "GitLab"),
+    ("leetcode.com", "LeetCode"),
+    ("kaggle.com", "Kaggle"),
+    ("behance.net", "Behance"),
+    ("dribbble.com", "Dribbble"),
+    ("medium.com", "Medium"),
+    ("stackoverflow.com", "Stack Overflow"),
+)
+
+_URLISH_RE = re.compile(r"^(https?://|www\.)|(^|\.)[a-z0-9-]+\.(com|org|net|io|dev|in|me|co)(/|$)", re.I)
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _href_for(field: str) -> str | None:
+    """The address a contact field should point at, or None if it is not a link.
+
+    Deliberately conservative. A field that is not obviously an address is left
+    as plain text: a spurious anchor around someone's city name is worse than a
+    missing one around their portfolio.
+    """
+    value = (field or "").strip()
+    if not value:
+        return None
+    if _EMAIL_RE.match(value):
+        return "mailto:" + value
+    if _URLISH_RE.search(value):
+        return value if value.lower().startswith(("http://", "https://")) else "https://" + value
+    return None
+
+
+def _label_for(field: str) -> str | None:
+    """"LinkedIn" for a linkedin.com address, and so on."""
+    low = (field or "").lower()
+    for host, label in _LINK_LABELS:
+        if host in low:
+            return label
+    return None
+
+
+def contact_field_html(field: str, link_style: str = "url") -> str:
+    """One field of the contact header.
+
+    THE DEFAULT PRINTS THE ADDRESS AND MAKES IT CLICKABLE, and that combination
+    is the whole point rather than a compromise. An extractor reads the text
+    layer, so what it recovers is identical either way — the anchor costs it
+    nothing. A human opening the PDF gets a link they can follow. There is no
+    trade here to make, which is why it is not an option.
+
+    `link_style="label"` prints "LinkedIn" instead of the address. It looks
+    tidier and it is what most resumes do, and it is the exact practice this
+    product exists to warn people about: the address then lives only in the PDF's
+    link annotation, which every text extractor ignores, so an application form
+    asking for a profile URL gets nothing and readiness scores the resume as
+    having no visible link. Offered because it is the user's document and their
+    call — with the consequence stated where they choose it, not buried here.
+    """
+    href = _href_for(field)
+    if not href:
+        return f'<span class="f">{_esc(field)}</span>'
+
+    text = field
+    if link_style == "label":
+        text = _label_for(field) or field
+    return f'<span class="f"><a href="{_esc(href)}">{_esc(text)}</a></span>'
+
+
 def build_html(struct: dict, density: float = 1.0) -> str:
     """The full HTML document for a resume struct.
 
@@ -463,9 +538,12 @@ def build_html(struct: dict, density: float = 1.0) -> str:
             parts.append(f'<h1 class="name">{_esc(name)}</h1>')
         fields = format_contact(contact)
         if fields:
+            # "url" unless the struct says otherwise. An unknown value falls
+            # back to the safe one rather than to the tidy one.
+            link_style = "label" if struct.get("link_style") == "label" else "url"
             sep = f'<span class="sep">{CONTACT_SEP}</span>'
             parts.append('<p class="contact">'
-                         + sep.join(f'<span class="f">{_esc(f)}</span>' for f in fields)
+                         + sep.join(contact_field_html(f, link_style) for f in fields)
                          + "</p>")
         parts.append("</header>")
 

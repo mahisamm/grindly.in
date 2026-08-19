@@ -84,6 +84,22 @@ enum RunStatus {
   cancelled
 }
 
+/// How profile addresses are printed in a rebuilt resume.
+///
+/// `url` prints the address AND makes it clickable. That is the default and it
+/// is not a compromise: an extractor reads the text layer, so the anchor costs
+/// it nothing, and a human gets a link they can follow.
+///
+/// `label` prints "LinkedIn" instead. It is tidier, it is what most resumes do,
+/// and it is the exact practice this product exists to warn against — measured
+/// on a real render, the address disappears from the text layer entirely, so an
+/// application form asking for a profile URL gets nothing. Offered because it is
+/// the user's document; the consequence is stated where they choose it.
+enum LinkStyle {
+  url
+  label
+}
+
 /// Whether this account may use the product yet.
 ///
 /// A closed beta needs a door, and the honest version of one is a state on the
@@ -304,6 +320,9 @@ model Resume {
   ///
   /// Null means nobody has opened the editor for this resume yet.
   structJson Json? @map("struct_json")
+
+  /// How this resume prints its profile addresses. See the LinkStyle enum.
+  linkStyle LinkStyle @default(url) @map("link_style")
 
   /// A random token that makes the readiness report readable without an
   /// account, at /r/<token>.

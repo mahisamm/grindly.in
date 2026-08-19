@@ -220,6 +220,7 @@ def cmd_variants(payload: dict) -> dict:
         # word "LinkedIn" behind a hyperlink carries an address no text
         # extractor sees — printing it as text is how the rebuild stops losing it.
         source_links=_str_list(payload.get("links"), limit=24),
+        link_style=str(payload.get("link_style") or "url"),
     )
 
     written = []
@@ -259,6 +260,13 @@ def cmd_render(payload: dict) -> dict:
     struct = resume_optimize._sanitize_struct(struct)
     if not struct or not struct.get("sections"):
         return _fail("that structure has no content to render")
+
+    # How profile addresses are printed. Carried on the struct rather than as a
+    # separate render argument, because it is a property of the document and
+    # every path that renders one — this command and the variant pipeline —
+    # needs it to travel with the thing being printed.
+    if payload.get("link_style") in ("url", "label"):
+        struct["link_style"] = payload["link_style"]
 
     result = render_pdf.render_fitted(struct, out)
     if not result.ok:

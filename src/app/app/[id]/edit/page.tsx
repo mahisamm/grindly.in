@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/auth";
 import { readStruct } from "@/lib/resumeStruct";
 import { Editor } from "./Editor";
+import { LinkStyleChoice } from "./LinkStyle";
 import { ExtractPrompt } from "./ExtractPrompt";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +26,10 @@ export default async function EditPage({ params }: { params: Promise<{ id: strin
 
   const resume = await prisma.resume.findFirst({
     where: { id, userId: user.id },
-    select: { id: true, label: true, structJson: true, score: true, chars: true },
+    select: {
+      id: true, label: true, structJson: true, score: true, chars: true,
+      linkStyle: true,
+    },
   });
   if (!resume) notFound();
 
@@ -42,12 +46,17 @@ export default async function EditPage({ params }: { params: Promise<{ id: strin
 
       <div className="mt-4">
         {struct ? (
-          <Editor
-            resumeId={resume.id}
-            resumeLabel={resume.label}
-            initial={struct}
-            baselineScore={resume.score}
-          />
+          <>
+            <Editor
+              resumeId={resume.id}
+              resumeLabel={resume.label}
+              initial={struct}
+              baselineScore={resume.score}
+            />
+            <div className="mt-8 max-w-md">
+              <LinkStyleChoice resumeId={resume.id} value={resume.linkStyle} />
+            </div>
+          </>
         ) : (
           <ExtractPrompt resumeId={resume.id} readable={resume.chars >= 200} />
         )}

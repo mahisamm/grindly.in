@@ -44,7 +44,7 @@ export async function GET(req: Request, { params }: Ctx) {
 
   const resume = await prisma.resume.findFirst({
     where: { id, userId: auth.user.id },
-    select: { id: true, label: true, structJson: true },
+    select: { id: true, label: true, structJson: true, linkStyle: true },
   });
   if (!resume) return notFound();
 
@@ -69,7 +69,7 @@ export async function GET(req: Request, { params }: Ctx) {
     text?: string;
     base64?: string;
     bytes?: number;
-  }>("export", { struct, format });
+  }>("export", { struct: { ...struct, link_style: resume.linkStyle }, format });
 
   if (!result.ok) return serverError(result.error, `export:${resume.id}`);
 
