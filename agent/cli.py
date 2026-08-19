@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import traceback
 
@@ -273,6 +274,38 @@ def cmd_render(payload: dict) -> dict:
 
 
 
+def _strip_redaction_markers(value):
+    """Remove the placeholders redact.py substitutes on the way OUT of here.
+
+    A model is handed a prompt whose email and phone have already been replaced
+    by `[email redacted]` and `[phone redacted]`, and when asked to reproduce a
+    contact line it faithfully copies the placeholders back. Written into a
+    resume, they become a document that reaches an employer saying
+    "[email redacted]" where the address should be.
+
+    Applied to the WHOLE structure rather than only the contact line, because
+    an ID run inside a bullet ("employee ID 44210") is redacted by the same
+    pass.
+    """
+    import redact
+
+    markers = (redact.EMAIL_PLACEHOLDER, redact.PHONE_PLACEHOLDER, redact.ID_PLACEHOLDER)
+
+    if isinstance(value, str):
+        out = value
+        for marker in markers:
+            out = out.replace(marker, "")
+        # Separators left stranded by a removal: " | | Bengaluru" -> "Bengaluru".
+        out = re.sub(r"\s*([|,·•])\s*(?=[|,·•])", "", out)
+        out = re.sub(r"^\s*[|,·•]\s*|\s*[|,·•]\s*$", "", out)
+        return re.sub(r"[ \t]{2,}", " ", out).strip()
+    if isinstance(value, list):
+        return [_strip_redaction_markers(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _strip_redaction_markers(v) for k, v in value.items()}
+    return value
+
+
 def cmd_struct(payload: dict) -> dict:
     """Read a resume into the editable structure the renderer prints.
 
@@ -294,16 +327,26 @@ def cmd_struct(payload: dict) -> dict:
     if not struct:
         return _fail("could not read a structure from this resume")
 
+    struct = _strip_redaction_markers(struct)
+
+    # IDENTITY COMES FROM THE SOURCE, NOT FROM THE MODEL.
+    #
+    # The rule resume_optimize already follows — it stamps the header on after
+    # the rewrite via `_identity_from_source`, which is exactly why the rewrite
+    # path never had this bug and this one did. The contact line is read off the
+    # document locally at upload, before anything is sent anywhere, so it is the
+    # only copy that still has the email and phone in it.
+    #
+    # This USED to be conditional on the model returning nothing, and that was
+    # the bug: the model returns something, it is just wrong, so the fallback
+    # never fired. Measured on the live site — an uploaded resume came back with
+    # "[email redacted] | [phone redacted] | Bengaluru" as its contact line,
+    # which the editor would have saved and the next build would have printed.
     contact_fallback = str(payload.get("contact_fallback") or "").strip()
-    if contact_fallback and not str(struct.get("contact_line") or "").strip():
-        # The header line is read off the document locally at upload time and is
-        # more reliable than anything a model returns for it — a model asked for
-        # a phone number faithfully returns "[phone redacted]", because
-        # redact.py stripped it on the way out.
+    if contact_fallback:
         struct["contact_line"] = contact_fallback
 
     return {"ok": True, "struct": struct}
-
 
 
 def cmd_export(payload: dict) -> dict:

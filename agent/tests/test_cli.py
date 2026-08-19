@@ -140,3 +140,97 @@ def test_health_reports_what_this_process_can_do():
     assert checks["python"].startswith("3.")
     for key in ("renderer", "pdfminer", "pypdf", "llm_providers"):
         assert key in checks, key
+
+
+# ---------------------------------------------------------------------------
+# the struct command, and the bug that shipped to production
+# ---------------------------------------------------------------------------
+
+class TestStructIdentity:
+    """A resume's contact line must never come back from a model.
+
+    Found on the live site: an uploaded resume returned
+    "[email redacted] | [phone redacted] | Bengaluru" as its contact line. Every
+    prompt leaving this process has PII substituted by redact.py, so a model
+    asked to reproduce a header faithfully copies the placeholders back — and
+    the editor would have saved that, and the next build would have printed a
+    PDF that goes to an employer saying "[email redacted]" where the address
+    belongs.
+
+    resume_optimize never had this bug because it stamps identity from the
+    source AFTER the rewrite. cmd_struct now does the same.
+    """
+
+    def test_markers_are_stripped_from_every_field(self):
+        import cli
+
+        dirty = {
+            "name": "Priya Sharma",
+            "contact_line": "[email redacted] | [phone redacted] | Bengaluru",
+            "sections": [
+                {
+                    "heading": "EXPERIENCE",
+                    "items": [
+                        {
+                            "head": "Engineer",
+                            "sub": "",
+                            "bullets": ["Rotated the key for employee ID [id redacted] weekly"],
+                        }
+                    ],
+                }
+            ],
+        }
+        clean = cli._strip_redaction_markers(dirty)
+        blob = json.dumps(clean)
+        assert "redacted" not in blob
+        assert "Bengaluru" in clean["contact_line"]
+        assert "Rotated the key" in clean["sections"][0]["items"][0]["bullets"][0]
+
+    def test_a_stranded_separator_does_not_survive(self):
+        """Removing the value leaves the pipe that was next to it."""
+        import cli
+
+        assert cli._strip_redaction_markers(
+            "[email redacted] | [phone redacted] | Bengaluru"
+        ) == "Bengaluru"
+
+    def test_the_local_contact_line_wins_over_the_model(self, monkeypatch):
+        """The whole fix. The model returns SOMETHING — it is just wrong — so a
+        fallback that only fires on an empty answer never fires at all."""
+        import cli
+        import resume_optimize
+
+        monkeypatch.setattr(
+            resume_optimize,
+            "_extract_struct",
+            lambda text: {
+                "name": "Priya Sharma",
+                "contact_line": "[email redacted] | [phone redacted] | Bengaluru",
+                "sections": [
+                    {"heading": "EXPERIENCE", "items": [{"head": "Engineer", "sub": "", "bullets": ["Did a thing"]}]}
+                ],
+            },
+        )
+
+        real = "priya@example.com | +91 98765 43210 | Bengaluru"
+        out = cli.cmd_struct({"text": "x" * 400, "contact_fallback": real})
+        assert out["ok"] is True
+        assert out["struct"]["contact_line"] == real
+
+    def test_without_a_fallback_it_still_never_returns_a_placeholder(self, monkeypatch):
+        import cli
+        import resume_optimize
+
+        monkeypatch.setattr(
+            resume_optimize,
+            "_extract_struct",
+            lambda text: {
+                "name": "Priya",
+                "contact_line": "[email redacted] | Bengaluru",
+                "sections": [
+                    {"heading": "X", "items": [{"head": "Engineer", "sub": "", "bullets": ["b"]}]}
+                ],
+            },
+        )
+        out = cli.cmd_struct({"text": "x" * 400})
+        assert "redacted" not in out["struct"]["contact_line"]
