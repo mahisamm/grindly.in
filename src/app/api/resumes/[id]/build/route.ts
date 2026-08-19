@@ -69,7 +69,12 @@ export async function POST(_req: Request, { params }: Ctx) {
   const outPath = path.join(outDir, "variant-1.pdf");
   await fsp.mkdir(outDir, { recursive: true }).catch(() => null);
 
-  const rendered = await runAgent<{ pages: number; chars: number; report: Report }>("render", {
+  const rendered = await runAgent<{
+    pages: number;
+    chars: number;
+    text: string;
+    report: Report;
+  }>("render", {
     struct,
     out: outPath,
     link_style: resume.linkStyle,
@@ -133,6 +138,14 @@ export async function POST(_req: Request, { params }: Ctx) {
         // here that differs from the output — the user typed it — so a fidelity
         // figure would be a comparison of a document with itself.
         fidelityJson: toJsonColumn(null),
+        // The struct is the one the user just typed, and the text is what came
+        // back off the PDF we printed from it. Both stored for the same reason
+        // a rewrite stores them — so this build can be promoted — and here the
+        // text is the more interesting half: the resume row still holds the
+        // reading of the ORIGINAL upload, so until an edited document is read
+        // back it has never actually been measured.
+        structJson: toJsonColumn(struct),
+        text: typeof rendered.text === "string" ? rendered.text : "",
         file: `${runDir}/variant-1.pdf`,
         bytes,
       },

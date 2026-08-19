@@ -72,6 +72,11 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
             changes: readStrings(v.changesJson),
             report: readReport(v.reportJson),
             fidelity: readFidelity(v.fidelityJson),
+            // Derived here rather than sending the fields themselves. The
+            // struct and the read-back text are several kilobytes per rebuild
+            // and nothing on the page renders either of them — all the card
+            // needs to know is whether the button can be offered at all.
+            canPromote: Boolean(v.structJson) && v.text.trim().length > 0,
           })),
           history: resume.scores.map((h) => ({
             id: h.id,

@@ -26,6 +26,8 @@ export type SessionUser = {
   createdAt: Date;
   /** pending | approved | blocked — the closed-beta door. See `isApproved`. */
   accessStatus: string;
+  /** The resume they are actually sending out. May be stale — see lib/primary. */
+  primaryResumeId: string | null;
 };
 
 export type AuthOk = { user: SessionUser };
@@ -40,6 +42,7 @@ const SELECT = {
   planExpiresAt: true,
   createdAt: true,
   accessStatus: true,
+  primaryResumeId: true,
   deletedAt: true,
 } as const;
 

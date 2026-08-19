@@ -27,6 +27,8 @@ type VariantView = {
   changes: string[];
   report: Report | null;
   fidelity: Fidelity | null;
+  /** False for rebuilds made before we started keeping their editable fields. */
+  canPromote: boolean;
 };
 
 type TargetView = {
@@ -600,6 +602,8 @@ function VariantCard({
         </button>
       </div>
 
+      {variant.canPromote && <Promote variantId={variant.id} />}
+
       {/* Expanded inside the card rather than in a modal: the comparison is the
           evidence for the number printed six inches above it, and putting it
           behind an overlay separates the claim from its proof. */}
@@ -617,6 +621,68 @@ function VariantCard({
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * "Use as my resume."
+ *
+ * The sentence under the button is the feature. Every tool in this category has
+ * a button here and none of them say what it does to the document you already
+ * have, so the safe assumption — the one people actually make — is that pressing
+ * it replaces something. It does not: the rebuild is saved as a document of its
+ * own and the account's pointer moves, which means the way back is another
+ * button rather than a support request. Saying so costs one line and is the
+ * difference between a button people press and one they hover over and leave.
+ *
+ * Navigates to the new resume on success. The thing just created is the thing
+ * they were promised, and leaving them on the card they pressed makes them go
+ * looking for it.
+ */
+function Promote({ variantId }: { variantId: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function promote() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/variants/${variantId}/promote`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.error ?? "That did not work.");
+        return;
+      }
+      router.push(`/app/${data.id}`);
+    } catch {
+      setError("We could not reach the server.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-border mt-4 border-t pt-4">
+      <button
+        onClick={() => void promote()}
+        disabled={busy}
+        className="btn w-full justify-center text-sm"
+      >
+        {busy ? "Saving…" : "Use as my resume"}
+      </button>
+      <p className="text-muted mt-2 text-xs leading-relaxed">
+        Saves this as a resume of its own and makes it the one you are sending
+        out. Your original stays exactly where it is — with its score, its
+        targets and everything you have logged against it — and you can
+        switch back from the resume list.
+      </p>
+      {error && (
+        <p role="alert" className="mt-2 text-xs" style={{ color: "#a3271b" }}>
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

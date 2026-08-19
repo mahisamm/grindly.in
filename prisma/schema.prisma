@@ -189,6 +189,25 @@ model User {
   /// every account was counted in Asia/Kolkata regardless of where they were,
   /// while the refusal message told them the window resets at midnight in their
   /// timezone. Null means we have not been told yet and the default applies.
+  /// Which of their resumes is the one they are actually sending out.
+  ///
+  /// A POINTER, and deliberately nothing more. Promoting a rebuild moves this
+  /// id; it never edits, replaces or deletes the document that held it before.
+  /// The old resume stays exactly where it was, keeps its score, its targets,
+  /// its rewrites and the applications logged against it, and can be made
+  /// primary again by pressing one button — because the alternative, promoting
+  /// by overwrite, means a person who preferred yesterday's version has no way
+  /// back and every "+18 points" this product ever claimed for them is measured
+  /// against a baseline that no longer exists.
+  ///
+  /// Not a relation. A relation here needs an onDelete rule, and both available
+  /// rules are wrong: Cascade would delete the ACCOUNT when its primary resume
+  /// is deleted, and SetNull adds a foreign key to every resume delete for a
+  /// column that reads correctly as a dangling id. `primaryResume()` in
+  /// lib/primary.ts resolves it and falls back to the newest resume, so a stale
+  /// id degrades to the old behaviour instead of to an error.
+  primaryResumeId String? @map("primary_resume_id")
+
   timezone  String?
   createdAt DateTime  @default(now()) @map("created_at")
   deletedAt DateTime? @map("deleted_at")
@@ -323,6 +342,18 @@ model Resume {
 
   /// How this resume prints its profile addresses. See the LinkStyle enum.
   linkStyle LinkStyle @default(url) @map("link_style")
+
+  /// Where this document came from, when it was not uploaded.
+  ///
+  /// Plain ids rather than relations, and that is the point: a promoted resume
+  /// has to outlive the variant it came from — variants are superseded and
+  /// deleted every time the same target is rebuilt — and outlive the resume it
+  /// was rebuilt from, which the user may well delete once they have stopped
+  /// sending it. A foreign key with either onDelete rule would take the
+  /// promoted document down with its history or leave the same dangling id
+  /// this column already tolerates. Both are null for an uploaded resume.
+  fromVariantId  String? @map("from_variant_id")
+  parentResumeId String? @map("parent_resume_id")
 
   /// A random token that makes the readiness report readable without an
   /// account, at /r/<token>.
@@ -482,6 +513,23 @@ model Variant {
   /// JSON: {total, recovered, lost[], pct} — how much of what we printed
   /// survived being read back out of the PDF. The headline claim.
   fidelityJson Json?   @map("fidelity_json")
+
+  /// The fields this rebuild was printed from — the same shape as
+  /// Resume.structJson — and the text a parser read back off the finished PDF.
+  ///
+  /// Stored at build time rather than recovered on demand, because neither can
+  /// be recovered faithfully afterwards. The struct cannot be re-derived from
+  /// the PDF without a second extraction pass that costs model calls and
+  /// returns strictly less than what we already held. The text could be
+  /// re-extracted, but `score` was computed from THIS reading, and a promoted
+  /// resume that re-extracts gets a number that disagrees with the one on the
+  /// card it was promoted from.
+  ///
+  /// Null on rows written before promotion existed. Those variants can still be
+  /// downloaded and compared; they simply cannot be promoted, and the button
+  /// says so rather than failing when pressed.
+  structJson Json?  @map("struct_json")
+  text       String @default("")
 
   /// Filename under data/variants/<resumeId>/. Not the bytes: a three-variant
   /// batch is ~300 KB and the web app already shares this filesystem.

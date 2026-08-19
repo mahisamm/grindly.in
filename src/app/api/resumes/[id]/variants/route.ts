@@ -34,6 +34,12 @@ type AgentVariant = {
   meets_floor: boolean;
   floor: number;
   floor_gap: string;
+  /** The fields this rebuild was printed from — what the editor and a
+      promotion both need. `unknown` because it crosses a subprocess boundary
+      and is written to a Json column unvalidated either way. */
+  struct: unknown;
+  /** The text read back off the finished PDF — what `score` was computed from. */
+  text: string;
   file: string;
   bytes: number;
 };
@@ -370,6 +376,13 @@ async function executeRun({
             changesJson: toJsonColumn(v.changes ?? []),
             reportJson: toJsonColumn(v.report),
             fidelityJson: toJsonColumn(v.fidelity),
+            // What "Use as my resume" needs: the fields this was printed from
+            // and the text a parser read back off it. Stored now because
+            // neither can be recovered later without another extraction pass,
+            // and the second reading would be the one that disagrees with the
+            // score already printed on the card.
+            structJson: toJsonColumn(v.struct),
+            text: typeof v.text === "string" ? v.text : "",
             // Run-scoped, so this row can only ever resolve to its own document.
             file: `${runDir}/${v.file}`,
             bytes: v.bytes ?? 0,

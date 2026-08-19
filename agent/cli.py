@@ -277,6 +277,12 @@ def cmd_render(payload: dict) -> dict:
         "ok": True,
         "pages": result.pages,
         "chars": len(parsed.strip()),
+        # The reading itself, not only its length. `chars` answers "did anything
+        # come out"; `text` is what the score was computed from, and it is what a
+        # caller needs to store if this document is ever to become a resume of
+        # its own. Reading the PDF back a second time later would be a second
+        # extraction of the same file to recover something already in hand.
+        "text": parsed,
         "report": readiness.score(parsed, _str_list(payload.get("target_keywords"))),
     }
 

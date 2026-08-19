@@ -585,6 +585,23 @@ def _one_variant(
         "meets_floor": meets_floor,
         "floor": readiness.SHIPPABLE_FLOOR,
         "floor_gap": "" if meets_floor else _floor_gap(report),
+        # What it takes to promote this rebuild into a resume of its own: the
+        # fields it was printed FROM, and the text a parser read back OFF it.
+        #
+        # Both are already in hand at this point and neither can be recovered
+        # later without cost. Re-deriving the struct from the finished PDF means
+        # a second extraction pass — model calls, and a worse answer than the
+        # one we already hold, because extraction from a rendered page is
+        # strictly lossier than the structure we rendered it from. Re-deriving
+        # the text means opening the file again.
+        #
+        # `text` is the extracted reading, deliberately, not a serialisation of
+        # the struct: it is what the score was computed from, so a promoted
+        # resume opens showing the same number the card showed. Handing over the
+        # struct's own prose instead would quietly re-score the document against
+        # text no employer will ever see.
+        "struct": struct,
+        "text": parsed,
         "pdf_bytes": pdf_bytes,
     }, reason
 

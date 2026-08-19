@@ -133,6 +133,46 @@ def test_render_requires_its_arguments():
     assert "out" in out["error"]
 
 
+@pytest.mark.slow
+def test_render_hands_back_the_text_it_scored(tmp_path):
+    """`render` must return the reading, not only how long it was.
+
+    `chars` answers "did anything come out of the PDF at all". `text` is the
+    string the score was computed from, and it is what the caller has to store
+    if the document it just built is ever going to become a resume of its own —
+    a promoted rebuild whose text was re-extracted later gets a number that
+    disagrees with the one shown on the card it was promoted from.
+    """
+    import render_pdf
+
+    if not render_pdf.renderer_available():
+        pytest.skip("playwright/chromium not installed")
+
+    out = str(tmp_path / "built.pdf")
+    struct = {
+        "name": "Priya Ramanathan",
+        "contact_line": "priya@example.com",
+        "sections": [{
+            "heading": "EXPERIENCE",
+            "items": [{
+                "head": "Backend Engineer",
+                "sub": "Zoho | Chennai",
+                "date": "2022 - Present",
+                "bullets": ["Cut p99 checkout latency from 1.4s to 380ms."],
+            }],
+        }],
+    }
+    result, _ = run({"cmd": "render", "struct": struct, "out": out})
+    assert result["ok"] is True, result
+    text = result["text"]
+    assert "Priya Ramanathan" in text
+    assert "Backend Engineer" in text
+    # The two fields have to describe the same reading. A `chars` computed from
+    # one extraction and a `text` from another is the exact bug this guards.
+    assert len(text.strip()) == result["chars"]
+    assert result["report"]["score"] >= 0
+
+
 def test_health_reports_what_this_process_can_do():
     out, _ = run({"cmd": "health"})
     assert out["ok"] is True

@@ -287,6 +287,37 @@ def test_generate_variants_produces_measured_rewrites(monkeypatch, tmp_path):
         assert v["fidelity"]["total"] > 0
 
 
+def test_every_variant_carries_what_promoting_it_needs(monkeypatch):
+    """A rebuild has to be promotable into a resume without a second extraction.
+
+    `struct` is what it was printed FROM and `text` is what a parser read back
+    OFF it. Both are held in memory at the moment the variant is built and
+    neither can be recovered faithfully afterwards: re-deriving the struct from
+    the finished PDF costs model calls and returns strictly less than we already
+    had, and re-extracting the text produces a second reading that can disagree
+    with the score already stored beside it.
+
+    The last assertion is the one that matters. `score` was computed from THIS
+    string, so a promoted resume opens showing the number its card showed.
+    """
+    import readiness
+
+    _stub_llm(monkeypatch, HONEST_STRUCT)
+    result = resume_optimize.generate_variants(MASTER, MASTER_SKILLS)
+    assert result["variants"], result["reasons"]
+
+    for v in result["variants"]:
+        struct = v["struct"]
+        assert isinstance(struct, dict)
+        assert struct.get("sections"), "a promotable struct with no sections is not promotable"
+        assert struct.get("name"), "identity is stamped by us, not by the model"
+
+        text = v["text"]
+        assert isinstance(text, str) and text.strip()
+        assert struct["name"] in text, "the reading must be of the document we printed"
+        assert readiness.score(text)["score"] == v["score"]
+
+
 def test_the_headline_claim_is_actually_measured(monkeypatch):
     """Fidelity must be computed from the rendered PDF, not asserted.
 
