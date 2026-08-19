@@ -11,6 +11,7 @@ import json
 import os
 import re
 import statistics
+import sys
 import threading
 import time
 import urllib.error
@@ -50,6 +51,13 @@ class Provider:
     fn: Callable[..., str | None]
     key_env: str
     backend: str
+    #: True when calls to this provider cost money. Paid providers are ordered
+    #: LAST in selection regardless of where they appear in PROVIDERS, so they
+    #: are reached only when the free tiers cannot answer — see
+    #: `_select_providers`. Making it a property of the provider rather than a
+    #: property of list order means a future edit to PROVIDERS cannot quietly
+    #: promote a paid backend to the default path.
+    paid: bool = False
 
 
 _health_lock = threading.Lock()
@@ -248,12 +256,95 @@ def _groq_gptoss(messages: list, timeout: int, temperature: float = 0.3) -> str 
     )
 
 
+
+def _anthropic(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
+    """Claude, as a paid last resort.
+
+    WHY THIS IS HERE AT ALL
+
+    The other four providers are free tiers. That is the right default for this
+    product — it is priced at 399 rupees for a job search and its audience is
+    students — but it has one failure mode that the ensemble cannot cover: free
+    tiers rate-limit on the same days, at the same hours, for the same reasons.
+    A campus placement week is exactly when every provider quota is thin and
+    exactly when nobody can afford the product to stop rewriting resumes.
+
+    STRICTLY OPT-IN. With no ANTHROPIC_API_KEY set this provider is not
+    configured, is never selected, and costs nothing. That is the same rule
+    every other provider here follows.
+
+    ORDERED LAST. `paid=True` puts it behind every free provider in selection,
+    so on an ordinary day it is not called at all.
+
+    COST, stated plainly for whoever decides whether to set the key: Claude
+    Opus 5 is $5 per million input tokens and $25 per million output. A resume
+    rewrite is roughly 2-4k in and 1-2k out, so a variant batch that falls all
+    the way through to this provider costs a few US cents. Effort is set to
+    `low` because these are mechanical tasks — extracting a structure, parsing
+    a job description, rewriting bullets — and the depth is not what makes them
+    good.
+    """
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        return None
+
+    try:
+        import anthropic
+    except ImportError:
+        # The key is set but the package is not installed. Reported once per
+        # process rather than silently returning nothing, because "I configured
+        # the paid fallback and it never runs" is otherwise undebuggable.
+        print(
+            "[llm] ANTHROPIC_API_KEY is set but the `anthropic` package is not "
+            "installed — run: pip install anthropic",
+            file=sys.stderr,
+        )
+        return None
+
+    # The other providers take an OpenAI-style messages array with a `system`
+    # role inside it. The Messages API takes the system prompt as its own
+    # top-level parameter, so it is lifted out here rather than every caller
+    # learning a second shape.
+    system = "\n\n".join(
+        str(m.get("content") or "") for m in messages if m.get("role") == "system"
+    )
+    turns = [
+        {"role": m["role"], "content": str(m.get("content") or "")}
+        for m in messages
+        if m.get("role") in ("user", "assistant")
+    ]
+    if not turns:
+        return None
+
+    client = anthropic.Anthropic(api_key=key, timeout=float(timeout))
+    response = client.messages.create(
+        model="claude-opus-5",
+        max_tokens=_REASONING_MAX_TOKENS,
+        system=system or anthropic.NOT_GIVEN,
+        messages=turns,
+        # Thinking is on by default on this model and is left on: the documented
+        # failure mode of disabling it is reasoning leaking into the visible
+        # answer, which for a caller that parses the answer as JSON is a broken
+        # response rather than a verbose one. Low effort is the cheap lever.
+        output_config={"effort": "low"},
+    )
+
+    # Only the text blocks. A response can also carry thinking blocks, and
+    # concatenating those into the answer would hand `_extract_json` a document
+    # with prose wrapped around the JSON it is looking for.
+    parts = [block.text for block in response.content if block.type == "text"]
+    text = "".join(parts).strip()
+    return text or None
+
+
 PROVIDERS: list[Provider] = [
     Provider("groq-llama-3.3-70b", _groq_llama, "GROQ_API_KEY", "groq"),
     Provider("cerebras-glm-4.7", _cerebras_glm, "CEREBRAS_API_KEY", "cerebras"),
     Provider("mistral-small", _mistral, "MISTRAL_API_KEY", "mistral"),
     Provider("groq-gpt-oss-120b", _groq_gptoss, "GROQ_API_KEY", "groq"),
     Provider("gemini-2.0-flash", _gemini, "GEMINI_API_KEY", "gemini"),
+    # Paid, and therefore last whatever this list says — see `paid` above.
+    Provider("claude-opus-5", _anthropic, "ANTHROPIC_API_KEY", "anthropic", paid=True),
 ]
 
 
@@ -325,6 +416,11 @@ def _select_providers(n: int) -> list[Provider]:
     configured = _configured_providers()
     healthy = [provider for provider in configured if not _circuit_open(provider)]
     candidates = healthy or configured
+    # Free first, always. Within each group the order in PROVIDERS is preserved,
+    # so this changes nothing on a deployment with no paid key set — and on one
+    # that has a key, the paid provider is reached only when the free tiers
+    # cannot fill the request.
+    candidates = sorted(candidates, key=lambda provider: provider.paid)
     selected: list[Provider] = []
     used_backends: set[str] = set()
     for provider in candidates:

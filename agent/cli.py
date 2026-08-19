@@ -381,7 +381,11 @@ def cmd_health(payload: dict) -> dict:
     import render_pdf
 
     checks = {"python": sys.version.split()[0], "renderer": render_pdf.renderer_available()}
-    for mod in ("pdfminer.high_level", "pypdf", "docx", "sklearn"):
+    # What this process needs to do its job. `sklearn` used to be on this list
+    # and was neither imported by anything nor installed after the pivot — a
+    # health check reporting on a package the product does not use is a health
+    # check nobody reads carefully.
+    for mod in ("pdfminer.high_level", "pypdf", "docx"):
         try:
             __import__(mod)
             checks[mod.split(".")[0]] = True

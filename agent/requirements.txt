@@ -1,10 +1,30 @@
-# Grindly agent worker deps. Uses local Ollama via REST (no python client needed).
-pdfminer.six>=20231228   # resume PDF text extraction
-pypdf>=4.2.0             # second-opinion PDF extractor — pdfminer reads ~nothing off some Tectonic output
-python-docx>=1.1.0       # resume DOCX text extraction
-playwright>=1.44.0       # live platform scraping + apply (mode=live only)
-cryptography>=42.0.0     # AES-256-GCM credential encryption (agent/secret_box.py)
-psycopg2-binary>=2.9.9   # Postgres driver for the production queue (agent/db.py); unused on SQLite
-scikit-learn>=1.4.0      # TF-IDF semantic scoring in matcher.py (cosine_similarity)
-sentry-sdk>=2.0.0        # error tracking — only active when SENTRY_DSN env var is set
+# Grindly agent dependencies.
+#
+# The four free-tier LLM providers are reached over plain urllib and need no
+# client library. The optional paid fallback is the exception — see the bottom
+# of this file.
+pdfminer.six>=20231228   # resume PDF text extraction, and the read-back that measures fidelity
+pypdf>=4.2.0             # second-opinion PDF extractor — pdfminer reads ~nothing off some output
+python-docx>=1.1.0       # DOCX resumes on the way in, DOCX export on the way out
+playwright>=1.44.0       # headless Chromium: struct -> HTML -> PDF (agent/render_pdf.py)
+
+# Removed with the auto-apply build, and left behind in this file until now:
+#
+#   cryptography     encrypted job-board credentials (agent/secret_box.py)
+#   psycopg2-binary  the Postgres job queue the worker fleet drained (agent/db.py)
+#   scikit-learn     TF-IDF matching in matcher.py
+#   sentry-sdk       the Python worker's error reporting
+#
+# None of those modules exist any more and nothing in agent/ imports any of
+# these packages. scikit-learn alone is ~100 MB installed, on a box with about
+# 760 MB free while the stack runs.
+# OPTIONAL — the paid fallback provider (agent/llm.py:_anthropic).
+#
+# Install this only if you intend to set ANTHROPIC_API_KEY. Without the key the
+# provider is never configured and never selected, so the package is dead weight
+# on a box with 760 MB of headroom. With the key set and the package missing,
+# llm.py says so on stderr rather than failing silently.
+#
+#   pip install anthropic
+#
 # Optional (email outcome scanner): google-auth google-auth-httplib2 google-api-python-client
