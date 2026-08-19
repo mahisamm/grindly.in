@@ -809,3 +809,24 @@ textarea.field { resize: vertical; min-height: 6rem; }
   .report-problem__trigger { transition: none; }
   .report-problem__trigger:hover { transform: none; }
 }
+
+/* ── Particle field (marketing surfaces only) ─────────────────────── */
+/* Fixed rather than absolute so it does not have to grow with the page:
+   the landing page is several screens tall and a canvas that tall is a
+   large allocation for a texture that only ever shows one viewport of
+   itself. `z-index: 0` with the page content at `z-index: 1` rather than
+   a negative index — negative would put it behind the body background,
+   where it is a perfectly running animation nobody can see. */
+.particle-field {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+/* Scoped variant for a panel that has its own bounds, like the sign-in
+   artwork. Same canvas, contained by the nearest positioned ancestor. */
+.particle-field--contained {
+  position: absolute;
+}

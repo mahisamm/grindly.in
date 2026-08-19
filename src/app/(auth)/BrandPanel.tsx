@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
 import { Magnifier, Shield, Target, Doc } from "@/components/Doodles";
+import { ParticleField } from "@/components/ParticleField";
 
 /**
  * The ink panel beside the sign-in form.
@@ -36,6 +37,11 @@ export function BrandPanel() {
         padding: "clamp(28px,4vw,52px)",
       }}
     >
+      {/* Paper-toned, because this panel is painted var(--ink) and ink specks
+          on ink are a canvas doing arithmetic for nobody. Contained by the
+          aside, which is already `relative overflow-hidden`. */}
+      <ParticleField tone="paper" className="particle-field--contained" />
+
       {/* Two vermilion washes, corner to corner. Pointer-events off and
           aria-hidden — it is atmosphere, not content. */}
       <div

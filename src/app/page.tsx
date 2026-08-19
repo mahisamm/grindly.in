@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { ParticleField } from "@/components/ParticleField";
+import { Reveal } from "@/components/Motion";
 import { runAgent, type CompanyPack } from "@/lib/agent";
 import { PRODUCTS, formatAmount } from "@/lib/plans";
 
@@ -23,7 +25,11 @@ export default async function Home() {
 
   return (
     <>
-      <header className="border-border border-b">
+      {/* Behind everything, and everything below is lifted to `relative z-10`
+          so it stays behind. It is the only client component on this page. */}
+      <ParticleField />
+
+      <header className="border-border relative z-10 border-b">
         <nav className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-5 py-4 sm:px-6 sm:py-5">
           <Logo />
           <div className="flex items-center gap-2 sm:gap-3">
@@ -43,7 +49,7 @@ export default async function Home() {
         </nav>
       </header>
 
-      <main className="flex-1">
+      <main className="relative z-10 flex-1">
         {/* hero */}
         <section className="mx-auto max-w-6xl px-5 pt-12 pb-12 sm:px-6 sm:pt-24 sm:pb-14">
           <p className="text-brand mb-5 font-mono text-xs tracking-[0.16em] uppercase">
@@ -128,11 +134,15 @@ export default async function Home() {
                 h: "Tailored to a real company",
                 p: "Amazon publishes 16 Leadership Principles. Google publishes the bullet form it wants. We surface what you already have to match — every claim linked to the company's own page, never scraped, never guessed. Type any other employer and you get one of three answers, including the honest one: for most companies there is nothing specific to tailor to, and we say so instead of inventing it.",
               },
-            ].map((c) => (
-              <div key={c.h}>
+            ].map((c, i) => (
+              // Staggered by index rather than all at once. Three columns
+              // arriving together is a page that jumped; ninety milliseconds
+              // apart is a page that settled, and it is short enough that
+              // nobody waiting for the third card notices they waited.
+              <Reveal key={c.h} delay={i * 90}>
                 <h2 className="font-display text-xl font-semibold">{c.h}</h2>
                 <p className="text-muted mt-2 leading-relaxed">{c.p}</p>
-              </div>
+              </Reveal>
             ))}
           </div>
         </section>
@@ -149,14 +159,22 @@ export default async function Home() {
               and never scraped from a job board.
             </p>
             <ul className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {companies.map((c) => (
-                <li key={c.slug} className="bg-surface border-border rounded-xl border p-5">
+              {companies.map((c, i) => (
+                <Reveal
+                  as="li"
+                  key={c.slug}
+                  // Capped at six steps. A stagger proportional to the list
+                  // makes the last card in a twelve-company grid arrive a
+                  // second after the first, which reads as a slow page.
+                  delay={Math.min(i, 6) * 55}
+                  className="bg-surface border-border rounded-xl border p-5"
+                >
                   <h3 className="font-display text-lg font-semibold">{c.name}</h3>
                   <p className="text-muted mt-1.5 text-sm leading-snug">{c.summary}</p>
                   <p className="text-muted mt-3 font-mono text-[10px] tracking-[0.1em] uppercase">
                     {c.sources.length} cited source{c.sources.length === 1 ? "" : "s"}
                   </p>
-                </li>
+                </Reveal>
               ))}
             </ul>
             <p className="text-muted mt-6 max-w-3xl text-xs leading-relaxed">
@@ -175,15 +193,19 @@ export default async function Home() {
               charge {formatAmount(250000)}–{formatAmount(410000)} a month.
             </p>
             <div className="mt-8 flex flex-wrap gap-4">
-              <div className="bg-surface border-border min-w-[220px] flex-1 rounded-xl border p-6">
+              <Reveal className="bg-surface border-border min-w-[220px] flex-1 rounded-xl border p-6">
                 <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">Free</p>
                 <p className="font-display mt-2 text-3xl font-bold">₹0</p>
                 <p className="text-muted mt-2 text-sm">
                   Full report, one resume, one company pack. No watermark.
                 </p>
-              </div>
-              {(["pass90", "pack1"] as const).map((sku) => (
-                <div key={sku} className="bg-surface border-border min-w-[220px] flex-1 rounded-xl border p-6">
+              </Reveal>
+              {(["pass90", "pack1"] as const).map((sku, i) => (
+                <Reveal
+                  key={sku}
+                  delay={(i + 1) * 90}
+                  className="bg-surface border-border min-w-[220px] flex-1 rounded-xl border p-6"
+                >
                   <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">
                     {PRODUCTS[sku].name}
                   </p>
@@ -191,14 +213,14 @@ export default async function Home() {
                     {formatAmount(PRODUCTS[sku].amount)}
                   </p>
                   <p className="text-muted mt-2 text-sm">{PRODUCTS[sku].blurb}</p>
-                </div>
+                </Reveal>
               ))}
             </div>
           </div>
         </section>
       </main>
 
-      <footer className="border-border border-t">
+      <footer className="border-border relative z-10 border-t">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-5 py-8 text-sm sm:px-6">
           <Logo size={24} />
           <nav className="text-muted flex flex-wrap items-center gap-5">
