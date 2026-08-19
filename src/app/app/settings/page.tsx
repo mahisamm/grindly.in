@@ -4,6 +4,7 @@ import { currentUser } from "@/lib/auth";
 import { daysRemaining, effectivePlan, formatLimit, limitsFor } from "@/lib/plans";
 import { usageToday } from "@/lib/quota";
 import { DeleteAccount } from "./DeleteAccount";
+import { ChangePassword, EmailSettings, ExportData } from "./AccountForms";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Account — Grindly" };
@@ -12,10 +13,18 @@ export default async function SettingsPage() {
   const user = await currentUser();
   if (!user) return null;
 
-  const [counts, usage] = await Promise.all([
+  const [counts, usage, credentials] = await Promise.all([
     prisma.resume.count({ where: { userId: user.id } }),
     usageToday(user.id),
+    // Whether this account has a password at all decides what the forms below
+    // can offer: a Google-only account has nothing to change and must not be
+    // shown a field implying it does.
+    prisma.user.findUnique({
+      where: { id: user.id },
+      select: { passwordHash: true, emailVerifiedAt: true },
+    }),
   ]);
+  const googleOnly = !credentials?.passwordHash;
   const plan = effectivePlan(user);
   const limits = limitsFor(user);
   const left = daysRemaining(user);
@@ -80,6 +89,25 @@ export default async function SettingsPage() {
             Sign out
           </button>
         </form>
+      </section>
+
+      <section className="bg-surface border-border mt-6 rounded-xl border p-6">
+        <h2 className="font-display text-lg font-semibold">Email address</h2>
+        <EmailSettings
+          email={user.email}
+          verified={Boolean(credentials?.emailVerifiedAt)}
+          googleOnly={googleOnly}
+        />
+      </section>
+
+      <section className="bg-surface border-border mt-6 rounded-xl border p-6">
+        <h2 className="font-display text-lg font-semibold">Password</h2>
+        <ChangePassword googleOnly={googleOnly} />
+      </section>
+
+      <section className="bg-surface border-border mt-6 rounded-xl border p-6">
+        <h2 className="font-display text-lg font-semibold">Your data</h2>
+        <ExportData />
       </section>
 
       {user.role === "admin" && (

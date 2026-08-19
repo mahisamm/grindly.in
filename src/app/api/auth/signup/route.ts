@@ -4,6 +4,7 @@ import { setUid } from "@/lib/session";
 import { isRateLimitedByIp } from "@/lib/rateLimit";
 import { audit } from "@/lib/audit";
 import { isValidTimezone } from "@/lib/quota";
+import { issueVerification } from "@/lib/emailVerification";
 import { adminEmail } from "@/lib/config";
 import {
   hashPassword,
@@ -101,6 +102,15 @@ export async function POST(req: Request) {
   }
 
   await setUid(user.id);
+
+  // Send the confirmation, but do not wait on it and do not fail the signup for
+  // it. The account works either way — verification gates recovery, not use —
+  // and a signup that 500s because an SMTP host is slow would be a worse
+  // product than an unconfirmed address.
+  void issueVerification(user.id, email, "signup").catch((e) =>
+    console.error("[signup] verification mail failed:", (e as Error).message),
+  );
+
   await audit(user.id, "signup", email);
   return NextResponse.json({ ok: true, user });
 }
