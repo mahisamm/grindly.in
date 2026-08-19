@@ -33,14 +33,19 @@ export type AdminStats = {
     blocked: number;
     newThisWeek: number;
     newThisMonth: number;
+    /** The SEVEN DAYS BEFORE this week, so a trend chip has a denominator
+        that is a real measurement rather than a projection. */
+    newWeekBefore: number;
   };
   /** Accounts that DID something in the window — not visitors. */
-  active: { day: number; week: number; month: number };
+  active: { day: number; week: number; month: number; weekBefore: number };
   work: {
     resumes: number;
     resumesThisWeek: number;
     rebuilds: number;
     rebuildsThisWeek: number;
+    resumesWeekBefore: number;
+    rebuildsWeekBefore: number;
     /** Rebuild outcomes, so a rising failure rate is visible before a user reports it. */
     runsByStatus: Record<string, number>;
     editorBuilds: number;
@@ -55,6 +60,11 @@ export type AdminStats = {
     /** Rebuilds that cleared the shippable floor, as a share of those kept. */
     atOrAboveFloor: number;
     keptVariants: number;
+    /** How every scored resume is distributed across the grade bands. The
+        product's own bands, not deciles — a chart that disagreed with the
+        letter printed on someone's report would be a second opinion nobody
+        asked for. */
+    scoreBands: { label: string; range: string; count: number }[];
   };
   funnel: {
     signedUp: number;
@@ -66,6 +76,7 @@ export type AdminStats = {
     /** Paise. */
     revenue: number;
     revenueThisMonth: number;
+    revenueMonthBefore: number;
     paidOrders: number;
     payingUsers: number;
   };
@@ -100,6 +111,15 @@ function activeSince(since: Date): Promise<number> {
     WHERE created_at >= ${since} AND user_id IS NOT NULL`);
 }
 
+/** The same count over a closed window, for the previous-period comparison. */
+function activeBetween(from: Date, to: Date): Promise<number> {
+  return distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`
+    SELECT COUNT(DISTINCT user_id) AS n
+    FROM audit_logs
+    WHERE created_at >= ${from} AND created_at < ${to}
+      AND user_id IS NOT NULL`);
+}
+
 /** One median, computed in Postgres rather than by pulling every row into Node. */
 async function median(sql: Promise<{ median: number | null }[]>): Promise<number | null> {
   const rows = await sql.catch(() => [] as { median: number | null }[]);
@@ -110,15 +130,22 @@ export async function adminStats(now = new Date()): Promise<AdminStats> {
   const day = new Date(now.getTime() - DAY);
   const week = new Date(now.getTime() - 7 * DAY);
   const month = new Date(now.getTime() - 30 * DAY);
+  // The window BEFORE the current one, for every trend chip on the page. A
+  // percentage beside a number is a claim about change, and the only honest
+  // way to make it is to count the previous period rather than model it.
+  const twoWeeks = new Date(now.getTime() - 14 * DAY);
+  const twoMonths = new Date(now.getTime() - 60 * DAY);
+  const between = (from: Date, to: Date) => ({ gte: from, lt: to });
 
   const [
-    total, pending, approved, blocked, newWeek, newMonth,
-    activeDay, activeWeek, activeMonth,
-    resumes, resumesWeek, rebuilds, rebuildsWeek, runStatusRows,
+    total, pending, approved, blocked, newWeek, newMonth, newWeekBefore,
+    activeDay, activeWeek, activeMonth, activeWeekBefore,
+    resumes, resumesWeek, resumesWeekBefore,
+    rebuilds, rebuildsWeek, rebuildsWeekBefore, runStatusRows, scoreBandRows,
     editorBuilds, coverLetters, exportCount,
     medianScore, medianGain, keptVariants, atFloor,
     uploadedUsers, rebuiltUsers, tookDocUsers,
-    revenueAgg, revenueMonthAgg, paidOrders, payingUsers,
+    revenueAgg, revenueMonthAgg, revenueMonthBeforeAgg, paidOrders, payingUsers,
     applications, replied,
     unresolvedErrors, errorsWeek, providerFailures, openProblems,
   ] = await Promise.all([
@@ -128,16 +155,32 @@ export async function adminStats(now = new Date()): Promise<AdminStats> {
     prisma.user.count({ where: { accessStatus: "blocked" } }),
     prisma.user.count({ where: { createdAt: { gte: week } } }),
     prisma.user.count({ where: { createdAt: { gte: month } } }),
+    prisma.user.count({ where: { createdAt: between(twoWeeks, week) } }),
 
     activeSince(day),
     activeSince(week),
     activeSince(month),
+    activeBetween(twoWeeks, week),
 
     prisma.resume.count(),
     prisma.resume.count({ where: { createdAt: { gte: week } } }),
+    prisma.resume.count({ where: { createdAt: between(twoWeeks, week) } }),
     prisma.variantRun.count(),
     prisma.variantRun.count({ where: { startedAt: { gte: week } } }),
+    prisma.variantRun.count({ where: { startedAt: between(twoWeeks, week) } }),
     prisma.variantRun.groupBy({ by: ["status"], _count: { _all: true } }),
+    // One grouped query rather than five counts, and the cut points are the
+    // product's own grade bands — see readiness.grade.
+    prisma.$queryRaw<{ band: string; n: bigint }[]>`
+      SELECT CASE
+               WHEN score >= 90 THEN 'A'
+               WHEN score >= 80 THEN 'B'
+               WHEN score >= 70 THEN 'C'
+               WHEN score >= 55 THEN 'D'
+               ELSE 'E'
+             END AS band,
+             COUNT(*) AS n
+      FROM resumes WHERE score IS NOT NULL GROUP BY 1`,
 
     prisma.auditLog.count({ where: { action: "resume_built" } }),
     prisma.auditLog.count({ where: { action: "cover_letter" } }),
@@ -166,6 +209,10 @@ export async function adminStats(now = new Date()): Promise<AdminStats> {
       where: { status: "paid", paidAt: { gte: month } },
       _sum: { amount: true },
     }),
+    prisma.order.aggregate({
+      where: { status: "paid", paidAt: between(twoMonths, month) },
+      _sum: { amount: true },
+    }),
     prisma.order.count({ where: { status: "paid" } }),
     distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`
       SELECT COUNT(DISTINCT user_id) AS n FROM orders WHERE status = 'paid'`),
@@ -184,18 +231,35 @@ export async function adminStats(now = new Date()): Promise<AdminStats> {
   const runsByStatus: Record<string, number> = {};
   for (const row of runStatusRows) runsByStatus[row.status] = row._count._all;
 
+  const bandCounts = new Map(scoreBandRows.map((r) => [r.band, Number(r.n)]));
+  const scoreBands = [
+    { label: "A", range: "90–100" },
+    { label: "B", range: "80–89" },
+    { label: "C", range: "70–79" },
+    { label: "D", range: "55–69" },
+    { label: "E", range: "under 55" },
+  ].map((b) => ({ ...b, count: bandCounts.get(b.label) ?? 0 }));
+
   return {
     users: {
       total, pending, approved, blocked,
       newThisWeek: newWeek,
       newThisMonth: newMonth,
+      newWeekBefore,
     },
-    active: { day: activeDay, week: activeWeek, month: activeMonth },
+    active: {
+      day: activeDay,
+      week: activeWeek,
+      month: activeMonth,
+      weekBefore: activeWeekBefore,
+    },
     work: {
       resumes,
       resumesThisWeek: resumesWeek,
+      resumesWeekBefore,
       rebuilds,
       rebuildsThisWeek: rebuildsWeek,
+      rebuildsWeekBefore,
       runsByStatus,
       editorBuilds,
       coverLetters,
@@ -206,6 +270,7 @@ export async function adminStats(now = new Date()): Promise<AdminStats> {
       medianGain,
       atOrAboveFloor: atFloor,
       keptVariants,
+      scoreBands,
     },
     funnel: {
       signedUp: total,
@@ -216,6 +281,7 @@ export async function adminStats(now = new Date()): Promise<AdminStats> {
     money: {
       revenue: revenueAgg._sum.amount ?? 0,
       revenueThisMonth: revenueMonthAgg._sum.amount ?? 0,
+      revenueMonthBefore: revenueMonthBeforeAgg._sum.amount ?? 0,
       paidOrders,
       payingUsers,
     },
