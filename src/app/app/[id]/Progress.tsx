@@ -149,15 +149,29 @@ function ScoreHistory({ history }: { history: ScorePoint[] }) {
               vectorEffect="non-scaling-stroke"
               strokeLinejoin="round"
             />
+            {/* Zero-length lines with a round cap, not circles.
+                The viewBox is stretched with preserveAspectRatio="none" — which
+                is right for the line, a sparkline is meant to fill its box — and
+                that scales x and y by different factors. A <circle> in that
+                space is drawn as an ellipse: these markers came out as wide flat
+                smears. `vector-effect` does not help, because it governs stroke
+                WIDTH and the circles were filled.
+                A zero-length subpath with stroke-linecap="round" renders as a
+                dot of exactly stroke-width across, and non-scaling-stroke keeps
+                that width in screen pixels — so it is round at any container
+                size. */}
             {history.map((point, i) => {
               const [x, y] = points[i].split(",");
               return (
-                <circle
+                <line
                   key={point.id}
-                  cx={x}
-                  cy={y}
-                  r="1.6"
-                  fill={scoreColor(point.score)}
+                  x1={x}
+                  y1={y}
+                  x2={x}
+                  y2={y}
+                  stroke={scoreColor(point.score)}
+                  strokeWidth={5}
+                  strokeLinecap="round"
                   vectorEffect="non-scaling-stroke"
                 />
               );
