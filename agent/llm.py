@@ -22,10 +22,15 @@ from typing import Callable
 
 import redact
 
-_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-)
+# An honest User-Agent.
+#
+# This used to spoof Chrome 125, which is pointless against an API you hold a
+# key for and mildly dishonest besides. Measured against all four providers on
+# production: the spoof and this string behave identically. Sending NO
+# User-Agent is the one thing that fails — Groq and Cerebras sit behind
+# Cloudflare, which answers a bare python-urllib with `403 error code: 1010`
+# and no explanation, so the header has to exist.
+_UA = "grindly/1.0 (+https://grindly.in)"
 # Completion budget. Ordinary chat models answer well inside the default; a
 # reasoning model bills its thinking against the same budget and needs headroom
 # for both, or it returns nothing at all (see _cerebras_glm).
@@ -175,31 +180,52 @@ def _gemini(messages: list, timeout: int, temperature: float = 0.3) -> str | Non
         return None
 
 
-def _groq_llama(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
+def _groq_gptoss20(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
+    """Groq's smaller open model.
+
+    This slot held `llama-3.3-70b-versatile`, which Groq has since retired — the
+    API answers "The model does not exist or you do not have access to it". It
+    had been failing on production for an unknown length of time, silently,
+    because a provider that errors is just a provider that does not contribute
+    to the ensemble.
+
+    Chosen over `qwen/qwen3.6-27b`, which is available and works but writes its
+    reasoning into the response as a `<think>` block — every caller here parses
+    the answer as JSON.
+    """
     return _openai_compat(
         "https://api.groq.com/openai/v1",
         os.environ.get("GROQ_API_KEY", ""),
-        "llama-3.3-70b-versatile",
+        "openai/gpt-oss-20b",
         messages,
         timeout,
         temperature,
     )
 
 
-def _cerebras_glm(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
+def _cerebras_gptoss(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
+    """Cerebras.
+
+    NOTE FOR ANYONE WONDERING WHY THIS NEVER RUNS: Cerebras no longer has a free
+    tier for this workload. Every model on the account answers
+    `402 Payment required to access this resource`, including the two it still
+    lists. The provider is kept because the code is correct and someone with a
+    paid account should get the benefit of it; the key is simply absent from
+    deployments that do not.
+
+    The model was `zai-glm-4.7`, which is now "archived and unavailable". Of the
+    two that remain, `gpt-oss-120b` is the general-purpose one.
+    """
     return _openai_compat(
         "https://api.cerebras.ai/v1",
         os.environ.get("CEREBRAS_API_KEY", ""),
-        "zai-glm-4.7",
+        "gpt-oss-120b",
         messages,
         timeout,
         temperature,
-        # A reasoning model: its thinking is billed against the same completion
-        # budget as its answer. On a resume-sized prompt it spent all 2048 tokens
-        # reasoning and returned finish_reason=length with no answer at all —
-        # every substantial call, for as long as this provider has been
-        # configured. Measured on a real resume: 4,834 reasoning tokens before a
-        # 5,520-character answer, so the budget has to clear both.
+        # Kept from the reasoning-model era. It costs nothing when the answer is
+        # short and it is the difference between an answer and an empty
+        # `finish_reason=length` when it is not.
         _REASONING_MAX_TOKENS,
     )
 
@@ -308,8 +334,8 @@ def _anthropic(messages: list, timeout: int, temperature: float = 0.3) -> str | 
 
 
 PROVIDERS: list[Provider] = [
-    Provider("groq-llama-3.3-70b", _groq_llama, "GROQ_API_KEY", "groq"),
-    Provider("cerebras-glm-4.7", _cerebras_glm, "CEREBRAS_API_KEY", "cerebras"),
+    Provider("groq-gpt-oss-20b", _groq_gptoss20, "GROQ_API_KEY", "groq"),
+    Provider("cerebras-gpt-oss-120b", _cerebras_gptoss, "CEREBRAS_API_KEY", "cerebras"),
     Provider("mistral-small", _mistral, "MISTRAL_API_KEY", "mistral"),
     Provider("groq-gpt-oss-120b", _groq_gptoss, "GROQ_API_KEY", "groq"),
     Provider("gemini-2.0-flash", _gemini, "GEMINI_API_KEY", "gemini"),

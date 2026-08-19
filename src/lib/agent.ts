@@ -173,6 +173,31 @@ export async function runAgent<T = Record<string, unknown>>(
       // and an unbounded buffer here is a memory leak with a stack trace.
       err = (err + chunk).slice(-MAX_STDERR_KEPT);
 
+      // A provider that is refusing every call is invisible otherwise.
+      //
+      // The ensemble is built to degrade rather than fail, which is right — and
+      // it means a provider whose model has been retired contributes nothing
+      // and says nothing. Two of the four free providers were dead on
+      // production for an unknown length of time: Groq's model had been
+      // withdrawn and Cerebras had moved off its free tier, and the only
+      // evidence anywhere was a `[llm] ... error:` line on stderr, in a
+      // container log nobody reads. Meanwhile the health check cheerfully
+      // listed all four, because it was reporting which KEYS were set.
+      //
+      // These lines are the one place that failure is observable, so they are
+      // lifted into the error table where the admin page shows them.
+      for (const line of chunk.split(/\r?\n/)) {
+        const failure = line.match(/^\[llm\]\s+(.*?)\s+error:\s+(.*)$/);
+        if (failure) {
+          report({
+            source: "agent",
+            kind: "llm-provider",
+            message: `${failure[1]} — ${failure[2]}`.slice(0, 400),
+            context: cmd,
+          });
+        }
+      }
+
       if (!options.onProgress) return;
       // Progress lines are read off the raw chunk rather than the kept tail, so
       // a long traceback later in the run cannot push earlier progress out of
