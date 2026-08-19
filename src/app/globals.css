@@ -66,6 +66,9 @@
      on #c22e1c is 2.9:1, which fails outright on the most-used control in the
      product. Same cream in both themes, for exactly that reason. */
   --on-cta: #f7f3ea;
+  /* The hard offset shadow the auth card uses. A near-black offset on a
+     near-black ground is invisible, so it cannot be one fixed value. */
+  --shadow-hard: rgba(23, 20, 15, 0.10);
   --accent: #c22e1c;
   --danger: #b3271a;
   --warn: #8a5e17;              /* ochre — paper text on it is 4.83:1 */
@@ -149,6 +152,9 @@
     /* Unchanged on purpose — see the note in the light palette. The primary
        button stays deep red at night, so its text stays cream. */
     --on-cta: #f7f3ea;
+    /* Light, not dark — see the light palette. On the dark ground the card
+       is lifted by a pale edge rather than a cast shadow. */
+    --shadow-hard: rgba(240, 235, 225, 0.07);
     --accent: #ff8f77;
     --danger: #ff7c6b;
     --warn: #e0a83c;
@@ -183,6 +189,8 @@
   --cta-2: #a82616;
   /* Unchanged on purpose — see the note in the light palette. */
   --on-cta: #f7f3ea;
+  /* See the light palette. */
+  --shadow-hard: rgba(240, 235, 225, 0.07);
   --accent: #ff8f77;
   --danger: #ff7c6b;
   --warn: #e0a83c;

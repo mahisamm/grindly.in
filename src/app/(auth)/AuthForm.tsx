@@ -95,32 +95,37 @@ export function AuthForm({
   return (
     <div className="animate-in relative z-[1] w-full max-w-[430px] min-w-0 px-5 py-12">
       {/* The brand panel carries the logo on desktop; on a phone that panel is
-          hidden, so the form has to introduce itself. */}
-      <Link href="/" className="mb-7 flex justify-center lg:hidden">
+          hidden, so the form has to introduce itself.
+          Left-aligned, not centred: everything else in this column starts on
+          the same axis, and a centred logo above left-aligned text was the
+          single most visible thing wrong with this page. One column, one edge. */}
+      <Link href="/" className="mb-8 inline-flex lg:hidden">
         <Logo size={34} />
       </Link>
 
       <div
-        className="bg-surface rounded-lg border p-6 sm:p-9"
+        className="bg-surface rounded-lg border p-6 sm:p-8"
         style={{
           borderColor: "var(--line-2)",
-          boxShadow: "10px 10px 0 rgba(23,20,15,0.08)",
+          // Themed, because the old value was a near-black offset shadow that
+          // simply vanished against the dark ground.
+          boxShadow: "8px 8px 0 var(--shadow-hard)",
         }}
       >
-      <h1 className="font-display text-3xl font-bold">
-        {isSignup ? "Create your account" : "Welcome back"}
-      </h1>
-      <p className="text-muted mt-2 text-sm">
-        {isSignup
-          ? "Your first resume, the full readiness report and one company pack are free."
-          : "Sign in to pick up where you left off."}
-      </p>
+        <h1 className="font-display text-[1.75rem] leading-tight font-bold sm:text-3xl">
+          {isSignup ? "Create your account" : "Welcome back"}
+        </h1>
+        <p className="text-muted mt-2 text-sm leading-relaxed">
+          {isSignup
+            ? "Your first resume, the full readiness report and one company pack are free."
+            : "Sign in to pick up where you left off."}
+        </p>
 
       {googleAuth && (
         <>
           <a
             href="/api/auth/google"
-            className="press mt-8 flex w-full items-center justify-center gap-2.5 rounded-full border px-4 py-3.5 font-semibold transition"
+            className="press mt-7 flex w-full items-center justify-center gap-2.5 rounded-full border px-4 py-3.5 font-semibold transition"
             style={{ borderColor: "var(--line-2)", background: "var(--paper)" }}
           >
             <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
@@ -131,7 +136,7 @@ export function AuthForm({
             </svg>
             Continue with Google
           </a>
-          <div className="my-6 flex items-center gap-3">
+          <div className="my-5 flex items-center gap-3">
             <span className="bg-border h-px flex-1" />
             <span className="text-muted font-mono text-[10px] tracking-[0.14em] uppercase">or</span>
             <span className="bg-border h-px flex-1" />
@@ -139,7 +144,7 @@ export function AuthForm({
         </>
       )}
 
-      <form onSubmit={submit} className={googleAuth ? "" : "mt-8"} noValidate>
+        <form onSubmit={submit} className={googleAuth ? "" : "mt-7"} noValidate>
         {isSignup && (
           <label className="mb-4 block">
             <span className="mb-1.5 block text-sm font-medium">Name</span>
@@ -168,7 +173,19 @@ export function AuthForm({
         </label>
 
         <label className="block">
-          <span className="mb-1.5 block text-sm font-medium">Password</span>
+          {/* The label row carries "Forgot your password?" on its right.
+              It used to sit on its own line below the submit button, where it
+              was an orphan between two paragraphs and read as a third piece of
+              body copy rather than an action. Beside the field it labels is
+              both the convention and the place someone looks for it. */}
+          <span className="mb-1.5 flex items-baseline justify-between gap-3">
+            <span className="text-sm font-medium">Password</span>
+            {!isSignup && (
+              <Link href="/forgot" className="text-muted hover:text-ink text-xs">
+                Forgot your password?
+              </Link>
+            )}
+          </span>
           <input
             type="password"
             required
@@ -195,39 +212,46 @@ export function AuthForm({
           </p>
         )}
 
-        <button type="submit" disabled={busy} className="btn btn-primary mt-6 w-full justify-center">
+          <button type="submit" disabled={busy} className="btn btn-primary mt-6 w-full justify-center">
           {busy ? "Working…" : isSignup ? "Create account" : "Sign in"}
         </button>
       </form>
 
-      {!isSignup && (
-        <Link href="/forgot" className="text-muted hover:text-ink mt-4 inline-block text-sm">
-          Forgot your password?
-        </Link>
-      )}
-
-      <p className="text-muted mt-6 text-sm">
-        {isSignup ? (
-          <>
-            Already have an account?{" "}
-            <Link href="/login" className="text-brand underline">Sign in</Link>
-          </>
-        ) : (
-          <>
-            No account yet?{" "}
-            <Link href="/signup" className="text-brand underline">Create one</Link>
-          </>
-        )}
-      </p>
-
-      <p className="text-muted mt-6 text-xs leading-relaxed">
-        Your resume and what we measure from it stay yours — we do not sell it,
-        we do not train models on it, and you can delete everything from your
-        account page. See our{" "}
-        <Link href="/privacy" className="underline hover:text-ink">Privacy Policy</Link>{" "}
-        and <Link href="/terms" className="underline hover:text-ink">Terms</Link>.
-      </p>
+        {/* One rule, then one line. The card used to end with a link and two
+            paragraphs at three different sizes, which gave it a ragged bottom
+            edge and no clear last action. */}
+        <p className="border-border text-muted mt-6 border-t pt-5 text-sm">
+          {isSignup ? (
+            <>
+              Already have an account?{" "}
+              <Link href="/login" className="text-brand font-medium underline">
+                Sign in
+              </Link>
+            </>
+          ) : (
+            <>
+              No account yet?{" "}
+              <Link href="/signup" className="text-brand font-medium underline">
+                Create one
+              </Link>
+            </>
+          )}
+        </p>
       </div>
+
+      {/* Outside the card, and lighter. It is a standing promise rather than a
+          step in signing in, and inside the card it competed with the button. */}
+      <p className="text-muted mt-6 px-1 text-xs leading-relaxed">
+        Your resume and what we measure from it stay yours — we do not sell it, we do
+        not train models on it, and you can delete everything from your account page.{" "}
+        <Link href="/privacy" className="hover:text-ink underline">
+          Privacy
+        </Link>{" "}
+        ·{" "}
+        <Link href="/terms" className="hover:text-ink underline">
+          Terms
+        </Link>
+      </p>
     </div>
   );
 }
