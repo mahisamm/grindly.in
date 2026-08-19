@@ -1866,6 +1866,23 @@ def _sanitize_struct(struct: dict) -> dict | None:
             items = _coerce_items(
                 sec.get("items") if sec.get("items") is not None else sec.get("content")
             )
+            # A heading with nothing under it is dropped.
+            #
+            # Every renderer prints the heading it is given, so a section the
+            # model named and then left empty came out as a bare "PROFESSIONAL
+            # SUMMARY" with white space beneath it — in the PDF, the .docx and
+            # the plain-text export alike. Seen on the live site: extraction
+            # invented that exact heading from a resume that has no summary, and
+            # it reached the exported documents.
+            #
+            # It also costs the user points. readiness.py scores structure partly
+            # on sections, and an empty one is a heading a parser indexes with no
+            # content behind it.
+            if not any(
+                item.get("head") or item.get("sub") or item.get("bullets")
+                for item in items
+            ):
+                continue
             sections.append({"heading": heading, "items": items})
 
     # Deliberately NOT rejecting a struct whose sections came back empty here.

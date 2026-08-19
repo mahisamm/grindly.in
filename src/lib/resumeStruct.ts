@@ -102,9 +102,16 @@ export function sanitizeStruct(value: unknown): ResumeStruct | null {
     })),
   };
 
-  // A section with no items and no heading contributes nothing but whitespace.
-  clean.sections = clean.sections.filter(
-    (s) => s.heading || s.items.some((i) => i.head || i.sub || i.bullets.length),
+  // A heading with nothing under it is dropped, not kept for its heading.
+  //
+  // This used to keep any section that had a heading, which meant a heading the
+  // extractor invented and left empty — "PROFESSIONAL SUMMARY" on a resume with
+  // no summary — was printed as a bare heading over white space in the PDF, the
+  // .docx and the text export. It also costs points: readiness.py scores
+  // structure partly on sections, and an empty one is a heading a parser
+  // indexes with nothing behind it.
+  clean.sections = clean.sections.filter((s) =>
+    s.items.some((i) => i.head || i.sub || i.bullets.length),
   );
 
   const hasContent = clean.sections.some((s) =>

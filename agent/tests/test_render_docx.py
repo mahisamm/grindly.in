@@ -172,3 +172,35 @@ def test_missing_keys_do_not_raise(builder):
     """The struct arrives from a browser through the editor. A missing key must
     be an empty field, not a KeyError on the far side of a subprocess."""
     builder({"sections": [{"items": [{"head": "Engineer"}]}]})
+
+
+def test_a_heading_with_nothing_under_it_is_not_printed():
+    """Seen on the live site: extraction invented a "Professional Summary"
+    heading for a resume that has no summary, left it empty, and every renderer
+    printed a bare heading over white space — in the PDF, the .docx and the
+    text export. It also costs the user points, because readiness.py scores
+    structure partly on sections and an empty one is a heading a parser indexes
+    with nothing behind it."""
+    import resume_optimize
+
+    struct = resume_optimize._sanitize_struct(
+        {
+            "name": "Priya Sharma",
+            "contact_line": "priya@example.com",
+            "sections": [
+                {"heading": "Professional Summary", "items": []},
+                {
+                    "heading": "Experience",
+                    "items": [{"head": "Engineer", "sub": "Freshworks", "bullets": ["Did a thing"]}],
+                },
+            ],
+        }
+    )
+    assert [s["heading"] for s in struct["sections"]] == ["Experience"]
+
+    text = render_docx.build_text(struct)
+    assert "PROFESSIONAL SUMMARY" not in text
+    assert "EXPERIENCE" in text
+
+    paragraphs = _paragraph_texts(render_docx.build_docx(struct))
+    assert not any("PROFESSIONAL SUMMARY" in p for p in paragraphs)
