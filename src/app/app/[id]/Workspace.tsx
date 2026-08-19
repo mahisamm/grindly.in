@@ -341,7 +341,7 @@ function DeleteResume({ id, label }: { id: string; label: string }) {
         onClick={remove}
         disabled={busy}
         className="rounded px-2 py-1 text-xs font-medium"
-        style={{ background: "#a3271b", color: "var(--paper)" }}
+        style={{ background: "#a3271b", color: "var(--on-cta)" }}
       >
         {busy ? "Deleting…" : "Yes, delete"}
       </button>
@@ -552,7 +552,7 @@ function VariantCard({
             {variant.pages ? ` · ${variant.pages} page${variant.pages === 1 ? "" : "s"}` : ""}
           </p>
         </div>
-        <ScoreDial score={variant.score} grade={variant.grade} size={64} />
+        <ScoreDial score={variant.score} grade={variant.grade} size={72} />
       </div>
 
       {belowFloor && (
@@ -1140,8 +1140,9 @@ function SupplyEvidence({
             className="cursor-pointer rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors"
             style={{
               borderColor: kind === value ? "var(--vermilion)" : "var(--line-2)",
-              background: kind === value ? "var(--vermilion)" : "transparent",
-              color: kind === value ? "var(--paper)" : "var(--muted)",
+              // See Compare.tsx: 12px label, so --cta rather than --vermilion.
+              background: kind === value ? "var(--cta)" : "transparent",
+              color: kind === value ? "var(--on-cta)" : "var(--muted)",
             }}
           >
             {label}

@@ -88,8 +88,9 @@ export function ThemeToggle() {
             onClick={() => apply(value)}
             className="cursor-pointer rounded-full px-3 py-1 text-xs font-semibold transition-colors"
             style={{
-              background: choice === value ? "var(--vermilion)" : "transparent",
-              color: choice === value ? "var(--paper)" : "var(--muted)",
+              // See Compare.tsx: 12px label, so --cta rather than --vermilion.
+              background: choice === value ? "var(--cta)" : "transparent",
+              color: choice === value ? "var(--on-cta)" : "var(--muted)",
             }}
           >
             {label}

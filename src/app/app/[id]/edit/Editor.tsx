@@ -342,7 +342,7 @@ export function Editor({
           {built && (
             <div className="border-border mt-5 border-t pt-5">
               <div className="flex items-center gap-4">
-                <ScoreDial score={built.score} grade={built.grade} size={64} />
+                <ScoreDial score={built.score} grade={built.grade} size={72} />
                 <div>
                   <p className="font-medium">
                     {delta === null

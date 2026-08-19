@@ -59,7 +59,7 @@ export function DeleteAccount({ email }: { email: string }) {
         onClick={remove}
         disabled={!matches || busy}
         className="mt-4 rounded px-4 py-2 text-sm font-medium disabled:opacity-40"
-        style={{ background: "#a3271b", color: "var(--paper)" }}
+        style={{ background: "#a3271b", color: "var(--on-cta)" }}
       >
         {busy ? "Deleting…" : "Delete my account permanently"}
       </button>

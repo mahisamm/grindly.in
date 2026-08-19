@@ -57,6 +57,15 @@
   --brand-2: #a82616;           /* hover / gradient end */
   --cta: #c22e1c;               /* primary action fill — paper on it is 4.83:1 */
   --cta-2: #a82616;
+  /* Text that sits ON a fill which stays DARK in both themes.
+     --paper cannot do this job. Most coloured fills here flip lightness between
+     the themes: vermilion, danger and warn all become light on the dark ground,
+     so --paper flips with them and stays readable. --cta does NOT flip, because
+     a primary button is deep red on paper and deep red at night — a pale red
+     button is not this brand. In dark mode --paper is near-black, and near-black
+     on #c22e1c is 2.9:1, which fails outright on the most-used control in the
+     product. Same cream in both themes, for exactly that reason. */
+  --on-cta: #f7f3ea;
   --accent: #c22e1c;
   --danger: #b3271a;
   --warn: #8a5e17;              /* ochre — paper text on it is 4.83:1 */
@@ -137,6 +146,9 @@
     --brand-2: #ffab98;
     --cta: #c22e1c;
     --cta-2: #a82616;
+    /* Unchanged on purpose — see the note in the light palette. The primary
+       button stays deep red at night, so its text stays cream. */
+    --on-cta: #f7f3ea;
     --accent: #ff8f77;
     --danger: #ff7c6b;
     --warn: #e0a83c;
@@ -169,6 +181,8 @@
   --brand-2: #ffab98;
   --cta: #c22e1c;
   --cta-2: #a82616;
+  /* Unchanged on purpose — see the note in the light palette. */
+  --on-cta: #f7f3ea;
   --accent: #ff8f77;
   --danger: #ff7c6b;
   --warn: #e0a83c;
@@ -614,7 +628,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .btn-primary {
   background: var(--cta);
   border-color: var(--cta-2);
-  color: var(--paper);
+  color: var(--on-cta);
   box-shadow: 3px 3px 0 rgba(23, 20, 15, 0.20);
 }
 .btn-primary:hover { background: var(--cta-2); }

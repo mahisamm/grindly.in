@@ -20,28 +20,78 @@ import { BAND_BLURBS, BAND_LABELS, scoreColor } from "@/lib/reportTypes";
  */
 
 export function ScoreDial({ score, grade, size = 132 }: { score: number; grade: string; size?: number }) {
-  const r = (size - 14) / 2;
+  // EVERYTHING scales with `size`, and that is the bug this shape fixes.
+  //
+  // The ring was drawn from `size` while the text inside it was hard-coded at
+  // text-4xl over an 11px label — about 53px of stacked type. Correct at the
+  // default 132 on the report page, and overflowing at the 64 the variant cards
+  // ask for, where the inner diameter is 50px: the score and the word GRADE
+  // rendered on top of each other and the whole dial read as a smear.
+  //
+  // A component that takes a size prop has to mean it. The ratios below are
+  // pinned to reproduce the previous look exactly at 132 (stroke 7, radius 59,
+  // 36px score, 11px label), so the screen this was always right on does not
+  // move.
+  const stroke = Math.max(3, Math.round(size * 0.053));
+  const r = (size - stroke * 2) / 2;
   const circumference = 2 * Math.PI * r;
   const filled = Math.max(0, Math.min(100, score)) / 100;
 
+  const scoreSize = Math.round(size * 0.273);
+  // 10px floor. Below that the label stops being readable, and an unreadable
+  // label is worse than an absent one — it is visual noise sitting on top of
+  // the number that matters.
+  const gradeSize = Math.max(10, Math.round(size * 0.083));
+  // Letter-spacing is a fixed em value, so it costs proportionally more width
+  // the smaller the type gets. "GRADE A" at 0.14em inside a 50px circle does
+  // not fit; at 0.06em it does.
+  const gradeTracking = size >= 100 ? "0.14em" : "0.06em";
+
   return (
-    <div className="relative inline-flex shrink-0 items-center justify-center" style={{ width: size, height: size }}>
+    <div
+      className="relative inline-flex shrink-0 items-center justify-center"
+      style={{ width: size, height: size }}
+    >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true" className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--border)" strokeWidth={7} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--border)" strokeWidth={stroke} />
         <circle
           cx={size / 2}
           cy={size / 2}
           r={r}
           fill="none"
           stroke={scoreColor(score)}
-          strokeWidth={7}
+          strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={`${circumference * filled} ${circumference}`}
         />
       </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="font-display text-4xl font-bold leading-none tabular-nums">{score}</span>
-        <span className="text-muted mt-1 text-[11px] tracking-[0.14em] uppercase">Grade {grade}</span>
+      <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+        <span
+          className="font-display font-bold tabular-nums"
+          style={{ fontSize: scoreSize, lineHeight: 1 }}
+        >
+          {score}
+        </span>
+        {/* 72px is where "GRADE A" physically fits, not a guess: at a 10px
+            floor the label is ~46px wide, and the chord of the circle at the
+            height it sits is 49px at size 72 and only 45px at 64. Below the
+            threshold the grade is dropped rather than shrunk — an unreadable
+            label is worse than an absent one, and the ring's colour already
+            carries the same signal. The screen reader text below always has
+            it. */}
+        {size >= 72 && grade && (
+          <span
+            className="text-muted uppercase"
+            style={{
+              fontSize: gradeSize,
+              letterSpacing: gradeTracking,
+              lineHeight: 1,
+              marginTop: Math.max(2, Math.round(size * 0.03)),
+            }}
+          >
+            Grade {grade}
+          </span>
+        )}
       </div>
       <span className="sr-only">Readiness score {score} out of 100, grade {grade}.</span>
     </div>

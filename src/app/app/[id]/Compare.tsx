@@ -70,8 +70,12 @@ export function Compare({
             className="cursor-pointer rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors"
             style={{
               borderColor: view === key ? "var(--vermilion)" : "var(--line-2)",
-              background: view === key ? "var(--vermilion)" : "transparent",
-              color: view === key ? "var(--paper)" : "var(--muted)",
+              // --cta, not --vermilion. These labels are 12px, and cream on
+              // vermilion is 3.55:1 — fine for the large text and graphics that
+              // colour is for, and short of the 4.5:1 body text needs. The
+              // primary-button pair clears it and matches the button language.
+              background: view === key ? "var(--cta)" : "transparent",
+              color: view === key ? "var(--on-cta)" : "var(--muted)",
             }}
           >
             {label}
