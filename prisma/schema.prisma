@@ -384,7 +384,7 @@ model RateLimitEntry {
 model ErrorEvent {
   id          String  @id @default(cuid())
   fingerprint String  @unique
-  source      String // web | agent
+  source      String // web | agent | browser — see lib/errors.ts
   kind        String
   message     String
   stack       String?

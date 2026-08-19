@@ -19,6 +19,7 @@
  */
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { report } from "@/lib/errors";
 
 export type AgentOk<T> = { ok: true } & T;
 export type AgentErr = { ok: false; error: string };
@@ -111,6 +112,12 @@ export async function runAgent<T = Record<string, unknown>>(
 
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
+      report({
+        source: "agent",
+        kind: "timeout",
+        message: `${cmd} exceeded ${Math.round(timeout / 1000)}s and was killed`,
+        context: cmd,
+      });
       finish({
         ok: false,
         error: `the ${cmd} step took longer than ${Math.round(timeout / 1000)}s and was stopped`,
@@ -140,13 +147,20 @@ export async function runAgent<T = Record<string, unknown>>(
         (e as NodeJS.ErrnoException).code === "ENOENT"
           ? `Python was not found at PYTHON_BIN="${pythonBin()}". Set PYTHON_BIN in .env to the interpreter that has agent/requirements.txt installed.`
           : String(e);
+      report({ source: "agent", kind: "spawn-failed", message: hint, context: cmd });
       finish({ ok: false, error: hint });
     });
 
     child.on("close", (code) => {
       const text = out.trim();
       if (!text) {
-        console.error(`[agent] ${cmd} wrote nothing to stdout (exit ${code}):\n${err}`);
+        report({
+          source: "agent",
+          kind: "no-output",
+          message: `${cmd} wrote nothing to stdout (exit ${code})`,
+          stack: err,
+          context: cmd,
+        });
         finish({
           ok: false,
           error:
@@ -162,11 +176,26 @@ export async function runAgent<T = Record<string, unknown>>(
           finish({ ok: false, error: `the ${cmd} step returned an unexpected shape` });
           return;
         }
-        if (!parsed.ok) console.error(`[agent] ${cmd} failed: ${parsed.error}`);
+        if (!parsed.ok) {
+          report({
+            source: "agent",
+            kind: `${cmd}-failed`,
+            message: parsed.error,
+            stack: err,
+            context: cmd,
+          });
+        }
         finish(parsed);
       } catch {
-        // The single most useful thing to log here is what was actually written.
-        console.error(`[agent] ${cmd} stdout was not JSON:\n${text.slice(0, 600)}\n--- stderr ---\n${err}`);
+        // The single most useful thing to record is what was actually written —
+        // that string is the whole diagnosis.
+        report({
+          source: "agent",
+          kind: "malformed-output",
+          message: `${cmd} stdout was not JSON: ${text.slice(0, 300)}`,
+          stack: err,
+          context: cmd,
+        });
         finish({ ok: false, error: `the ${cmd} step returned malformed output` });
       }
     });

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/auth";
 import { describe } from "@/lib/config";
 import { formatAmount } from "@/lib/plans";
+import { ResolveError } from "./ResolveError";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Admin — Grindly" };
@@ -119,7 +120,13 @@ export default async function AdminPage() {
           Unresolved errors
         </h2>
         {recentErrors.length === 0 ? (
-          <p className="text-muted mt-3 text-sm">Nothing logged.</p>
+          // "Nothing logged" used to be the only thing this panel could say,
+          // because nothing in the application wrote an ErrorEvent row. It is
+          // now a claim rather than a gap.
+          <p className="text-muted mt-3 text-sm">
+            Nothing unresolved. Faults from the web app, the Python agent and the
+            browser all land here.
+          </p>
         ) : (
           <div className="mt-3 overflow-x-auto">
             <table className="w-full min-w-[620px] text-sm">
@@ -130,6 +137,10 @@ export default async function AdminPage() {
                   <Th>Message</Th>
                   <Th>Seen</Th>
                   <Th>Last</Th>
+                  <Th>Context</Th>
+                  {/* The action column has no heading — a screen reader is told
+                      what the control does by the button itself. */}
+                  <Th> </Th>
                 </tr>
               </thead>
               <tbody>
@@ -140,6 +151,12 @@ export default async function AdminPage() {
                     <Td className="max-w-[24rem] truncate">{e.message}</Td>
                     <Td className="tabular-nums">{e.count}</Td>
                     <Td>{new Date(e.lastSeenAt).toLocaleString("en-IN")}</Td>
+                    <Td className="text-muted max-w-[12rem] truncate font-mono text-xs">
+                      {e.context ?? ""}
+                    </Td>
+                    <Td>
+                      <ResolveError id={e.id} />
+                    </Td>
                   </tr>
                 ))}
               </tbody>
