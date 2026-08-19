@@ -53,6 +53,7 @@ export async function GET() {
     select: {
       id: true, email: true, name: true, plan: true, planExpiresAt: true,
       role: true, timezone: true, emailVerifiedAt: true, createdAt: true,
+      accessStatus: true, approvedAt: true, primaryResumeId: true,
       resumes: {
         orderBy: { createdAt: "asc" },
         include: {
@@ -64,6 +65,11 @@ export async function GET() {
       orders: { orderBy: { createdAt: "asc" } },
       auditLogs: { orderBy: { createdAt: "asc" }, take: 2000 },
       usage: { orderBy: { localDate: "asc" } },
+      // Their own words about what went wrong. Included for the same reason
+      // they are cascade-deleted with the account: the text is theirs, and an
+      // export that promises "everything Grindly holds about this account"
+      // cannot quietly omit the one table where the account did the writing.
+      problems: { orderBy: { createdAt: "asc" } },
     },
   });
   if (!account) return serverError("Account not found.", `account/export:${user.id}`);
@@ -131,11 +137,15 @@ export async function GET() {
       timezone: account.timezone,
       email_verified_at: account.emailVerifiedAt,
       created_at: account.createdAt,
+      access_status: account.accessStatus,
+      approved_at: account.approvedAt,
+      primary_resume_id: account.primaryResumeId,
     },
     resumes: account.resumes,
     orders: account.orders,
     daily_usage: account.usage,
     activity: account.auditLogs,
+    problems_reported: account.problems,
     files: fileIndex,
     not_included: [
       "The password hash. It is not usable data and it is not worth having in a downloads folder.",

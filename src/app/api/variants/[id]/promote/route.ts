@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApprovedUser, badRequest, notFound, serverError } from "@/lib/auth";
 import { limitsFor, formatLimit } from "@/lib/plans";
-import { toJsonColumn } from "@/lib/jsonColumn";
+import { toJsonColumn, toJsonValue } from "@/lib/jsonColumn";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -135,7 +135,10 @@ export async function POST(_req: Request, { params }: Ctx) {
           // again without re-deriving a claim its owner already made.
           contactJson: toJsonColumn(variant.resume.contactJson),
           linksJson: toJsonColumn(variant.resume.linksJson),
-          skillsJson: (variant.resume.skillsJson ?? []) as never,
+          // `toJsonValue`, not `toJsonColumn`: skillsJson is a required column
+          // with a [] default, and a required Json column's input type has no
+          // DbNull to write.
+          skillsJson: toJsonValue(variant.resume.skillsJson ?? []),
           linkStyle: variant.resume.linkStyle,
           fromVariantId: variant.id,
           parentResumeId: variant.resume.id,

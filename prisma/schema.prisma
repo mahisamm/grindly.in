@@ -642,7 +642,20 @@ model Order {
 model ProblemReport {
   id     String  @id @default(cuid())
   userId String? @map("user_id")
-  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Cascade, not SetNull.
+  ///
+  /// SetNull was the first version and it was wrong. Deleting an account here
+  /// is a HARD delete — api/account/route.ts says so in its docstring and
+  /// relies on every table hanging off User with onDelete: Cascade — and a
+  /// detached report is not a deleted one. The message is free text somebody
+  /// typed, and people describing a problem write "my resume at
+  /// priya@example.com came back blank". Keeping that after they asked for
+  /// everything to be removed keeps the sentence and drops only the label
+  /// saying whose it was.
+  ///
+  /// The cost is real: a report from an account that then left is often the
+  /// most informative one there is. It is still not ours to keep.
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// What they typed. The whole value of this table.
   message String

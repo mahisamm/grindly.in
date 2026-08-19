@@ -139,11 +139,15 @@ export async function POST(_req: Request, { params }: Ctx) {
         // figure would be a comparison of a document with itself.
         fidelityJson: toJsonColumn(null),
         // The struct is the one the user just typed, and the text is what came
-        // back off the PDF we printed from it. Both stored for the same reason
-        // a rewrite stores them — so this build can be promoted — and here the
-        // text is the more interesting half: the resume row still holds the
-        // reading of the ORIGINAL upload, so until an edited document is read
-        // back it has never actually been measured.
+        // back off the PDF we printed from it. Both stored so this build can be
+        // promoted on the same terms a rewrite can.
+        //
+        // The two texts are not the same text. Further down, the resume row is
+        // updated with `structToText(struct)` — the fields serialised — so its
+        // Readiness tab describes what the user now has. What is stored here is
+        // the EXTRACTION: what came back out of the printed PDF, which is what
+        // `score` was actually computed from, and therefore what a promoted
+        // copy has to carry if its number is to mean the same thing.
         structJson: toJsonColumn(struct),
         text: typeof rendered.text === "string" ? rendered.text : "",
         file: `${runDir}/variant-1.pdf`,

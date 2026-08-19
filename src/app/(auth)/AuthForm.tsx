@@ -121,6 +121,23 @@ export function AuthForm({
             : "Sign in to pick up where you left off."}
         </p>
 
+        {/* Said here, before the password field, and not for the first time on
+            /pending. Signing someone up and only then telling them a person has
+            to let them in is the kind of surprise that reads as a bait — and it
+            is a surprise we can remove with one sentence, on the screen where
+            they are still deciding. Sign-in does not carry it: an account that
+            already exists finds out from the page it lands on, and repeating it
+            to approved users on every sign-in would be noise. */}
+        {isSignup && (
+          <p
+            className="mt-4 rounded-lg border px-3 py-2.5 text-xs leading-relaxed"
+            style={{ borderColor: "var(--line-2)", background: "var(--surface-2)" }}
+          >
+            Grindly is in a <b>closed beta</b>. You can create an account now; someone
+            approves it by hand before you can upload, usually the same day.
+          </p>
+        )}
+
       {googleAuth && (
         <>
           <a
