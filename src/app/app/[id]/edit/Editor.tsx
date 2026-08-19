@@ -391,6 +391,27 @@ export function Editor({
           Saved as you type. Building it is the only step that costs anything against your
           daily limit — you can edit for as long as you like first.
         </p>
+
+        {/* The other two formats, offered where the document is.
+            A PDF is right for a person and wrong for a form: half the campus
+            portals in India accept DOCX only, and every application has a box
+            that wants the text. */}
+        <div className="bg-surface border-border mt-4 rounded-xl border p-5">
+          <h2 className="font-display text-base font-semibold">Other formats</h2>
+          <p className="text-muted mt-1.5 text-xs leading-relaxed">
+            Built from these same fields. A portal that accepts DOCX only, and a plain
+            text version for the box on an application form — pasting out of a PDF is
+            what produces the mangling this whole product measures.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <a href={`/api/resumes/${resumeId}/export?format=docx`} className="btn text-sm">
+              Download .docx
+            </a>
+            <a href={`/api/resumes/${resumeId}/export?format=txt`} className="btn text-sm">
+              Download .txt
+            </a>
+          </div>
+        </div>
       </aside>
     </div>
   );

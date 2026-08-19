@@ -305,6 +305,41 @@ def cmd_struct(payload: dict) -> dict:
     return {"ok": True, "struct": struct}
 
 
+
+def cmd_export(payload: dict) -> dict:
+    """The same resume as .docx or as plain text.
+
+    docx comes back base64-encoded rather than written to a path, because unlike
+    a variant batch this is one small file produced on demand for an immediate
+    download — there is nothing to name it after and nothing to clean up.
+    """
+    import base64
+
+    import render_docx
+    import resume_optimize
+
+    struct = payload.get("struct")
+    if not isinstance(struct, dict):
+        return _fail("struct required")
+
+    struct = resume_optimize._sanitize_struct(struct)
+    if not struct or not struct.get("sections"):
+        return _fail("that structure has no content to export")
+
+    fmt = str(payload.get("format") or "docx").lower()
+    if fmt == "txt":
+        return {"ok": True, "format": "txt", "text": render_docx.build_text(struct)}
+    if fmt == "docx":
+        data = render_docx.build_docx(struct)
+        return {
+            "ok": True,
+            "format": "docx",
+            "bytes": len(data),
+            "base64": base64.b64encode(data).decode("ascii"),
+        }
+    return _fail(f"unknown format: {fmt}")
+
+
 def cmd_health(payload: dict) -> dict:
     """What this process can actually do, for /api/health and preflight."""
     import render_pdf
@@ -336,6 +371,7 @@ COMMANDS = {
     "variants": cmd_variants,
     "struct": cmd_struct,
     "render": cmd_render,
+    "export": cmd_export,
     "health": cmd_health,
 }
 

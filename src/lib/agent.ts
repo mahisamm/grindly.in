@@ -52,6 +52,11 @@ const TIMEOUTS: Record<string, number> = {
   // never look alike.
   research: 120_000,
   render: 90_000,
+  // Extraction is model calls; the same budget the research lookup gets.
+  struct: 120_000,
+  // Local rendering only — no model, no Chromium. If this takes 30s something
+  // is wrong that a longer timeout will not fix.
+  export: 30_000,
   variants: 420_000,
 };
 const DEFAULT_TIMEOUT = 60_000;
