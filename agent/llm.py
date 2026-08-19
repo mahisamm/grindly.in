@@ -57,11 +57,12 @@ _provider_health: dict[str, dict[str, float]] = {}
 
 # Whether the LAST chat_json_ensemble call fell back to a single provider's
 # answer instead of merging several. Callers that treat a verdict as consensus —
-# company_rep caches one globally, by company name, for the whole fleet — need to
-# know the difference between "three models agreed" and "two timed out".
+# company_research caches its answer by company name — need to know the
+# difference between "three models agreed" and "two timed out".
 #
-# Thread-local: worker.py fetches platforms in a ThreadPoolExecutor, and a module
-# global would let one thread's degraded call mislabel another thread's merge.
+# Thread-local rather than a module global: the variant pipeline runs its
+# strategies in a ThreadPoolExecutor, and a global would let one thread's
+# degraded call mislabel another thread's merge.
 _ensemble_state = threading.local()
 
 

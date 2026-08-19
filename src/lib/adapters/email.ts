@@ -1,9 +1,12 @@
 /**
- * Email adapter — fallback channel when Slack is unconnected or failing.
+ * The one way mail leaves this application: password resets and email
+ * verification.
  *
  * Production: set EMAIL_SMTP_HOST / _PORT / _USER / _PASS (+ EMAIL_FROM) and mail
  * goes out over SMTP via nodemailer.
- * Dev/prototype (no SMTP env): logs + appends to data/email-outbox.jsonl.
+ * Dev/prototype (no SMTP env): logs + appends to data/email-outbox.jsonl, so the
+ * whole reset and verification flow is exercisable locally with no mail server
+ * and no account anywhere — read the token out of the outbox file.
  */
 import fs from "node:fs";
 import path from "node:path";
