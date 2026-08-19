@@ -18,7 +18,7 @@ export const maxDuration = 180;
 type Ctx = { params: Promise<{ id: string }> };
 
 /** The label for a document the user wrote themselves. */
-export const OWN_EDIT_LABEL = "Yours";
+const OWN_EDIT_LABEL = "Yours";
 
 /**
  * Render the saved fields to a PDF and measure it on the same ruler.

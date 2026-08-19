@@ -63,36 +63,6 @@ class Provider:
 _health_lock = threading.Lock()
 _provider_health: dict[str, dict[str, float]] = {}
 
-# Whether the LAST chat_json_ensemble call fell back to a single provider's
-# answer instead of merging several. Callers that treat a verdict as consensus —
-# company_research caches its answer by company name — need to know the
-# difference between "three models agreed" and "two timed out".
-#
-# Thread-local rather than a module global: the variant pipeline runs its
-# strategies in a ThreadPoolExecutor, and a global would let one thread's
-# degraded call mislabel another thread's merge.
-_ensemble_state = threading.local()
-
-
-def _set_degraded(value: bool) -> None:
-    _ensemble_state.degraded = value
-
-
-def last_ensemble_was_degraded() -> bool:
-    """True when the last ensemble in THIS thread returned a lone answer.
-
-    Only meaningful immediately after a chat_json_ensemble call. Callers that
-    care should reset_ensemble_state() first, so a stale value from an earlier,
-    unrelated call on the same thread cannot be mistaken for this one's.
-    """
-    return bool(getattr(_ensemble_state, "degraded", False))
-
-
-def reset_ensemble_state() -> None:
-    """Clear the degraded flag before a call whose result will be trusted."""
-    _set_degraded(False)
-
-
 def _retry_delay(error: Exception, attempt: int) -> float:
     if isinstance(error, urllib.error.HTTPError):
         retry_after = error.headers.get("Retry-After") if error.headers else None
@@ -575,7 +545,6 @@ def chat_json_ensemble(
     temperature: float = 0.3,
 ):
     """Return a consensus merge of all valid structured provider answers."""
-    _set_degraded(False)
     responses = chat_ensemble(prompt, system, n, timeout, temperature)
     parsed = [_extract_json(response) for response in responses if response]
     parsed = [item for item in parsed if item is not None]
@@ -585,7 +554,6 @@ def chat_json_ensemble(
         return None
     if len(parsed) == 1:
         print("[llm] degraded ensemble: only one valid provider response")
-        _set_degraded(True)
         return parsed[0]
     if all(isinstance(item, list) for item in parsed):
         merged_list = _merge_lists(parsed)

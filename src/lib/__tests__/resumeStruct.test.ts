@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  LIMITS,
-  countBullets,
-  readStruct,
-  sanitizeStruct,
-  structToText,
-} from "@/lib/resumeStruct";
+import { LIMITS, readStruct, sanitizeStruct, structToText } from "@/lib/resumeStruct";
 
 /**
  * The editor's boundary.
@@ -146,21 +140,5 @@ describe("structToText", () => {
   it("puts every section on its own line", () => {
     const text = structToText(sanitizeStruct(VALID)!);
     expect(text.split("\n").filter(Boolean).length).toBeGreaterThan(3);
-  });
-});
-
-describe("countBullets", () => {
-  it("counts across sections and entries", () => {
-    expect(countBullets(sanitizeStruct(VALID)!)).toBe(1);
-    expect(
-      countBullets(
-        sanitizeStruct({
-          sections: [
-            { heading: "A", items: [{ head: "x", sub: "", bullets: ["1", "2"] }] },
-            { heading: "B", items: [{ head: "y", sub: "", bullets: ["3"] }] },
-          ],
-        })!,
-      ),
-    ).toBe(3);
   });
 });

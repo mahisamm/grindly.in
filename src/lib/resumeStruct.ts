@@ -138,12 +138,3 @@ export function structToText(struct: ResumeStruct): string {
   }
   return lines.join("\n");
 }
-
-/** Rough size, for telling someone their document is getting long. */
-export function countBullets(struct: ResumeStruct): number {
-  return struct.sections.reduce(
-    (total, section) =>
-      total + section.items.reduce((n, item) => n + item.bullets.length, 0),
-    0,
-  );
-}
