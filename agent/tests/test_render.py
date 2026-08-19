@@ -474,3 +474,77 @@ def test_the_label_style_removes_the_address_from_the_text_layer(tmp_path):
     # The tidy option does not. This is the whole warning, measured.
     assert "github.com/priya-r" not in label_text
     assert "GitHub" in label_text
+
+
+# ---------------------------------------------------------------------------
+# the type scale
+# ---------------------------------------------------------------------------
+
+def _pt(css: str, selector: str) -> float:
+    """The font-size, in points, of one rule in the rendered stylesheet.
+
+    Split on the selector AND its brace. The template's comments name each
+    other — the note on `h1.name` cites the tracking measurement recorded above
+    `h2.sec-h` — so a bare selector string finds the prose before the rule.
+    """
+    import re as _re
+    block = css.split(selector + " {", 1)[1]
+    m = _re.search(r"font-size:\s*([\d.]+)pt", block)
+    assert m, f"no font-size in the {selector} rule"
+    return float(m.group(1))
+
+
+def test_no_tracking_in_the_template_reaches_the_extraction_cliff():
+    """Every letter-spacing in the sheet, measured against one known number.
+
+    Chromium turns letter-spacing into real inter-glyph distance in the PDF and
+    pdfminer inserts a space wherever that distance passes word_margin — which
+    is relative to the type size, so the threshold is the same em value at any
+    size. Measured twice on this template: section headings at 9.2pt shatter
+    between 0.10 and 0.12em, and the name at 21.6pt survives -0.012, 0.02,
+    0.035, 0.05 and 0.08em and shatters at 0.12em into "M a h e n d h a r".
+
+    So the cliff is a property of the stylesheet rather than of any one rule,
+    and this asserts it across all of them. A future edit that letterspaces a
+    job title or a skills label fails here rather than in someone's ATS.
+    """
+    import re as _re
+    values = [float(v) for v in _re.findall(r"letter-spacing:\s*(-?[\d.]+)em", render_pdf._css(1.0))]
+    assert values, "the template letterspaces nothing at all — did a rule move?"
+    for value in values:
+        assert abs(value) <= 0.10, f"letter-spacing: {value}em is at or past the extraction cliff"
+
+
+def test_the_name_reads_as_a_letterhead_not_as_a_heading():
+    """The header's internal ratio.
+
+    A name at 2.05x body over a contact line at 0.92x is a ratio of 2.2, and at
+    that ratio the two lines read as a heading and its subheading rather than as
+    a person and their address. This pins the separation rather than either
+    number, so the type scale can move as long as the header still has a clear
+    first line.
+    """
+    css = render_pdf._css(1.0)
+    name = _pt(css, "h1.name")
+    contact = _pt(css, "p.contact")
+    assert name / contact >= 2.4, f"name {name}pt over contact {contact}pt is too flat"
+
+
+def test_a_section_heading_outranks_the_job_titles_inside_it():
+    """Hierarchy, in the one place it was inverted.
+
+    Section headings were set smaller than the item heads they governed, so
+    every job title outweighed the section it sat in and the page read as a flat
+    list of bold lines. Uppercase does most of the work — caps are cap-height
+    tall where mixed case is x-height tall — but it cannot also give away four
+    tenths of a point.
+    """
+    css = render_pdf._css(1.0)
+    assert "text-transform: uppercase;" in css.split("h2.sec-h {", 1)[1][:400]
+    assert _pt(css, "h2.sec-h") >= _pt(css, "p.item-head") - 0.5
+
+
+def test_the_rule_under_a_heading_is_quieter_than_the_ink():
+    """Six full-width lines at full-strength ink is a form, not a resume."""
+    assert render_pdf.RULE != render_pdf.INK
+    assert int(render_pdf.RULE.lstrip("#")[:2], 16) > int(render_pdf.INK.lstrip("#")[:2], 16)

@@ -94,7 +94,13 @@ FONT_STACK = (
 # before employer without needing a second typeface to say so.
 INK = "#111111"
 INK_META = "#333333"
-RULE = "#111111"
+# The one grey the document uses for anything that is not a letter: the rule
+# under a section heading and the middots between fields. It was #111 — the same
+# ink as the text — and a full-strength full-width line under all six headings is
+# what made a finished resume read as a form to be filled in rather than a
+# document to be read. The heading still announces the section; the rule now only
+# has to separate it, and 0.5pt at 40% grey still prints on a laser printer.
+RULE = "#999999"
 
 
 def _esc(value: object) -> str:
@@ -223,18 +229,44 @@ def _css(density: float = 1.0) -> str:
          correct, because both boxes share a left edge and vertical order wins. */
       header.hd {{
         text-align: left;
-        margin-bottom: {13 * density:.1f}pt;
+        margin-bottom: {18 * density:.1f}pt;
       }}
+      /* The name, set as a letterhead rather than as a document title.
+         Three things were wrong with the first version and all three were
+         about ratio rather than about the name itself.
+
+         SIZE. 2.05x body against a contact line at 0.92x is a ratio of 2.2,
+         which is not enough separation for the eye to read one as the person
+         and the other as how to reach them. They read as a heading and a
+         subheading of equal standing. 2.2x over 0.88x is a ratio of 2.5 and
+         the header resolves into a name with an address under it.
+
+         TRACKING. Grotesks are drawn for text sizes and are fitted too loosely
+         when set large: the standard correction for display-set Helvetica or
+         Arial is about -1.5%, and the previous -0.5% was close enough to zero
+         to leave the name looking like default browser output. Measured
+         against the extraction cliff for completeness — rendered and read back,
+         the name survives as one string at -0.012, 0.02, 0.035, 0.05 and 0.08em
+         and shatters into "M a h e n d h a r" at 0.12em, the same threshold
+         `h2.sec-h` documents. Negative tracking is nowhere near it.
+
+         AIR. 4pt between a 21pt line and an 8.6pt line is not a gap, it is a
+         collision: the descenders of the name land in the contact line's
+         ascenders. 6pt reads as deliberate. */
       h1.name {{
-        font-size: {base * 2.05:.1f}pt;
+        font-size: {base * 2.2:.1f}pt;
         font-weight: 700;
-        letter-spacing: -0.005em;
-        margin: 0 0 {4 * density:.1f}pt;
-        line-height: 1.08;
+        letter-spacing: -0.012em;
+        margin: 0 0 {6 * density:.1f}pt;
+        line-height: 1.02;
       }}
       p.contact {{
-        font-size: {base * 0.92:.1f}pt;
+        font-size: {base * 0.88:.1f}pt;
         color: {INK_META};
+        /* Small grey text closes up as it shrinks. A fraction of a point back
+           between the glyphs keeps an email address and a phone number legible
+           at 8.6pt, which is the size at which people actually squint at them. */
+        letter-spacing: 0.008em;
         margin: 0;
         line-height: 1.4;
       }}
@@ -255,10 +287,10 @@ def _css(density: float = 1.0) -> str:
          extractor still sees the delimiter it needs to split the header on. */
       p.contact .sep {{ color: #999999; padding: 0 {base * 0.34:.1f}pt; }}
 
-      section.sec {{ margin-top: {15.5 * density:.1f}pt; }}
+      section.sec {{ margin-top: {17 * density:.1f}pt; }}
       section.sec:first-of-type {{ margin-top: 0; }}
       h2.sec-h {{
-        font-size: {base * 0.94:.1f}pt;
+        font-size: {base * 0.98:.1f}pt;
         font-weight: 700;
         text-transform: uppercase;
         /* 0.08em, and this number is measured rather than chosen.
@@ -284,8 +316,12 @@ def _css(density: float = 1.0) -> str:
       }}
       article.item:last-child {{ margin-bottom: 0; }}
 
+      /* A job title, and the one line on the page that is not allowed to
+         outweigh the section heading above it. Bold does the work; a full point
+         of extra size on top of bold made every role read as its own heading
+         and flattened the document into a list of shouted lines. */
       p.item-head {{
-        font-size: {base * 1.04:.1f}pt;
+        font-size: {base * 1.02:.1f}pt;
         font-weight: 700;
         margin: 0;
         line-height: 1.3;
@@ -337,6 +373,12 @@ def _css(density: float = 1.0) -> str:
          mistake. */
       p.prose {{ margin: 0 0 {3 * density:.1f}pt; line-height: 1.42; }}
       p.prose:last-child {{ margin-bottom: 0; }}
+
+      /* Never break a paragraph or a bullet so that one line of it sits alone
+         at the foot or the head of a page. `article.item` already keeps a whole
+         role together, but a summary paragraph and a long bullet are not items
+         and could strand a line on their own across the page break. */
+      p, li {{ orphans: 2; widows: 2; }}
     """
 
 
