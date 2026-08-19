@@ -164,3 +164,20 @@ and the product they used is already not the product that was there — but if
 any of them uploaded a resume in the last week, their score history and rebuilt
 PDFs disappear without warning. The addresses are in the dump if you want to
 send anything.
+
+---
+
+## Deploying a change to the Caddyfile
+
+`docker-compose.yml` bind-mounts it as a single FILE, which resolves to an
+inode — and `git pull` replaces the file rather than editing it, so the running
+container keeps the old contents. `caddy reload` re-reads the same stale inode
+and changes nothing.
+
+```bash
+docker compose up -d --force-recreate caddy
+docker compose exec caddy grep -n X-Frame-Options /etc/caddy/Caddyfile   # verify
+```
+
+This cost two days of a header the app was deliberately not sending being
+injected at the proxy anyway, which presented as an application bug.
