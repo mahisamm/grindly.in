@@ -58,16 +58,23 @@ services:
   # declared in schema.prisma now, and the ordering above is what stops the next
   # unmanaged table being an outage instead of a red line in a terminal.
   #
-  # THERE IS NO `--accept-data-loss` HERE, ON PURPOSE. Without it Prisma refuses
-  # a destructive change, and with no TTY it cannot prompt, so it errors. That
-  # is the correct outcome — the deploy fails loudly instead of quietly deleting
-  # production. If you are reading this because a migration just failed: that is
-  # the guard working. Do not "fix" it by adding the flag.
+  # THIS RUNS `migrate deploy`, NOT `db push`, and the difference is the whole
+  # point of the incident above. `db push` compares the live database to the
+  # schema and invents a plan to reconcile them — a plan that includes dropping
+  # anything it does not recognise, computed fresh on a production box at deploy
+  # time. `migrate deploy` applies the exact SQL in prisma/migrations, which was
+  # written locally, reviewed in a diff, and can touch nothing it does not name.
+  # An unmanaged table is now invisible to it rather than a candidate for
+  # deletion, and a deploy can no longer do anything that was not in the commit.
+  #
+  # It also never prompts and never needs `--accept-data-loss`: a destructive
+  # change has to be written into a migration file by a human first, which is
+  # exactly where that decision belongs.
   migrate:
     profiles: ["migrate"]
     build: { context: ., dockerfile: Dockerfile }
     image: grindly-web
-    command: sh -c "npx prisma db push --skip-generate && node scripts/seed-admin.mjs"
+    command: sh -c "npx prisma migrate deploy && node scripts/seed-admin.mjs"
     environment:
       DATABASE_URL: postgresql://grindly:${POSTGRES_PASSWORD_URLENCODED:?POSTGRES_PASSWORD_URLENCODED must be set}@postgres:5432/grindly
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}

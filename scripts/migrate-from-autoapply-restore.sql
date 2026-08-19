@@ -1,4 +1,4 @@
--- Second half of the pivot migration. Run AFTER `prisma db push`.
+-- Second half of the pivot migration. Run AFTER `prisma migrate deploy`.
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/migrate-from-autoapply-restore.sql
 --
@@ -9,8 +9,8 @@
 BEGIN;
 
 -- Preconditions, both directions. Between them they catch running this before
--- `db push` (old table still there) and running it against a database that was
--- never prepared (no carry table).
+-- the schema was rebuilt (old table still there) and running it against a
+-- database that was never prepared (no carry table).
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -26,7 +26,7 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'plan_expires_at'
   ) THEN
     RAISE EXCEPTION
-      'public.users has no plan_expires_at — `prisma db push` has not run yet. Refusing.';
+      'public.users has no plan_expires_at — `prisma migrate deploy` has not run yet. Refusing.';
   END IF;
 
   IF EXISTS (
@@ -34,23 +34,22 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'applications'
   ) THEN
     RAISE EXCEPTION
-      'public.applications still exists — `prisma db push` did not rebuild the schema. Refusing.';
+      'public.applications still exists — the schema was not rebuilt. Refusing.';
   END IF;
 END $$;
 
--- UPSERT, not INSERT.
+-- UPSERT, not INSERT, and it stayed an upsert through a change of mechanism.
 --
--- A rehearsal against a replica showed that `prisma db push` does NOT drop
--- `public.users`: the table exists in both schemas, so Prisma ALTERS it in
--- place — dropping the columns that went away, adding `plan_expires_at`, and
--- keeping every row. The other 27 tables are dropped outright.
+-- Under the old `prisma db push` cutover, `public.users` was NOT dropped: the
+-- table existed in both schemas, so Prisma altered it in place and kept every
+-- row — which made an insert-only restore fail on the primary key, and would
+-- have left the survivors carrying their OLD values (plan 'plus'/'starter' from
+-- a discontinued product, mixed-case emails, still-valid session tokens).
 --
--- That is better news than expected (the accounts were never actually at risk
--- of vanishing) and it makes an insert-only restore wrong twice over: it fails
--- on the primary key, and even if it did not, the surviving rows would keep
--- their OLD values — plan 'plus'/'starter' from a discontinued product, mixed-
--- case emails, and session tokens still valid. So this normalises what
--- survived and inserts anything that did not.
+-- The cutover now drops `public` outright, so these rows genuinely are gone and
+-- the insert is doing real work. The conflict clause is kept anyway: it is what
+-- makes this file safe to re-run, and re-running a restore at 2am because you
+-- are not sure the first one finished is a thing that happens.
 INSERT INTO public.users (
   id, email, name, password_hash, google_id, role,
   plan, plan_expires_at, token_version, created_at, deleted_at
@@ -86,9 +85,9 @@ ON CONFLICT (id) DO UPDATE SET
   plan          = EXCLUDED.plan,
   plan_expires_at = NULL,
   token_version = EXCLUDED.token_version,
-  -- deleted_at is NOT touched. A row `db push` carried across that was already
-  -- soft-deleted stays soft-deleted: the account is gone, its email stays
-  -- claimed, and the deletion record survives the rewrite.
+  -- deleted_at is NOT touched. An account that was already soft-deleted stays
+  -- soft-deleted: it is gone, its email stays claimed, and the deletion record
+  -- survives the rewrite.
   created_at    = EXCLUDED.created_at;
 
 COMMIT;

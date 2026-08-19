@@ -123,7 +123,7 @@ docker run -d --name grindly-postgres \
 # 2. Config
 cp .env.example .env
 npm run setup            # generates APP_ENCRYPTION_KEY, installs everything,
-                         # runs prisma db push
+                         # runs prisma migrate deploy
 
 # 3. Go
 npm run dev              # http://localhost:3000
@@ -137,7 +137,7 @@ hand:
 npm install
 python -m venv .venv && .venv/bin/pip install -r agent/requirements.txt
 .venv/bin/python -m playwright install chromium
-npx prisma db push
+npx prisma migrate deploy
 ```
 
 Then sign up. The first account on a fresh database becomes an admin.

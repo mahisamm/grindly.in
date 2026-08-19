@@ -1,15 +1,16 @@
 -- Carry real accounts across the auto-apply -> resume-readiness rewrite.
 --
--- The new schema shares almost nothing with the old one, and the deploy path
--- runs `prisma db push`, which drops whatever does not match. Run without this,
--- that deletes every account on the box.
+-- The new schema shares almost nothing with the old one, and the cutover empties
+-- `public` outright (scripts/reset-public-schema.sql). Run without this, that
+-- deletes every account on the box.
 --
--- HOW IT SURVIVES `db push`
+-- HOW THE ACCOUNTS SURVIVE
 --
--- Prisma manages the `public` schema only. So the accounts are copied into a
--- separate `legacy` schema first, `db push` rebuilds `public` underneath them,
--- and they are copied back. No file round-trip, no window where the only copy
--- of a user is a CSV on the machine being rebuilt.
+-- Prisma manages the `public` schema only, and the drop names `public` only. So
+-- the accounts are copied into a separate `legacy` schema first, `public` is
+-- rebuilt underneath them from prisma/migrations, and they are copied back. No
+-- file round-trip, no window where the only copy of a user is a CSV on the
+-- machine being rebuilt.
 --
 -- `legacy` is deliberately LEFT IN PLACE afterwards. It is a few kilobytes and
 -- it is the in-database record of what the accounts looked like before the
@@ -29,11 +30,13 @@
 -- USAGE
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/migrate-from-autoapply.sql
---   npx prisma db push --skip-generate
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/reset-public-schema.sql
+--   npx prisma migrate deploy
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/migrate-from-autoapply-restore.sql
 --
--- Run the two halves either side of `db push`. Running this file twice is safe;
--- it refuses rather than overwriting a carry table that already exists.
+-- Run the two halves either side of the drop-and-rebuild. Running this file
+-- twice is safe; it refuses rather than overwriting a carry table that already
+-- exists — and the drop refuses to run at all until this has succeeded.
 
 BEGIN;
 
@@ -115,12 +118,36 @@ END $$;
 -- so "what did this user actually do" is answerable after cutover without
 -- restoring a whole dump.
 CREATE TABLE legacy.applications_archive AS SELECT * FROM public.applications;
--- The old application archive contains enum-typed columns. Prisma must drop
--- those old enum types during the pivot, so preserve their values as text rather
--- than leaving the archive dependent on types in the managed public schema.
-ALTER TABLE legacy.applications_archive ALTER COLUMN status TYPE text USING status::text;
-ALTER TABLE legacy.applications_archive ALTER COLUMN failure_reason TYPE text USING failure_reason::text;
-ALTER TABLE legacy.applications_archive ALTER COLUMN outcome TYPE text USING outcome::text;
+
+-- The old application archive contains enum-typed columns. The cutover drops
+-- those enum types along with the rest of `public`, and a column whose type has
+-- been dropped takes its table with it — so their values are frozen as text
+-- while the types still exist.
+--
+-- Guarded, one column at a time, rather than three bare ALTERs. The bare
+-- version assumed a column list nobody had checked against the box it would run
+-- on: the rehearsal fixture omitted `status`, the statement errored, and half 1
+-- aborted at the point where the accounts were already copied and the archive
+-- was half-built. A column that is absent is not a reason to stop a migration —
+-- there is nothing to convert.
+DO $$
+DECLARE col text;
+BEGIN
+  FOREACH col IN ARRAY ARRAY['status', 'failure_reason', 'outcome'] LOOP
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'legacy' AND table_name = 'applications_archive'
+        AND column_name = col
+    ) THEN
+      EXECUTE format(
+        'ALTER TABLE legacy.applications_archive ALTER COLUMN %I TYPE text USING %I::text',
+        col, col);
+    ELSE
+      RAISE NOTICE 'legacy.applications_archive has no % column — nothing to convert', col;
+    END IF;
+  END LOOP;
+END $$;
+
 CREATE TABLE legacy.profiles_archive     AS SELECT * FROM public.profiles;
 
 -- Duplicate emails would fail the new unique index halfway through the restore,
@@ -148,6 +175,6 @@ SELECT
   (SELECT count(*) FROM legacy.applications_archive)   AS applications_archived,
   (SELECT count(*) FROM legacy.profiles_archive)       AS profiles_archived;
 \echo ''
-\echo 'Now run:  npx prisma db push --skip-generate'
+\echo 'Now run:  psql ... -f scripts/reset-public-schema.sql  then  npx prisma migrate deploy'
 \echo 'Then run: scripts/migrate-from-autoapply-restore.sql'
 \echo ''
