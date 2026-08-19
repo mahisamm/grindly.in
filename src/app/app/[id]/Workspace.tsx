@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
   Advice, CompanyPack, CompanyResearch, Fidelity, Report,
@@ -164,6 +165,11 @@ export function ResumeWorkspace({
               {resume.chars.toLocaleString()} characters read
             </span>
           )}
+          {/* The way to act on everything this page says. Without it the report
+              names a problem and the only place to fix it is Word. */}
+          <Link href={`/app/${resume.id}/edit`} className="btn text-sm">
+            Edit
+          </Link>
           <DeleteResume id={resume.id} label={resume.label} />
         </div>
       </div>
@@ -1197,6 +1203,13 @@ function RawTab({ resume }: { resume: ResumeView }) {
       {resume.report?.findings?.length ? (
         <div className="mt-6">
           <Findings findings={resume.report.findings} />
+          <p className="text-muted mt-4 text-sm">
+            <Link href={`/app/${resume.id}/edit`} className="text-brand underline">
+              Fix these in the editor
+            </Link>{" "}
+            — the same fields the PDF is printed from, scored on the same ruler when
+            you rebuild.
+          </p>
         </div>
       ) : null}
       <pre className="bg-surface-2 border-border mt-6 max-h-[32rem] overflow-auto rounded-xl border p-5 font-mono text-xs leading-relaxed whitespace-pre-wrap">

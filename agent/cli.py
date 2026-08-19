@@ -242,10 +242,22 @@ def cmd_render(payload: dict) -> dict:
     import readiness
     import render_pdf
 
+    import resume_optimize
+
     struct = payload.get("struct")
     out = str(payload.get("out") or "")
     if not isinstance(struct, dict) or not out:
         return _fail("struct and out required")
+
+    # Sanitised before anything is printed. This used to be reachable only from
+    # our own pipeline, whose structs were already sanitised on the way out of
+    # the model; it is now also reachable from the editor, which means the shape
+    # arrives from a browser. _sanitize_struct is what turns "bullets" that came
+    # through as a plain string into a list — without it that string is iterated
+    # character by character and the PDF gets one bullet per letter.
+    struct = resume_optimize._sanitize_struct(struct)
+    if not struct or not struct.get("sections"):
+        return _fail("that structure has no content to render")
 
     result = render_pdf.render_fitted(struct, out)
     if not result.ok:
@@ -258,6 +270,39 @@ def cmd_render(payload: dict) -> dict:
         "chars": len(parsed.strip()),
         "report": readiness.score(parsed, _str_list(payload.get("target_keywords"))),
     }
+
+
+
+def cmd_struct(payload: dict) -> dict:
+    """Read a resume into the editable structure the renderer prints.
+
+    Same extraction the rewrite pipeline runs on every batch, exposed on its own
+    so the web app can hand a user their resume as fields rather than as a wall
+    of extracted text. That is the difference between a tool that tells you what
+    is missing and one you can fix it in.
+
+    Costs model calls, so callers cache the result on the resume row rather than
+    asking again on every page load.
+    """
+    import resume_optimize
+
+    text = str(payload.get("text") or "")[:MAX_TEXT]
+    if len(text.strip()) < 200:
+        return _fail("too little text to read a structure from")
+
+    struct = resume_optimize._extract_struct(text)
+    if not struct:
+        return _fail("could not read a structure from this resume")
+
+    contact_fallback = str(payload.get("contact_fallback") or "").strip()
+    if contact_fallback and not str(struct.get("contact_line") or "").strip():
+        # The header line is read off the document locally at upload time and is
+        # more reliable than anything a model returns for it — a model asked for
+        # a phone number faithfully returns "[phone redacted]", because
+        # redact.py stripped it on the way out.
+        struct["contact_line"] = contact_fallback
+
+    return {"ok": True, "struct": struct}
 
 
 def cmd_health(payload: dict) -> dict:
@@ -289,6 +334,7 @@ COMMANDS = {
     "companies": cmd_companies,
     "research": cmd_research,
     "variants": cmd_variants,
+    "struct": cmd_struct,
     "render": cmd_render,
     "health": cmd_health,
 }

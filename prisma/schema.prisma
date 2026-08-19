@@ -252,6 +252,18 @@ model Resume {
   /// is what stops the advice call re-running on every page load.
   textHash String? @map("text_hash")
 
+  /// The resume as editable fields: {name, contact_line, sections[{heading,
+  /// items[{head, sub, bullets[]}]}]} — the exact shape render_pdf prints.
+  ///
+  /// Extracted by the same code every rewrite already ran, cached here because
+  /// it costs model calls and the editor would otherwise pay for it on every
+  /// page load. It is also what turns the product from one that tells you what
+  /// is missing into one you can fix it in: the report says a bullet has no
+  /// outcome, and this is the field you type the outcome into.
+  ///
+  /// Null means nobody has opened the editor for this resume yet.
+  structJson Json? @map("struct_json")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
