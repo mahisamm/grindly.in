@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
-import { requireUser, notFound } from "@/lib/auth";
+import { requireApprovedUser, notFound } from "@/lib/auth";
 import { VARIANT_DIR } from "@/lib/agent";
 
 export const runtime = "nodejs";
@@ -19,7 +19,7 @@ type Ctx = { params: Promise<{ id: string }> };
  * against the session.
  */
 export async function GET(req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { prisma } from "@/lib/prisma";
-import { requireUser, notFound, serverError } from "@/lib/auth";
+import { requireApprovedUser, notFound, serverError } from "@/lib/auth";
 import { appUrl } from "@/lib/config";
 import { audit } from "@/lib/audit";
 
@@ -23,7 +23,7 @@ type Ctx = { params: Promise<{ id: string }> };
  * is only acceptable because of what is on the other side of it.
  */
 export async function POST(_req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 
@@ -69,7 +69,7 @@ export async function POST(_req: Request, { params }: Ctx) {
  * address is dead, not that it is now harder to guess.
  */
 export async function DELETE(_req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 

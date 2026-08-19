@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser, notFound, serverError } from "@/lib/auth";
+import { requireApprovedUser, notFound, serverError } from "@/lib/auth";
 import { killRun } from "@/lib/variantRuns";
 import { refund } from "@/lib/quota";
 import { audit } from "@/lib/audit";
@@ -25,7 +25,7 @@ type Ctx = { params: Promise<{ id: string; runId: string }> };
  * whatever they do next.
  */
 export async function DELETE(_req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id, runId } = await params;
 

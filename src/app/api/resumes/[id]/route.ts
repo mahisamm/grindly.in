@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
-import { requireUser, notFound, serverError } from "@/lib/auth";
+import { requireApprovedUser, notFound, serverError } from "@/lib/auth";
 import { RESUME_DIR, VARIANT_DIR } from "@/lib/agent";
 import {
   readAdvice, readContact, readFidelity, readReport, readStrings, readTargetSpec,
@@ -16,7 +16,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 /** One resume with its report, variants and targets. */
 export async function GET(_req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 
@@ -56,7 +56,7 @@ export async function GET(_req: Request, { params }: Ctx) {
 
 /** Delete a resume, its variants, and every file either produced. */
 export async function DELETE(_req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 
@@ -88,7 +88,7 @@ export async function DELETE(_req: Request, { params }: Ctx) {
 
 /** Rename. The only editable field on a resume — the text comes from the file. */
 export async function PATCH(req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser, notFound, badRequest, serverError } from "@/lib/auth";
+import { requireApprovedUser, notFound, badRequest, serverError } from "@/lib/auth";
 import { toJsonColumn } from "@/lib/jsonColumn";
 import { readStruct, sanitizeStruct } from "@/lib/resumeStruct";
 import { audit } from "@/lib/audit";
@@ -24,7 +24,7 @@ type Ctx = { params: Promise<{ id: string }> };
  * empty resume.
  */
 export async function GET(_req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 
@@ -74,7 +74,7 @@ export async function POST(req: Request, { params }: Ctx) {
 }
 
 async function savePut(req: Request, { id }: { id: string }) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
 
   const resume = await prisma.resume.findFirst({

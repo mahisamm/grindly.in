@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Logo } from "@/components/Brand";
 import { MobileNav } from "@/components/MobileNav";
-import { currentUser } from "@/lib/auth";
+import { currentUser, isApproved } from "@/lib/auth";
 import { daysRemaining, effectivePlan } from "@/lib/plans";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +18,14 @@ export const dynamic = "force-dynamic";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await currentUser();
   if (!user) redirect("/login");
+  // The beta door, checked once for the whole signed-in shell rather than per
+  // page — same reasoning as the auth check above it.
+  //
+  // It covers settings too, which is why /pending carries its own export and
+  // delete controls rather than linking here: a layout cannot see the pathname,
+  // and the alternative — a second gate inside each page — is the "protected by
+  // someone remembering" arrangement this layout exists to avoid.
+  if (!isApproved(user)) redirect("/pending");
 
   const plan = effectivePlan(user);
   const left = daysRemaining(user);

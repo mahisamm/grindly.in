@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser, notFound, badRequest } from "@/lib/auth";
+import { requireApprovedUser, notFound, badRequest } from "@/lib/auth";
 import { runAgent } from "@/lib/agent";
 import { readTargetSpec } from "@/lib/reportTypes";
 import { reserve, refund } from "@/lib/quota";
@@ -28,7 +28,7 @@ type Ctx = { params: Promise<{ id: string }> };
  * missing fact to their resume if it is true.
  */
 export async function POST(req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { user } = auth;
   const { id } = await params;

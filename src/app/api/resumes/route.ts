@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
-import { requireUser, badRequest, serverError } from "@/lib/auth";
+import { requireApprovedUser, badRequest, serverError } from "@/lib/auth";
 import { runAgent, RESUME_DIR, type Report } from "@/lib/agent";
 import { formatLimit, limitsFor } from "@/lib/plans";
 import { reserve, refund } from "@/lib/quota";
@@ -20,7 +20,7 @@ const MAX_BYTES = 5 * 1024 * 1024;
 
 /** Everything the user has uploaded, newest first. */
 export async function GET() {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
 
   const resumes = await prisma.resume.findMany({
@@ -45,7 +45,7 @@ export async function GET() {
  * request and the user gets their report on the page they uploaded from.
  */
 export async function POST(req: Request) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { user } = auth;
 

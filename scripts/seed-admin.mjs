@@ -20,17 +20,32 @@ async function main() {
     return;
   }
 
-  const user = await prisma.user.findUnique({ where: { email }, select: { id: true, role: true } });
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, role: true, accessStatus: true },
+  });
   if (!user) {
     console.log(`[seed-admin] No account for ${email} yet. Sign up, then re-run.`);
     return;
   }
-  if (user.role === "admin") {
+  // Approved as well as promoted. `isApproved` already lets admins through the
+  // beta gate whatever the column says, so this is belt and braces — but the
+  // column is what the admin page DISPLAYS, and an operator reading "pending"
+  // next to their own name would reasonably conclude the gate was broken.
+  if (user.role === "admin" && user.accessStatus === "approved") {
     console.log(`[seed-admin] ${email} is already an admin.`);
     return;
   }
 
-  await prisma.user.update({ where: { id: user.id }, data: { role: "admin" } });
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      role: "admin",
+      accessStatus: "approved",
+      approvedAt: new Date(),
+      approvedBy: "seed-admin",
+    },
+  });
   console.log(`[seed-admin] ${email} promoted to admin.`);
 }
 

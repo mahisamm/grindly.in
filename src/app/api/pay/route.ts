@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser, badRequest, serverError } from "@/lib/auth";
+import { requireApprovedUser, badRequest, serverError } from "@/lib/auth";
 import { PRODUCTS, isSku } from "@/lib/plans";
 import { createOrder } from "@/lib/payment";
 import { isRateLimited } from "@/lib/rateLimit";
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 /** Start a purchase. Returns what the browser needs to open checkout. */
 export async function POST(req: Request) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { user } = auth;
 

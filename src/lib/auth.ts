@@ -24,6 +24,8 @@ export type SessionUser = {
   plan: string;
   planExpiresAt: Date | null;
   createdAt: Date;
+  /** pending | approved | blocked — the closed-beta door. See `isApproved`. */
+  accessStatus: string;
 };
 
 export type AuthOk = { user: SessionUser };
@@ -37,6 +39,7 @@ const SELECT = {
   plan: true,
   planExpiresAt: true,
   createdAt: true,
+  accessStatus: true,
   deletedAt: true,
 } as const;
 
@@ -57,6 +60,19 @@ export async function currentUser(): Promise<SessionUser | null> {
   return rest;
 }
 
+/**
+ * May this account use the product?
+ *
+ * ADMINS ALWAYS CAN, whatever their row says. That is not a convenience: the
+ * approval queue lives behind the admin surface, so an admin who could be left
+ * `pending` would be locked out of the only screen that could let them in.
+ * The one account that must never be gated is the one holding the key.
+ */
+export function isApproved(user: { role?: string | null; accessStatus?: string | null }): boolean {
+  if (user.role === "admin") return true;
+  return user.accessStatus === "approved";
+}
+
 export async function requireUser(): Promise<AuthOk | AuthErr> {
   const user = await currentUser();
   if (!user) {
@@ -65,6 +81,37 @@ export async function requireUser(): Promise<AuthOk | AuthErr> {
     };
   }
   return { user };
+}
+
+/**
+ * A signed-in user who has been let into the beta.
+ *
+ * Used by every route that DOES something — uploads, rebuilds, exports. Reading
+ * your own account is deliberately not gated: someone waiting for approval
+ * should still be able to see their settings page and delete the account they
+ * just made.
+ *
+ * 403 with a code rather than 401, because the session is perfectly valid and
+ * signing in again would achieve nothing. The client uses the code to send them
+ * to the waiting screen instead of the sign-in page.
+ */
+export async function requireApprovedUser(): Promise<AuthOk | AuthErr> {
+  const auth = await requireUser();
+  if ("error" in auth) return auth;
+  if (!isApproved(auth.user)) {
+    return {
+      error: NextResponse.json(
+        {
+          error:
+            "Your account is waiting to be let into the beta. You will be able to use " +
+            "Grindly as soon as it is approved.",
+          code: "pending_approval",
+        },
+        { status: 403 },
+      ),
+    };
+  }
+  return auth;
 }
 
 export async function requireAdmin(): Promise<AuthOk | AuthErr> {

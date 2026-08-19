@@ -84,6 +84,19 @@ enum RunStatus {
   cancelled
 }
 
+/// Whether this account may use the product yet.
+///
+/// A closed beta needs a door, and the honest version of one is a state on the
+/// account rather than a secret invite code: the person signs up, sees exactly
+/// where they stand, and the operator sees a queue. `blocked` is separate from
+/// deletion — an account that abused the free tier should stop working without
+/// its owner's data being destroyed on the operator's say-so.
+enum AccessStatus {
+  pending
+  approved
+  blocked
+}
+
 /// Where an application got to. Set by the user, never inferred — Grindly does
 /// not talk to any job board and will not pretend to know.
 enum ApplicationStatus {
@@ -126,6 +139,20 @@ model User {
   planExpiresAt DateTime? @map("plan_expires_at")
 
   role         Role   @default(user)
+
+  /// Beta gate. Admins bypass it entirely — see lib/auth.requireApprovedUser —
+  /// so an operator can never lock themselves out of their own queue.
+  ///
+  /// Defaults to `pending`, and the migration that added it set every EXISTING
+  /// account to `approved`: a gate that retroactively locks out the people
+  /// already using the product is not a gate, it is an outage.
+  accessStatus AccessStatus @default(pending) @map("access_status")
+  approvedAt   DateTime?    @map("approved_at")
+  /// Who let them in. A user id rather than a relation: the reviewer is
+  /// almost always the one admin, and a self-relation on User to record it
+  /// would cost a join on every account read to answer a question nobody asks
+  /// outside this one table.
+  approvedBy   String?      @map("approved_by")
   // Session revocation counter, embedded in the signed cookie. Logout and any
   // credential change increment it, so an already-issued cookie stops working
   // immediately — a stateless HMAC cannot otherwise be revoked.
@@ -157,8 +184,11 @@ model User {
   usage        DailyUsage[]
   resetTokens  PasswordResetToken[]
   emailTokens  EmailVerificationToken[]
+  problems     ProblemReport[]
 
   @@index([plan])
+  /// The admin queue reads pending accounts oldest-first on every load.
+  @@index([accessStatus, createdAt])
   @@map("users")
 }
 
@@ -516,6 +546,40 @@ model Order {
   /// sequential scan of the table, growing with revenue.
   @@index([status])
   @@map("orders")
+}
+
+/// Something a user says went wrong.
+///
+/// Deliberately separate from ErrorEvent, which records faults the software
+/// noticed. This records faults it did NOT notice — the ones where nothing threw
+/// and the product simply did the wrong thing, which in a product built on
+/// measurement is the more dangerous kind. A rewrite that quietly drops a job is
+/// not an exception anywhere; it is a sentence a person has to type.
+///
+/// The account is recorded but nullable, so a report survives the reporter
+/// deleting their account: the bug does not stop existing because they left.
+model ProblemReport {
+  id     String  @id @default(cuid())
+  userId String? @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// What they typed. The whole value of this table.
+  message String
+  /// Where they were when they hit it — captured by the widget rather than
+  /// asked for, because "what page were you on" is a question people answer
+  /// wrongly and resent being asked.
+  path      String?
+  userAgent String? @map("user_agent")
+  /// The resume in view, when there was one. Turns "the rewrite was wrong" into
+  /// a report someone can actually open.
+  resumeId  String? @map("resume_id")
+
+  resolvedAt DateTime? @map("resolved_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([resolvedAt, createdAt])
+  @@index([userId])
+  @@map("problem_reports")
 }
 
 // ---------------------------------------------------------------------------

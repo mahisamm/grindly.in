@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser, notFound, badRequest, serverError } from "@/lib/auth";
+import { requireApprovedUser, notFound, badRequest, serverError } from "@/lib/auth";
 import { runAgent } from "@/lib/agent";
 import { readStruct } from "@/lib/resumeStruct";
 import { safeEntryName } from "@/lib/zip";
@@ -33,7 +33,7 @@ type Ctx = { params: Promise<{ id: string }> };
  * happens to demand would be charging for their circumstances.
  */
 export async function GET(req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser, badRequest, notFound, serverError } from "@/lib/auth";
+import { requireApprovedUser, badRequest, notFound, serverError } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -17,7 +17,7 @@ function isStatus(value: unknown): value is Status {
 
 /** Move an application along, or correct it. */
 export async function PATCH(req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 
@@ -56,7 +56,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
  *  a few seconds. The destructive actions worth guarding are the ones that take
  *  documents with them. */
 export async function DELETE(_req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 

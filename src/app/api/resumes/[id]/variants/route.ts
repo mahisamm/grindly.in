@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
-import { requireUser, notFound, serverError, badRequest } from "@/lib/auth";
+import { requireApprovedUser, notFound, serverError, badRequest } from "@/lib/auth";
 import { runAgent, VARIANT_DIR, type Report, type Fidelity } from "@/lib/agent";
 import { readContact, readStrings, readTargetSpec } from "@/lib/reportTypes";
 import { toJsonColumn } from "@/lib/jsonColumn";
@@ -46,7 +46,7 @@ type AgentVariant = {
  * the honest "just make this better" run.
  */
 export async function POST(req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { user } = auth;
   const { id } = await params;

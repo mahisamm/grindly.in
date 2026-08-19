@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser, badRequest, notFound, serverError } from "@/lib/auth";
+import { requireApprovedUser, badRequest, notFound, serverError } from "@/lib/auth";
 import { PRODUCTS, effectivePlan, extendedExpiry, isSku } from "@/lib/plans";
 import { verifyPayment } from "@/lib/payment";
 import { audit } from "@/lib/audit";
@@ -28,7 +28,7 @@ export const dynamic = "force-dynamic";
  *      entitlement twice for one booking.
  */
 export async function POST(req: Request) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { user } = auth;
 

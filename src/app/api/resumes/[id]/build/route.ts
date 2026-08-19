@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
-import { requireUser, notFound, badRequest, serverError } from "@/lib/auth";
+import { requireApprovedUser, notFound, badRequest, serverError } from "@/lib/auth";
 import { runAgent, VARIANT_DIR, type Report } from "@/lib/agent";
 import { toJsonColumn } from "@/lib/jsonColumn";
 import { readStruct, structToText } from "@/lib/resumeStruct";
@@ -41,7 +41,7 @@ const OWN_EDIT_LABEL = "Yours";
  * ever accepted.
  */
 export async function POST(_req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { user } = auth;
   const { id } = await params;

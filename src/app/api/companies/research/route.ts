@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUser, badRequest, serverError } from "@/lib/auth";
+import { requireApprovedUser, badRequest, serverError } from "@/lib/auth";
 import { runAgent, type CompanyResearch } from "@/lib/agent";
 import { isRateLimited } from "@/lib/rateLimit";
 
@@ -27,7 +27,7 @@ export const maxDuration = 120;
  * cannot help rather than them asking for something they did not get.
  */
 export async function POST(req: Request) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { user } = auth;
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser, notFound, serverError } from "@/lib/auth";
+import { requireApprovedUser, notFound, serverError } from "@/lib/auth";
 import { runAgent, type Report } from "@/lib/agent";
 import { reserve, refund } from "@/lib/quota";
 import { audit } from "@/lib/audit";
@@ -22,7 +22,7 @@ type Ctx = { params: Promise<{ id: string }> };
  * this product and a model does not produce it.
  */
 export async function POST(_req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { user } = auth;
   const { id } = await params;

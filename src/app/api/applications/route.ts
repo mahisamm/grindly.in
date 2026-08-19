@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser, badRequest, notFound, serverError } from "@/lib/auth";
+import { requireApprovedUser, badRequest, notFound, serverError } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -15,7 +15,7 @@ function isStatus(value: unknown): value is Status {
 
 /** Everything this user has sent, newest first. */
 export async function GET(req: Request) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
 
   const resumeId = new URL(req.url).searchParams.get("resumeId");
@@ -44,7 +44,7 @@ export async function GET(req: Request) {
  * out of thirty-one".
  */
 export async function POST(req: Request) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
 
   let body: {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireUser, notFound } from "@/lib/auth";
+import { requireApprovedUser, notFound } from "@/lib/auth";
 import { reapStaleRuns } from "@/lib/variantRuns";
 
 export const runtime = "nodejs";
@@ -21,7 +21,7 @@ type Ctx = { params: Promise<{ id: string }> };
  * is really still running is the moment they ask.
  */
 export async function GET(_req: Request, { params }: Ctx) {
-  const auth = await requireUser();
+  const auth = await requireApprovedUser();
   if ("error" in auth) return auth.error;
   const { id } = await params;
 
