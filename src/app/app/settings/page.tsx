@@ -5,6 +5,7 @@ import { daysRemaining, effectivePlan, formatLimit, limitsFor } from "@/lib/plan
 import { usageToday } from "@/lib/quota";
 import { DeleteAccount } from "./DeleteAccount";
 import { ChangePassword, EmailSettings, ExportData } from "./AccountForms";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Account — Grindly" };
@@ -103,6 +104,17 @@ export default async function SettingsPage() {
       <section className="bg-surface border-border mt-6 rounded-xl border p-6">
         <h2 className="font-display text-lg font-semibold">Password</h2>
         <ChangePassword googleOnly={googleOnly} />
+      </section>
+
+      <section className="bg-surface border-border mt-6 rounded-xl border p-6">
+        <h2 className="font-display text-lg font-semibold">Appearance</h2>
+        <p className="text-muted mt-2 text-sm leading-relaxed">
+          A job search happens at odd hours. System follows your device, which is
+          usually the right answer without anyone choosing.
+        </p>
+        <div className="mt-4 inline-flex">
+          <ThemeToggle />
+        </div>
       </section>
 
       <section className="bg-surface border-border mt-6 rounded-xl border p-6">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
   Advice, CompanyPack, CompanyResearch, Fidelity, Report,
 } from "@/lib/reportTypes";
@@ -9,6 +9,7 @@ import { SHIPPABLE_FLOOR } from "@/lib/reportTypes";
 import { isUnlimited } from "@/lib/plans";
 import { FidelityLine, Findings, ReportPanel, ScoreDial } from "@/components/Score";
 import { RunBanner, useRunStatus } from "./RunProgress";
+import { Compare } from "./Compare";
 
 type VariantView = {
   id: string;
@@ -52,6 +53,12 @@ type ResumeView = {
 
 type Tab = "report" | "rewrite" | "target" | "raw";
 
+const TABS: Tab[] = ["report", "rewrite", "target", "raw"];
+
+function isTab(value: string | null): value is Tab {
+  return TABS.includes((value ?? "") as Tab);
+}
+
 export function ResumeWorkspace({
   resume,
   packs,
@@ -65,7 +72,33 @@ export function ResumeWorkspace({
   targetLimit: number;
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("report");
+  const pathname = usePathname();
+  const params = useSearchParams();
+
+  /**
+   * Which panel is open, kept in the URL rather than in component state.
+   *
+   * It was `useState`, which meant the back button did not come back, a refresh
+   * lost your place, and a link to "look at the rewrites" was impossible to
+   * send — every share of this page landed on Readiness no matter what the
+   * sender was looking at. An unrecognised value falls back rather than
+   * rendering nothing, because this parameter is in a URL anyone can edit.
+   */
+  const tab: Tab = isTab(params.get("tab")) ? (params.get("tab") as Tab) : "report";
+
+  const setTab = (next: Tab) => {
+    const query = new URLSearchParams(params.toString());
+    // The default is expressed by absence, so the canonical URL for this page
+    // has no query string at all.
+    if (next === "report") query.delete("tab");
+    else query.set("tab", next);
+    const suffix = query.toString();
+    // `replace`, not `push`: switching tabs is not navigation and should not
+    // fill the back stack with four entries for one page. `scroll: false`
+    // because the panel changing under a heading is not a reason to jump the
+    // viewport to the top.
+    router.replace(suffix ? `${pathname}?${suffix}` : pathname, { scroll: false });
+  };
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -450,7 +483,12 @@ function RewriteTab({
       ) : (
         <ul className="mt-8 grid gap-5 lg:grid-cols-3">
           {untargeted.map((v) => (
-            <VariantCard key={v.id} variant={v} />
+            <VariantCard
+              key={v.id}
+              variant={v}
+              baseline={resume.report}
+              originalText={resume.text}
+            />
           ))}
         </ul>
       )}
@@ -458,7 +496,17 @@ function RewriteTab({
   );
 }
 
-function VariantCard({ variant }: { variant: VariantView }) {
+function VariantCard({
+  variant,
+  baseline,
+  originalText,
+}: {
+  variant: VariantView;
+  /** The user's own resume, for the side-by-side. */
+  baseline: Report | null;
+  originalText: string;
+}) {
+  const [comparing, setComparing] = useState(false);
   const delta = variant.score - variant.baselineScore;
   // Derived from the score rather than stored, so it can never disagree with
   // the number printed beside it. SHIPPABLE_FLOOR mirrors the Python constant.
@@ -519,7 +567,31 @@ function VariantCard({ variant }: { variant: VariantView }) {
         >
           Open PDF
         </a>
+        <button
+          onClick={() => setComparing((v) => !v)}
+          aria-expanded={comparing}
+          className="btn justify-center text-sm"
+        >
+          {comparing ? "Hide" : "Compare"}
+        </button>
       </div>
+
+      {/* Expanded inside the card rather than in a modal: the comparison is the
+          evidence for the number printed six inches above it, and putting it
+          behind an overlay separates the claim from its proof. */}
+      {comparing && (
+        <div className="border-border mt-5 border-t pt-5">
+          <Compare
+            baseline={baseline}
+            baselineLabel="Your resume"
+            variantLabel={variant.label}
+            variantReport={variant.report}
+            variantFidelity={variant.fidelity}
+            variantId={variant.id}
+            originalText={originalText}
+          />
+        </div>
+      )}
     </li>
   );
 }
@@ -775,7 +847,12 @@ function TargetTab({
                 {variants.length > 0 && (
                   <ul className="mt-3 grid gap-3 sm:grid-cols-3">
                     {variants.map((v) => (
-                      <VariantCard key={v.id} variant={v} />
+                      <VariantCard
+                        key={v.id}
+                        variant={v}
+                        baseline={resume.report}
+                        originalText={resume.text}
+                      />
                     ))}
                   </ul>
                 )}

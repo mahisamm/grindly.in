@@ -3,10 +3,18 @@
 {$APP_DOMAIN} {
 	encode zstd gzip
 
+	# Transport-level headers only.
+	#
+	# X-Frame-Options is deliberately NOT here. Caddy's header directive
+	# REPLACES what the upstream sent, so a blanket DENY at this layer
+	# overrode the app's per-route policy and blocked the one frame the
+	# product actually uses — the PDF preview beside a rebuild, which is
+	# same-origin and behind an ownership check. Framing policy is decided in
+	# next.config.ts, where the routes are, and Caddy no longer has an opinion
+	# it cannot express per path.
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "geolocation=(), camera=(), microphone=()"
 		-Server
