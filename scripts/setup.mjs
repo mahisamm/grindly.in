@@ -4,7 +4,7 @@
  *   npm run setup
  *
  * Does: ensure .env (+ generate APP_ENCRYPTION_KEY), npm install, install agent
- * Python deps + Playwright chromium, prisma generate + db push.
+ * Python deps + Playwright chromium, prisma generate + migrate deploy.
  */
 import { execSync } from "node:child_process";
 import crypto from "node:crypto";
@@ -63,6 +63,10 @@ try {
 // 4. prisma
 step(4, "Database");
 run("npx prisma generate");
-run("npx prisma db push");
+// `migrate deploy` rather than `db push`: a developer's database is then
+// built by exactly the SQL that will build production, so a migration that
+// is wrong is wrong on the first machine that runs it rather than on the
+// last one.
+run("npx prisma migrate deploy");
 
 console.log("\n\x1b[32mSetup complete.\x1b[0m  Next: `npm run dev`  →  http://localhost:3000\n");

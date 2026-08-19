@@ -34,7 +34,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma generate
-      - run: npx prisma db push --skip-generate
+      - run: npx prisma migrate deploy
       - run: npm run lint
       - run: npm run build
       - run: npm test
@@ -47,4 +47,12 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install -r agent/requirements.txt pytest
+      # Without the browser, every test that renders a PDF SKIPS — quietly, by
+      # design, so a developer without Chromium still gets a useful suite. In CI
+      # that meant the renderer was never exercised at all: the four layout
+      # invariants in render_pdf.py were each measured by rendering a real PDF
+      # and reading it back, they are the difference between a resume a parser
+      # can read and one it cannot, and nothing on the way to production was
+      # checking them. Two minutes of install for the tests that matter most.
+      - run: python -m playwright install --with-deps chromium
       - run: python -m pytest agent/tests -q

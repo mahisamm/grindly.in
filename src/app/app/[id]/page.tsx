@@ -1,10 +1,14 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/auth";
 import { runAgent } from "@/lib/agent";
 import { limitsFor } from "@/lib/plans";
-import type { Advice, CompanyPack, Fidelity, Report } from "@/lib/reportTypes";
+import type { CompanyPack } from "@/lib/reportTypes";
+import {
+  readAdvice, readFidelity, readReport, readStrings, readTargetSpec,
+} from "@/lib/reportTypes";
 import { ResumeWorkspace } from "./Workspace";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +23,10 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
     include: {
       variants: { orderBy: [{ createdAt: "desc" }] },
       targets: { orderBy: { createdAt: "desc" } },
+      // Oldest first: this is a line on a chart, and a chart reads left to
+      // right through time.
+      scores: { orderBy: { createdAt: "asc" }, take: 100 },
+      applications: { orderBy: { appliedAt: "desc" }, take: 200 },
     },
   });
   if (!resume) notFound();
@@ -36,15 +44,22 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
       >
         ← All resumes
       </Link>
+      {/* The workspace reads `?tab=` with useSearchParams, which suspends. The
+          boundary is here rather than around the whole page so the heading and
+          the back link are painted immediately — they do not depend on the
+          query string. */}
+      <Suspense fallback={<WorkspaceSkeleton />}>
       <ResumeWorkspace
         resume={{
           id: resume.id,
           label: resume.label,
           chars: resume.chars,
+          truncated: resume.truncated,
+          shareToken: resume.shareToken,
           text: resume.text,
-          report: parse<Report>(resume.reportJson),
-          advice: parse<Advice>(resume.adviceJson),
-          skills: parse<string[]>(resume.skillsJson) ?? [],
+          report: readReport(resume.reportJson),
+          advice: readAdvice(resume.adviceJson),
+          skills: readStrings(resume.skillsJson),
           variants: resume.variants.map((v) => ({
             id: v.id,
             label: v.label,
@@ -54,18 +69,33 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
             beatsBaseline: v.beatsBaseline,
             pages: v.pages,
             targetId: v.targetId,
-            changes: parse<string[]>(v.changesJson) ?? [],
-            report: parse<Report>(v.reportJson),
-            fidelity: parse<Fidelity>(v.fidelityJson),
+            changes: readStrings(v.changesJson),
+            report: readReport(v.reportJson),
+            fidelity: readFidelity(v.fidelityJson),
+          })),
+          history: resume.scores.map((h) => ({
+            id: h.id,
+            score: h.score,
+            grade: h.grade,
+            source: h.source,
+            variantLabel: h.variantLabel,
+            createdAt: h.createdAt.toISOString(),
+          })),
+          applications: resume.applications.map((a) => ({
+            id: a.id,
+            company: a.company,
+            role: a.role,
+            status: a.status,
+            variantLabel: a.variantLabel,
+            notes: a.notes,
+            appliedAt: a.appliedAt.toISOString(),
           })),
           targets: resume.targets.map((t) => ({
             id: t.id,
             kind: t.kind,
             name: t.name,
             slug: t.slug,
-            spec: parse<{ skills: string[]; must_have: string[]; nice_to_have: string[] }>(
-              t.specJson,
-            ),
+            spec: readTargetSpec(t.specJson),
           })),
         }}
         packs={packs.ok ? packs.packs : []}
@@ -77,15 +107,33 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
         // upgrade prompt as the response to a button that looked available.
         targetLimit={limitsFor(user).targetsPerResume}
       />
+      </Suspense>
     </div>
   );
 }
 
-function parse<T>(value: string | null): T | null {
-  if (!value) return null;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return null;
-  }
+/**
+ * The shape of the workspace while it resolves — a heading, a tab row and a
+ * card, at the sizes the real thing uses.
+ *
+ * Sized deliberately rather than left as a spinner: a fallback with different
+ * dimensions to the content it stands in for makes the page jump when it
+ * arrives, which reads as a bug on a fast connection and as two separate loads
+ * on a slow one.
+ */
+function WorkspaceSkeleton() {
+  return (
+    <div className="mt-4 animate-pulse" aria-hidden="true">
+      <div className="h-9 w-64 rounded" style={{ background: "var(--surface-2)" }} />
+      <div className="border-border mt-6 flex gap-4 border-b pb-3">
+        {[88, 96, 140, 168].map((w) => (
+          <div key={w} className="h-4 rounded" style={{ width: w, background: "var(--surface-2)" }} />
+        ))}
+      </div>
+      <div className="mt-8 grid gap-10 lg:grid-cols-[1.4fr_1fr]">
+        <div className="h-64 rounded-xl" style={{ background: "var(--surface-2)" }} />
+        <div className="h-40 rounded-xl" style={{ background: "var(--surface-2)" }} />
+      </div>
+    </div>
+  );
 }

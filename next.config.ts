@@ -26,7 +26,12 @@ const securityHeaders = [
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob: https://*.razorpay.com",
       "connect-src 'self' https://*.razorpay.com",
-      "frame-src https://*.razorpay.com",
+      // 'self' is here for the PDF preview beside a rebuild — the document is
+      // served by our own ownership-checked route and framed on the compare
+      // panel, which is the one place in the product where the claim and its
+      // evidence sit next to each other. Without it the frame is blocked and
+      // the panel renders an empty box with no error the user can act on.
+      "frame-src 'self' https://*.razorpay.com",
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
@@ -55,6 +60,28 @@ const nextConfig: NextConfig = {
       {
         source: "/(.*)",
         headers: securityHeaders,
+      },
+      {
+        // The rendered PDFs, which the compare panel frames.
+        //
+        // X-Frame-Options: DENY blocks framing outright — including by the same
+        // origin, which is the only kind we want. There is no SAMEORIGIN-plus-
+        // nothing-else form of that header that also survives the wildcard rule
+        // above, so this route overrides it and states the real policy in CSP
+        // instead: this document may be framed by us and by nobody.
+        //
+        // frame-ancestors is the modern replacement for X-Frame-Options and is
+        // the header that actually decides this in every current browser.
+        //
+        // No `sandbox` directive: the browser's built-in PDF viewer is a plugin
+        // that a strict sandbox disables, so adding it would trade a working
+        // preview for a blank frame — and the document is one this user is
+        // already authorised to download.
+        source: "/api/variants/:id/file",
+        headers: [
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+        ],
       },
     ];
   },

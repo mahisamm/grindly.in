@@ -35,7 +35,36 @@ _PROVIDER_KEYS = (
     "GEMINI_API_KEY",
     "CEREBRAS_API_KEY",
     "MISTRAL_API_KEY",
+    # The paid fallback. Absolutely must be pinned off: an unpinned key here
+    # would mean the test suite spends money, which is a worse version of the
+    # flake problem this fixture already exists to prevent.
+    "ANTHROPIC_API_KEY",
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_llm_cache(tmp_path, monkeypatch):
+    """No model-answer memoisation under the suite, and a scratch dir if some
+    test turns it back on.
+
+    llm_cache is keyed on input text, which is what makes it useful in
+    production and poison here. Two kinds of breakage, both observed the moment
+    caching was introduced:
+
+      * Across tests: two tests that stub different model replies for the same
+        input, and the second one reads the first one's answer.
+      * WITHIN one test: the research tests call `research("Freshworks")` twice
+        with different stubbed replies precisely to prove the filtering, and a
+        cache correctly returns the first answer to the second call.
+
+    The second is the important one, because the cache is not misbehaving there
+    — it is doing exactly its job, and the test is not about caching. A suite
+    with an opaque memoisation layer underneath it is a suite where a passing
+    test proves less than it looks like it does. So it is off, and the cache has
+    its own tests in test_llm_cache.py.
+    """
+    monkeypatch.setenv("GRINDLY_LLM_CACHE", "0")
+    monkeypatch.setenv("GRINDLY_LLM_CACHE_DIR", str(tmp_path / "llm-cache"))
 
 
 @pytest.fixture(autouse=True, scope="session")

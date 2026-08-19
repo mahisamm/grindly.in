@@ -82,6 +82,116 @@
   --font-display: var(--ff-display);
 }
 
+
+/* ───────────────────────────────────────────────────────────
+   Dark mode
+
+   Only the tokens are redefined; not one component rule below knows this
+   block exists. That is the whole reason the palette was built as tokens in
+   the first place, and it is why this is a forty-line change rather than a
+   rewrite.
+
+   Three states, and all three are needed:
+
+     :root                     — light, the default, defined above.
+     prefers-color-scheme:dark — the operating system's choice, honoured
+                                 unless the reader has explicitly chosen light.
+     [data-theme="dark"]       — an explicit choice, which must win over the
+                                 system in BOTH directions.
+
+   The palette is NOT an inversion. Pure white ink on near-black is the most
+   common way to get dark mode wrong: at this line length it haloes and reads
+   as glare. Ink is a warm off-white, paper is a warm near-black — the same
+   letterpress idea photographed at night rather than a negative of it.
+
+   The vermilion had to move. #c22e1c is 4.83:1 on paper and 2.4:1 on the dark
+   ground, which fails body text outright; the dark-mode brand is lifted to
+   #ff7a5e (7.1:1 on --paper) and the CTA fill keeps the deeper tone with light
+   text on it. Contrast is a property of a PAIR, so a token that changes ground
+   has to change ink with it.
+   ─────────────────────────────────────────────────────────── */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #14120f;
+    --paper-2: #1d1a16;
+    --panel: #1a1713;
+    --ink: #f0ebe1;
+    --ink-soft: #bdb5a7;
+    --ink-mute: #8c8479;
+    --line: rgba(240, 235, 225, 0.14);
+    --line-2: rgba(240, 235, 225, 0.30);
+
+    --vermilion: #ff7a5e;
+    --vermilion-deep: #e3402a;
+
+    --background: var(--paper);
+    --surface: var(--panel);
+    --surface-2: var(--paper-2);
+    --border: #332e27;
+    --ink-color: var(--ink);
+    --foreground: var(--ink);
+    --muted: #bdb5a7;
+
+    --brand: #ff8f77;
+    --brand-2: #ffab98;
+    --cta: #c22e1c;
+    --cta-2: #a82616;
+    --accent: #ff8f77;
+    --danger: #ff7c6b;
+    --warn: #e0a83c;
+  }
+}
+
+/* The explicit choice, which must beat the system setting either way. */
+:root[data-theme="dark"] {
+  --paper: #14120f;
+  --paper-2: #1d1a16;
+  --panel: #1a1713;
+  --ink: #f0ebe1;
+  --ink-soft: #bdb5a7;
+  --ink-mute: #8c8479;
+  --line: rgba(240, 235, 225, 0.14);
+  --line-2: rgba(240, 235, 225, 0.30);
+
+  --vermilion: #ff7a5e;
+  --vermilion-deep: #e3402a;
+
+  --background: var(--paper);
+  --surface: var(--panel);
+  --surface-2: var(--paper-2);
+  --border: #332e27;
+  --ink-color: var(--ink);
+  --foreground: var(--ink);
+  --muted: #bdb5a7;
+
+  --brand: #ff8f77;
+  --brand-2: #ffab98;
+  --cta: #c22e1c;
+  --cta-2: #a82616;
+  --accent: #ff8f77;
+  --danger: #ff7c6b;
+  --warn: #e0a83c;
+}
+
+/* The paper grain is a multiply blend, which on a dark ground turns the whole
+   page to mud. Screen at a fraction of the opacity keeps the texture without
+   the sludge. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .grain-fixed { mix-blend-mode: screen; opacity: 0.18; }
+}
+:root[data-theme="dark"] .grain-fixed { mix-blend-mode: screen; opacity: 0.18; }
+
+/* Tell the browser which ground its own widgets — form controls, scrollbars,
+   the space past the end of a scroll — should be drawn against. Without it a
+   date picker and a select arrive in light chrome on a dark page. */
+:root { color-scheme: light; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { color-scheme: dark; }
+}
+:root[data-theme="dark"] { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
+
 html, body {
   background: var(--background);
   color: var(--foreground);
@@ -271,7 +381,6 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
   mix-blend-mode: multiply;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
 }
-@media (prefers-reduced-motion: no-preference) {}
 
 /* ── Soft radial glow behind a section (subtle vermilion bloom) ─────── */
 .glow-blue { position: relative; }

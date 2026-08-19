@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { runAgent, type CompanyPack } from "@/lib/agent";
 import { PRODUCTS, formatAmount } from "@/lib/plans";
 
@@ -200,10 +201,14 @@ export default async function Home() {
       <footer className="border-border border-t">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-5 py-8 text-sm sm:px-6">
           <Logo size={24} />
-          <nav className="text-muted flex flex-wrap gap-5">
+          <nav className="text-muted flex flex-wrap items-center gap-5">
             <Link href="/pricing" className="hover:text-ink">Pricing</Link>
             <Link href="/privacy" className="hover:text-ink">Privacy</Link>
             <Link href="/terms" className="hover:text-ink">Terms</Link>
+            {/* Reachable without an account: someone reading the landing page at
+                midnight is exactly who needs it, and they have not signed up
+                yet. */}
+            <ThemeToggle />
           </nav>
         </div>
       </footer>

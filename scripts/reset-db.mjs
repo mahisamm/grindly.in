@@ -60,17 +60,25 @@ async function main() {
   // through then leaves a consistent database rather than parents whose
   // children are already gone.
   await prisma.variant.deleteMany();
+  await prisma.variantRun.deleteMany();
+  await prisma.application.deleteMany();
+  await prisma.scoreEvent.deleteMany();
   await prisma.target.deleteMany();
   await prisma.resume.deleteMany();
   await prisma.order.deleteMany();
   await prisma.dailyUsage.deleteMany();
   await prisma.passwordResetToken.deleteMany();
+  await prisma.emailVerificationToken.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.user.deleteMany();
 
   // Standalone tables, no relations to respect.
   await prisma.rateLimitEntry.deleteMany();
   await prisma.errorEvent.deleteMany();
+  // Written by scripts/backup-drill.sh rather than by the app, and cleared here
+  // anyway: "reset" has to mean the database is empty, or a drill result from
+  // before the reset is read afterwards as if it described the new state.
+  await prisma.backupHealth.deleteMany();
 
   console.log("Database reset.");
 }

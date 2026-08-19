@@ -78,6 +78,27 @@ export default function RootLayout({
       className={`${bodySans.variable} ${codeMono.variable} ${displayFont.variable} h-full antialiased`}
     >
       <head>
+        {/*
+          Apply the saved theme BEFORE the first paint.
+
+          Without this, a reader who chose dark gets one frame of the light
+          palette on every navigation that hits the server — a white flash on a
+          dark page, at the moment the page is least able to hide it. There is
+          no way to do this from React: the attribute has to be on <html> before
+          the browser draws anything, and the earliest that can happen is a
+          blocking script in the head.
+
+          It reads the same key the toggle writes, and does nothing at all when
+          the choice is "system" — the CSS already honours prefers-color-scheme
+          on its own.
+        */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{var t=localStorage.getItem('grindly-theme');" +
+              "if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}",
+          }}
+        />
         <link rel="manifest" href="/manifest.json" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />

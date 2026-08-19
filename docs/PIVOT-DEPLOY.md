@@ -12,25 +12,28 @@ trigger by accident.
 
 ## The trap
 
-`docker compose up -d` starts a one-shot `migrate` service that runs
-`npx prisma db push`. The new schema shares almost nothing with the old one, so
-that push is a destructive change — it drops 27 tables.
+`docker compose up -d` starts a one-shot `migrate` service. It runs
+`npx prisma migrate deploy`, which applies the SQL in `prisma/migrations` and
+nothing else — so on a box carrying the old product's 27 tables it will create
+the new schema *alongside* them and fail on the first name that collides.
 
-Two independent things stop it being a disaster, and you need to understand both
-or you will disable one while working around the other:
+That failure is loud and harmless, and it is not the trap. The trap is that
+`migrate` is one-shot and `web` used to depend on it: `up -d` stops the running
+container before it evaluates dependencies, so a failed migration left nothing
+serving. `migrate` is now a separate step you run first, and only a successful
+one lets you take the next.
 
-1. **`migrate` has no `--accept-data-loss`.** Prisma refuses destructive changes
-   without it, and there is no TTY in the container to prompt on, so it errors
-   and `web` never starts. Failing safe.
-2. **But it fails at the worst possible moment** — after the pre-migration SQL
-   has already moved your accounts into the `legacy` schema, so you are
-   half-migrated with a stack that will not come up.
+So: **empty `public` by hand, first.** `scripts/reset-public-schema.sql` does
+it, refuses unless the accounts are already carried into `legacy`, and refuses
+outright on a database that is not the pre-pivot one. After it runs, `migrate
+deploy` builds the new schema on clean ground, from files that were reviewed in
+a diff rather than from a plan computed on the box.
 
-So: **do the schema change by hand, first.** After that, `migrate` finds the
-schema already in sync, exits 0, and the stack starts normally.
-
-Do not add `--accept-data-loss` to the compose file. That converts every future
-deploy into one that will silently drop whatever it finds inconvenient.
+The old version of this runbook used `prisma db push --accept-data-loss` here.
+Never add that flag to anything: it asks Prisma to invent a reconciliation plan
+against a live database and promises in advance not to object to it. That is how
+`backup_health` — a table created by the backup script, outside Prisma's
+knowledge — became a candidate for deletion and took a deploy down with it.
 
 ---
 
@@ -74,7 +77,8 @@ grep -c "model Resume"      prisma/schema.prisma   # >= 1
 grep -c "model Variant"     prisma/schema.prisma   # >= 1
 grep -c "model Application" prisma/schema.prisma   # 0
 ls agent/readiness.py agent/render_pdf.py
-ls scripts/migrate-from-autoapply*.sql
+ls scripts/migrate-from-autoapply*.sql scripts/reset-public-schema.sql
+ls prisma/migrations/*/migration.sql                # the schema, as reviewable SQL
 ```
 
 Any failure: stop.
@@ -102,22 +106,46 @@ docker compose exec -T postgres \
   < scripts/migrate-from-autoapply.sql
 ```
 
-Copies accounts into a `legacy` schema, which `prisma db push` does not manage
-and therefore will not touch. Archives `applications` and `profiles` alongside
-them. Refuses if it has already run.
+Copies accounts into a `legacy` schema, which Prisma does not manage and step 5a
+therefore leaves alone. Archives `applications` and `profiles` alongside them,
+freezing their enum columns as text first — the types themselves go with
+`public`. Refuses if it has already run.
 
 Expected output: a row reading `users | applications_archived | profiles_archived`.
 
 ### 5. Change the schema — the irreversible step
 
+Two commands, and the split is the point: one destroys, one builds, and only the
+first is irreversible.
+
 ```bash
+# 5a. Empty public. Refuses unless step 4 has already carried the accounts.
+docker compose exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U grindly -d grindly \
+  < scripts/reset-public-schema.sql
+
+# 5b. Build the new schema from prisma/migrations.
 docker compose run --rm --no-deps \
   -e DATABASE_URL="postgresql://grindly:${POSTGRES_PASSWORD}@postgres:5432/grindly" \
-  migrate sh -c "npx prisma db push --skip-generate --accept-data-loss"
+  migrate sh -c "npx prisma migrate deploy"
 ```
 
-`--no-deps` so this does not start `web`. This is the one place the flag is
-used, typed by a human who has read step 0.
+`--no-deps` so this does not start `web`.
+
+5a prints the carried-account count and the number of tables it is about to
+destroy before it does anything. Read both. If the carried count is not 6, stop
+— step 4 did not do what you think it did, and 5a is the last moment that is
+recoverable without the dump.
+
+5b is deterministic: it applies `00000000000000_baseline_pivot_schema` and
+records it in `_prisma_migrations`. Every deploy after this one applies only
+what is new, so this is the last time the schema step is anything but boring.
+
+The whole sequence — 4, 5a, 5b, 6 — is rehearsed by
+`scripts/rehearse-migration.sh` against a throwaway database seeded with a
+replica of the old schema. Run it before you run any of this. It asserts the
+refusals as well as the successes: that 5a will not run before 4, and will not
+run twice.
 
 ### 6. Put the accounts back
 
@@ -144,7 +172,7 @@ docker compose rm -f worker planner sweep connect searxng redis
 ```bash
 docker compose up -d
 docker compose ps
-docker compose logs --tail=40 migrate   # should be a no-op: schema already in sync
+docker compose logs --tail=40 migrate   # "No pending migrations" — 5b already applied it
 docker compose logs --tail=40 web
 ```
 
@@ -177,7 +205,9 @@ Keep the rollback tags for a week.
 
 Before step 5, rollback is `git checkout master && docker compose up -d`.
 
-**After step 5 there is no rollback without the dump.** The old tables are gone.
+**After step 5a there is no rollback without the dump.** The old tables are gone.
+5b is not the dangerous half — if it fails, `public` is empty and re-running it
+is free.
 Restoring means: stop the stack, drop the database, restore
 `grindly-FULL-*.sql.gz`, retag `grindly-web:pre-pivot-*` back to `latest`, and
 bring up the old compose file from `master`.

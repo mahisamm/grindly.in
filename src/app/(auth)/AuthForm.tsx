@@ -71,7 +71,11 @@ export function AuthForm({
       const res = await fetch(`/api/auth/${mode}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(isSignup ? { email, password, name } : { email, password }),
+        body: JSON.stringify(
+          isSignup
+            ? { email, password, name, timezone: browserTimezone() }
+            : { email, password, timezone: browserTimezone() },
+        ),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -226,4 +230,24 @@ export function AuthForm({
       </div>
     </div>
   );
+}
+
+/**
+ * The browser's IANA timezone, or null if it will not say.
+ *
+ * Sent on sign-in as well as sign-up, so an account created before this existed
+ * gets its zone the next time its owner signs in rather than staying on the
+ * default forever. Daily quotas are counted in the user's own day (lib/quota.ts)
+ * and the refusal message promises the limit resets at midnight in their
+ * timezone — which was true only for the half of the audience in IST.
+ *
+ * Not sensitive, and not a fingerprint we did not already have: it is one of the
+ * first things any server can infer from a request.
+ */
+function browserTimezone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
 }

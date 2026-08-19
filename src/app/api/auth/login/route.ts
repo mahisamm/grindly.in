@@ -4,6 +4,7 @@ import { setUid } from "@/lib/session";
 import { isRateLimited, isRateLimitedByIp } from "@/lib/rateLimit";
 import { audit } from "@/lib/audit";
 import { normalizeEmail, verifyPassword } from "@/lib/password";
+import { isValidTimezone } from "@/lib/quota";
 
 /**
  * Sign in with an email and a password.
@@ -34,7 +35,7 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: { email?: string; password?: string };
+  let body: { email?: string; password?: string; timezone?: string };
   try {
     body = await req.json();
   } catch {
@@ -84,6 +85,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "That email and password do not match." }, { status: 401 });
   }
   const found = live;
+
+  // Learn the user's timezone on every sign-in, not only at signup.
+  //
+  // Daily quotas are counted in their local day, and an account created before
+  // that column existed — or before this code did — would otherwise be counted
+  // in the default zone forever. Best-effort: a failed housekeeping write must
+  // not fail a sign-in that has already succeeded.
+  if (isValidTimezone(body.timezone)) {
+    await prisma.user
+      .update({ where: { id: found.id }, data: { timezone: body.timezone } })
+      .catch((e) => console.error("[login] timezone update failed:", (e as Error).message));
+  }
 
   await setUid(found.id);
   await audit(found.id, "login", email);

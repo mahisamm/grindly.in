@@ -3,10 +3,18 @@
 {$APP_DOMAIN} {
 	encode zstd gzip
 
+	# Transport-level headers only.
+	#
+	# X-Frame-Options is deliberately NOT here. Caddy's header directive
+	# REPLACES what the upstream sent, so a blanket DENY at this layer
+	# overrode the app's per-route policy and blocked the one frame the
+	# product actually uses — the PDF preview beside a rebuild, which is
+	# same-origin and behind an ownership check. Framing policy is decided in
+	# next.config.ts, where the routes are, and Caddy no longer has an opinion
+	# it cannot express per path.
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
 		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "geolocation=(), camera=(), microphone=()"
 		-Server
@@ -17,29 +25,16 @@
 			roll_size 10MB
 			roll_keep 5
 		}
-		# Redact the remote-browser connect token from logged URLs. It rides
-		# in the query string (/connect-ws/?token=...) and gates a live,
-		# mid-login browser session — logging it in plaintext would let anyone
-		# with log access hijack that session for its short validity window.
+		# Any token riding in a query string is redacted before it is written.
+		# Nothing in the current product puts one there, and the filter stays
+		# because a log is written continuously and a mistake in it is only
+		# discovered afterwards — by which point the value is on disk, in a
+		# rotation, and possibly in a backup.
 		format filter {
 			request>uri query {
 				replace token REDACTED
 			}
 		}
-	}
-
-	# Remote-browser connect flow (linkedin/naukri/unstop/indeed only —
-	# Internshala uses its own credential+OTP relay, see connect_login.py):
-	# websockify's WS bridge for the live login viewer (see
-	# agent/connect_service.py, Dockerfile.connect). Path-scoped so only this
-	# one prefix reaches the connect service — everything else still goes to
-	# web. Caddy reverse_proxy handles the WebSocket upgrade automatically;
-	# no extra directive needed. Access control is the token itself
-	# (?token=... in the URL, checked by websockify's TokenFile plugin) —
-	# Caddy does not and cannot authenticate this, so the token's entropy +
-	# short expiry is load-bearing here.
-	handle_path /connect-ws/* {
-		reverse_proxy connect:6080
 	}
 
 	reverse_proxy web:3000

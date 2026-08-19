@@ -47,7 +47,7 @@ _ADVISE_SYS = (
 
 # ---------- public API ----------
 
-def advise(resume_text: str) -> dict:
+def _advise_uncached(resume_text: str) -> dict:
     """Prose advice on a resume: strengths, issues, suggestions. Never a number.
 
     Always returns a dict with all three keys. When no provider answers, the
@@ -440,3 +440,20 @@ def _lst(v: object, max_n: int) -> list[str]:
     if isinstance(v, list):
         return [str(x) for x in v[:max_n] if str(x).strip()]
     return []
+
+
+def advise(resume_text: str) -> dict:
+    """Prose advice on a resume. See `_advise_uncached`.
+
+    NOT CACHED, and the reason is worth keeping: `_advise_uncached` always
+    returns a well-formed dict, filling it from a heuristic fallback when no
+    provider answers. Nothing in that shape distinguishes "a model read this
+    resume" from "every provider was rate-limited", so a cache would happily
+    store one bad minute and serve it for a week — and the panel it feeds tells
+    the user they are reading a model's opinion.
+
+    The benefit it would buy is close to zero anyway: the result is persisted
+    per-resume in `Resume.adviceJson`, and the button that calls this is only
+    offered when that column is empty.
+    """
+    return _advise_uncached(resume_text)

@@ -7,6 +7,7 @@ import { requireUser, badRequest, serverError } from "@/lib/auth";
 import { runAgent, RESUME_DIR, type Report } from "@/lib/agent";
 import { formatLimit, limitsFor } from "@/lib/plans";
 import { reserve, refund } from "@/lib/quota";
+import { toJsonColumn, toJsonValue } from "@/lib/jsonColumn";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -129,7 +130,8 @@ export async function POST(req: Request) {
   }
 
   const ingested = await runAgent<{
-    text: string; chars: number; links: string[]; contact: Record<string, unknown>;
+    text: string; chars: number; truncated: boolean;
+    links: string[]; contact: Record<string, unknown>;
   }>("ingest", { path: dest });
 
   if (!ingested.ok) {
@@ -158,12 +160,13 @@ export async function POST(req: Request) {
       data: {
         text: text.slice(0, 60000),
         chars: ingested.chars ?? text.trim().length,
-        contactJson: JSON.stringify(ingested.contact ?? {}),
-        linksJson: JSON.stringify(ingested.links ?? []),
-        skillsJson: JSON.stringify(skills.ok ? skills.skills : []),
+        truncated: Boolean(ingested.truncated),
+        contactJson: toJsonColumn(ingested.contact ?? {}),
+        linksJson: toJsonColumn(ingested.links ?? []),
+        skillsJson: toJsonValue(skills.ok ? skills.skills : []),
         score: report?.score ?? null,
         grade: report?.grade ?? null,
-        reportJson: report ? JSON.stringify(report) : null,
+        reportJson: toJsonColumn(report),
         textHash: crypto.createHash("sha256").update(text).digest("hex"),
       },
     });
@@ -172,6 +175,22 @@ export async function POST(req: Request) {
     return serverError("We read your resume but could not save the result.");
   }
 
+  // The first point on this resume's history. Written after the row is saved,
+  // so a score that exists in the history is always one the resume actually
+  // carried.
+  if (report) {
+    await prisma.scoreEvent
+      .create({
+        data: {
+          resumeId: resume.id,
+          score: report.score,
+          grade: report.grade,
+          source: "upload",
+        },
+      })
+      .catch((e) => console.error("[resumes] score history write failed:", e));
+  }
+
   await audit(user.id, "resume_upload", resume.id, file.name);
-  return NextResponse.json({ ok: true, id: resume.id, report });
+  return NextResponse.json({ ok: true, id: resume.id, report, truncated: Boolean(ingested.truncated) });
 }

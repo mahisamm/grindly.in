@@ -98,10 +98,16 @@ def cmd_ingest(payload: dict) -> dict:
     except Exception as e:  # noqa: BLE001
         print(f"[cli] contact extraction failed: {e}", file=sys.stderr)
 
+    # `chars` counts the WHOLE document; `text` is capped. Those two disagreeing
+    # is the only signal that anything was dropped, and the caller should not
+    # have to rediscover the constant to work it out — a resume longer than the
+    # cap is scored, rewritten and fidelity-checked on a fragment, and the
+    # product has to be able to say so.
     return {
         "ok": True,
         "text": text[:MAX_TEXT],
         "chars": len(text.strip()),
+        "truncated": len(text) > MAX_TEXT,
         "links": links[:12],
         "contact": contact,
     }
@@ -236,10 +242,22 @@ def cmd_render(payload: dict) -> dict:
     import readiness
     import render_pdf
 
+    import resume_optimize
+
     struct = payload.get("struct")
     out = str(payload.get("out") or "")
     if not isinstance(struct, dict) or not out:
         return _fail("struct and out required")
+
+    # Sanitised before anything is printed. This used to be reachable only from
+    # our own pipeline, whose structs were already sanitised on the way out of
+    # the model; it is now also reachable from the editor, which means the shape
+    # arrives from a browser. _sanitize_struct is what turns "bullets" that came
+    # through as a plain string into a list — without it that string is iterated
+    # character by character and the PDF gets one bullet per letter.
+    struct = resume_optimize._sanitize_struct(struct)
+    if not struct or not struct.get("sections"):
+        return _fail("that structure has no content to render")
 
     result = render_pdf.render_fitted(struct, out)
     if not result.ok:
@@ -254,12 +272,120 @@ def cmd_render(payload: dict) -> dict:
     }
 
 
+
+def cmd_struct(payload: dict) -> dict:
+    """Read a resume into the editable structure the renderer prints.
+
+    Same extraction the rewrite pipeline runs on every batch, exposed on its own
+    so the web app can hand a user their resume as fields rather than as a wall
+    of extracted text. That is the difference between a tool that tells you what
+    is missing and one you can fix it in.
+
+    Costs model calls, so callers cache the result on the resume row rather than
+    asking again on every page load.
+    """
+    import resume_optimize
+
+    text = str(payload.get("text") or "")[:MAX_TEXT]
+    if len(text.strip()) < 200:
+        return _fail("too little text to read a structure from")
+
+    struct = resume_optimize._extract_struct(text)
+    if not struct:
+        return _fail("could not read a structure from this resume")
+
+    contact_fallback = str(payload.get("contact_fallback") or "").strip()
+    if contact_fallback and not str(struct.get("contact_line") or "").strip():
+        # The header line is read off the document locally at upload time and is
+        # more reliable than anything a model returns for it — a model asked for
+        # a phone number faithfully returns "[phone redacted]", because
+        # redact.py stripped it on the way out.
+        struct["contact_line"] = contact_fallback
+
+    return {"ok": True, "struct": struct}
+
+
+
+def cmd_export(payload: dict) -> dict:
+    """The same resume as .docx or as plain text.
+
+    docx comes back base64-encoded rather than written to a path, because unlike
+    a variant batch this is one small file produced on demand for an immediate
+    download — there is nothing to name it after and nothing to clean up.
+    """
+    import base64
+
+    import render_docx
+    import resume_optimize
+
+    struct = payload.get("struct")
+    if not isinstance(struct, dict):
+        return _fail("struct required")
+
+    struct = resume_optimize._sanitize_struct(struct)
+    if not struct or not struct.get("sections"):
+        return _fail("that structure has no content to export")
+
+    fmt = str(payload.get("format") or "docx").lower()
+    if fmt == "txt":
+        return {"ok": True, "format": "txt", "text": render_docx.build_text(struct)}
+    if fmt == "docx":
+        data = render_docx.build_docx(struct)
+        return {
+            "ok": True,
+            "format": "docx",
+            "bytes": len(data),
+            "base64": base64.b64encode(data).decode("ascii"),
+        }
+    return _fail(f"unknown format: {fmt}")
+
+
+
+def cmd_cover(payload: dict) -> dict:
+    """A cover letter, under the same rules as everything else here.
+
+    See cover_letter.py: the gates are stricter than the resume's, because a
+    cover letter is prose ABOUT the candidate rather than a rearrangement of
+    what they wrote, and the genre is built out of exactly the claims they
+    cannot defend.
+    """
+    import cover_letter
+
+    result = cover_letter.write(
+        str(payload.get("text") or "")[:MAX_TEXT],
+        company=str(payload.get("company") or "")[:120],
+        role=str(payload.get("role") or "")[:120],
+        requirements=_str_list(payload.get("requirements"), limit=20),
+    )
+
+    # A refusal is reported as a SUCCESSFUL call that produced no letter, the
+    # same shape `variants` uses for `aborted`. The distinction matters on the
+    # other side of the pipe: lib/agent.ts records every {ok:false} as an error
+    # event, and "the drafts all made claims the resume does not support" is a
+    # product outcome rather than a fault. Filing it as one would bury the real
+    # faults under it.
+    if result.get("ok"):
+        return {"ok": True, "refused": None, "letter": result["letter"],
+                "used": result.get("used") or []}
+    return {
+        "ok": True,
+        "refused": result.get("error") or "No letter could be produced.",
+        "problems": result.get("problems") or [],
+        "letter": "",
+        "used": [],
+    }
+
+
 def cmd_health(payload: dict) -> dict:
     """What this process can actually do, for /api/health and preflight."""
     import render_pdf
 
     checks = {"python": sys.version.split()[0], "renderer": render_pdf.renderer_available()}
-    for mod in ("pdfminer.high_level", "pypdf", "docx", "sklearn"):
+    # What this process needs to do its job. `sklearn` used to be on this list
+    # and was neither imported by anything nor installed after the pivot — a
+    # health check reporting on a package the product does not use is a health
+    # check nobody reads carefully.
+    for mod in ("pdfminer.high_level", "pypdf", "docx"):
         try:
             __import__(mod)
             checks[mod.split(".")[0]] = True
@@ -283,7 +409,10 @@ COMMANDS = {
     "companies": cmd_companies,
     "research": cmd_research,
     "variants": cmd_variants,
+    "struct": cmd_struct,
     "render": cmd_render,
+    "export": cmd_export,
+    "cover": cmd_cover,
     "health": cmd_health,
 }
 

@@ -14,17 +14,13 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@novnc/novnc": "^1.7.0",
     "@prisma/client": "^6.19.3",
     "@sentry/nextjs": "10.69.0",
-    "libphonenumber-js": "^1.13.7",
     "next": "16.2.12",
     "nodemailer": "^9.0.1",
     "prisma": "^6.19.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "three": "^0.160.0",
-    "twilio": "^6.0.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -34,7 +30,6 @@
     "@types/nodemailer": "^8.0.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@types/three": "^0.160.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
     "jsdom": "^29.1.1",

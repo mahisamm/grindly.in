@@ -5,6 +5,7 @@
 // and the options-object form made the common case read as
 // `audit("login", {userId: id, target: email})` — three quarters punctuation.
 import { prisma } from "./prisma";
+import { maybeSweepRetention } from "./retention";
 
 export async function audit(
   userId: string | null,
@@ -26,4 +27,9 @@ export async function audit(
   } catch (e) {
     console.error("[audit] write failed:", (e as Error).message);
   }
+
+  // Housekeeping hangs off the write that causes the growth. Not awaited: the
+  // caller is finishing a user's request and a retention sweep is nobody's
+  // business but the operator's.
+  maybeSweepRetention();
 }

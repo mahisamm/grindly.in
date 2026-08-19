@@ -65,8 +65,10 @@ export async function GET(req: Request, { params }: Ctx) {
       // three variants a trip through the file manager.
       "Content-Disposition": `${req.headers.get("x-download") ? "attachment" : "inline"}; filename="${download}"`,
       "Cache-Control": "private, no-store",
-      // A PDF is opened by a plugin in the same origin; stop it being framed
-      // and stop any sniffing games.
+      // No sniffing games. Framing policy is NOT set here — it is in
+      // next.config.ts, which allows this one route to be framed by us and by
+      // nobody (frame-ancestors 'self'), because the compare panel previews the
+      // document beside the score it earned.
       "X-Content-Type-Options": "nosniff",
     },
   });

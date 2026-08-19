@@ -53,6 +53,12 @@ export function llmProviders(): string[] {
       ["GEMINI_API_KEY", "gemini"],
       ["CEREBRAS_API_KEY", "cerebras"],
       ["MISTRAL_API_KEY", "mistral"],
+      // The optional paid fallback (agent/llm.py). It belongs in this list for
+      // one specific reason: a deployment configured with ONLY this key is
+      // fully able to rewrite, and without the entry the admin page and the
+      // health check would both report "disabled (no LLM key)" on a box that
+      // works.
+      ["ANTHROPIC_API_KEY", "anthropic (paid)"],
     ] as const
   )
     .filter(([key]) => env(key))

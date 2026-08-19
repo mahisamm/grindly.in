@@ -22,6 +22,88 @@ datasource db {
 }
 
 // ---------------------------------------------------------------------------
+// closed vocabularies
+// ---------------------------------------------------------------------------
+//
+// These were `String` columns with the legal values written in a comment beside
+// them. A comment does not stop a typo, and the typo that matters here is not a
+// crash: `plan = "Pass"` reads as an unknown plan, `limitsFor` falls through to
+// the free tier, and a paying customer is quietly capped at two resumes with no
+// error anywhere. Postgres refuses the write instead.
+//
+// Deliberately NOT enums: `Variant.label` (strategy names come from Python and
+// change with the pipeline), `AuditLog.action` (an append-only log should never
+// reject a new kind of event), `ErrorEvent.kind`.
+
+/// What a user has bought. `admin` is not here on purpose — it is derived from
+/// `role` at read time by lib/plans.ts and must never be a purchasable state.
+enum Plan {
+  free
+  pack
+  pass
+}
+
+enum Role {
+  user
+  admin
+}
+
+enum OrderStatus {
+  created
+  paid
+  failed
+  refunded
+}
+
+/// The two things that can be bought. Mirrors PRODUCTS in lib/plans.ts.
+enum Sku {
+  pass90
+  pack1
+}
+
+/// What a set of variants was aimed at. `notes` is the user's own hearsay about
+/// an employer, kept apart from `company` precisely so the UI can label it as
+/// theirs rather than as something we checked.
+enum TargetKind {
+  company
+  jd
+  notes
+}
+
+/// Where a rewrite batch got to.
+///
+/// `empty` is a success, not a failure: the rewrites ran and none of them beat
+/// the user's own resume, which is a real and good answer. Conflating it with
+/// `failed` would tell someone their resume is broken when what happened is
+/// that it is already good.
+enum RunStatus {
+  running
+  done
+  empty
+  failed
+  cancelled
+}
+
+/// Where an application got to. Set by the user, never inferred — Grindly does
+/// not talk to any job board and will not pretend to know.
+enum ApplicationStatus {
+  sent
+  screening
+  interview
+  offer
+  rejected
+  withdrawn
+}
+
+/// Why a score was recorded, for the history on a resume.
+enum ScoreSource {
+  upload
+  rescore
+  variant
+  edit
+}
+
+// ---------------------------------------------------------------------------
 // identity
 // ---------------------------------------------------------------------------
 
@@ -40,24 +122,41 @@ model User {
   // how you earn a chargeback and a bad review from a satisfied customer.
   // A pass has an expiry; when it passes, the user drops to free and keeps
   // everything they already made.
-  plan          String    @default("free")
+  plan          Plan      @default(free)
   planExpiresAt DateTime? @map("plan_expires_at")
 
-  role         String @default("user") // user | admin
+  role         Role   @default(user)
   // Session revocation counter, embedded in the signed cookie. Logout and any
   // credential change increment it, so an already-issued cookie stops working
   // immediately — a stateless HMAC cannot otherwise be revoked.
   tokenVersion Int    @default(0) @map("token_version")
 
+  /// When this address was proven to belong to whoever holds the account.
+  ///
+  /// Null is the ordinary state for an account that has not clicked the link
+  /// yet, and it does NOT gate signing in — a resume tool that locks people out
+  /// of the product they just signed up for until they check their inbox loses
+  /// more users than it protects. What it gates is anything that trusts the
+  /// address to reach a person: a password reset to a typo'd address is an
+  /// account nobody can recover.
+  emailVerifiedAt DateTime? @map("email_verified_at")
+
+  /// IANA zone, captured from the browser at sign-in. Daily quotas are counted
+  /// in the user's own day — see lib/quota.ts — and before this column existed
+  /// every account was counted in Asia/Kolkata regardless of where they were,
+  /// while the refusal message told them the window resets at midnight in their
+  /// timezone. Null means we have not been told yet and the default applies.
+  timezone  String?
   createdAt DateTime  @default(now()) @map("created_at")
   deletedAt DateTime? @map("deleted_at")
 
-  resumes     Resume[]
-  targets     Target[]
-  orders      Order[]
-  auditLogs   AuditLog[]
-  usage       DailyUsage[]
-  resetTokens PasswordResetToken[]
+  resumes      Resume[]
+  targets      Target[]
+  orders       Order[]
+  auditLogs    AuditLog[]
+  usage        DailyUsage[]
+  resetTokens  PasswordResetToken[]
+  emailTokens  EmailVerificationToken[]
 
   @@index([plan])
   @@map("users")
@@ -84,6 +183,34 @@ model PasswordResetToken {
   @@map("password_reset_tokens")
 }
 
+/// Proof that someone can read mail at an address.
+///
+/// Same shape as PasswordResetToken and for the same reason — only the hash is
+/// stored, so a leaked backup is not a set of keys — with one addition that
+/// carries the whole design of the email-change flow.
+///
+/// `email` is the address being PROVEN, which for a change is the new one and
+/// is deliberately not yet on the user row. Writing the new address first and
+/// verifying afterwards means a typo, or an attacker with a borrowed session,
+/// moves the account's identity to somewhere nobody can sign in from. The user
+/// row changes only when the link is clicked, and until then the old address
+/// still works.
+model EmailVerificationToken {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash String    @unique @map("token_hash")
+  email     String
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_verification_tokens")
+}
+
 // ---------------------------------------------------------------------------
 // the evidence ledger
 // ---------------------------------------------------------------------------
@@ -104,41 +231,150 @@ model Resume {
   ext          String? // ".pdf" | ".docx" | ".txt" — null for built-from-scratch
   text         String  @default("")
   chars        Int     @default(0)
+  /// True when the extracted text hit the 60 000-character ceiling and the tail
+  /// was dropped. Everything downstream — the score, the rewrite, the fidelity
+  /// count — then describes a fragment of the document, and the report says so
+  /// rather than presenting a partial reading as a complete one.
+  truncated    Boolean @default(false)
 
   /// JSON. Name, email, phone, GPA, marks — read off the header locally, never
   /// from a model, because the LLM boundary redacts PII on the way out and a
   /// model asked for the phone number faithfully returns "[phone redacted]".
-  contactJson String? @map("contact_json")
+  contactJson Json?   @map("contact_json")
   /// JSON array of URLs found in the PDF's link annotations. A resume that
   /// shows the word "LinkedIn" behind a hyperlink has an address no text
   /// extractor will ever see, and four real application forms asked for it.
-  linksJson   String? @map("links_json")
+  linksJson   Json?   @map("links_json")
   /// JSON array of the candidate's own skills. This is the allow-list every
   /// rewrite is checked against, so it is a claim of theirs, never ours.
-  skillsJson  String  @default("[]") @map("skills_json")
+  skillsJson  Json    @default("[]") @map("skills_json")
 
   /// Last untargeted readiness score. Denormalised out of reportJson so the
   /// list page can sort and show it without parsing a blob per row.
   score      Int?
   grade      String?
   /// JSON: the full readiness report — bands, findings, facts.
-  reportJson String? @map("report_json")
+  reportJson Json?   @map("report_json")
   /// JSON: prose advice from the model. Separate column because it is optional,
   /// costs an LLM call, and must never be confused with the score.
-  adviceJson String? @map("advice_json")
+  adviceJson Json?   @map("advice_json")
 
   /// sha256 of `text`. A re-score is skipped when this has not changed, which
   /// is what stops the advice call re-running on every page load.
   textHash String? @map("text_hash")
 
+  /// The resume as editable fields: {name, contact_line, sections[{heading,
+  /// items[{head, sub, bullets[]}]}]} — the exact shape render_pdf prints.
+  ///
+  /// Extracted by the same code every rewrite already ran, cached here because
+  /// it costs model calls and the editor would otherwise pay for it on every
+  /// page load. It is also what turns the product from one that tells you what
+  /// is missing into one you can fix it in: the report says a bullet has no
+  /// outcome, and this is the field you type the outcome into.
+  ///
+  /// Null means nobody has opened the editor for this resume yet.
+  structJson Json? @map("struct_json")
+
+  /// A random token that makes the readiness report readable without an
+  /// account, at /r/<token>.
+  ///
+  /// The report — not the resume, not the PDFs, not the contact details. What a
+  /// share link exposes is the measurement and the findings, which is the part
+  /// worth showing a senior who offered to look over your CV, and the part that
+  /// contains nothing an employer could use to identify you.
+  ///
+  /// Null is the default and revoking sets it back to null, so a link that has
+  /// been shared with the wrong person stops working rather than being merely
+  /// hard to guess.
+  shareToken String? @unique @map("share_token")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  variants Variant[]
-  targets  Target[]
+  variants     Variant[]
+  targets      Target[]
+  scores       ScoreEvent[]
+  runs         VariantRun[]
+  applications Application[]
 
   @@index([userId, createdAt])
   @@map("resumes")
+}
+
+/// Every score this resume has ever been given, in order.
+///
+/// `Resume.score` is the latest one and nothing else — it is overwritten on
+/// every re-read, so the question a user most wants answered ("did the thing I
+/// changed help?") had no data behind it at all. The product measures a document
+/// on a fixed ruler; a ruler with no history can tell you where you are and
+/// never that you are moving.
+///
+/// Append-only. Nothing updates a row here, and a delete only happens with the
+/// resume it belongs to.
+model ScoreEvent {
+  id       String @id @default(cuid())
+  resumeId String @map("resume_id")
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  score  Int
+  grade  String
+  source ScoreSource
+
+  /// The variant this score came from, when it came from one. Deliberately not
+  /// a relation: a variant is superseded and deleted on every re-run, and the
+  /// history of what was measured must outlive the document that was measured.
+  variantLabel String? @map("variant_label")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([resumeId, createdAt])
+  @@map("score_events")
+}
+
+/// One rewrite batch, from the button press to the documents.
+///
+/// A batch is several model calls plus up to four headless Chromium renders —
+/// minutes, not seconds. It used to run inside the POST that started it, which
+/// meant the browser held a request open for the whole thing and the work
+/// existed nowhere else. Close the tab, lose the connection, or let a phone
+/// sleep, and the server finished the job and wrote the rows while the person
+/// who asked for it saw nothing and had no way to find out.
+///
+/// The row is the fix. The POST creates it and returns immediately; the work
+/// runs after the response and reports its progress here; the page polls it and
+/// finds it again on a cold load. What the user waited for is now a thing that
+/// exists rather than a connection that has to be held.
+model VariantRun {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+
+  resumeId String @map("resume_id")
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  /// Null for the untargeted "just make this better" run. Not a relation: a
+  /// target can be deleted while a run that referenced it is still worth
+  /// reading, and a failed run's history should not vanish with it.
+  targetId   String? @map("target_id")
+  targetName String  @default("") @map("target_name")
+
+  status RunStatus @default(running)
+  /// What it is doing right now, in the user's words rather than the
+  /// pipeline's — "Rendering the second rebuild", not "[optimize] variant 2/3".
+  stage  String    @default("Starting")
+  /// Why it stopped, when it stopped badly. Shown to the user, so it is a
+  /// sentence rather than a stack.
+  error  String?
+
+  /// How many rewrites were kept. Zero with status `empty` is the honest
+  /// "nothing beat your resume" outcome.
+  variantsMade Int @default(0) @map("variants_made")
+
+  startedAt  DateTime  @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+
+  @@index([resumeId, startedAt])
+  @@index([status])
+  @@map("variant_runs")
 }
 
 /// What a set of variants was aimed at: a curated company pack, or a pasted
@@ -151,7 +387,7 @@ model Target {
   resumeId String @map("resume_id")
   resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
 
-  kind String // company | jd
+  kind TargetKind
   /// companies.py slug, for kind=company.
   slug String?
   /// Display name — the company, or the title parsed out of the JD.
@@ -162,7 +398,7 @@ model Target {
   /// re-parsing it is free while re-asking them for it is not.
   jdText   String? @map("jd_text")
   /// JSON: parsed requirements — must_have, nice_to_have, skills.
-  specJson String? @map("spec_json")
+  specJson Json?   @map("spec_json")
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -191,12 +427,12 @@ model Variant {
   pages         Int?
 
   /// JSON array of plain-English changes, shown to the user instead of a diff.
-  changesJson  String? @map("changes_json")
+  changesJson  Json?   @map("changes_json")
   /// JSON: the full readiness report for THIS variant.
-  reportJson   String? @map("report_json")
+  reportJson   Json?   @map("report_json")
   /// JSON: {total, recovered, lost[], pct} — how much of what we printed
   /// survived being read back out of the PDF. The headline claim.
-  fidelityJson String? @map("fidelity_json")
+  fidelityJson Json?   @map("fidelity_json")
 
   /// Filename under data/variants/<resumeId>/. Not the bytes: a three-variant
   /// batch is ~300 KB and the web app already shares this filesystem.
@@ -208,6 +444,43 @@ model Variant {
   @@index([resumeId, createdAt])
   @@index([targetId])
   @@map("variants")
+}
+
+/// Where you sent this resume, and what happened.
+///
+/// Grindly does not submit anything and does not read anyone's inbox: bulk
+/// submission through job boards breaks their terms and gets user accounts
+/// banned, and that decision is the reason this product exists in its current
+/// shape. So every row here is typed by the person who sent the application.
+///
+/// It earns its place by answering the one question a spreadsheet is usually
+/// keeping: which VERSION of my resume did I send them? That is a join this
+/// database can make and a spreadsheet cannot, and it is the difference between
+/// "I applied to 40 places" and "the tailored version got three replies out of
+/// nine and the generic one got none out of thirty-one".
+model Application {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+
+  resumeId String @map("resume_id")
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  /// Which document went out. Deliberately not a relation: a variant is
+  /// superseded and deleted on the next rebuild, and the record of what you
+  /// sent must outlive the file. The label is what a person recognises anyway.
+  variantLabel String? @map("variant_label")
+
+  company String
+  role    String            @default("")
+  status  ApplicationStatus @default(sent)
+  notes   String?
+
+  appliedAt DateTime  @default(now()) @map("applied_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId, appliedAt])
+  @@index([resumeId])
+  @@map("applications")
 }
 
 // ---------------------------------------------------------------------------
@@ -223,10 +496,10 @@ model Order {
 
   /// pass90 | pack1 — see lib/plans.ts. The product bought is recorded on the
   /// order at creation, not read from the client at confirmation time.
-  sku      String
+  sku      Sku
   amount   Int // in the smallest unit (paise / cents)
-  currency String @default("INR")
-  status   String @default("created") // created | paid | failed | refunded
+  currency String      @default("INR")
+  status   OrderStatus @default(created)
 
   providerOrderId String? @unique @map("provider_order_id")
   /// Unique, so one captured payment can only ever settle one order. Without
@@ -239,6 +512,9 @@ model Order {
   paidAt    DateTime? @map("paid_at")
 
   @@index([userId, createdAt])
+  /// The admin page sums every paid order on load. Without this that is a
+  /// sequential scan of the table, growing with revenue.
+  @@index([status])
   @@map("orders")
 }
 
@@ -258,6 +534,9 @@ model AuditLog {
 
   @@index([userId])
   @@index([action])
+  /// Both the retention sweep and every "what happened around 3pm" question
+  /// filter on time. This is also the index the sweep's DELETE uses.
+  @@index([createdAt])
   @@map("audit_logs")
 }
 
@@ -279,7 +558,7 @@ model RateLimitEntry {
 model ErrorEvent {
   id          String  @id @default(cuid())
   fingerprint String  @unique
-  source      String // web | agent
+  source      String // web | agent | browser — see lib/errors.ts
   kind        String
   message     String
   stack       String?

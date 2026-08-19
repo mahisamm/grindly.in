@@ -23,6 +23,17 @@
 export type PlanId = "free" | "pack" | "pass" | "admin";
 
 /**
+ * What a payment can actually grant.
+ *
+ * `Product.grants` used to be `Exclude<PlanId, "free">`, which includes "admin"
+ * — a tier that is granted by a role on the user row and is deliberately not
+ * reachable by paying. Nothing ever set it, but the type said a product could,
+ * and the compiler had to be told otherwise the moment `User.plan` became an
+ * enum that does not contain it. The narrower type is the true one.
+ */
+export type PurchasablePlan = Extract<PlanId, "pack" | "pass">;
+
+/**
  * The stand-in for "no cap".
  *
  * A real number rather than `Infinity`, because these values are counted
@@ -113,7 +124,7 @@ export type Product = {
   amount: number;
   currency: "INR";
   /** Which tier this grants. Written on the product, not assumed at confirm time. */
-  grants: Exclude<PlanId, "free">;
+  grants: PurchasablePlan;
   days: number;
   blurb: string;
 };

@@ -214,7 +214,7 @@ def _verdict(data: dict, name: str) -> dict:
     }
 
 
-def research(name: str, role_hint: str = "") -> dict:
+def _research_uncached(name: str, role_hint: str = "") -> dict:
     """What we can honestly say about tailoring a resume to `name`.
 
     Always returns a dict with `tailoring` set to one of "curated",
@@ -301,3 +301,43 @@ def research(name: str, role_hint: str = "") -> dict:
         "emphasis": [], "keywords": [], "summary": "", "confidence": 0.0,
         "disclaimer": companies.DISCLAIMER,
     }
+
+
+def research(name: str, role_hint: str = "") -> dict:
+    """Look a company up, reusing an identical lookup from the last week.
+
+    The highest-hit-rate call in the product: the same fifty or so employers are
+    typed by everyone, and the answer does not change between Tuesday and
+    Thursday.
+
+    ONLY A GENERATED PACK WITH CONTENT IS CACHED, and the two exclusions are
+    both about not caching a bad day:
+
+      * `not_required` is the correct answer for most employers AND the answer
+        an outage produces — `_research_uncached` says so itself: "no model
+        configured, every provider failed, or every answer was a guess" all
+        return it. Right for the user in the moment, wrong to keep. It is also
+        the cheap branch, so recomputing costs little.
+      * `curated` is read from companies.py on disk, costs nothing, and editing
+        a pack should reach every user on the next request rather than in a
+        week.
+    """
+    import llm_cache
+
+    typed = str(name or "").strip()
+    if not typed:
+        return _research_uncached(name, role_hint)
+
+    cache_key = llm_cache.key("research", typed.lower(), role_hint)
+    hit = llm_cache.get(cache_key)
+    if hit is not None:
+        return hit
+
+    answer = _research_uncached(name, role_hint)
+    if (
+        isinstance(answer, dict)
+        and answer.get("tailoring") == "generated"
+        and (answer.get("keywords") or answer.get("emphasis"))
+    ):
+        llm_cache.put(cache_key, answer)
+    return answer

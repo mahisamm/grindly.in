@@ -1,13 +1,17 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { requireUser, notFound, serverError, badRequest } from "@/lib/auth";
 import { runAgent, VARIANT_DIR, type Report, type Fidelity } from "@/lib/agent";
+import { readContact, readStrings, readTargetSpec } from "@/lib/reportTypes";
+import { toJsonColumn } from "@/lib/jsonColumn";
 import { reserve, refund } from "@/lib/quota";
 import { formatLimit, limitsFor } from "@/lib/plans";
 import { audit } from "@/lib/audit";
+import { report } from "@/lib/errors";
+import { activeRun, holdRun, releaseRun } from "@/lib/variantRuns";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,6 +77,25 @@ export async function POST(req: Request, { params }: Ctx) {
     // No body is valid — that is the untargeted run.
   }
 
+  // One batch at a time per resume.
+  //
+  // Two concurrent runs against the same resume both spend quota, both render
+  // to Chromium on a one-vCPU box, and then race to supersede each other's
+  // rows — so the user is charged twice and shown whichever finished last. It
+  // is also what a double-click produces, which is the common case rather than
+  // the adversarial one.
+  const running = await activeRun(resume.id);
+  if (running) {
+    return NextResponse.json(
+      {
+        error: "This resume is already being rebuilt. Wait for that to finish.",
+        code: "already_running",
+        runId: running.id,
+      },
+      { status: 409 },
+    );
+  }
+
   // Quota BEFORE the target is created. The other order committed a Target row
   // and then 429'd — so a free user (1 target per resume) who had already used
   // their daily runs permanently burned their only target slot on a request
@@ -96,63 +119,215 @@ export async function POST(req: Request, { params }: Ctx) {
   // labelled with the old strategy, old score and old fidelity report — opening
   // the NEW run's document. A user downloading a resume that is not the one
   // they were shown is the worst failure this product can have.
-  const runId = crypto.randomUUID();
-  const outDir = path.join(VARIANT_DIR, resume.id, runId);
-  const skills = parseArray(resume.skillsJson);
-  const contact = (safeParse(resume.contactJson) ?? {}) as Record<string, unknown>;
+  const runDir = crypto.randomUUID();
 
-  const result = await runAgent<{
-    variants: AgentVariant[];
-    baseline: number;
-    reasons: string[];
-    floor: number;
-    meets_floor: boolean;
-    floor_gap: string;
-    aborted: string | null;
-  }>("variants", {
-    text: resume.text,
-    skills,
-    out_dir: outDir,
-    contact_fallback: typeof contact.contact_line === "string" ? contact.contact_line : "",
-    target_keywords: target.keywords,
-    emphasis: target.emphasis,
-    target_name: target.name,
-    // Link annotations off the uploaded PDF. A LinkedIn address hidden behind
-    // the word "LinkedIn" is invisible to every text extractor, so the rebuild
-    // prints it out — see _merge_profile_links in resume_optimize.py.
-    links: parseArray(resume.linksJson),
+  const run = await prisma.variantRun.create({
+    data: {
+      userId: user.id,
+      resumeId: resume.id,
+      targetId: target.id,
+      targetName: target.name,
+      stage: "Starting",
+    },
+    select: { id: true, startedAt: true },
   });
 
-  if (!result.ok) {
+  // The check above has a window: two requests can both read "nothing running"
+  // before either has inserted a row, and then both spend a quota unit, both
+  // render on a one-vCPU box, and race to supersede each other's variants — so
+  // the user is charged twice and shown whichever finished last. A double click
+  // is exactly how that happens.
+  //
+  // Closed by checking AFTER the insert instead of only before it: whoever
+  // started first wins, and anyone who finds an older running row stands down.
+  // The comparison is on `startedAt` with the id breaking ties, so both sides
+  // of a genuine tie reach the same verdict and exactly one survives.
+  const rival = await prisma.variantRun.findFirst({
+    where: { resumeId: resume.id, status: "running", id: { not: run.id } },
+    orderBy: [{ startedAt: "asc" }, { id: "asc" }],
+    select: { id: true, startedAt: true },
+  });
+  const lost =
+    rival &&
+    (rival.startedAt < run.startedAt ||
+      (rival.startedAt.getTime() === run.startedAt.getTime() && rival.id < run.id));
+  if (lost) {
+    await prisma.variantRun
+      .update({
+        where: { id: run.id },
+        data: { status: "cancelled", stage: "Superseded", finishedAt: new Date() },
+      })
+      .catch(() => null);
     await refund(user.id, "variantRuns");
-    return serverError(result.error);
+    return NextResponse.json(
+      {
+        error: "This resume is already being rebuilt. Wait for that to finish.",
+        code: "already_running",
+        runId: rival.id,
+      },
+      { status: 409 },
+    );
+  }
+
+  // The work runs AFTER this response.
+  //
+  // `after` keeps it inside the route's maxDuration budget while letting the
+  // browser go, and that is the whole point. A batch is minutes long, and it
+  // used to run inside this request: the work existed only as an open HTTP
+  // connection, so closing the tab or letting a phone sleep meant the server
+  // finished the job, wrote the rows and spent the quota while the person who
+  // asked for it saw a spinner vanish and had no way to find out it had worked.
+  after(async () => {
+    await executeRun({
+      runId: run.id,
+      runDir,
+      userId: user.id,
+      resume,
+      target,
+    });
+  });
+
+  return NextResponse.json(
+    {
+      ok: true,
+      runId: run.id,
+      targetId: target.id,
+      message: "Rebuilding. This takes a minute or two — you can leave this page.",
+    },
+    { status: 202 },
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * The batch itself: build, measure, persist, and record how it went.
+ *
+ * Nothing here throws to a caller, because there is no caller left — the
+ * response went out before this started. Every exit updates the run row
+ * instead, since a row stuck on `running` is a spinner that never stops for
+ * whoever is watching it. The one case this cannot cover is the process dying
+ * mid-run, which is what reapStaleRuns exists for.
+ */
+async function executeRun({
+  runId,
+  runDir,
+  userId,
+  resume,
+  target,
+}: {
+  runId: string;
+  runDir: string;
+  userId: string;
+  resume: {
+    id: string;
+    text: string;
+    skillsJson: unknown;
+    contactJson: unknown;
+    linksJson: unknown;
+  };
+  target: ResolvedTarget;
+}): Promise<void> {
+  const outDir = path.join(VARIANT_DIR, resume.id, runDir);
+  const skills = readStrings(resume.skillsJson);
+  const contact = readContact(resume.contactJson);
+
+  // Not awaited by the pipeline: a progress label is worth nothing if writing
+  // it can slow down or fail the work it describes.
+  const setStage = (stage: string) => {
+    void prisma.variantRun.update({ where: { id: runId }, data: { stage } }).catch(() => null);
+  };
+
+  const finish = async (data: {
+    status: "done" | "empty" | "failed" | "cancelled";
+    stage: string;
+    error?: string | null;
+    variantsMade?: number;
+  }) => {
+    releaseRun(runId);
+    await prisma.variantRun
+      .update({
+        where: { id: runId },
+        data: {
+          status: data.status,
+          stage: data.stage,
+          error: data.error ?? null,
+          variantsMade: data.variantsMade ?? 0,
+          finishedAt: new Date(),
+        },
+      })
+      .catch((e) => console.error("[variants] could not close run:", (e as Error).message));
+  };
+
+  let result;
+  try {
+    result = await runAgent<{
+      variants: AgentVariant[];
+      baseline: number;
+      reasons: string[];
+      floor: number;
+      meets_floor: boolean;
+      floor_gap: string;
+      aborted: string | null;
+    }>(
+      "variants",
+      {
+        text: resume.text,
+        skills,
+        out_dir: outDir,
+        contact_fallback: contact.contact_line ?? "",
+        target_keywords: target.keywords,
+        emphasis: target.emphasis,
+        target_name: target.name,
+        // Link annotations off the uploaded PDF. A LinkedIn address hidden
+        // behind the word "LinkedIn" is invisible to every text extractor, so
+        // the rebuild prints it out — see _merge_profile_links.
+        links: readStrings(resume.linksJson),
+      },
+      {
+        onProgress: setStage,
+        onStart: (kill) => holdRun(runId, kill),
+      },
+    );
+  } catch (e) {
+    // runAgent is documented never to throw, and this is here anyway: an
+    // exception escaping an `after` callback is an unhandled rejection with
+    // nobody left to catch it, and the row would sit on `running` until the
+    // reaper found it ten minutes later.
+    await refund(userId, "variantRuns");
+    await finish({
+      status: "failed",
+      stage: "Stopped",
+      error: "Something went wrong on our side. You have not been charged for this.",
+    });
+    report({ source: "web", kind: "run-crashed", message: String(e), context: `run:${runId}` });
+    return;
+  }
+
+  if (!result.ok) {
+    await refund(userId, "variantRuns");
+    await finish({ status: "failed", stage: "Stopped", error: result.error });
+    return;
   }
 
   if (result.aborted) {
     // Our side failed, or the input could not be worked with. Either way the
     // user did not get anything, so they are not charged for it.
-    await refund(user.id, "variantRuns");
-    return NextResponse.json(
-      { ok: false, aborted: result.aborted, reasons: result.reasons, error: abortMessage(result.aborted) },
-      { status: 422 },
-    );
+    await refund(userId, "variantRuns");
+    await finish({ status: "failed", stage: "Stopped", error: abortMessage(result.aborted) });
+    return;
   }
 
   if (!result.variants.length) {
-    // This is a real, valid outcome — the rewrites ran and none beat the master.
-    // It is NOT a failure, and it is not charged for either: the user pressed a
-    // button and received no document.
-    await refund(user.id, "variantRuns");
-    return NextResponse.json({
-      ok: true,
-      variants: [],
-      baseline: result.baseline,
-      reasons: result.reasons,
-      message:
-        "None of the rewrites scored higher than your current resume, so there is " +
-        "nothing here worth swapping to. That is a good sign.",
-    });
+    // A real and valid outcome: the rewrites ran and none beat the master. NOT
+    // a failure, and not charged for either — a button was pressed and no
+    // document came back.
+    await refund(userId, "variantRuns");
+    await finish({ status: "empty", stage: "Nothing beat your resume", variantsMade: 0 });
+    return;
   }
+
+  setStage("Saving");
 
   // Replace, don't accumulate. A second run against the same target supersedes
   // the first: the user pressed the button again because they wanted a new
@@ -163,15 +338,15 @@ export async function POST(req: Request, { params }: Ctx) {
     select: { id: true, file: true },
   });
   if (superseded.length) {
-    await prisma.variant.deleteMany({
-      where: { id: { in: superseded.map((v) => v.id) } },
-    }).catch((e) => console.error("[variants] supersede failed:", e));
+    await prisma.variant
+      .deleteMany({ where: { id: { in: superseded.map((v) => v.id) } } })
+      .catch((e) => console.error("[variants] supersede failed:", e));
     for (const old of superseded) {
       const dir = path.dirname(old.file);
       if (dir && dir !== ".") {
-        await fsp.rm(path.join(VARIANT_DIR, resume.id, dir), {
-          recursive: true, force: true,
-        }).catch(() => {});
+        await fsp
+          .rm(path.join(VARIANT_DIR, resume.id, dir), { recursive: true, force: true })
+          .catch(() => {});
       }
     }
   }
@@ -190,38 +365,54 @@ export async function POST(req: Request, { params }: Ctx) {
             baselineScore: v.baseline_score,
             beatsBaseline: Boolean(v.beats_baseline),
             pages: v.pages ?? null,
-            changesJson: JSON.stringify(v.changes ?? []),
-            reportJson: JSON.stringify(v.report ?? null),
-            fidelityJson: JSON.stringify(v.fidelity ?? null),
+            changesJson: toJsonColumn(v.changes ?? []),
+            reportJson: toJsonColumn(v.report),
+            fidelityJson: toJsonColumn(v.fidelity),
             // Run-scoped, so this row can only ever resolve to its own document.
-            file: `${runId}/${v.file}`,
+            file: `${runDir}/${v.file}`,
             bytes: v.bytes ?? 0,
           },
         }),
       ),
     );
   } catch (e) {
-    console.error("[variants] persist failed:", e);
-    return serverError("We built the rewrites but could not save them.");
+    // The documents are on disk but nothing points at them. Charging for a
+    // batch the user cannot reach would be charging for our own bug.
+    await refund(userId, "variantRuns");
+    await finish({
+      status: "failed",
+      stage: "Stopped",
+      error: "We built the rewrites but could not save them. You have not been charged.",
+    });
+    report({
+      source: "web",
+      kind: "variants-persist-failed",
+      message: String(e),
+      context: `run:${runId}`,
+    });
+    return;
   }
 
-  await audit(user.id, "variants", resume.id, target.name || "untargeted");
-  return NextResponse.json({
-    ok: true,
-    baseline: result.baseline,
-    reasons: result.reasons,
-    targetId: target.id,
-    floor: result.floor,
-    meetsFloor: result.meets_floor,
-    floorGap: result.floor_gap,
-    variants: created.map((v, i) => ({
-      ...v,
-      changes: result.variants[i]?.changes ?? [],
-      report: result.variants[i]?.report ?? null,
-      fidelity: result.variants[i]?.fidelity ?? null,
-      meetsFloor: result.variants[i]?.meets_floor ?? true,
-      floorGap: result.variants[i]?.floor_gap ?? "",
-    })),
+  // One history point per rebuild that was kept. `variantLabel` rather than a
+  // relation on purpose: a variant is superseded and deleted on the next run,
+  // and the record of what was measured has to outlive the document.
+  await prisma.scoreEvent
+    .createMany({
+      data: created.map((v) => ({
+        resumeId: resume.id,
+        score: v.score,
+        grade: v.grade,
+        source: "variant" as const,
+        variantLabel: v.label,
+      })),
+    })
+    .catch((e) => console.error("[variants] score history write failed:", e));
+
+  await audit(userId, "variants", resume.id, target.name || "untargeted");
+  await finish({
+    status: "done",
+    stage: `${created.length} rebuild${created.length === 1 ? "" : "s"} ready`,
+    variantsMade: created.length,
   });
 }
 
@@ -299,7 +490,7 @@ async function resolveTarget(
       data: {
         userId, resumeId, kind: "company",
         slug: body.company, name: pack.pack.name,
-        specJson: JSON.stringify({ skills: pack.pack.keywords }),
+        specJson: toJsonColumn({ skills: pack.pack.keywords }),
       },
     });
     return {
@@ -334,7 +525,7 @@ async function resolveTarget(
       data: {
         userId, resumeId, kind: "notes", name: name.slice(0, 120),
         jdText: notesText,
-        specJson: JSON.stringify({ skills: parsed.spec.skills ?? [], source: "user" }),
+        specJson: toJsonColumn({ skills: parsed.spec.skills ?? [], source: "user" }),
       },
     });
     return {
@@ -378,7 +569,7 @@ async function resolveTarget(
         // re-read it from later.
         slug: found.slug ?? null,
         name: found.name.slice(0, 120),
-        specJson: JSON.stringify({
+        specJson: toJsonColumn({
           skills: found.keywords ?? [],
           emphasis: found.slug ? [] : (found.emphasis ?? []),
           tailoring: found.tailoring,
@@ -401,27 +592,27 @@ async function resolveTarget(
   const created = await prisma.target.create({
     data: {
       userId, resumeId, kind: "jd", name: name.slice(0, 120),
-      jdText: jd, specJson: JSON.stringify(parsed.spec),
+      jdText: jd, specJson: toJsonColumn(parsed.spec),
     },
   });
   return { id: created.id, name, keywords: parsed.spec.skills ?? [], emphasis: [] };
 }
 
 async function targetToResolved(t: {
-  id: string; name: string; kind: string; slug: string | null; specJson: string | null;
+  id: string; name: string; kind: string; slug: string | null; specJson: unknown;
 }): Promise<ResolvedTarget> {
-  const spec = (safeParse(t.specJson) ?? {}) as { skills?: string[]; emphasis?: string[] };
+  const spec = readTargetSpec(t.specJson);
   // A curated pack is re-read from `companies.py` every time, so editing a pack
   // and deploying updates every target pointing at it. A generated one has no
   // pack to re-read, so its emphasis was stored on the target — and is used
   // verbatim rather than re-generated, because re-running the model on every
   // rebuild would silently change what a saved target means.
-  let emphasis: string[] = Array.isArray(spec.emphasis) ? spec.emphasis : [];
+  let emphasis: string[] = spec?.emphasis ?? [];
   if (t.kind === "company" && t.slug) {
     const pack = await runAgent<{ pack: { emphasis: string[] } }>("companies", { slug: t.slug });
     if (pack.ok) emphasis = pack.pack.emphasis ?? [];
   }
-  return { id: t.id, name: t.name, keywords: spec.skills ?? [], emphasis };
+  return { id: t.id, name: t.name, keywords: spec?.skills ?? [], emphasis };
 }
 
 function abortMessage(code: string): string {
@@ -434,19 +625,5 @@ function abortMessage(code: string): string {
       return "We could not read a clear structure out of this resume. Try uploading the original PDF rather than a scan.";
     default:
       return "The rewrite could not be completed.";
-  }
-}
-
-function parseArray(value: string | null): string[] {
-  const parsed = safeParse(value);
-  return Array.isArray(parsed) ? parsed.map(String) : [];
-}
-
-function safeParse(value: string | null): unknown {
-  if (!value) return null;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
   }
 }

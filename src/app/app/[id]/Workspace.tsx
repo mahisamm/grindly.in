@@ -1,13 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
   Advice, CompanyPack, CompanyResearch, Fidelity, Report,
 } from "@/lib/reportTypes";
 import { SHIPPABLE_FLOOR } from "@/lib/reportTypes";
 import { isUnlimited } from "@/lib/plans";
 import { FidelityLine, Findings, ReportPanel, ScoreDial } from "@/components/Score";
+import { RunBanner, useRunStatus } from "./RunProgress";
+import { Compare } from "./Compare";
+import { CoverLetter } from "./CoverLetter";
+import { ProgressPanel, type ApplicationRow, type ScorePoint } from "./Progress";
+import { ShareLink } from "./ShareLink";
 
 type VariantView = {
   id: string;
@@ -39,15 +45,27 @@ type ResumeView = {
   id: string;
   label: string;
   chars: number;
+  /** The document was longer than we read. Everything below describes a part of it. */
+  truncated: boolean;
+  /** Non-null when a public report link exists for this resume. */
+  shareToken: string | null;
   text: string;
   report: Report | null;
   advice: Advice | null;
   skills: string[];
   variants: VariantView[];
   targets: TargetView[];
+  history: ScorePoint[];
+  applications: ApplicationRow[];
 };
 
-type Tab = "report" | "rewrite" | "target" | "raw";
+type Tab = "report" | "rewrite" | "target" | "progress" | "raw";
+
+const TABS: Tab[] = ["report", "rewrite", "target", "progress", "raw"];
+
+function isTab(value: string | null): value is Tab {
+  return TABS.includes((value ?? "") as Tab);
+}
 
 export function ResumeWorkspace({
   resume,
@@ -62,10 +80,41 @@ export function ResumeWorkspace({
   targetLimit: number;
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("report");
+  const pathname = usePathname();
+  const params = useSearchParams();
+
+  /**
+   * Which panel is open, kept in the URL rather than in component state.
+   *
+   * It was `useState`, which meant the back button did not come back, a refresh
+   * lost your place, and a link to "look at the rewrites" was impossible to
+   * send — every share of this page landed on Readiness no matter what the
+   * sender was looking at. An unrecognised value falls back rather than
+   * rendering nothing, because this parameter is in a URL anyone can edit.
+   */
+  const tab: Tab = isTab(params.get("tab")) ? (params.get("tab") as Tab) : "report";
+
+  const setTab = (next: Tab) => {
+    const query = new URLSearchParams(params.toString());
+    // The default is expressed by absence, so the canonical URL for this page
+    // has no query string at all.
+    if (next === "report") query.delete("tab");
+    else query.set("tab", next);
+    const suffix = query.toString();
+    // `replace`, not `push`: switching tabs is not navigation and should not
+    // fill the back stack with four entries for one page. `scroll: false`
+    // because the panel changing under a heading is not a reason to jump the
+    // viewport to the top.
+    router.replace(suffix ? `${pathname}?${suffix}` : pathname, { scroll: false });
+  };
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+
+  // The rebuild is a row on the server now, so this is the page catching up
+  // with it rather than the page owning it. On a cold load it finds a batch
+  // that was started before the tab was closed.
+  const { run, isRunning, refresh: refreshRun, cancel: cancelRun } = useRunStatus(resume.id);
 
   async function post(url: string, body?: unknown, label = "working") {
     setBusy(label);
@@ -80,10 +129,17 @@ export function ResumeWorkspace({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data?.error ?? "That did not work.");
+        // A 409 means a batch is already in flight — usually a double click.
+        // Picking the run up is more useful than the refusal message.
+        if (res.status === 409) void refreshRun();
         return null;
       }
       if (data?.message) setNote(data.message);
-      router.refresh();
+      // A 202 hands back a run id rather than results: the work has only just
+      // started. Begin watching it instead of refreshing a page that has
+      // nothing new on it yet.
+      if (data?.runId) void refreshRun();
+      else router.refresh();
       return data;
     } catch {
       setError("We could not reach the server.");
@@ -93,10 +149,15 @@ export function ResumeWorkspace({
     }
   }
 
+  // One flag for "a rebuild is happening", whether this tab started it or found
+  // it. Every button that would start another one reads this.
+  const rebuilding = busy === "rewrite" || isRunning;
+
   const tabs: [Tab, string][] = [
     ["report", "Readiness"],
     ["rewrite", `Rewrites${resume.variants.length ? ` (${resume.variants.length})` : ""}`],
     ["target", `Target a company${resume.targets.length ? ` (${resume.targets.length})` : ""}`],
+    ["progress", `Progress${resume.applications.length ? ` (${resume.applications.length})` : ""}`],
     ["raw", "What the machine reads"],
   ];
 
@@ -112,6 +173,11 @@ export function ResumeWorkspace({
               {resume.chars.toLocaleString()} characters read
             </span>
           )}
+          {/* The way to act on everything this page says. Without it the report
+              names a problem and the only place to fix it is Word. */}
+          <Link href={`/app/${resume.id}/edit`} className="btn text-sm">
+            Edit
+          </Link>
           <DeleteResume id={resume.id} label={resume.label} />
         </div>
       </div>
@@ -154,6 +220,8 @@ export function ResumeWorkspace({
         ))}
       </div>
 
+      <RunBanner run={run} onCancel={cancelRun} />
+
       {(error || note) && (
         <p
           role="alert"
@@ -187,6 +255,7 @@ export function ResumeWorkspace({
         <RewriteTab
           resume={resume}
           busy={busy}
+          rebuilding={rebuilding}
           onRun={(targetId) =>
             post(`/api/resumes/${resume.id}/variants`, targetId ? { targetId } : {}, "rewrite")
           }
@@ -198,8 +267,17 @@ export function ResumeWorkspace({
           packs={packs}
           disclaimer={disclaimer}
           targetLimit={targetLimit}
+          rebuilding={rebuilding}
           busy={busy}
           onTarget={(body) => post(`/api/resumes/${resume.id}/variants`, body, "rewrite")}
+        />
+      </div>
+      <div className="py-8" role="tabpanel" id="panel-progress" aria-labelledby="tab-progress" hidden={tab !== "progress"}>
+        <ProgressPanel
+          resumeId={resume.id}
+          history={resume.history}
+          applications={resume.applications}
+          variantLabels={[...new Set(resume.variants.map((v) => v.label))]}
         />
       </div>
       <div className="py-8" role="tabpanel" id="panel-raw" aria-labelledby="tab-raw" hidden={tab !== "raw"}>
@@ -298,6 +376,23 @@ function ReportTab({
   return (
     <div className="grid gap-10 lg:grid-cols-[1.4fr_1fr]">
       <div>
+        {/* Said before the score, not after it. Every number on this page
+            describes the first 60 000 characters of a longer document, and a
+            partial reading presented as a complete one is the one thing this
+            product cannot do. */}
+        {resume.truncated && (
+          <div
+            className="mb-6 rounded-lg border p-3 text-sm leading-snug"
+            style={{ borderColor: "var(--warn)", background: "var(--surface-2)" }}
+          >
+            <p className="font-medium">This resume is longer than we read.</p>
+            <p className="text-muted mt-1">
+              We measure the first 60,000 characters — about fifteen pages. Everything
+              below describes that much of it. If your file is that long, the more
+              useful fact is that no recruiter reads past page two either.
+            </p>
+          </div>
+        )}
         <ReportPanel report={resume.report} />
       </div>
       <aside>
@@ -327,6 +422,8 @@ function ReportTab({
             </button>
           )}
         </div>
+
+        <ShareLink resumeId={resume.id} initialToken={resume.shareToken} />
 
         {resume.skills.length > 0 && (
           <div className="bg-surface border-border mt-4 rounded-xl border p-5">
@@ -369,10 +466,13 @@ function AdviceList({ title, items }: { title: string; items: string[] }) {
 function RewriteTab({
   resume,
   busy,
+  rebuilding,
   onRun,
 }: {
   resume: ResumeView;
   busy: string | null;
+  /** A batch is in flight — this tab's, another tab's, or one from before. */
+  rebuilding: boolean;
   onRun: (targetId: string | null) => void;
 }) {
   const untargeted = resume.variants.filter((v) => !v.targetId);
@@ -397,23 +497,22 @@ function RewriteTab({
             we will never do to reach the number is write a fact you did not.
           </p>
         </div>
-        <button onClick={() => onRun(null)} disabled={busy !== null} className="btn btn-primary">
-          {busy === "rewrite" ? "Rebuilding…" : untargeted.length ? "Run again" : "Rebuild my resume"}
+        <button onClick={() => onRun(null)} disabled={busy !== null || rebuilding} className="btn btn-primary">
+          {rebuilding ? "Rebuilding…" : untargeted.length ? "Run again" : "Rebuild my resume"}
         </button>
       </div>
-
-      {busy === "rewrite" && (
-        <p className="text-muted mt-6 text-sm">
-          This takes a minute or two — several rewrites, each rendered and re-measured.
-        </p>
-      )}
 
       {untargeted.length === 0 ? (
         <p className="text-muted mt-8 text-sm">No rewrites yet.</p>
       ) : (
         <ul className="mt-8 grid gap-5 lg:grid-cols-3">
           {untargeted.map((v) => (
-            <VariantCard key={v.id} variant={v} />
+            <VariantCard
+              key={v.id}
+              variant={v}
+              baseline={resume.report}
+              originalText={resume.text}
+            />
           ))}
         </ul>
       )}
@@ -421,7 +520,17 @@ function RewriteTab({
   );
 }
 
-function VariantCard({ variant }: { variant: VariantView }) {
+function VariantCard({
+  variant,
+  baseline,
+  originalText,
+}: {
+  variant: VariantView;
+  /** The user's own resume, for the side-by-side. */
+  baseline: Report | null;
+  originalText: string;
+}) {
+  const [comparing, setComparing] = useState(false);
   const delta = variant.score - variant.baselineScore;
   // Derived from the score rather than stored, so it can never disagree with
   // the number printed beside it. SHIPPABLE_FLOOR mirrors the Python constant.
@@ -482,7 +591,31 @@ function VariantCard({ variant }: { variant: VariantView }) {
         >
           Open PDF
         </a>
+        <button
+          onClick={() => setComparing((v) => !v)}
+          aria-expanded={comparing}
+          className="btn justify-center text-sm"
+        >
+          {comparing ? "Hide" : "Compare"}
+        </button>
       </div>
+
+      {/* Expanded inside the card rather than in a modal: the comparison is the
+          evidence for the number printed six inches above it, and putting it
+          behind an overlay separates the claim from its proof. */}
+      {comparing && (
+        <div className="border-border mt-5 border-t pt-5">
+          <Compare
+            baseline={baseline}
+            baselineLabel="Your resume"
+            variantLabel={variant.label}
+            variantReport={variant.report}
+            variantFidelity={variant.fidelity}
+            variantId={variant.id}
+            originalText={originalText}
+          />
+        </div>
+      )}
     </li>
   );
 }
@@ -493,6 +626,7 @@ function TargetTab({
   disclaimer,
   targetLimit,
   busy,
+  rebuilding,
   onTarget,
 }: {
   resume: ResumeView;
@@ -500,6 +634,7 @@ function TargetTab({
   disclaimer: string;
   targetLimit: number;
   busy: string | null;
+  rebuilding: boolean;
   onTarget: (body: Record<string, string>) => void;
 }) {
   const [jd, setJd] = useState("");
@@ -614,11 +749,11 @@ function TargetTab({
                     // Disabled rather than allowed-and-then-refused. Setting up
                     // a NEW target is what the plan caps; re-running one that
                     // already exists is always available.
-                    disabled={busy !== null || (!existing && left === 0)}
+                    disabled={busy !== null || rebuilding || (!existing && left === 0)}
                     title={!existing && left === 0 ? "No targets left on this resume" : undefined}
                     className="btn w-full justify-center text-sm"
                   >
-                    {busy === "rewrite"
+                    {rebuilding
                       ? "Working…"
                       : variants.length
                         ? "Rebuild"
@@ -634,7 +769,13 @@ function TargetTab({
         <p className="text-muted mt-6 max-w-3xl text-xs leading-relaxed">{disclaimer}</p>
       </section>
 
-      <AnyCompany resume={resume} busy={busy} onTarget={onTarget} targetsLeft={left} />
+      <AnyCompany
+        resume={resume}
+        busy={busy}
+        rebuilding={rebuilding}
+        onTarget={onTarget}
+        targetsLeft={left}
+      />
 
       <section className="border-border border-t pt-10">
         <h2 className="font-display text-2xl font-semibold">Or paste a job description</h2>
@@ -658,10 +799,10 @@ function TargetTab({
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button
             onClick={() => onTarget({ jd })}
-            disabled={busy !== null || jd.trim().length < 60}
+            disabled={busy !== null || rebuilding || jd.trim().length < 60}
             className="btn btn-primary"
           >
-            {busy === "rewrite" ? "Working…" : "Tailor to this role"}
+            {rebuilding ? "Working…" : "Tailor to this role"}
           </button>
           <span className="text-muted text-xs">
             {jd.trim().length < 60
@@ -730,7 +871,12 @@ function TargetTab({
                 {variants.length > 0 && (
                   <ul className="mt-3 grid gap-3 sm:grid-cols-3">
                     {variants.map((v) => (
-                      <VariantCard key={v.id} variant={v} />
+                      <VariantCard
+                        key={v.id}
+                        variant={v}
+                        baseline={resume.report}
+                        originalText={resume.text}
+                      />
                     ))}
                   </ul>
                 )}
@@ -738,6 +884,11 @@ function TargetTab({
             );
           })}
       </section>
+
+      <CoverLetter
+        resumeId={resume.id}
+        targets={resume.targets.map((t) => ({ id: t.id, name: t.name }))}
+      />
     </div>
   );
 }
@@ -758,11 +909,13 @@ function TargetTab({
 function AnyCompany({
   resume,
   busy,
+  rebuilding,
   onTarget,
   targetsLeft,
 }: {
   resume: ResumeView;
   busy: string | null;
+  rebuilding: boolean;
   onTarget: (body: Record<string, string>) => void;
   /** New company targets this plan still allows on this resume. */
   targetsLeft: number;
@@ -875,6 +1028,7 @@ function AnyCompany({
               <SupplyEvidence
                 company={found.name}
                 busy={busy}
+                rebuilding={rebuilding}
                 disabled={!existing && targetsLeft === 0}
                 onTarget={onTarget}
               />
@@ -909,10 +1063,10 @@ function AnyCompany({
                     existing ? { targetId: existing.id } : { companyName: found.name },
                   )
                 }
-                disabled={busy !== null || (!existing && targetsLeft === 0)}
+                disabled={busy !== null || rebuilding || (!existing && targetsLeft === 0)}
                 className="btn btn-primary mt-5"
               >
-                {busy === "rewrite"
+                {rebuilding
                   ? "Working…"
                   : !existing && targetsLeft === 0
                     ? "No targets left on this resume"
@@ -952,11 +1106,13 @@ function AnyCompany({
 function SupplyEvidence({
   company,
   busy,
+  rebuilding,
   disabled,
   onTarget,
 }: {
   company: string;
   busy: string | null;
+  rebuilding: boolean;
   disabled: boolean;
   onTarget: (body: Record<string, string>) => void;
 }) {
@@ -1034,10 +1190,10 @@ function SupplyEvidence({
                 : { notes: text, companyName: company },
             )
           }
-          disabled={busy !== null || short || disabled}
+          disabled={busy !== null || rebuilding || short || disabled}
           className="btn btn-primary text-sm"
         >
-          {busy === "rewrite"
+          {rebuilding
             ? "Working…"
             : disabled
               ? "No targets left on this resume"
@@ -1070,6 +1226,13 @@ function RawTab({ resume }: { resume: ResumeView }) {
       {resume.report?.findings?.length ? (
         <div className="mt-6">
           <Findings findings={resume.report.findings} />
+          <p className="text-muted mt-4 text-sm">
+            <Link href={`/app/${resume.id}/edit`} className="text-brand underline">
+              Fix these in the editor
+            </Link>{" "}
+            — the same fields the PDF is printed from, scored on the same ruler when
+            you rebuild.
+          </p>
         </div>
       ) : null}
       <pre className="bg-surface-2 border-border mt-6 max-h-[32rem] overflow-auto rounded-xl border p-5 font-mono text-xs leading-relaxed whitespace-pre-wrap">

@@ -19,6 +19,7 @@
  */
 import { spawn } from "node:child_process";
 import path from "node:path";
+import { report } from "@/lib/errors";
 
 export type AgentOk<T> = { ok: true } & T;
 export type AgentErr = { ok: false; error: string };
@@ -51,6 +52,13 @@ const TIMEOUTS: Record<string, number> = {
   // never look alike.
   research: 120_000,
   render: 90_000,
+  // Extraction is model calls; the same budget the research lookup gets.
+  struct: 120_000,
+  // Local rendering only — no model, no Chromium. If this takes 30s something
+  // is wrong that a longer timeout will not fix.
+  export: 30_000,
+  // Several drafts, each checked independently against the gates.
+  cover: 150_000,
   variants: 420_000,
 };
 const DEFAULT_TIMEOUT = 60_000;
@@ -63,6 +71,24 @@ function pythonBin(): string {
   return process.env.PYTHON_BIN || "python";
 }
 
+export type RunOptions = {
+  /**
+   * Called with each `[progress] ...` line the pipeline writes while it works.
+   *
+   * The variant pipeline is minutes long, and its stderr already narrated what
+   * it was doing to a log nobody was reading. This is that narration, delivered
+   * to whoever is waiting. Never awaited and never allowed to throw: a progress
+   * callback that fails must not take the run down with it.
+   */
+  onProgress?: (message: string) => void;
+  /**
+   * Called once with a function that kills the subprocess, so a caller holding
+   * a long run can stop it. Handed out rather than returned because the run
+   * itself is the thing being awaited.
+   */
+  onStart?: (kill: () => void) => void;
+};
+
 /**
  * Run one agent command.
  *
@@ -73,6 +99,7 @@ function pythonBin(): string {
 export async function runAgent<T = Record<string, unknown>>(
   cmd: string,
   payload: Record<string, unknown> = {},
+  options: RunOptions = {},
 ): Promise<AgentResult<T>> {
   const timeout = TIMEOUTS[cmd] ?? DEFAULT_TIMEOUT;
   const cli = path.join(process.cwd(), "agent", "cli.py");
@@ -102,6 +129,12 @@ export async function runAgent<T = Record<string, unknown>>(
     let outBytes = 0;
     let settled = false;
 
+    try {
+      options.onStart?.(() => child.kill("SIGKILL"));
+    } catch {
+      /* a caller that cannot hold the handle does not get to stop the run */
+    }
+
     const finish = (result: AgentResult<T>) => {
       if (settled) return;
       settled = true;
@@ -111,6 +144,12 @@ export async function runAgent<T = Record<string, unknown>>(
 
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
+      report({
+        source: "agent",
+        kind: "timeout",
+        message: `${cmd} exceeded ${Math.round(timeout / 1000)}s and was killed`,
+        context: cmd,
+      });
       finish({
         ok: false,
         error: `the ${cmd} step took longer than ${Math.round(timeout / 1000)}s and was stopped`,
@@ -133,6 +172,22 @@ export async function runAgent<T = Record<string, unknown>>(
       // Keep only the tail: a traceback's last frames are the part anyone reads,
       // and an unbounded buffer here is a memory leak with a stack trace.
       err = (err + chunk).slice(-MAX_STDERR_KEPT);
+
+      if (!options.onProgress) return;
+      // Progress lines are read off the raw chunk rather than the kept tail, so
+      // a long traceback later in the run cannot push earlier progress out of
+      // the buffer before it has been seen. A chunk can split a line, which
+      // costs at most one missed update — not worth a reassembly buffer for a
+      // label that is replaced seconds later anyway.
+      for (const line of chunk.split(/\r?\n/)) {
+        const match = line.match(/^\[progress\]\s+(.*)$/);
+        if (!match) continue;
+        try {
+          options.onProgress(match[1].trim().slice(0, 200));
+        } catch {
+          /* never let a progress listener break the run it is watching */
+        }
+      }
     });
 
     child.on("error", (e) => {
@@ -140,13 +195,20 @@ export async function runAgent<T = Record<string, unknown>>(
         (e as NodeJS.ErrnoException).code === "ENOENT"
           ? `Python was not found at PYTHON_BIN="${pythonBin()}". Set PYTHON_BIN in .env to the interpreter that has agent/requirements.txt installed.`
           : String(e);
+      report({ source: "agent", kind: "spawn-failed", message: hint, context: cmd });
       finish({ ok: false, error: hint });
     });
 
     child.on("close", (code) => {
       const text = out.trim();
       if (!text) {
-        console.error(`[agent] ${cmd} wrote nothing to stdout (exit ${code}):\n${err}`);
+        report({
+          source: "agent",
+          kind: "no-output",
+          message: `${cmd} wrote nothing to stdout (exit ${code})`,
+          stack: err,
+          context: cmd,
+        });
         finish({
           ok: false,
           error:
@@ -162,11 +224,26 @@ export async function runAgent<T = Record<string, unknown>>(
           finish({ ok: false, error: `the ${cmd} step returned an unexpected shape` });
           return;
         }
-        if (!parsed.ok) console.error(`[agent] ${cmd} failed: ${parsed.error}`);
+        if (!parsed.ok) {
+          report({
+            source: "agent",
+            kind: `${cmd}-failed`,
+            message: parsed.error,
+            stack: err,
+            context: cmd,
+          });
+        }
         finish(parsed);
       } catch {
-        // The single most useful thing to log here is what was actually written.
-        console.error(`[agent] ${cmd} stdout was not JSON:\n${text.slice(0, 600)}\n--- stderr ---\n${err}`);
+        // The single most useful thing to record is what was actually written —
+        // that string is the whole diagnosis.
+        report({
+          source: "agent",
+          kind: "malformed-output",
+          message: `${cmd} stdout was not JSON: ${text.slice(0, 300)}`,
+          stack: err,
+          context: cmd,
+        });
         finish({ ok: false, error: `the ${cmd} step returned malformed output` });
       }
     });

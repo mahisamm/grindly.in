@@ -6,6 +6,12 @@ Upload a resume. Grindly measures what a parser can actually recover from the
 file, rebuilds it as a clean single-column PDF, scores the rebuild on the same
 ruler, and tailors it to a named company — without inventing a single fact.
 
+Then it lets you fix what it found. The report names a problem; the editor is
+the fields that problem lives in, and rebuilding re-measures on the same ruler
+so you can see whether the change helped. Out the other end: PDF, .docx for the
+portals that accept nothing else, and plain text for the box on an application
+form.
+
 ---
 
 ## The claim this product refuses to make
@@ -75,11 +81,14 @@ Browser ── Next.js 16 (App Router, TS, Tailwind v4)
               └── agent/cli.py            one spawn, JSON in, JSON out
                      ├── readiness.py     the score — pure, no model, no I/O
                      ├── render_pdf.py    struct → HTML → Chromium → PDF
+                     ├── render_docx.py   the same struct → .docx and plain text
                      ├── resume_optimize  rewrite + the three gates
+                     ├── cover_letter.py  a letter, under stricter gates
                      ├── resume_parse     PDF/DOCX/TXT extraction
                      ├── jobspec.py       pasted JD → requirements
                      ├── companies.py     curated packs, with sources
-                     ├── llm.py           4 free-tier providers, ensembled
+                     ├── llm.py           4 free tiers + an optional paid last resort
+                     ├── llm_cache.py     never re-ask a question with one answer
                      └── redact.py        PII stripped at the model boundary
 ```
 
@@ -94,7 +103,8 @@ src/
 ├─ app/
 │  ├─ page.tsx            Landing
 │  ├─ login, signup       Email + password, Google optional
-│  ├─ app/                The workspace (upload → report → rewrite → target)
+│  ├─ app/                The workspace (upload → report → edit → rewrite → target)
+│  ├─ r/[token]/          A shared report, readable without an account
 │  ├─ pricing/            Season Pass checkout
 │  ├─ admin/              One page: config, usage, errors
 │  └─ api/                resumes · variants · companies · pay · auth · health
@@ -104,7 +114,11 @@ src/
 │  ├─ auth.ts             requireUser / requireAdmin
 │  ├─ plans.ts            Passes, limits, pricing
 │  ├─ quota.ts            Reserve-then-refund daily ceilings
-│  └─ payment.ts          Razorpay, or a stub by default
+│  ├─ payment.ts          Razorpay, or a stub by default
+│  ├─ resumeStruct.ts     The editable fields, validated both ways
+│  ├─ variantRuns.ts      A rebuild as a row, not an open connection
+│  ├─ errors.ts           Faults the admin page can actually see
+│  └─ zip.ts              The data export, without a dependency
 └─ components/Score.tsx   The dial, the bands, the findings
 ```
 
@@ -123,7 +137,7 @@ docker run -d --name grindly-postgres \
 # 2. Config
 cp .env.example .env
 npm run setup            # generates APP_ENCRYPTION_KEY, installs everything,
-                         # runs prisma db push
+                         # runs prisma migrate deploy
 
 # 3. Go
 npm run dev              # http://localhost:3000
@@ -137,7 +151,7 @@ hand:
 npm install
 python -m venv .venv && .venv/bin/pip install -r agent/requirements.txt
 .venv/bin/python -m playwright install chromium
-npx prisma db push
+npx prisma migrate deploy
 ```
 
 Then sign up. The first account on a fresh database becomes an admin.
@@ -161,8 +175,9 @@ curl http://localhost:3000/api/health?deep=1
 ## Tests
 
 ```bash
-npm test                                        # 63 tests — routes, money, quota, crypto
-.venv/bin/python -m pytest agent                # 61 tests — the scorer and the pipeline
+npm test                                        # 191 tests — routes, money, quota, crypto,
+                                                #   schema parsing, migrations, the zip writer
+.venv/bin/python -m pytest agent                # 331 tests — the scorer, the pipeline, the gates
 .venv/bin/python -m pytest agent -m "not slow"  # skip the Chromium renders
 ```
 

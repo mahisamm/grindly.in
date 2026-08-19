@@ -12,7 +12,15 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     ".venv/**",
+    // Scratch directories the test suites create and hold open. ESLint walks
+    // every path it is not told to skip, and on Windows a directory a running
+    // process has locked answers EPERM — which aborts the whole lint run rather
+    // than skipping one folder. `npm run lint` simply did not work on a machine
+    // that had run the tests.
     ".pytest_tmp/**",
+    ".pytest_cache/**",
+    ".test-tmp/**",
+    "data/**",
     "next-env.d.ts",
   ]),
 ]);

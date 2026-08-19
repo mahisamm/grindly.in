@@ -14,6 +14,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUid } from "@/lib/session";
+import { report } from "@/lib/errors";
 
 export type SessionUser = {
   id: string;
@@ -92,6 +93,22 @@ export function badRequest(message: string): NextResponse {
   return NextResponse.json({ error: message }, { status: 400 });
 }
 
-export function serverError(message = "Something went wrong on our side."): NextResponse {
+/**
+ * A 500, recorded.
+ *
+ * Every route in the app answers a fault by calling this, which made it the one
+ * place worth teaching to write the fault down. Before this, a 500 existed only
+ * as a line in a container log and as a sentence on someone's screen, and the
+ * admin page's error table — the operator's whole view of what is broken — sat
+ * empty through every outage.
+ *
+ * `context` is what makes a row actionable: the route, and anything the caller
+ * knows about which record it was working on.
+ */
+export function serverError(
+  message = "Something went wrong on our side.",
+  context?: string,
+): NextResponse {
+  report({ source: "web", kind: "server-error", message, context: context ?? null });
   return NextResponse.json({ error: message }, { status: 500 });
 }

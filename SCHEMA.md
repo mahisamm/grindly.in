@@ -1,393 +1,101 @@
-﻿# Grindly Database Schema
+# The database
 
-## ER Diagram
+`prisma/schema.prisma` is the source of truth and carries the reasoning for
+every non-obvious column. This file is the map: what the tables are for, how
+they relate, and how a change to them reaches production.
+
+The previous version of this document described `Profile`, `Application` →
+`ResumeVersion`, `AgentRun`, `PlatformCredential` and a job queue drained by
+`worker.py --serve`. None of those exist. They belonged to the auto-apply build
+that the resume-readiness rewrite replaced, and a schema document describing a
+database nobody has is worse than no document at all — it is a map of a city
+that was demolished.
+
+---
+
+## Shape
 
 ```
-User (1) ──→ (1) Profile
-  │
-  ├─→ (N) Application ──→ (1) ResumeVersion (optional snapshot)
-  │        └─→ (1) Job (optional)
-  │
-  ├─→ (N) Report
-  ├─→ (N) UserIntegration
-  ├─→ (N) ResumeVersion
-  ├─→ (N) AuditLog
-  ├─→ (N) Notification
-  ├─→ (N) AgentRun
-  └─→ (N) PlatformCredential
+User
+ ├─→ Resume ──→ ScoreEvent      every score this document has ever been given
+ │      ├─→ Variant             one measured rewrite, or the user's own edit
+ │      ├─→ Target ──→ Variant  what a set of rewrites was aimed at
+ │      ├─→ VariantRun          one rebuild batch, from button press to PDFs
+ │      └─→ Application         where this resume was sent, typed by the user
+ ├─→ Order                      a pass purchase
+ ├─→ DailyUsage                 per-user daily ceilings
+ ├─→ AuditLog
+ ├─→ PasswordResetToken
+ └─→ EmailVerificationToken
+
+standalone:  RateLimitEntry · ErrorEvent · BackupHealth
 ```
 
----
-
-## Tables
-
-### `users`
-User accounts + billing + platform connection state.
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | String (cuid) | Primary key |
-| `email` | String | Unique, login credential |
-| `name` | String? | Optional |
-| `password_hash` | String? | Hashed password |
-| `created_at` | DateTime | Account creation |
-| `paid` | Boolean | Has active subscription? |
-| `plan` | String | "free" \| "starter" \| "pro" — plan cap locked |
-| `slack_user_id` | String? | Slack integration (stubbed) |
-| `slack_channel` | String? | Slack integration (stubbed) |
-| `slack_connected` | Boolean | Slack notification enabled? |
-| `internshala_connected` | Boolean | Legacy — use UserIntegration table |
-| `status` | String | "registered" \| "onboarding" \| "active" \| "paused" |
-
-**Relations:**
-- Has one Profile (1:1, cascade delete)
-- Has many Applications (1:N, cascade delete)
-- Has many Reports (1:N, cascade delete)
-- Has many UserIntegrations (1:N, cascade delete)
+A user has resumes; a resume has a measured report and some variants; a variant
+may be aimed at a target. That is the whole product, and the schema is
+deliberately about that size.
 
 ---
 
-### `profiles`
-User preferences, firewall rules, and profile data (resume, skills).
+## What each table is for
 
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | String (cuid) | Primary key |
-| `user_id` | String (FK) | Unique per user |
-| `resume_text` | String? | Plain text resume |
-| `resume_name` | String? | File name of resume |
-| `skills` | String (JSON) | Array extracted from resume |
-| `education` | String? | Education background |
-| `experience_level` | String? | "student" \| "fresher" \| "1-2yr" |
-| **Targeting** |
-| `preferred_domains` | String (JSON) | ["Web Dev", "Data Science", ...] |
-| `preferred_locations` | String (JSON) | ["Remote", "Bangalore", ...] |
-| `work_mode` | String | "any" \| "remote" \| "onsite" |
-| **Firewall** |
-| `stipend_min` | Integer | Min monthly stipend (₹); 0 = unpaid OK |
-| `max_per_day` | Integer | **DEPRECATED** — use plan cap from users.plan |
-| `min_match_score` | Integer | 0–100 threshold (default 55) |
-| `excluded_companies` | String (JSON) | ["Acme Corp", ...] |
-| `auto_apply` | Boolean | Auto-submit or ask first? |
-| **Generated** |
-| `plan_json` | String? | Agent-generated application plan |
-| `updated_at` | DateTime | Last modified |
-
-**Relations:**
-- Belongs to User (1:1, cascade delete)
+| Table | Why it exists |
+|---|---|
+| `users` | Identity, plan, timezone. `plan` and `role` are enums — a typo used to read as an unknown plan, drop the user to the free tier, and log nothing. |
+| `resumes` | The extracted text, the contact fields read locally, the last report, and `struct_json` — the editable fields the PDF is printed from. |
+| `score_events` | Append-only. `resumes.score` is overwritten on every read, so without this the question "did my change help?" has no data behind it. |
+| `variants` | One rendered rewrite with its own report and fidelity count. Superseded and deleted on the next run against the same target. |
+| `targets` | A curated company pack, a pasted job description, or the user's own notes about an employer — `kind` keeps the last of those labelled as theirs. |
+| `variant_runs` | A rebuild batch as a row rather than an open HTTP request, so the work survives a closed tab. |
+| `applications` | Where a resume was sent. Typed by the user; Grindly submits nothing. Records WHICH VERSION went out, which is the join a spreadsheet cannot make. |
+| `orders` | A pass purchase. The product bought is written at creation, never read from the client at confirmation. |
+| `daily_usage` | Reserve-then-refund ceilings, counted in the user's own day. |
+| `audit_logs` | Append-only trail. Pruned at 180 days by `lib/retention.ts`. |
+| `error_events` | Deduplicated faults from the web app, the Python agent and the browser. Resolved ones pruned at 30 days. |
+| `rate_limit_entries` | DB-backed limiter, swept opportunistically. |
+| `password_reset_tokens` · `email_verification_tokens` | Hash only. A table of usable tokens hands out every account the moment a backup leaks. |
+| `backup_health` | Written by `scripts/backup-drill.sh`, never by the app. Declared here so migrations leave it alone. |
 
 ---
 
-### `user_integrations`
-Platform connection state per user per platform.
+## Changing it
 
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | String (cuid) | Primary key |
-| `user_id` | String (FK) | Composite key (user, platform) |
-| `platform` | String | "linkedin" \| "internshala" \| "naukri" \| "unstop" \| "indeed" |
-| `status` | String | "disconnected" \| "connected" \| "connecting" \| "needs_login" |
-| `connected_at` | DateTime? | Timestamp of successful login (null if disconnected) |
-| `updated_at` | DateTime | Last status change |
+`prisma migrate deploy` applies the SQL in `prisma/migrations` and nothing else.
+**`prisma db push` is not used anywhere any more**, and the difference is the
+point: `db push` compares a live database to the schema and invents a
+reconciliation plan on the spot — a plan computed on a production box, at deploy
+time, that nobody reads. That is how `backup_health` became a deletion candidate
+and took a deploy down with it.
 
-**Constraints:**
-- Unique (user_id, platform) — one integration record per user per platform
-- Cascade delete on user deletion
+```bash
+# 1. Edit prisma/schema.prisma, then generate the migration:
+npx prisma migrate dev --name what_you_changed
 
-**Relations:**
-- Belongs to User (FK user_id)
-
----
-
-### `applications`
-Per-run job application attempt (matched, applied, skipped, or failed).
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | String (cuid) | Primary key |
-| `user_id` | String (FK) | Which user attempted |
-| `job_id` | String (FK)? | Reference to Job (optional) |
-| `job_title` | String | Job title (denormalized, copied) |
-| `company` | String | Company name |
-| `url` | String? | Job listing URL |
-| `match_score` | Integer | 0–100 agent scoring |
-| `status` | ApplyStatus | matched \| approved \| submitting \| applied \| skipped \| failed \| needs_review |
-| `reason` | String? | Why matched / skipped / failed (free text) |
-| `failure_reason` | FailureReason? | Machine reason on failure — see [src/lib/applyState.ts](src/lib/applyState.ts) |
-| `screenshot_path` | String? | Proof image of the submit attempt |
-| `resume_version_id` | String (FK)? | Exact ResumeVersion sent for this application |
-| `applied_at` | DateTime? | When actually applied (if status=applied) |
-| `outcome` | Outcome? | interview \| offer \| rejected \| no_response (user-reported) |
-| `outcome_at` | DateTime? | When the outcome was reported |
-| `created_at` | DateTime | Record creation timestamp |
-
-**Relations:**
-- Belongs to User (cascade delete)
-- Belongs to Job (optional, nullable)
-- Belongs to ResumeVersion (optional, nullable)
-
-**Indexes:** `userId`, `[userId, status]`, `status`, `jobId`, `resumeVersionId`, `createdAt` — this is the most-queried table (dashboard, admin overview, per-platform fail-rate stats), so every common filter/sort column is indexed.
-
-**Denormalization:** job_title, company, url are copied from Job table for query speed and archive purposes.
-
----
-
-### `jobs`
-Master job listing (indexed by source + external ID, not regenerated per user).
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | String (cuid) | Primary key |
-| `source` | String | "internshala" \| "linkedin" \| "naukri" \| "unstop" \| "indeed" |
-| `external_id` | String | Platform-specific job ID |
-| `title` | String | Job title |
-| `company` | String | Company name |
-| `location` | String? | Job location |
-| `stipend` | String? | Stipend range (e.g., "₹10,000–15,000") |
-| `duration` | String? | Internship duration (e.g., "6 months") |
-| `skills` | String (JSON) | ["Python", "React", ...] |
-| `url` | String | Job listing URL |
-| `scraped_at` | DateTime | When agent fetched this |
-
-**Constraints:**
-- Unique (source, external_id) — no duplicates per platform
-
-**Relations:**
-- Has many Applications (1:N)
-
----
-
-### `reports`
-Daily run summary sent to user (Slack, email, or dashboard).
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | String (cuid) | Primary key |
-| `user_id` | String (FK) | Which user's run |
-| `date` | String | "YYYY-MM-DD" run date |
-| `matched_count` | Integer | Jobs matched by scoring |
-| `applied_count` | Integer | Jobs successfully applied |
-| `failed_count` | Integer | Jobs failed to apply |
-| `summary` | String | Human-readable summary |
-| `delivered` | Boolean | Was Slack notification sent? |
-| `created_at` | DateTime | Report generated at |
-
-**Relations:**
-- Belongs to User (cascade delete)
-
----
-
-### `resume_versions`
-Immutable snapshot of the exact resume sent for one application — answers "which resume did the recruiter see?" Never mutated after create.
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | String (cuid) | Primary key |
-| `user_id` | String (FK) | Owner |
-| `label` | String | Human label, e.g. "Frontend Dev @ Razorpay" |
-| `job_title` / `company` | String? | Target role context |
-| `text` | String | Exact tailored resume text sent |
-| `file_path` | String? | Path to the exact PDF sent |
-| `skills_claimed` | String (JSON) | Skills surfaced for this specific role |
-| `base_skills` | String (JSON) | Master skills at time of send (truthfulness reference — see `agent/resume_ai.py`) |
-| `created_at` | DateTime | Creation timestamp |
-
-**Relations:** Belongs to User (cascade delete); has many Applications. **Index:** `userId`.
-
----
-
-### `audit_logs`
-Append-only audit trail — reconstruct what auth/agent did, for disputes.
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | String (cuid) | Primary key |
-| `user_id` | String (FK)? | Nullable — some events are pre-auth |
-| `action` | String | login \| otp_issued \| otp_throttled \| apply \| apply_failed \| firewall_block \| session_expired \| consent \| high_failure_rate \| ... |
-| `target` | String? | Job URL / platform / phone-mask / etc |
-| `detail` | String? | Freeform or JSON |
-| `created_at` | DateTime | Event timestamp |
-
-**Indexes:** `userId`, `action`.
-
----
-
-### `agent_runs`
-DB-backed run queue — gives retries, per-user locking, and idempotent resume without needing Redis. `worker.py --serve`/`--drain` claims queued rows transactionally.
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | String (cuid) | Primary key |
-| `user_id` | String (FK) | Owner |
-| `mode` | RunMode | mock \| live \| analyze |
-| `status` | RunStatus | queued \| running \| done \| failed \| cancelled |
-| `attempts` / `max_attempts` | Integer | Retry bookkeeping (default max 3) |
-| `locked_by` / `locked_at` | String? / DateTime? | Worker instance holding the row |
-| `error` | String? | Failure detail |
-| `result` | String? | JSON `{applied,matched,failed}` |
-| `created_at` / `updated_at` | DateTime | |
-
-**Indexes:** `status`, `userId`.
-
----
-
-### `platform_credentials`
-Encrypted-at-rest platform credentials. Plaintext is **never** stored — ciphertext is AES-256-GCM (`src/lib/crypto.ts` / `agent/secret_box.py`).
-
-| Field | Type | Notes |
-|-------|------|-------|
-| `id` | String (cuid) | Primary key |
-| `user_id` | String (FK) | Owner |
-| `platform` | String | Platform name (includes "gmail" for the Gmail OAuth refresh token, in addition to the 5 apply platforms) |
-| `ciphertext` | String | `base64(nonce).base64(ciphertext+tag)` |
-| `updated_at` | DateTime | |
-
-**Constraints:** unique `(userId, platform)`.
-
----
-
-### `notifications`, `otp_tokens`, `otp_attempts`, `password_reset_tokens`, `rate_limit_entries`
-Supporting tables for delivery tracking and DB-backed (multi-instance-safe) counters that replaced in-process `Map`s:
-
-- **`notifications`** — tiered notification log (`tier`: urgent \| digest; `channel`: slack \| email \| console), indexed on `userId`.
-- **`otp_tokens`** — phone OTP codes with expiry, indexed on `phone`.
-- **`otp_attempts`** — brute-force counter per phone (`OtpAttempt`), unique + indexed on `phone`.
-- **`password_reset_tokens`** — 15-minute single-use tokens, unique `tokenHash`, indexed on `userId`.
-- **`rate_limit_entries`** — generic rate-limit counters keyed `"forgot:<ip>"` / `"otp:<phone>"` / etc, unique + indexed on `key`.
-
----
-
-## API Field Mapping
-
-### User Response (`GET /api/me`)
-```json
-{
-  "user": {
-    "id": "cuid",
-    "email": "user@example.com",
-    "name": "John Doe",
-    "paid": true,
-    "plan": "pro",
-    "status": "active",
-    "slackConnected": false,
-    "internshalaConnected": false
-  },
-  "profile": {
-    "preferredDomains": ["Web Dev"],
-    "preferredLocations": ["Remote"],
-    "workMode": "remote",
-    "experienceLevel": "student",
-    "stipendMin": 5000,
-    "minMatchScore": 55,
-    "excludedCompanies": [],
-    "autoApply": true
-  },
-  "applications": [
-    {
-      "id": "cuid",
-      "jobTitle": "Frontend Intern",
-      "company": "TechCorp",
-      "matchScore": 85,
-      "status": "applied",
-      "createdAt": "2026-06-17T10:30:00Z"
-    }
-  ],
-  "reports": [
-    {
-      "date": "2026-06-17",
-      "matchedCount": 15,
-      "appliedCount": 8,
-      "failedCount": 0
-    }
-  ],
-  "integrations": [
-    {
-      "platform": "linkedin",
-      "status": "connected",
-      "connectedAt": "2026-06-15T14:22:00Z"
-    },
-    {
-      "platform": "internshala",
-      "status": "needs_login",
-      "connectedAt": null
-    }
-  ],
-  "stats": {
-    "matched": 45,
-    "applied": 32,
-    "skipped": 10,
-    "failed": 3,
-    "avgScore": 72
-  }
-}
+# 2. READ THE GENERATED SQL. This is not a formality.
 ```
 
----
+Prisma's draft is a description of the end state, not a plan for getting there
+safely. Converting a `text` column holding JSON to `jsonb` generates
+`DROP COLUMN` + `ADD COLUMN` — the right final schema and an empty product. The
+migration that did that conversion here is hand-written for exactly that reason,
+and `scripts/rehearse-schema-migration.sh` seeds a database the old way,
+migrates it, and asserts the data is still there.
 
-## Key Constraints & Patterns
+Two tests hold this together:
 
-### Plan Caps (Server-Locked)
-- `Starter plan` → 10 applications/day (can't edit via profile form)
-- `Pro plan` → 30 applications/day (can't edit via profile form)
-- Read from `users.plan` column, not `profiles.max_per_day`
-- Python agent checks `get_plan_cap(uid)` from `agent/db.py`
-
-### Multi-Source Job Allocation
-- Agent fetches jobs from 5 sources in priority order: LinkedIn → Internshala → Naukri → Unstop → Indeed
-- Allocates plan cap across sources (e.g., 10 cap / 3 sources ≈ 3–4 per source)
-- Each source module stores state in per-user per-platform browser profile: `agent/browser_profile/{uid}/{platform}/`
-
-### Integration Status States
-- `disconnected` — user clicked disconnect or never connected
-- `connected` — user logged in via headed browser, session active
-- `connecting` — browser window open, waiting for login (poll every 2s for 5m)
-- `needs_login` — agent detected session expired during run, user must reconnect
-
-### Fallback for Pre-Migration
-- If `user_integrations` table doesn't exist yet, API endpoints gracefully catch errors
-- Dashboard shows legacy `users.internshala_connected` as fallback for Internshala status
-- Python agent calls `_ensure_integrations_table(c)` on startup
+- `prisma/__tests__/migration-coverage.test.ts` — every model and column in the
+  schema appears in a migration. A model added without one produces a client
+  that queries a column the database does not have, and it fails on the first
+  request in production rather than at deploy time.
+- `scripts/__tests__/reset-db.regression-1.test.ts` — every model is cleared by
+  `scripts/reset-db.mjs`.
 
 ---
 
-## Enums (native Postgres enums)
+## Migrating the production box
 
-`status`/`role`/`plan`/`platform`/etc used to be bare `String` columns with the
-valid value set only documented in comments — nothing stopped a typo'd value
-from being written. They're now real Prisma/Postgres enums, verified against
-actual read/write call sites in `src/` and `agent/` (not just doc comments):
-`Role`, `PlanTier`, `UserStatus`, `Platform`, `IntegrationStatus`,
-`ApplyStatus`, `FailureReason`, `Outcome`, `RunMode`, `RunStatus`. See
-`prisma/schema.prisma` for the exact member lists. `ApplyStatus` and
-`FailureReason` are mirrored with the Python agent via
-`src/lib/applyState.ts` ↔ `agent/safety.py` — keep both in sync if the set
-ever changes.
-
-## Indexes (Postgres)
-
-Postgres does **not** auto-index foreign-key columns — every FK below is
-explicitly indexed, not just the default unique constraints:
-- `users.email`, `users.googleId`, `users.phone` (unique)
-- `user_integrations.(userId, platform)` (unique)
-- `platform_credentials.(userId, platform)` (unique)
-- `jobs.(source, externalId)` (unique)
-- `applications.userId`, `applications.(userId, status)`, `applications.status`,
-  `applications.jobId`, `applications.resumeVersionId`, `applications.createdAt`
-- `resume_versions.userId`, `audit_logs.userId`, `audit_logs.action`,
-  `agent_runs.status`, `agent_runs.userId`, `notifications.userId`
-- `otp_tokens.phone`, `otp_attempts.phone` (unique), `password_reset_tokens.userId`,
-  `password_reset_tokens.tokenHash` (unique), `rate_limit_entries.key` (unique)
-
-No `prisma/migrations/` history exists yet — schema changes are applied via
-`prisma db push` (see `docker-compose.yml`'s `migrate` service and
-`prisma/MIGRATE_POSTGRES.md`). Baselining a real migration history against
-the live prod DB is a manual follow-up, not something to generate blind
-against an unknown prod state.
-
----
-
-## Unused / Deprecated Fields
-
-- `profiles.max_per_day` — kept for backward compatibility, **not** used for plan enforcement
-- `users.internshala_connected` — legacy, kept for fallback; new code uses `user_integrations` table
-- `applications.job_id` — optional; mostly for archive/audit purposes
+`docs/PIVOT-DEPLOY.md` is authoritative for the auto-apply → resume-readiness
+cutover, which has not happened yet. `scripts/rehearse-migration.sh` rehearses
+the whole thing against a throwaway database, including the refusals: the
+destructive step will not run before the accounts are carried out of the way,
+and will not run twice.

@@ -154,7 +154,7 @@ def _vocab_skills(text: str) -> list[str]:
     return found
 
 
-def parse(jd_text: str, use_llm: bool = True) -> dict:
+def _parse_uncached(jd_text: str, use_llm: bool = True) -> dict:
     """Parse a pasted job description.
 
     Returns::
@@ -239,3 +239,34 @@ def _llm_extra_skills(jd_text: str, known: set[str]) -> list[str]:
         if s and 1 < len(s) < 40 and s not in known and s not in cleaned:
             cleaned.append(s)
     return cleaned
+
+
+def parse(jd_text: str, use_llm: bool = True) -> dict:
+    """Parse a job description, reusing an identical parse from the last week.
+
+    The same posting is parsed more than once as a matter of course: a target is
+    created from it, and every rebuild against that target re-reads it. The
+    requirements in a posting do not change because someone pressed a button
+    again, so the second call is free-tier quota spent for nothing — and that
+    quota is shared by everyone on the instance.
+
+    A spec with NO skills in it is not cached. That is the shape of both "this
+    text has no requirements in it" and "no provider answered", and the two are
+    indistinguishable here — caching it would turn one rate-limited minute into
+    a week of empty coverage scores for that posting.
+    """
+    import llm_cache
+
+    text = (jd_text or "").strip()
+    if not text:
+        return _parse_uncached(jd_text, use_llm)
+
+    cache_key = llm_cache.key("jobspec", text, use_llm)
+    hit = llm_cache.get(cache_key)
+    if hit is not None:
+        return hit
+
+    spec = _parse_uncached(jd_text, use_llm)
+    if isinstance(spec, dict) and spec.get("skills"):
+        llm_cache.put(cache_key, spec)
+    return spec

@@ -44,7 +44,7 @@ if ! docker compose run --rm migrate; then
 
 Read the message above. Prisma refuses a destructive change rather than
 guessing, and the usual cause is a table it does not know about: anything
-created by a script rather than by schema.prisma looks to 'db push' like
+created by a script rather than by schema.prisma looked to 'db push' like
 something to drop. Declare it in schema.prisma and run this again.
 
 Do NOT add --accept-data-loss to make this go away. That is the guard."
