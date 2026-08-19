@@ -23,6 +23,10 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
     include: {
       variants: { orderBy: [{ createdAt: "desc" }] },
       targets: { orderBy: { createdAt: "desc" } },
+      // Oldest first: this is a line on a chart, and a chart reads left to
+      // right through time.
+      scores: { orderBy: { createdAt: "asc" }, take: 100 },
+      applications: { orderBy: { appliedAt: "desc" }, take: 200 },
     },
   });
   if (!resume) notFound();
@@ -51,6 +55,7 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
           label: resume.label,
           chars: resume.chars,
           truncated: resume.truncated,
+          shareToken: resume.shareToken,
           text: resume.text,
           report: readReport(resume.reportJson),
           advice: readAdvice(resume.adviceJson),
@@ -67,6 +72,23 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
             changes: readStrings(v.changesJson),
             report: readReport(v.reportJson),
             fidelity: readFidelity(v.fidelityJson),
+          })),
+          history: resume.scores.map((h) => ({
+            id: h.id,
+            score: h.score,
+            grade: h.grade,
+            source: h.source,
+            variantLabel: h.variantLabel,
+            createdAt: h.createdAt.toISOString(),
+          })),
+          applications: resume.applications.map((a) => ({
+            id: a.id,
+            company: a.company,
+            role: a.role,
+            status: a.status,
+            variantLabel: a.variantLabel,
+            notes: a.notes,
+            appliedAt: a.appliedAt.toISOString(),
           })),
           targets: resume.targets.map((t) => ({
             id: t.id,

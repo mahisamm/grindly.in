@@ -61,6 +61,7 @@ async function main() {
   // children are already gone.
   await prisma.variant.deleteMany();
   await prisma.variantRun.deleteMany();
+  await prisma.application.deleteMany();
   await prisma.scoreEvent.deleteMany();
   await prisma.target.deleteMany();
   await prisma.resume.deleteMany();

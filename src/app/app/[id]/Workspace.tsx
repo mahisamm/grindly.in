@@ -12,6 +12,8 @@ import { FidelityLine, Findings, ReportPanel, ScoreDial } from "@/components/Sco
 import { RunBanner, useRunStatus } from "./RunProgress";
 import { Compare } from "./Compare";
 import { CoverLetter } from "./CoverLetter";
+import { ProgressPanel, type ApplicationRow, type ScorePoint } from "./Progress";
+import { ShareLink } from "./ShareLink";
 
 type VariantView = {
   id: string;
@@ -45,17 +47,21 @@ type ResumeView = {
   chars: number;
   /** The document was longer than we read. Everything below describes a part of it. */
   truncated: boolean;
+  /** Non-null when a public report link exists for this resume. */
+  shareToken: string | null;
   text: string;
   report: Report | null;
   advice: Advice | null;
   skills: string[];
   variants: VariantView[];
   targets: TargetView[];
+  history: ScorePoint[];
+  applications: ApplicationRow[];
 };
 
-type Tab = "report" | "rewrite" | "target" | "raw";
+type Tab = "report" | "rewrite" | "target" | "progress" | "raw";
 
-const TABS: Tab[] = ["report", "rewrite", "target", "raw"];
+const TABS: Tab[] = ["report", "rewrite", "target", "progress", "raw"];
 
 function isTab(value: string | null): value is Tab {
   return TABS.includes((value ?? "") as Tab);
@@ -151,6 +157,7 @@ export function ResumeWorkspace({
     ["report", "Readiness"],
     ["rewrite", `Rewrites${resume.variants.length ? ` (${resume.variants.length})` : ""}`],
     ["target", `Target a company${resume.targets.length ? ` (${resume.targets.length})` : ""}`],
+    ["progress", `Progress${resume.applications.length ? ` (${resume.applications.length})` : ""}`],
     ["raw", "What the machine reads"],
   ];
 
@@ -263,6 +270,14 @@ export function ResumeWorkspace({
           rebuilding={rebuilding}
           busy={busy}
           onTarget={(body) => post(`/api/resumes/${resume.id}/variants`, body, "rewrite")}
+        />
+      </div>
+      <div className="py-8" role="tabpanel" id="panel-progress" aria-labelledby="tab-progress" hidden={tab !== "progress"}>
+        <ProgressPanel
+          resumeId={resume.id}
+          history={resume.history}
+          applications={resume.applications}
+          variantLabels={[...new Set(resume.variants.map((v) => v.label))]}
         />
       </div>
       <div className="py-8" role="tabpanel" id="panel-raw" aria-labelledby="tab-raw" hidden={tab !== "raw"}>
@@ -407,6 +422,8 @@ function ReportTab({
             </button>
           )}
         </div>
+
+        <ShareLink resumeId={resume.id} initialToken={resume.shareToken} />
 
         {resume.skills.length > 0 && (
           <div className="bg-surface border-border mt-4 rounded-xl border p-5">

@@ -84,6 +84,17 @@ enum RunStatus {
   cancelled
 }
 
+/// Where an application got to. Set by the user, never inferred — Grindly does
+/// not talk to any job board and will not pretend to know.
+enum ApplicationStatus {
+  sent
+  screening
+  interview
+  offer
+  rejected
+  withdrawn
+}
+
 /// Why a score was recorded, for the history on a resume.
 enum ScoreSource {
   upload
@@ -264,13 +275,27 @@ model Resume {
   /// Null means nobody has opened the editor for this resume yet.
   structJson Json? @map("struct_json")
 
+  /// A random token that makes the readiness report readable without an
+  /// account, at /r/<token>.
+  ///
+  /// The report — not the resume, not the PDFs, not the contact details. What a
+  /// share link exposes is the measurement and the findings, which is the part
+  /// worth showing a senior who offered to look over your CV, and the part that
+  /// contains nothing an employer could use to identify you.
+  ///
+  /// Null is the default and revoking sets it back to null, so a link that has
+  /// been shared with the wrong person stops working rather than being merely
+  /// hard to guess.
+  shareToken String? @unique @map("share_token")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  variants Variant[]
-  targets  Target[]
-  scores   ScoreEvent[]
-  runs     VariantRun[]
+  variants     Variant[]
+  targets      Target[]
+  scores       ScoreEvent[]
+  runs         VariantRun[]
+  applications Application[]
 
   @@index([userId, createdAt])
   @@map("resumes")
@@ -419,6 +444,43 @@ model Variant {
   @@index([resumeId, createdAt])
   @@index([targetId])
   @@map("variants")
+}
+
+/// Where you sent this resume, and what happened.
+///
+/// Grindly does not submit anything and does not read anyone's inbox: bulk
+/// submission through job boards breaks their terms and gets user accounts
+/// banned, and that decision is the reason this product exists in its current
+/// shape. So every row here is typed by the person who sent the application.
+///
+/// It earns its place by answering the one question a spreadsheet is usually
+/// keeping: which VERSION of my resume did I send them? That is a join this
+/// database can make and a spreadsheet cannot, and it is the difference between
+/// "I applied to 40 places" and "the tailored version got three replies out of
+/// nine and the generic one got none out of thirty-one".
+model Application {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+
+  resumeId String @map("resume_id")
+  resume   Resume @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+
+  /// Which document went out. Deliberately not a relation: a variant is
+  /// superseded and deleted on the next rebuild, and the record of what you
+  /// sent must outlive the file. The label is what a person recognises anyway.
+  variantLabel String? @map("variant_label")
+
+  company String
+  role    String            @default("")
+  status  ApplicationStatus @default(sent)
+  notes   String?
+
+  appliedAt DateTime  @default(now()) @map("applied_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([userId, appliedAt])
+  @@index([resumeId])
+  @@map("applications")
 }
 
 // ---------------------------------------------------------------------------
