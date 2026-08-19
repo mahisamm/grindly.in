@@ -39,6 +39,59 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  # The application, running, over HTTP, in a real browser.
+  #
+  # `web` and `agent` are both green on code that ships a beta access queue whose
+  # Approve button sits off the right edge of a phone screen, and a "recently
+  # decided" list ordered oldest-first. Neither defect is reachable from a pure
+  # function — one is a browser laying out a page, the other is an ORDER BY — so
+  # neither suite is the wrong one, they are just the wrong SHAPE. This is the
+  # missing shape: build it, start it, use it, and look at it.
+  smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: grindly
+          POSTGRES_PASSWORD: grindly
+          POSTGRES_DB: grindly
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U grindly"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npm run build
+      # Chromium for the layout sweep, axe-core for the accessibility pass. The
+      # axe package is optional at runtime — browser_check.py skips that half
+      # with a note when it is absent — and it is not optional here, because CI
+      # is the one place the skip would go unnoticed.
+      - run: pip install playwright axe-playwright-python
+      - run: python -m playwright install --with-deps chromium
+      - name: start the app
+        run: |
+          npm start &
+          for i in $(seq 1 60); do
+            if curl -sf -o /dev/null http://localhost:3000/; then exit 0; fi
+            sleep 2
+          done
+          echo "the server never came up"; exit 1
+      - run: npm run smoke
+
   agent:
     runs-on: ubuntu-latest
     steps:
