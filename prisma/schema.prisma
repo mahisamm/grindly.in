@@ -324,10 +324,6 @@ model Resume {
   /// costs an LLM call, and must never be confused with the score.
   adviceJson Json?   @map("advice_json")
 
-  /// sha256 of `text`. A re-score is skipped when this has not changed, which
-  /// is what stops the advice call re-running on every page load.
-  textHash String? @map("text_hash")
-
   /// The resume as editable fields: {name, contact_line, sections[{heading,
   /// items[{head, sub, bullets[]}]}]} — the exact shape render_pdf prints.
   ///

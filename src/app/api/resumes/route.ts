@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
@@ -167,7 +166,6 @@ export async function POST(req: Request) {
         score: report?.score ?? null,
         grade: report?.grade ?? null,
         reportJson: toJsonColumn(report),
-        textHash: crypto.createHash("sha256").update(text).digest("hex"),
       },
     });
   } catch (e) {

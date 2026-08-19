@@ -97,8 +97,27 @@ async function main() {
   let resumeId = null;
 
   try {
+    // ---- the operator, created FIRST and deliberately so -----------------
+    //
+    // api/auth/signup promotes the very first account on a fresh database to
+    // admin, so that a new deployment has a way to reach its own admin surface.
+    // Signing the user up first therefore makes the user an admin on an empty
+    // database, which silently turns off every gate this script exists to test:
+    // the run reported seven failures the first time it met a freshly migrated
+    // database, none of them a defect in the product.
+    let res = await admin.call("/api/auth/signup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: adminEmail, password, name: "Operator" }),
+    });
+    adminRow = await prisma.user.findUnique({ where: { email: adminEmail } });
+    await prisma.user.update({
+      where: { id: adminRow.id },
+      data: { role: "admin", accessStatus: "approved" },
+    });
+
     // ---- the beta door ---------------------------------------------------
-    let res = await user.call("/api/auth/signup", {
+    res = await user.call("/api/auth/signup", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email: userEmail, password, name: "Priya Ramanathan" }),
@@ -106,6 +125,7 @@ async function main() {
     check("signup succeeds", res.status === 200, `status ${res.status}`);
     userRow = await prisma.user.findUnique({ where: { email: userEmail } });
     check("a new account starts pending", userRow?.accessStatus === "pending", userRow?.accessStatus);
+    check("a new account is not an admin", userRow?.role === "user", userRow?.role);
 
     res = await user.call("/app");
     check(
@@ -126,18 +146,6 @@ async function main() {
       body: JSON.stringify({ message: "I cannot get in and I have an interview.", path: "/pending" }),
     });
     check("a pending account can still report a problem", res.status === 200, `status ${res.status}`);
-
-    // ---- an operator lets them in ---------------------------------------
-    await admin.call("/api/auth/signup", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: adminEmail, password, name: "Operator" }),
-    });
-    adminRow = await prisma.user.findUnique({ where: { email: adminEmail } });
-    await prisma.user.update({
-      where: { id: adminRow.id },
-      data: { role: "admin", accessStatus: "approved" },
-    });
 
     res = await user.call(`/api/admin/access/${userRow.id}`, {
       method: "POST",

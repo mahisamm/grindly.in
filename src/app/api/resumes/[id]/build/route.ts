@@ -185,7 +185,6 @@ export async function POST(_req: Request, { params }: Ctx) {
         score,
         grade: rendered.report?.grade ?? null,
         reportJson: toJsonColumn(rendered.report),
-        textHash: crypto.createHash("sha256").update(text).digest("hex"),
         // The advice was written about the previous draft and is now describing
         // a document that no longer exists.
         adviceJson: toJsonColumn(null),

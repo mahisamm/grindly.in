@@ -78,14 +78,26 @@ export type AdminStats = {
   };
 };
 
-/** Distinct accounts with an audit entry since `since`. */
-async function activeSince(since: Date): Promise<number> {
-  const rows = await prisma.auditLog.findMany({
-    where: { createdAt: { gte: since }, userId: { not: null } },
-    distinct: ["userId"],
-    select: { userId: true },
-  });
-  return rows.length;
+/**
+ * Distinct accounts with an audit entry since `since`.
+ *
+ * COUNT(DISTINCT ...) in Postgres, not `findMany({ distinct })` in Prisma.
+ * Prisma's version issues SELECT DISTINCT ON and then ships one row per
+ * matching account across the wire so that `.length` can be taken in Node — so
+ * this panel, which asks the question four times over different windows,
+ * transferred four copies of the user table to render four integers. The audit
+ * log is the largest table in the schema and grows fastest.
+ */
+async function distinctUsers(sql: Promise<{ n: bigint | number }[]>): Promise<number> {
+  const rows = await sql.catch(() => [] as { n: bigint | number }[]);
+  return Number(rows[0]?.n ?? 0);
+}
+
+function activeSince(since: Date): Promise<number> {
+  return distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`
+    SELECT COUNT(DISTINCT user_id) AS n
+    FROM audit_logs
+    WHERE created_at >= ${since} AND user_id IS NOT NULL`);
 }
 
 /** One median, computed in Postgres rather than by pulling every row into Node. */
@@ -142,13 +154,12 @@ export async function adminStats(now = new Date()): Promise<AdminStats> {
 
     // The funnel, measured as DISTINCT ACCOUNTS that reached each step — not as
     // event counts, which one enthusiastic user can inflate on their own.
-    prisma.resume.findMany({ distinct: ["userId"], select: { userId: true } }),
-    prisma.variantRun.findMany({ distinct: ["userId"], select: { userId: true } }),
-    prisma.auditLog.findMany({
-      where: { action: { in: ["resume_export", "resume_built"] }, userId: { not: null } },
-      distinct: ["userId"],
-      select: { userId: true },
-    }),
+    // Counted in Postgres for the reason given on `distinctUsers`.
+    distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`SELECT COUNT(DISTINCT user_id) AS n FROM resumes`),
+    distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`SELECT COUNT(DISTINCT user_id) AS n FROM variant_runs`),
+    distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(DISTINCT user_id) AS n FROM audit_logs
+      WHERE user_id IS NOT NULL AND action IN ('resume_export', 'resume_built')`),
 
     prisma.order.aggregate({ where: { status: "paid" }, _sum: { amount: true } }),
     prisma.order.aggregate({
@@ -156,11 +167,8 @@ export async function adminStats(now = new Date()): Promise<AdminStats> {
       _sum: { amount: true },
     }),
     prisma.order.count({ where: { status: "paid" } }),
-    prisma.order.findMany({
-      where: { status: "paid" },
-      distinct: ["userId"],
-      select: { userId: true },
-    }),
+    distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(DISTINCT user_id) AS n FROM orders WHERE status = 'paid'`),
 
     prisma.application.count(),
     prisma.application.count({
@@ -201,15 +209,15 @@ export async function adminStats(now = new Date()): Promise<AdminStats> {
     },
     funnel: {
       signedUp: total,
-      uploaded: uploadedUsers.length,
-      rebuilt: rebuiltUsers.length,
-      tookADocument: tookDocUsers.length,
+      uploaded: uploadedUsers,
+      rebuilt: rebuiltUsers,
+      tookADocument: tookDocUsers,
     },
     money: {
       revenue: revenueAgg._sum.amount ?? 0,
       revenueThisMonth: revenueMonthAgg._sum.amount ?? 0,
       paidOrders,
-      payingUsers: payingUsers.length,
+      payingUsers,
     },
     applications: { logged: applications, replied },
     health: {
