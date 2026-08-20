@@ -1,14 +1,18 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { currentUser } from "@/lib/auth";
+import { currentUser, type SessionUser } from "@/lib/auth";
 import { describe } from "@/lib/config";
-import { formatAmount } from "@/lib/plans";
+import { formatAmount, LIMITS, PRODUCTS, formatLimit } from "@/lib/plans";
 import { adminStats, signupsByDay } from "@/lib/adminStats";
+import { readAdminSettings } from "@/lib/adminSettings";
+import { classifyPending } from "@/lib/feedback";
 import { ResolveError } from "./ResolveError";
 import { AccessQueue } from "./AccessQueue";
 import { ProblemReports } from "./ProblemReports";
 import { AccountTable } from "./AccountTable";
+import { AdminsPanel } from "./AdminsPanel";
+import { SettingsSwitches } from "./SettingsSwitches";
 import { AdminNav, isSection, type SectionKey } from "./Nav";
 import { BandBars, Donut, KpiCard, SignupArea, StatusPill } from "./Charts";
 import { Funnel, ScoreStat, Section, Stat, StatGrid } from "./Panels";
@@ -89,7 +93,9 @@ export default async function AdminPage({
           {section === "quality" && <Quality stats={stats} />}
           {section === "money" && <Money stats={stats} caps={caps} />}
           {section === "problems" && <Problems stats={stats} />}
+          {section === "feedback" && <Feedback />}
           {section === "health" && <Health stats={stats} caps={caps} />}
+          {section === "settings" && <Settings user={user} />}
         </div>
       </div>
     </main>
@@ -436,13 +442,19 @@ function Money({ stats, caps }: { stats: Stats; caps: Caps }) {
         />
         <Stat label="Paid orders" value={stats.money.paidOrders} />
         <Stat
-          label="Paying accounts"
+          label="Free accounts"
+          value={stats.users.total - stats.money.payingUsers}
+          sub="Never bought a pass or a pack."
+        />
+        <Stat
+          label="Converted"
           value={stats.money.payingUsers}
           sub={
             stats.users.total
-              ? `${Math.round((stats.money.payingUsers / stats.users.total) * 100)}% of accounts`
+              ? `${Math.round((stats.money.payingUsers / stats.users.total) * 100)}% of accounts have paid at least once`
               : "no accounts yet"
           }
+          tone="good"
         />
         <Stat
           label="Revenue per account"
@@ -488,6 +500,84 @@ async function Problems({ stats }: { stats: Stats }) {
         }))}
       />
     </Section>
+  );
+}
+
+/* ── feedback ────────────────────────────────────────────────────── */
+
+async function Feedback() {
+  // Classifies a small batch of whatever is still unsorted, then reads the
+  // result of every batch ever run — including this one. Best-effort: see
+  // lib/feedback.ts for what happens to a report that fails to classify.
+  await classifyPending();
+
+  const [positive, negative, unclassified] = await Promise.all([
+    prisma.problemReport.findMany({
+      where: { sentiment: "positive" },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      select: { id: true, summary: true, message: true, createdAt: true, user: { select: { email: true } } },
+    }),
+    prisma.problemReport.findMany({
+      where: { sentiment: "negative" },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      select: { id: true, summary: true, message: true, createdAt: true, user: { select: { email: true } } },
+    }),
+    prisma.problemReport.count({ where: { sentiment: null } }),
+  ]);
+
+  return (
+    <Section
+      title="Feedback"
+      note='There is no separate feedback form — every row here started as a report typed into the "Problems" widget. A model reads the text and sorts it into these two columns and writes the one-line summary; nobody is asked to rate anything twice.'
+    >
+      {unclassified > 0 && (
+        <p className="text-muted mt-3 text-xs">
+          {unclassified} not yet classified — reload this page to pick up more (12 per visit).
+        </p>
+      )}
+      <div className="mt-3 grid gap-6 md:grid-cols-2">
+        <FeedbackColumn title="Positive" tone="good" rows={positive} />
+        <FeedbackColumn title="Negative" tone="bad" rows={negative} />
+      </div>
+    </Section>
+  );
+}
+
+function FeedbackColumn({
+  title,
+  tone,
+  rows,
+}: {
+  title: string;
+  tone: "good" | "bad";
+  rows: { id: string; summary: string | null; message: string; createdAt: Date; user: { email: string } | null }[];
+}) {
+  return (
+    <div>
+      <h3 className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">
+        {title} <span className="text-muted normal-case">· {rows.length}</span>
+      </h3>
+      {rows.length === 0 ? (
+        <p className="text-muted mt-2 text-xs">Nothing here yet.</p>
+      ) : (
+        <ul className="mt-2 flex flex-col gap-2">
+          {rows.map((r) => (
+            <li key={r.id} className="bg-surface border-border rounded-lg border p-3">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm leading-snug">{r.summary ?? r.message}</p>
+                <StatusPill tone={tone}>{tone === "good" ? "+" : "−"}</StatusPill>
+              </div>
+              <p className="text-muted mt-1.5 font-mono text-[10px] tracking-[0.08em] uppercase">
+                {r.user?.email ?? "account deleted"} ·{" "}
+                {r.createdAt.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -572,6 +662,91 @@ async function Health({ stats, caps }: { stats: Stats; caps: Caps }) {
             </table>
           </div>
         )}
+      </Section>
+    </>
+  );
+}
+
+/* ── settings ────────────────────────────────────────────────────── */
+
+async function Settings({ user }: { user: SessionUser }) {
+  const [admins, settings] = await Promise.all([
+    prisma.user.findMany({ where: { role: "admin" }, orderBy: { email: "asc" }, select: { id: true, email: true } }),
+    Promise.resolve(readAdminSettings()),
+  ]);
+
+  return (
+    <>
+      <Section
+        title="Feature flags"
+        note="File-backed, not database-backed — flipping one of these cannot itself fail because the database is having a bad night. Takes effect immediately, no redeploy."
+      >
+        <SettingsSwitches
+          initial={{ signupsPaused: settings.signupsPaused, rebuildsPaused: settings.rebuildsPaused }}
+        />
+      </Section>
+
+      <Section
+        title="Admin accounts"
+        note="Anyone listed here has full access to this page and to every account's data. The last admin cannot be revoked from here."
+      >
+        <AdminsPanel admins={admins} selfId={user.id} />
+      </Section>
+
+      <Section
+        title="Plans & quotas"
+        note="Read-only. Prices are what Razorpay was told to charge for a live order (see lib/plans.ts, PRODUCTS) — changing one here without changing it there would desync what this page shows from what a receipt says, so both live in code and go through review like anything else that touches billing."
+      >
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[36rem] text-sm">
+            <thead>
+              <tr className="border-border border-b text-left">
+                <Th>Plan</Th>
+                <Th className="text-right">Resumes</Th>
+                <Th className="text-right">Rebuilds/day</Th>
+                <Th className="text-right">Advice/day</Th>
+                <Th className="text-right">Uploads/day</Th>
+                <Th className="text-right">Targets/resume</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {(Object.entries(LIMITS) as [keyof typeof LIMITS, (typeof LIMITS)[keyof typeof LIMITS]][]).map(
+                ([plan, limits]) => (
+                  <tr key={plan} className="border-border border-b last:border-0">
+                    <td className="py-2 pr-4 font-medium capitalize">{plan}</td>
+                    <td className="py-2 pr-4 text-right font-mono text-xs tabular-nums">
+                      {formatLimit(limits.resumes)}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono text-xs tabular-nums">
+                      {formatLimit(limits.variantRunsPerDay)}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono text-xs tabular-nums">
+                      {formatLimit(limits.adviceRunsPerDay)}
+                    </td>
+                    <td className="py-2 pr-4 text-right font-mono text-xs tabular-nums">
+                      {formatLimit(limits.uploadsPerDay)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-xs tabular-nums">
+                      {formatLimit(limits.targetsPerResume)}
+                    </td>
+                  </tr>
+                ),
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-3">
+          {Object.values(PRODUCTS).map((p) => (
+            <div key={p.sku} className="bg-surface border-border min-w-48 flex-1 rounded-xl border p-4">
+              <p className="text-sm font-semibold">{p.name}</p>
+              <p className="font-display mt-1 text-xl font-bold">{formatAmount(p.amount, p.currency)}</p>
+              <p className="text-muted mt-1 text-xs leading-snug">
+                Grants {p.grants} for {p.days} days. {p.blurb}
+              </p>
+            </div>
+          ))}
+        </div>
       </Section>
     </>
   );

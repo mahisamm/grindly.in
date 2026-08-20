@@ -22,6 +22,7 @@ const OAUTH_ERRORS: Record<string, string> = {
   google_unverified: "Verify your email address with Google first, then sign in.",
   account_deleted: "That account has been deleted.",
   account_failed: "We could not finish setting up your account. Try again.",
+  signups_paused: "New sign-ups are paused right now. Please check back shortly.",
 };
 
 /**

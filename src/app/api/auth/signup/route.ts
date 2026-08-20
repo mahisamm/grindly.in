@@ -6,6 +6,7 @@ import { audit } from "@/lib/audit";
 import { isValidTimezone } from "@/lib/quota";
 import { issueVerification } from "@/lib/emailVerification";
 import { adminEmail } from "@/lib/config";
+import { readAdminSettings } from "@/lib/adminSettings";
 import {
   hashPassword,
   isValidEmail,
@@ -51,6 +52,19 @@ export async function POST(req: Request) {
   if (!isValidEmail(email)) {
     return NextResponse.json({ error: "That does not look like an email address." }, { status: 400 });
   }
+
+  // Checked after the email is validated (so a malformed address gets the
+  // usual message) and before anything else costs a database round trip. The
+  // owner email is exempt — with no second way in, pausing signups while the
+  // owner's own row does not exist yet would lock them out of the console
+  // that turns this back off.
+  if (readAdminSettings().signupsPaused && !(adminEmail() && email === adminEmail())) {
+    return NextResponse.json(
+      { error: "New sign-ups are paused right now. Please check back shortly." },
+      { status: 503 },
+    );
+  }
+
   const passwordProblem = validatePassword(password);
   if (passwordProblem) {
     return NextResponse.json({ error: passwordProblem }, { status: 400 });

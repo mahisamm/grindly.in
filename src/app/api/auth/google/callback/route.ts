@@ -8,6 +8,7 @@ import { setUid } from "@/lib/session";
 import { isRateLimitedByIp } from "@/lib/rateLimit";
 import { normalizeEmail } from "@/lib/password";
 import { adminEmail } from "@/lib/config";
+import { readAdminSettings } from "@/lib/adminSettings";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -84,6 +85,14 @@ export async function GET(req: Request) {
   });
 
   if (user?.deletedAt) return back("account_deleted");
+
+  // Only a NEW account is gated — a returning user must keep signing in
+  // exactly as before, paused or not. The owner email is exempt for the same
+  // reason the password path exempts it: no second way back into the console
+  // that lifts the pause.
+  if (!user && readAdminSettings().signupsPaused && !(adminEmail() && email === adminEmail())) {
+    return back("signups_paused");
+  }
 
   try {
     if (!user) {

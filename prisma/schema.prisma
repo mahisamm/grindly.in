@@ -667,8 +667,19 @@ model ProblemReport {
   resolvedAt DateTime? @map("resolved_at")
   createdAt  DateTime  @default(now()) @map("created_at")
 
+  /// positive | negative. Set once, by cmd_classify_feedback reading `message` —
+  /// never by the reporter, who only ever typed the message itself. Null means
+  /// "not classified yet", not "neutral"; there is no neutral bucket because the
+  /// admin feedback view sorts into exactly two columns.
+  sentiment String?
+  /// One line, written by the same call that set `sentiment`. What the admin
+  /// feedback view actually shows — the full `message` is one click away.
+  summary String?
+  classifiedAt DateTime? @map("classified_at")
+
   @@index([resolvedAt, createdAt])
   @@index([userId])
+  @@index([sentiment])
   @@map("problem_reports")
 }
 

@@ -470,6 +470,52 @@ def cmd_health(payload: dict) -> dict:
     return {"ok": True, "checks": checks}
 
 
+def cmd_classify_feedback(payload: dict) -> dict:
+    """Sentiment and a one-line summary for one problem report.
+
+    Single-provider (llm.chat_json), not the ensemble: this sorts an admin's
+    inbox into two columns, not a candidate's resume score — a majority-vote
+    merge across three providers is not worth three times the cost for
+    "positive or negative".
+    """
+    import llm
+
+    message = str(payload.get("message") or "").strip()[:4000]
+    if len(message) < 3:
+        return _fail("message is empty")
+
+    def valid(parsed: object) -> bool:
+        return (
+            isinstance(parsed, dict)
+            and parsed.get("sentiment") in ("positive", "negative")
+            and isinstance(parsed.get("summary"), str)
+            and bool(parsed["summary"].strip())
+        )
+
+    result = llm.chat_json(
+        "A user of a resume-tailoring product wrote this in the app's feedback "
+        f'widget:\n\n"""\n{message}\n"""\n\n'
+        "Reply with ONLY a JSON object: "
+        '{"sentiment": "positive" | "negative", '
+        '"summary": "<one line, under 100 characters, in your own words>"}. '
+        'Choose "negative" for anything reporting a bug, a complaint, confusion, '
+        "or a request that implies something is missing or broken. Choose "
+        '"positive" only for genuine praise or a thank-you with no complaint in '
+        'it. When in doubt, choose "negative" — this feeds a queue of things to '
+        "fix, not a testimonial wall.",
+        system="You classify one piece of user feedback. Reply with strict JSON and nothing else.",
+        validator=valid,
+    )
+    if not result:
+        return _fail("no provider returned a usable classification")
+
+    return {
+        "ok": True,
+        "sentiment": result["sentiment"],
+        "summary": result["summary"].strip()[:200],
+    }
+
+
 COMMANDS = {
     "ingest": cmd_ingest,
     "skills": cmd_skills,
@@ -483,6 +529,7 @@ COMMANDS = {
     "export": cmd_export,
     "cover": cmd_cover,
     "health": cmd_health,
+    "classify_feedback": cmd_classify_feedback,
 }
 
 

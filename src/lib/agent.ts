@@ -60,6 +60,9 @@ const TIMEOUTS: Record<string, number> = {
   // Several drafts, each checked independently against the gates.
   cover: 150_000,
   variants: 420_000,
+  // One model call, one short answer — but a cold interpreter is in front of
+  // it, and this runs in a batch of several from the admin feedback view.
+  classify_feedback: 30_000,
 };
 const DEFAULT_TIMEOUT = 60_000;
 

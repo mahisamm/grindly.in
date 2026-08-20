@@ -7,7 +7,9 @@ export type SectionKey =
   | "quality"
   | "money"
   | "problems"
-  | "health";
+  | "feedback"
+  | "health"
+  | "settings";
 
 export const SECTIONS: { key: SectionKey; label: string; group: string }[] = [
   { key: "overview", label: "Overview", group: "Dashboard" },
@@ -16,7 +18,9 @@ export const SECTIONS: { key: SectionKey; label: string; group: string }[] = [
   { key: "quality", label: "Quality", group: "Product" },
   { key: "money", label: "Money", group: "Product" },
   { key: "problems", label: "Problems", group: "Operations" },
+  { key: "feedback", label: "Feedback", group: "Operations" },
   { key: "health", label: "Health", group: "Operations" },
+  { key: "settings", label: "Settings", group: "Operations" },
 ];
 
 export function isSection(value: string | undefined): value is SectionKey {

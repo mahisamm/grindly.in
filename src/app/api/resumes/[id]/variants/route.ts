@@ -12,6 +12,7 @@ import { formatLimit, limitsFor } from "@/lib/plans";
 import { audit } from "@/lib/audit";
 import { report } from "@/lib/errors";
 import { activeRun, holdRun, releaseRun } from "@/lib/variantRuns";
+import { readAdminSettings } from "@/lib/adminSettings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,6 +57,16 @@ export async function POST(req: Request, { params }: Ctx) {
   if ("error" in auth) return auth.error;
   const { user } = auth;
   const { id } = await params;
+
+  // No exemption for admin here, deliberately — see adminSettings.ts. This is
+  // for a deploy or a migration, and "except the operator testing the box
+  // during one" is exactly the run that would collide with it.
+  if (readAdminSettings().rebuildsPaused) {
+    return NextResponse.json(
+      { error: "Rebuilds are paused for maintenance. Try again shortly.", code: "rebuilds_paused" },
+      { status: 503 },
+    );
+  }
 
   const resume = await prisma.resume.findFirst({
     where: { id, userId: user.id },
