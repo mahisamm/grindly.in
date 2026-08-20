@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
@@ -357,6 +357,27 @@ function DeleteResume({ id, label }: { id: string; label: string }) {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * The readiness tab, opened in two acts.
+ *
+ * User reviews kept saying the same thing: a full report sitting on the left
+ * that nobody asked for, next to a button offering "a review" — so the button
+ * read as a second, human reviewer, and the report read as the thing the
+ * button had already done. One reviewer, one entry point: the first visit
+ * shows a single card with a single press, and that press opens everything —
+ * the report rises in on the left, the button itself flies to the right and
+ * becomes the model's-read card, and the share card appears only once there
+ * is a report on screen to share.
+ *
+ * Two rules keep the theatre honest. The report is NEVER gated on the model:
+ * the score is arithmetic, already computed at upload, and it reveals
+ * instantly even if every LLM provider is down or the advice quota is spent —
+ * the only spinner shown is on the model call, which is genuinely in flight.
+ * And the curtain only falls once: advice existing in the database (any
+ * device) or a localStorage mark (this device, covering the case where the
+ * advice call failed) means the tab opens straight onto the report forever
+ * after.
+ */
 function ReportTab({
   resume,
   busy,
@@ -366,6 +387,63 @@ function ReportTab({
   busy: string | null;
   onAdvice: () => void;
 }) {
+  const seenKey = `grindly:report-seen:${resume.id}`;
+  // Whether THIS browser has opened the report before. useSyncExternalStore
+  // rather than an effect: the server snapshot says "not seen" (the server
+  // cannot know), the client snapshot reads localStorage, and React reconciles
+  // the two at hydration without a flash or a cascading set-state.
+  const seenBefore = useSyncExternalStore(
+    noopSubscribe,
+    () => {
+      try {
+        return localStorage.getItem(seenKey) !== null;
+      } catch {
+        return false; // blocked storage just means the curtain shows again
+      }
+    },
+    () => false,
+  );
+  const [opened, setOpened] = useState<"no" | "flying" | "yes">("no");
+  // How the panels enter: "none" for a return visit (no animation), "stagger"
+  // for phones and reduced-motion, "flight" for the full button-to-card
+  // journey on a two-column layout.
+  const [entrance, setEntrance] = useState<"none" | "stagger" | "flight">("none");
+  const [flightFrom, setFlightFrom] = useState<{
+    left: number; top: number; width: number; height: number;
+  } | null>(null);
+  const gateBtnRef = useRef<HTMLButtonElement>(null);
+  const asideSlotRef = useRef<HTMLDivElement>(null);
+
+  // Advice in the database means any device has seen it; the localStorage
+  // mark covers this device when the advice call failed or is still running.
+  const gated = !resume.advice && !seenBefore && opened === "no";
+
+  function reveal() {
+    try {
+      localStorage.setItem(seenKey, "1");
+    } catch {
+      /* the gate returns next visit; nothing worse */
+    }
+    // Fired first so the model is reading while the report animates in — the
+    // animation is presentation over data the page already has, never a wait.
+    onAdvice();
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setOpened("yes");
+      return;
+    }
+    const from = gateBtnRef.current?.getBoundingClientRect();
+    // Below `lg` the aside stacks under the report, so the button would fly
+    // downward off the viewport — noise, not delight. Stagger instead.
+    if (from && window.innerWidth >= 1024) {
+      setFlightFrom({ left: from.left, top: from.top, width: from.width, height: from.height });
+      setEntrance("flight");
+      setOpened("flying");
+    } else {
+      setEntrance("stagger");
+      setOpened("yes");
+    }
+  }
+
   if (!resume.report) {
     return (
       <p className="text-muted text-sm">
@@ -375,9 +453,50 @@ function ReportTab({
     );
   }
 
+  if (gated) {
+    return (
+      <div className="mx-auto max-w-xl py-10 text-center sm:py-16">
+        <h2 className="font-display text-2xl font-semibold sm:text-3xl">
+          Your report is ready
+        </h2>
+        <p className="text-muted mx-auto mt-3 max-w-md text-sm leading-relaxed">
+          The score is already measured — arithmetic over your text, not opinion.
+          One press opens it, and asks a model for its read on the writing: what
+          works, what is weak, what to do. It never produces a number and it can
+          never invent a fact you did not claim.
+        </p>
+        <button
+          ref={gateBtnRef}
+          onClick={reveal}
+          disabled={busy !== null}
+          className="btn btn-primary mt-6 min-w-52 justify-center"
+        >
+          Ask for a review
+        </button>
+      </div>
+    );
+  }
+
+  // Entrance timing for each panel, as a spreadable prop bundle. `none` means
+  // a return visit: everything is simply there, the way it was left.
+  const rise = (ms: number) =>
+    entrance === "none"
+      ? {}
+      : {
+          className: "report-reveal",
+          style: { "--reveal-at": `${ms}ms` } as React.CSSProperties,
+        };
+
   return (
     <div className="grid gap-10 lg:grid-cols-[1.4fr_1fr]">
-      <div>
+      {opened === "flying" && flightFrom && (
+        <FlightGhost
+          from={flightFrom}
+          targetRef={asideSlotRef}
+          onDone={() => setOpened("yes")}
+        />
+      )}
+      <div {...rise(40)}>
         {/* Said before the score, not after it. Every number on this page
             describes the first 60 000 characters of a longer document, and a
             partial reading presented as a complete one is the one thing this
@@ -398,64 +517,135 @@ function ReportTab({
         <ReportPanel report={resume.report} />
       </div>
       <aside>
-        {resume.advice ? (
-          // The box, the heading and the disclaimer only earn their place once
-          // there is a real opinion inside them to qualify. "A recruiter's
-          // read" tested as confusing before that — read as a human reviewer,
-          // not a model — so the launcher below drops all three.
-          <div className="bg-surface border-border rounded-xl border p-5">
-            <h3 className="font-display text-lg font-semibold">Model&rsquo;s read</h3>
-            <p className="text-muted mt-1.5 text-sm leading-snug">
-              The score above is arithmetic. This is a model&rsquo;s opinion on the writing —
-              it never produces a number and it can never suggest a fact you did not
-              already claim.
-            </p>
-            <div className="mt-4 flex flex-col gap-4 text-sm">
-              <AdviceList title="Working" items={resume.advice.strengths} />
-              <AdviceList title="Weak" items={resume.advice.issues} />
-              <AdviceList title="Do this" items={resume.advice.suggestions} />
+        {/* `visibility`, not `display`: the ghost needs this slot's rectangle
+            to land on, so it must keep its layout while it hides. */}
+        <div
+          ref={asideSlotRef}
+          style={opened === "flying" ? { visibility: "hidden" } : undefined}
+          {...(entrance === "stagger" ? rise(160) : {})}
+        >
+          {resume.advice ? (
+            // The box, the heading and the disclaimer only earn their place
+            // once there is a real opinion inside them to qualify.
+            <div className="bg-surface border-border rounded-xl border p-5">
+              <h3 className="font-display text-lg font-semibold">Model&rsquo;s read</h3>
+              <p className="text-muted mt-1.5 text-sm leading-snug">
+                The score above is arithmetic. This is a model&rsquo;s opinion on the writing —
+                it never produces a number and it can never suggest a fact you did not
+                already claim.
+              </p>
+              <div className="mt-4 flex flex-col gap-4 text-sm">
+                <AdviceList title="Working" items={resume.advice.strengths} />
+                <AdviceList title="Weak" items={resume.advice.issues} />
+                <AdviceList title="Do this" items={resume.advice.suggestions} />
+              </div>
             </div>
-          </div>
-        ) : (
-          <div>
-            <p className="text-muted text-sm leading-snug">
-              Want a model&rsquo;s opinion on the writing, not just the score?
-            </p>
-            {/* Capped, not full-bleed: in the one-column layout below `lg` this
-                aside spans the whole page, and a button stretched across 700px
-                of tablet reads as a banner rather than a control. */}
-            <button
-              onClick={onAdvice}
-              disabled={busy !== null}
-              className="btn mt-2 w-full justify-center sm:w-auto sm:min-w-52"
-            >
-              {busy === "advice" ? "Reading…" : "Ask for a review"}
-            </button>
-          </div>
-        )}
+          ) : (
+            <div>
+              <p className="text-muted text-sm leading-snug">
+                {busy === "advice"
+                  ? "The model is reading your resume now."
+                  : "Want a model’s opinion on the writing, not just the score?"}
+              </p>
+              {/* Capped, not full-bleed: in the one-column layout below `lg` this
+                  aside spans the whole page, and a button stretched across 700px
+                  of tablet reads as a banner rather than a control. */}
+              <button
+                onClick={onAdvice}
+                disabled={busy !== null}
+                className="btn mt-2 w-full justify-center sm:w-auto sm:min-w-52"
+              >
+                {busy === "advice" ? "Reading…" : "Ask for a review"}
+              </button>
+            </div>
+          )}
+        </div>
 
-        <ShareLink resumeId={resume.id} initialToken={resume.shareToken} />
+        <div {...rise(320)}>
+          <ShareLink resumeId={resume.id} initialToken={resume.shareToken} />
+        </div>
 
         {resume.skills.length > 0 && (
-          <div className="bg-surface border-border mt-4 rounded-xl border p-5">
-            <h3 className="font-display text-lg font-semibold">Skills we found</h3>
-            <p className="text-muted mt-1.5 text-xs leading-snug">
-              A rewrite may surface these. It cannot introduce a technology, employer,
-              date or number that is not somewhere in your resume.
-            </p>
-            <ul className="mt-3 flex flex-wrap gap-1.5">
-              {resume.skills.map((s) => (
-                <li
-                  key={s}
-                  className="bg-surface-2 border-border rounded border px-2 py-0.5 font-mono text-[11px]"
-                >
-                  {s}
-                </li>
-              ))}
-            </ul>
+          <div {...rise(440)}>
+            <div className="bg-surface border-border mt-4 rounded-xl border p-5">
+              <h3 className="font-display text-lg font-semibold">Skills we found</h3>
+              <p className="text-muted mt-1.5 text-xs leading-snug">
+                A rewrite may surface these. It cannot introduce a technology, employer,
+                date or number that is not somewhere in your resume.
+              </p>
+              <ul className="mt-3 flex flex-wrap gap-1.5">
+                {resume.skills.map((s) => (
+                  <li
+                    key={s}
+                    className="bg-surface-2 border-border rounded border px-2 py-0.5 font-mono text-[11px]"
+                  >
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
         )}
       </aside>
+    </div>
+  );
+}
+
+/** For useSyncExternalStore over a value that never changes underneath us:
+ *  localStorage is only ever written by our own click handler, which re-renders
+ *  anyway, so there is nothing to subscribe to. */
+const noopSubscribe = () => () => {};
+
+/**
+ * The gate button, mid-journey to the aside.
+ *
+ * A FLIP-style clone: fixed-positioned at the button's last rectangle, then
+ * transitioned to the aside slot's rectangle in the next frame. The real slot
+ * hides (visibility, not display — its rectangle is the destination) until
+ * `onDone` swaps it in. Completion is a timer rather than `transitionend`,
+ * which never fires if the tab is backgrounded mid-flight — a stuck curtain
+ * over a report someone asked to see is the one failure this must not have.
+ */
+function FlightGhost({
+  from,
+  targetRef,
+  onDone,
+}: {
+  from: { left: number; top: number; width: number; height: number };
+  targetRef: React.RefObject<HTMLDivElement | null>;
+  onDone: () => void;
+}) {
+  const [box, setBox] = useState(from);
+  useLayoutEffect(() => {
+    const to = targetRef.current?.getBoundingClientRect();
+    if (!to || to.width === 0) {
+      // Nowhere to land — skip the theatre and show the page.
+      const bail = setTimeout(onDone, 0);
+      return () => clearTimeout(bail);
+    }
+    // Two frames: the first paints the clone at the source, the second starts
+    // the transition. One frame collapses both into a single style write and
+    // nothing animates.
+    const raf = requestAnimationFrame(() =>
+      requestAnimationFrame(() =>
+        setBox({ left: to.left, top: to.top, width: to.width, height: to.height }),
+      ),
+    );
+    const timer = setTimeout(onDone, 640);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div
+      aria-hidden
+      className="btn pointer-events-none fixed z-50 items-center justify-center overflow-hidden"
+      style={{ ...box, margin: 0, transition: "all 0.56s var(--ease)" }}
+    >
+      Ask for a review
     </div>
   );
 }

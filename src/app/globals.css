@@ -357,6 +357,13 @@ h1, h2, h3 { font-family: var(--ff-display), "Fraunces", Georgia, serif; }
 @keyframes float-up { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
 .animate-in { animation: float-up 0.55s var(--ease) both; }
 
+/* ── Report reveal — the workspace's staged first opening ──────────
+   Same float-up as .animate-in, but each panel names its own start via
+   --reveal-at so the report, the model card and the share card arrive in
+   order rather than as one slab. `both` keeps a delayed panel invisible
+   until its turn. */
+.report-reveal { animation: float-up 0.55s var(--ease) both; animation-delay: var(--reveal-at, 0ms); }
+
 /* ── Scroll reveal — JS adds .is-visible via IntersectionObserver ──── */
 .reveal {
   opacity: 0;
@@ -446,6 +453,7 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .animate-in { animation: none; }
+  .report-reveal { animation: none; }
   .reveal { opacity: 1; transform: none; transition: none; }
   html { scroll-behavior: auto; }
 }
