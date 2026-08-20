@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import type { Band, Fidelity, Finding, Report } from "@/lib/reportTypes";
 import { BAND_BLURBS, BAND_LABELS, scoreColor } from "@/lib/reportTypes";
 
@@ -19,7 +20,39 @@ import { BAND_BLURBS, BAND_LABELS, scoreColor } from "@/lib/reportTypes";
  * "the red ones are urgent" is not an instruction they can follow.
  */
 
-export function ScoreDial({ score, grade, size = 132 }: { score: number; grade: string; size?: number }) {
+export function ScoreDial({
+  score,
+  grade,
+  size = 132,
+  animate = false,
+}: {
+  score: number;
+  grade: string;
+  size?: number;
+  /** Count the number up and draw the ring on mount — the workspace's first
+      reveal only. Everywhere else the dial is a fact, not an event. */
+  animate?: boolean;
+}) {
+  // 0..1 through the entrance. Starts complete unless animating, so the
+  // default renders exactly what it always did, with no effect and no flicker.
+  const [progress, setProgress] = useState(animate ? 0 : 1);
+  useEffect(() => {
+    if (!animate) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const id = requestAnimationFrame(() => setProgress(1));
+      return () => cancelAnimationFrame(id);
+    }
+    const t0 = performance.now();
+    const DURATION = 900;
+    let raf = requestAnimationFrame(function tick(now: number) {
+      const p = Math.min(1, (now - t0) / DURATION);
+      // easeOutCubic: fast through the small numbers, settling on the real one
+      // — a linear count spends most of its time on digits nobody cares about.
+      setProgress(1 - Math.pow(1 - p, 3));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [animate]);
   // EVERYTHING scales with `size`, and that is the bug this shape fixes.
   //
   // The ring was drawn from `size` while the text inside it was hard-coded at
@@ -35,7 +68,12 @@ export function ScoreDial({ score, grade, size = 132 }: { score: number; grade: 
   const stroke = Math.max(3, Math.round(size * 0.053));
   const r = (size - stroke * 2) / 2;
   const circumference = 2 * Math.PI * r;
-  const filled = Math.max(0, Math.min(100, score)) / 100;
+  // Ring and number share `progress`, so they arrive together. The stroke
+  // colour is the FINAL score's from the first frame — counting up through
+  // red and amber on the way to a green 91 would flash two verdicts that
+  // were never given.
+  const filled = (Math.max(0, Math.min(100, score)) / 100) * progress;
+  const shownScore = Math.round(score * progress);
 
   const scoreSize = Math.round(size * 0.273);
   // 10px floor. Below that the label stops being readable, and an unreadable
@@ -70,7 +108,7 @@ export function ScoreDial({ score, grade, size = 132 }: { score: number; grade: 
           className="font-display font-bold tabular-nums"
           style={{ fontSize: scoreSize, lineHeight: 1 }}
         >
-          {score}
+          {shownScore}
         </span>
         {/* 72px is where "GRADE A" physically fits, not a guess: at a 10px
             floor the label is ~46px wide, and the chord of the circle at the
@@ -98,7 +136,24 @@ export function ScoreDial({ score, grade, size = 132 }: { score: number; grade: 
   );
 }
 
-export function BandBars({ bands }: { bands: Record<string, Band> }) {
+export function BandBars({
+  bands,
+  animate = false,
+}: {
+  bands: Record<string, Band>;
+  /** Grow the bars from zero on mount — see ScoreDial. */
+  animate?: boolean;
+}) {
+  // Mount at zero width, then let the transition already on the fill carry
+  // each bar to its real value. Two frames, not one: a single frame collapses
+  // the two widths into one style write and nothing moves.
+  const [grown, setGrown] = useState(!animate);
+  useEffect(() => {
+    if (!animate) return;
+    const raf = requestAnimationFrame(() => requestAnimationFrame(() => setGrown(true)));
+    return () => cancelAnimationFrame(raf);
+  }, [animate]);
+
   const entries = Object.entries(bands);
   if (!entries.length) return null;
 
@@ -115,9 +170,9 @@ export function BandBars({ bands }: { bands: Record<string, Band> }) {
           </div>
           <div className="bg-surface-2 mt-1.5 h-2 w-full overflow-hidden rounded-full">
             <div
-              className="h-full rounded-full transition-[width] duration-500"
+              className="h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none"
               style={{
-                width: `${band.score}%`,
+                width: grown ? `${band.score}%` : "0%",
                 background: scoreColor(band.score),
               }}
             />
@@ -210,7 +265,7 @@ export function FidelityLine({
   );
 }
 
-export function ReportPanel({ report }: { report: Report }) {
+export function ReportPanel({ report, animate = false }: { report: Report; animate?: boolean }) {
   return (
     <div className="flex flex-col gap-6">
       {/* items-start, not items-center.
@@ -221,9 +276,9 @@ export function ReportPanel({ report }: { report: Report }) {
           as one object. Below `sm` the dial goes above the bars entirely —
           side by side at 390px leaves the bars about 180px wide. */}
       <div className="flex flex-col items-start gap-5 sm:flex-row sm:items-start sm:gap-6">
-        <ScoreDial score={report.score} grade={report.grade} />
+        <ScoreDial score={report.score} grade={report.grade} animate={animate} />
         <div className="w-full min-w-0 flex-1">
-          <BandBars bands={report.bands} />
+          <BandBars bands={report.bands} animate={animate} />
         </div>
       </div>
       <div>

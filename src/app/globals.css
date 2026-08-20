@@ -364,6 +364,23 @@ h1, h2, h3 { font-family: var(--ff-display), "Fraunces", Georgia, serif; }
    until its turn. */
 .report-reveal { animation: float-up 0.55s var(--ease) both; animation-delay: var(--reveal-at, 0ms); }
 
+/* ── Reading scene — a scan beam sweeping the skeleton sheet ───────
+   Pure decoration over an aria-hidden card; the band results beside it are
+   the data. Hidden entirely under reduced motion (the scene itself is also
+   skipped in that case — this is belt and braces). */
+@keyframes scan-sweep { from { top: 8%; } to { top: 88%; } }
+.scan-beam {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--vermilion), transparent);
+  box-shadow: 0 0 12px 2px color-mix(in srgb, var(--vermilion) 45%, transparent);
+  animation: scan-sweep 1.5s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) { .scan-beam { animation: none; opacity: 0; } }
+
 /* ── Scroll reveal — JS adds .is-visible via IntersectionObserver ──── */
 .reveal {
   opacity: 0;

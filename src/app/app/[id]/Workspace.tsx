@@ -1,12 +1,12 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
   Advice, CompanyPack, CompanyResearch, Fidelity, Report,
 } from "@/lib/reportTypes";
-import { SHIPPABLE_FLOOR } from "@/lib/reportTypes";
+import { BAND_LABELS, SHIPPABLE_FLOOR, scoreColor } from "@/lib/reportTypes";
 import { isUnlimited } from "@/lib/plans";
 import { FidelityLine, Findings, ReportPanel, ScoreDial } from "@/components/Score";
 import { RunBanner, useRunStatus } from "./RunProgress";
@@ -358,25 +358,27 @@ function DeleteResume({ id, label }: { id: string; label: string }) {
 // ---------------------------------------------------------------------------
 
 /**
- * The readiness tab, opened in two acts.
+ * The readiness tab, opened in three acts.
  *
  * User reviews kept saying the same thing: a full report sitting on the left
  * that nobody asked for, next to a button offering "a review" — so the button
- * read as a second, human reviewer, and the report read as the thing the
- * button had already done. One reviewer, one entry point: the first visit
- * shows a single card with a single press, and that press opens everything —
- * the report rises in on the left, the button itself flies to the right and
- * becomes the model's-read card, and the share card appears only once there
- * is a report on screen to share.
+ * read as a second, human reviewer. One reviewer, one entry point. Act one is
+ * a single card with a single press. Act two is the reading: a scan beam over
+ * a skeleton sheet while the real band results tick in (ReadingScene). Act
+ * three is the settle: the dial counts up, the bars grow, and the aside —
+ * model card, then share, then skills — arrives after the score, not beside
+ * it. (An earlier act two flew the button across to the aside; testers
+ * watched the button land on the right while the report appeared unannounced
+ * on the left. The star of this reveal is the report.)
  *
  * Two rules keep the theatre honest. The report is NEVER gated on the model:
- * the score is arithmetic, already computed at upload, and it reveals
- * instantly even if every LLM provider is down or the advice quota is spent —
- * the only spinner shown is on the model call, which is genuinely in flight.
- * And the curtain only falls once: advice existing in the database (any
- * device) or a localStorage mark (this device, covering the case where the
- * advice call failed) means the tab opens straight onto the report forever
- * after.
+ * the score is arithmetic, already computed at upload, and it reveals even if
+ * every LLM provider is down or the advice quota is spent — the reading scene
+ * shows real measured sub-scores while the one genuine in-flight call (the
+ * model's advice) runs. And the curtain only falls once: advice existing in
+ * the database (any device) or a localStorage mark (this device, covering the
+ * case where the advice call failed) means the tab opens straight onto the
+ * report forever after.
  */
 function ReportTab({
   resume,
@@ -403,16 +405,11 @@ function ReportTab({
     },
     () => false,
   );
-  const [opened, setOpened] = useState<"no" | "flying" | "yes">("no");
-  // How the panels enter: "none" for a return visit (no animation), "stagger"
-  // for phones and reduced-motion, "flight" for the full button-to-card
-  // journey on a two-column layout.
-  const [entrance, setEntrance] = useState<"none" | "stagger" | "flight">("none");
-  const [flightFrom, setFlightFrom] = useState<{
-    left: number; top: number; width: number; height: number;
-  } | null>(null);
-  const gateBtnRef = useRef<HTMLButtonElement>(null);
-  const asideSlotRef = useRef<HTMLDivElement>(null);
+  const [opened, setOpened] = useState<"no" | "reading" | "yes">("no");
+  // Whether the settled layout should perform its entrance. "cinematic" only
+  // ever follows the reading scene; a return visit is "none" — everything is
+  // simply there, the way it was left.
+  const [entrance, setEntrance] = useState<"none" | "cinematic">("none");
 
   // Advice in the database means any device has seen it; the localStorage
   // mark covers this device when the advice call failed or is still running.
@@ -424,25 +421,22 @@ function ReportTab({
     } catch {
       /* the gate returns next visit; nothing worse */
     }
-    // Fired first so the model is reading while the report animates in — the
-    // animation is presentation over data the page already has, never a wait.
+    // Fired first, so the model genuinely IS reading for every second the
+    // reading scene is on screen — the scene narrates a real call in flight,
+    // never a simulated one.
     onAdvice();
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       setOpened("yes");
       return;
     }
-    const from = gateBtnRef.current?.getBoundingClientRect();
-    // Below `lg` the aside stacks under the report, so the button would fly
-    // downward off the viewport — noise, not delight. Stagger instead.
-    if (from && window.innerWidth >= 1024) {
-      setFlightFrom({ left: from.left, top: from.top, width: from.width, height: from.height });
-      setEntrance("flight");
-      setOpened("flying");
-    } else {
-      setEntrance("stagger");
-      setOpened("yes");
-    }
+    setEntrance("cinematic");
+    setOpened("reading");
   }
+
+  // Stable across renders: the reading scene keys its auto-advance timer on
+  // this, and the advice call resolving mid-scene re-renders this component —
+  // a fresh closure each render would restart the clock at every refresh.
+  const settle = useCallback(() => setOpened("yes"), []);
 
   if (!resume.report) {
     return (
@@ -466,7 +460,6 @@ function ReportTab({
           never invent a fact you did not claim.
         </p>
         <button
-          ref={gateBtnRef}
           onClick={reveal}
           disabled={busy !== null}
           className="btn btn-primary mt-6 min-w-52 justify-center"
@@ -475,6 +468,10 @@ function ReportTab({
         </button>
       </div>
     );
+  }
+
+  if (opened === "reading") {
+    return <ReadingScene report={resume.report} onDone={settle} />;
   }
 
   // Entrance timing for each panel, as a spreadable prop bundle. `none` means
@@ -489,14 +486,7 @@ function ReportTab({
 
   return (
     <div className="grid gap-10 lg:grid-cols-[1.4fr_1fr]">
-      {opened === "flying" && flightFrom && (
-        <FlightGhost
-          from={flightFrom}
-          targetRef={asideSlotRef}
-          onDone={() => setOpened("yes")}
-        />
-      )}
-      <div {...rise(40)}>
+      <div {...rise(0)}>
         {/* Said before the score, not after it. Every number on this page
             describes the first 60 000 characters of a longer document, and a
             partial reading presented as a complete one is the one thing this
@@ -514,16 +504,12 @@ function ReportTab({
             </p>
           </div>
         )}
-        <ReportPanel report={resume.report} />
+        {/* The dial counts up and the bars grow only on the cinematic
+            entrance — a return visit renders the finished fact. */}
+        <ReportPanel report={resume.report} animate={entrance === "cinematic"} />
       </div>
       <aside>
-        {/* `visibility`, not `display`: the ghost needs this slot's rectangle
-            to land on, so it must keep its layout while it hides. */}
-        <div
-          ref={asideSlotRef}
-          style={opened === "flying" ? { visibility: "hidden" } : undefined}
-          {...(entrance === "stagger" ? rise(160) : {})}
-        >
+        <div {...rise(700)}>
           {resume.advice ? (
             // The box, the heading and the disclaimer only earn their place
             // once there is a real opinion inside them to qualify.
@@ -561,12 +547,12 @@ function ReportTab({
           )}
         </div>
 
-        <div {...rise(320)}>
+        <div {...rise(900)}>
           <ShareLink resumeId={resume.id} initialToken={resume.shareToken} />
         </div>
 
         {resume.skills.length > 0 && (
-          <div {...rise(440)}>
+          <div {...rise(1080)}>
             <div className="bg-surface border-border mt-4 rounded-xl border p-5">
               <h3 className="font-display text-lg font-semibold">Skills we found</h3>
               <p className="text-muted mt-1.5 text-xs leading-snug">
@@ -597,55 +583,73 @@ function ReportTab({
 const noopSubscribe = () => () => {};
 
 /**
- * The gate button, mid-journey to the aside.
+ * The moment between the press and the report: your resume, being read.
  *
- * A FLIP-style clone: fixed-positioned at the button's last rectangle, then
- * transitioned to the aside slot's rectangle in the next frame. The real slot
- * hides (visibility, not display — its rectangle is the destination) until
- * `onDone` swaps it in. Completion is a timer rather than `transitionend`,
- * which never fires if the tab is backgrounded mid-flight — a stuck curtain
- * over a report someone asked to see is the one failure this must not have.
+ * A scan beam sweeps a skeleton sheet while the four band results tick in one
+ * at a time — each line is the REAL measured sub-score, not a progress bar
+ * over pretend work, and the model's advice call genuinely is in flight for
+ * every second this is on screen (reveal() fires it before showing this).
+ * The first version of this reveal flew the button across to the aside
+ * instead, and testers watched the button land on the right while the
+ * report — the actual star — appeared unannounced on the left.
+ *
+ * Auto-advances on a timer rather than `animationend`, which never fires in a
+ * backgrounded tab — a stuck curtain over a report someone asked to see is
+ * the one failure this must not have. The skip link is for the second upload,
+ * when the theatre is no longer news.
  */
-function FlightGhost({
-  from,
-  targetRef,
-  onDone,
-}: {
-  from: { left: number; top: number; width: number; height: number };
-  targetRef: React.RefObject<HTMLDivElement | null>;
-  onDone: () => void;
-}) {
-  const [box, setBox] = useState(from);
-  useLayoutEffect(() => {
-    const to = targetRef.current?.getBoundingClientRect();
-    if (!to || to.width === 0) {
-      // Nowhere to land — skip the theatre and show the page.
-      const bail = setTimeout(onDone, 0);
-      return () => clearTimeout(bail);
-    }
-    // Two frames: the first paints the clone at the source, the second starts
-    // the transition. One frame collapses both into a single style write and
-    // nothing animates.
-    const raf = requestAnimationFrame(() =>
-      requestAnimationFrame(() =>
-        setBox({ left: to.left, top: to.top, width: to.width, height: to.height }),
-      ),
-    );
-    const timer = setTimeout(onDone, 640);
-    return () => {
-      cancelAnimationFrame(raf);
-      clearTimeout(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+function ReadingScene({ report, onDone }: { report: Report; onDone: () => void }) {
+  useEffect(() => {
+    const timer = setTimeout(onDone, 3400);
+    return () => clearTimeout(timer);
+  }, [onDone]);
+
+  const entries = Object.entries(report.bands);
 
   return (
-    <div
-      aria-hidden
-      className="btn pointer-events-none fixed z-50 items-center justify-center overflow-hidden"
-      style={{ ...box, margin: 0, transition: "all 0.56s var(--ease)" }}
-    >
-      Ask for a review
+    <div className="mx-auto max-w-md py-8 text-center sm:py-12">
+      <h2 className="font-display text-xl font-semibold sm:text-2xl">
+        Reading your resume…
+      </h2>
+      <p className="text-muted mt-2 text-sm leading-snug">
+        The way a recruiter&rsquo;s software reads it — while a model reads the writing.
+      </p>
+
+      {/* The sheet is decoration and says so; the band lines below are the
+          data and are real text. */}
+      <div
+        aria-hidden
+        className="bg-surface border-border relative mx-auto mt-6 h-44 w-full max-w-xs overflow-hidden rounded-xl border p-5"
+      >
+        <div className="flex h-full flex-col gap-2.5">
+          {[82, 46, 68, 90, 58, 74, 40].map((w, i) => (
+            <div key={i} className="bg-surface-2 h-2.5 rounded" style={{ width: `${w}%` }} />
+          ))}
+        </div>
+        <div className="scan-beam" />
+      </div>
+
+      <ul className="mx-auto mt-5 flex max-w-xs flex-col gap-2 text-left">
+        {entries.map(([key, band], i) => (
+          <li
+            key={key}
+            className="report-reveal flex items-baseline justify-between gap-3 text-sm"
+            style={{ "--reveal-at": `${500 + i * 620}ms` } as React.CSSProperties}
+          >
+            <span>{BAND_LABELS[key] ?? key}</span>
+            <span className="font-mono text-xs tabular-nums" style={{ color: scoreColor(band.score) }}>
+              {band.score} / 100
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      <button
+        onClick={onDone}
+        className="text-muted hover:text-ink mt-6 cursor-pointer text-xs underline"
+      >
+        Show the report now
+      </button>
     </div>
   );
 }
