@@ -5,6 +5,7 @@ import { currentUser } from "@/lib/auth";
 import { googleOAuthConfigured } from "@/lib/config";
 import { AuthForm } from "../(auth)/AuthForm";
 import { BrandPanel } from "../(auth)/BrandPanel";
+import { AmbientBackground } from "@/components/AmbientBackground";
 
 export const metadata: Metadata = { title: "Sign in — Grindly" };
 // Reads the session cookie and the server's capabilities, so it cannot be
@@ -18,12 +19,15 @@ export default async function LoginPage() {
   return (
     <main className="grid min-h-screen grid-cols-1 lg:grid-cols-2">
       <BrandPanel />
-      <div className="grid-bg relative flex min-w-0 items-center justify-center">
+      <div className="grid-bg relative flex min-w-0 items-center justify-center overflow-hidden">
+        <AmbientBackground contain />
         {/* Required, not decorative: AuthForm reads `?error=` with
             useSearchParams, and a page that does so without a boundary fails
             the build. */}
         <Suspense fallback={<div className="min-h-[60vh]" />}>
-          <AuthForm mode="login" googleAuth={googleOAuthConfigured()} />
+          <div className="relative z-[1] min-w-0">
+            <AuthForm mode="login" googleAuth={googleOAuthConfigured()} />
+          </div>
         </Suspense>
       </div>
     </main>

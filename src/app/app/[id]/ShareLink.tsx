@@ -6,10 +6,11 @@ import { useRouter } from "next/navigation";
 /**
  * A link to the readiness report, for someone without an account.
  *
- * The thing being shared is the MEASUREMENT — score, bands, findings — and not
- * the resume, the PDFs, the contact details, or even the filename, which is
- * usually the owner's own name. That is what makes an unguessable URL an
- * acceptable access control here: what is behind it identifies nobody.
+ * The thing being shared is the MEASUREMENT — score, bands, findings — plus
+ * the candidate's name off the resume header, because owners send these links
+ * saying "look at my report" and a page that refused to say whose it was made
+ * every recipient ask. The line is drawn there: no email, no phone, no resume
+ * text, no PDFs, no file label. See r/[token]/page.tsx.
  *
  * Said out loud in the interface rather than only in a comment, because someone
  * about to send a link to a stranger deserves to know what is in it.
@@ -70,9 +71,10 @@ export function ShareLink({
     <div className="bg-surface border-border mt-4 rounded-xl border p-5">
       <h3 className="font-display text-lg font-semibold">Share this report</h3>
       <p className="text-muted mt-1.5 text-sm leading-relaxed">
-        A link anyone can open — showing the score, the bands and the findings, and
-        nothing else. Not your resume, not the rebuilt PDFs, not your contact details,
-        not even the file name. Useful for the senior who offered to look over your CV.
+        A link anyone can open — showing your name as it appears on the resume, the
+        score, the bands and the findings, and nothing else. Not the resume itself,
+        not the rebuilt PDFs, not your email or phone, not the file name. Useful for
+        the senior who offered to look over your CV.
       </p>
 
       {token && url ? (

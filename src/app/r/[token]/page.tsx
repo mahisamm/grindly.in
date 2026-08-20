@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { prisma } from "@/lib/prisma";
-import { readReport, toPublicReport } from "@/lib/reportTypes";
+import { readContact, readReport, toPublicReport } from "@/lib/reportTypes";
 import { Logo } from "@/components/Brand";
 import { ReportPanel } from "@/components/Score";
 
@@ -11,11 +11,14 @@ export const dynamic = "force-dynamic";
 /**
  * A readiness report, readable by whoever has the link.
  *
- * What is here is the measurement and nothing else: the score, the five bands
- * and the findings. Not the resume text, not the contact details, not the
- * rebuilt PDFs, not even the label the owner gave the file — that is often
- * their own name. A person opening this link learns what a parser recovers from
- * a document; they do not learn whose it is.
+ * What is here is the measurement, plus exactly one fact about the person: the
+ * NAME off the resume's own header. Owners share these links saying "look at my
+ * report", and a page that refused to say whose it was made every recipient ask
+ * — so the name is now shown, the ShareLink card says so before the link is
+ * created, and the line is drawn there: no email, no phone, no resume text, no
+ * rebuilt PDFs, no file label. The name comes from the parsed contact header,
+ * never from the account, so it is the name the candidate put at the top of
+ * their own document.
  *
  * `noindex` because a share link is for one person, and a report indexed by a
  * search engine is a report the owner did not agree to publish.
@@ -42,7 +45,12 @@ export default async function SharedReportPage({
     // Deliberately narrow. Anything selected here is something the holder of
     // this link can read, and the safest way to keep that list short is to
     // write it out rather than to spread a row and delete from it.
-    select: { score: true, grade: true, reportJson: true, createdAt: true, truncated: true },
+    // `contactJson` is here for ONE field — the name — and nothing else from
+    // it may reach the page; see the doc comment above.
+    select: {
+      score: true, grade: true, reportJson: true, createdAt: true, truncated: true,
+      contactJson: true,
+    },
   });
   if (!resume) notFound();
 
@@ -53,6 +61,7 @@ export default async function SharedReportPage({
   // above is narrow on purpose, but the report itself carries the contact
   // details a parser recovered, so narrowing the columns was not enough.
   const report = toPublicReport(stored);
+  const ownerName = (readContact(resume.contactJson).name ?? "").trim().slice(0, 80);
 
   return (
     <>
@@ -72,7 +81,12 @@ export default async function SharedReportPage({
           Shared readiness report
         </p>
         <h1 className="font-display mt-3 text-3xl font-bold text-balance sm:text-4xl">
-          What a machine recovers from this resume
+          {/* The possessive is built by hand rather than a locale API because
+              the name is whatever was printed on the resume header — "s'" vs
+              "'s" on names already ending in s is the only case worth handling. */}
+          {ownerName
+            ? `${ownerName}${ownerName.endsWith("s") ? "’" : "’s"} resume, as a machine reads it`
+            : "What a machine recovers from this resume"}
         </h1>
         <p className="text-muted mt-3 max-w-2xl leading-relaxed">
           This is a measurement, not an opinion, and not an &ldquo;ATS score&rdquo; — no

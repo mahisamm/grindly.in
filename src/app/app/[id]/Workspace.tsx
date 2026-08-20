@@ -14,6 +14,7 @@ import { Compare } from "./Compare";
 import { CoverLetter } from "./CoverLetter";
 import { ProgressPanel, type ApplicationRow, type ScorePoint } from "./Progress";
 import { ShareLink } from "./ShareLink";
+import { LinkStyleChoice } from "./edit/LinkStyle";
 
 type VariantView = {
   id: string;
@@ -51,6 +52,8 @@ type ResumeView = {
   truncated: boolean;
   /** Non-null when a public report link exists for this resume. */
   shareToken: string | null;
+  /** "url" (address printed and clickable) or "label" (site name only). */
+  linkStyle: string;
   text: string;
   report: Report | null;
   advice: Advice | null;
@@ -157,7 +160,7 @@ export function ResumeWorkspace({
 
   const tabs: [Tab, string][] = [
     ["report", "Readiness"],
-    ["rewrite", `Rewrites${resume.variants.length ? ` (${resume.variants.length})` : ""}`],
+    ["rewrite", `Rewrite${resume.variants.length ? ` (${resume.variants.length})` : ""}`],
     ["target", `Target a company${resume.targets.length ? ` (${resume.targets.length})` : ""}`],
     ["progress", `Progress${resume.applications.length ? ` (${resume.applications.length})` : ""}`],
     ["raw", "What the machine reads"],
@@ -184,108 +187,199 @@ export function ResumeWorkspace({
         </div>
       </div>
 
-      {/* A strip that scrolls sideways below `sm`, and wraps above it.
-          Four tabs do not fit across 390px: they wrapped onto three ragged
-          lines with the selected underline stranded on the first, and the row
-          stopped reading as one control at all. */}
-      <div className="tab-strip border-border mt-6 border-b" role="tablist">
-        {tabs.map(([key, label]) => (
-          <button
-            key={key}
-            role="tab"
-            id={`tab-${key}`}
-            aria-selected={tab === key}
-            aria-controls={`panel-${key}`}
-            // Only the selected tab is in the tab order, and arrow keys move
-            // between them — the ARIA tabs pattern. Without it a screen reader
-            // announces "tab 1 of 4" with no panel attached, and a keyboard user
-            // has to Tab through all four to reach the content.
-            tabIndex={tab === key ? 0 : -1}
-            onKeyDown={(e) => {
-              const i = tabs.findIndex(([k]) => k === tab);
-              if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-                e.preventDefault();
-                const next = (i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
-                setTab(tabs[next][0]);
-                document.getElementById(`tab-${tabs[next][0]}`)?.focus();
+      {/* The workspace menu. On a laptop it is a fixed left sidebar — the
+          place a returning user's eye already checks — and on a phone it is a
+          disclosure showing where you are, opening with a height animation
+          rather than teleporting. The horizontal strip this replaces sat
+          centred in the content column and read as part of the page rather
+          than as its navigation. */}
+      <div className="mt-6 flex flex-col gap-2 lg:flex-row lg:gap-10">
+        <WorkspaceNav tabs={tabs} active={tab} onPick={setTab} />
+
+        <div className="min-w-0 flex-1">
+          <RunBanner run={run} onCancel={cancelRun} />
+
+          {(error || note) && (
+            <p
+              role="alert"
+              className="mt-5 rounded-lg border p-3 text-sm"
+              style={{
+                borderColor: error ? "#a3271b" : "var(--border)",
+                color: error ? "#a3271b" : "var(--ink-color)",
+                background: error ? "transparent" : "var(--surface-2)",
+              }}
+            >
+              {error ?? note}
+            </p>
+          )}
+
+          {/* All panels exist; the inactive ones are `hidden`.
+              Rendering only the selected panel left the other `aria-controls`
+              on the tab list pointing at element ids that were not in the
+              document. `hidden` keeps them out of the accessibility tree and
+              out of the tab order while keeping the id reachable. */}
+          <div className="py-6" role="tabpanel" id="panel-report" aria-labelledby="tab-report" hidden={tab !== "report"}>
+            <ReportTab
+              resume={resume}
+              busy={busy}
+              onAdvice={() => post(`/api/resumes/${resume.id}/advice`, undefined, "advice")}
+            />
+          </div>
+          <div className="py-6" role="tabpanel" id="panel-rewrite" aria-labelledby="tab-rewrite" hidden={tab !== "rewrite"}>
+            <RewriteTab
+              resume={resume}
+              busy={busy}
+              rebuilding={rebuilding}
+              onRun={(targetId) =>
+                post(`/api/resumes/${resume.id}/variants`, targetId ? { targetId } : {}, "rewrite")
               }
-            }}
-            onClick={() => setTab(key)}
-            className="-mb-px cursor-pointer border-b-2 px-3.5 py-2.5 text-sm font-medium whitespace-nowrap transition-colors sm:px-4"
-            style={{
-              borderColor: tab === key ? "var(--brand)" : "transparent",
-              color: tab === key ? "var(--ink-color)" : "var(--muted)",
-            }}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      <RunBanner run={run} onCancel={cancelRun} />
-
-      {(error || note) && (
-        <p
-          role="alert"
-          className="mt-5 rounded-lg border p-3 text-sm"
-          style={{
-            borderColor: error ? "#a3271b" : "var(--border)",
-            color: error ? "#a3271b" : "var(--ink-color)",
-            background: error ? "transparent" : "var(--surface-2)",
-          }}
-        >
-          {error ?? note}
-        </p>
-      )}
-
-      {/* All four panels exist; the inactive ones are `hidden`.
-          Rendering only the selected panel left three of the four `aria-controls`
-          on the tab row pointing at element ids that were not in the document.
-          A screen reader announces those as tabs that control nothing, and the
-          relationship the whole ARIA tabs pattern is built on is simply absent
-          for three quarters of the row. `hidden` keeps them out of the
-          accessibility tree and out of the tab order while keeping the id
-          reachable. */}
-      <div className="py-8" role="tabpanel" id="panel-report" aria-labelledby="tab-report" hidden={tab !== "report"}>
-        <ReportTab
-          resume={resume}
-          busy={busy}
-          onAdvice={() => post(`/api/resumes/${resume.id}/advice`, undefined, "advice")}
-        />
-      </div>
-      <div className="py-8" role="tabpanel" id="panel-rewrite" aria-labelledby="tab-rewrite" hidden={tab !== "rewrite"}>
-        <RewriteTab
-          resume={resume}
-          busy={busy}
-          rebuilding={rebuilding}
-          onRun={(targetId) =>
-            post(`/api/resumes/${resume.id}/variants`, targetId ? { targetId } : {}, "rewrite")
-          }
-        />
-      </div>
-      <div className="py-8" role="tabpanel" id="panel-target" aria-labelledby="tab-target" hidden={tab !== "target"}>
-        <TargetTab
-          resume={resume}
-          packs={packs}
-          disclaimer={disclaimer}
-          targetLimit={targetLimit}
-          rebuilding={rebuilding}
-          busy={busy}
-          onTarget={(body) => post(`/api/resumes/${resume.id}/variants`, body, "rewrite")}
-        />
-      </div>
-      <div className="py-8" role="tabpanel" id="panel-progress" aria-labelledby="tab-progress" hidden={tab !== "progress"}>
-        <ProgressPanel
-          resumeId={resume.id}
-          history={resume.history}
-          applications={resume.applications}
-          variantLabels={[...new Set(resume.variants.map((v) => v.label))]}
-        />
-      </div>
-      <div className="py-8" role="tabpanel" id="panel-raw" aria-labelledby="tab-raw" hidden={tab !== "raw"}>
-        <RawTab resume={resume} />
+            />
+          </div>
+          <div className="py-6" role="tabpanel" id="panel-target" aria-labelledby="tab-target" hidden={tab !== "target"}>
+            <TargetTab
+              resume={resume}
+              packs={packs}
+              disclaimer={disclaimer}
+              targetLimit={targetLimit}
+              rebuilding={rebuilding}
+              busy={busy}
+              onTarget={(body) => post(`/api/resumes/${resume.id}/variants`, body, "rewrite")}
+            />
+          </div>
+          <div className="py-6" role="tabpanel" id="panel-progress" aria-labelledby="tab-progress" hidden={tab !== "progress"}>
+            <ProgressPanel
+              resumeId={resume.id}
+              history={resume.history}
+              applications={resume.applications}
+              variantLabels={[...new Set(resume.variants.map((v) => v.label))]}
+            />
+          </div>
+          <div className="py-6" role="tabpanel" id="panel-raw" aria-labelledby="tab-raw" hidden={tab !== "raw"}>
+            <RawTab resume={resume} />
+          </div>
+        </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The workspace's navigation, in the two shapes it needs.
+ *
+ * From `lg` up: a vertical sidebar, sticky so it stays put while a long panel
+ * scrolls — the ARIA tabs pattern with Up/Down arrows, since the list is now
+ * vertical. Below `lg`: a disclosure button that names the section you are in
+ * and opens with a grid-rows height animation (see `.disclose` in globals) —
+ * a dropdown that teleports open reads as a glitch, one that unfolds reads as
+ * a menu. The sidebar stays in the DOM on phones (CSS-hidden), so the
+ * `tab-${key}` ids the panels' aria-labelledby point at always exist.
+ */
+function WorkspaceNav({
+  tabs,
+  active,
+  onPick,
+}: {
+  tabs: [Tab, string][];
+  active: Tab;
+  onPick: (tab: Tab) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const activeLabel = tabs.find(([k]) => k === active)?.[1] ?? "";
+
+  return (
+    <nav aria-label="Resume workspace sections" className="lg:w-48 lg:shrink-0">
+      {/* Phone: the disclosure. */}
+      <div className="lg:hidden">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="bg-surface border-border flex w-full cursor-pointer items-center justify-between rounded-xl border px-4 py-3 text-sm font-semibold"
+        >
+          {activeLabel}
+          <svg
+            aria-hidden
+            viewBox="0 0 24 24"
+            className="h-4 w-4 transition-transform duration-200"
+            style={{ transform: open ? "rotate(180deg)" : undefined, color: "var(--muted)" }}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </button>
+        <div className={`disclose ${open ? "open" : ""}`}>
+          <ul className="min-h-0">
+            <li aria-hidden className="h-2" />
+            {tabs.map(([key, label]) => (
+              <li key={key}>
+                <button
+                  onClick={() => {
+                    onPick(key);
+                    setOpen(false);
+                  }}
+                  aria-current={active === key ? "true" : undefined}
+                  className="w-full cursor-pointer rounded-lg px-4 py-2.5 text-left text-sm"
+                  style={
+                    active === key
+                      ? { background: "var(--cta)", color: "var(--on-cta)" }
+                      : { color: "var(--muted)" }
+                  }
+                >
+                  {label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      {/* Laptop: the sidebar. Hidden on phones by CSS, never unmounted — the
+          panels' aria-labelledby ids live here. */}
+      <div
+        className="hidden lg:sticky lg:top-6 lg:block"
+        role="tablist"
+        aria-orientation="vertical"
+      >
+        <ul className="space-y-0.5">
+          {tabs.map(([key, label]) => (
+            <li key={key}>
+              <button
+                role="tab"
+                id={`tab-${key}`}
+                aria-selected={active === key}
+                aria-controls={`panel-${key}`}
+                // Only the selected tab is in the tab order; arrows move the
+                // rest — the ARIA tabs pattern, vertical edition.
+                tabIndex={active === key ? 0 : -1}
+                onKeyDown={(e) => {
+                  const i = tabs.findIndex(([k]) => k === active);
+                  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                    e.preventDefault();
+                    const next =
+                      (i + (e.key === "ArrowDown" ? 1 : tabs.length - 1)) % tabs.length;
+                    onPick(tabs[next][0]);
+                    document.getElementById(`tab-${tabs[next][0]}`)?.focus();
+                  }
+                }}
+                onClick={() => onPick(key)}
+                className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-sm whitespace-nowrap transition-colors"
+                style={
+                  active === key
+                    ? { background: "var(--cta)", color: "var(--on-cta)" }
+                    : { color: "var(--muted)" }
+                }
+              >
+                {label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </nav>
   );
 }
 
@@ -526,24 +620,27 @@ function ReportTab({
                 <AdviceList title="Do this" items={resume.advice.suggestions} />
               </div>
             </div>
-          ) : (
-            <div>
-              <p className="text-muted text-sm leading-snug">
-                {busy === "advice"
-                  ? "The model is reading your resume now."
-                  : "Want a model’s opinion on the writing, not just the score?"}
+          ) : busy === "advice" ? (
+            // The one press already happened at the gate — no second "Ask for
+            // a review" ever appears once the report is on screen. While the
+            // call is in flight this is a status, not an offer.
+            <div className="bg-surface border-border rounded-xl border p-5">
+              <h3 className="font-display text-lg font-semibold">Model&rsquo;s read</h3>
+              <p className="text-muted mt-1.5 text-sm leading-snug">
+                The model is reading your resume now — its notes on the writing will
+                appear here in a few seconds.
               </p>
-              {/* Capped, not full-bleed: in the one-column layout below `lg` this
-                  aside spans the whole page, and a button stretched across 700px
-                  of tablet reads as a banner rather than a control. */}
-              <button
-                onClick={onAdvice}
-                disabled={busy !== null}
-                className="btn mt-2 w-full justify-center sm:w-auto sm:min-w-52"
-              >
-                {busy === "advice" ? "Reading…" : "Ask for a review"}
-              </button>
             </div>
+          ) : (
+            // The call failed or never landed (a provider outage, a spent
+            // quota, a legacy reveal). A quiet retry line, not a call to
+            // action — testers read a second big button as a second product.
+            <p className="text-muted text-sm leading-snug">
+              The model&rsquo;s notes on the writing did not arrive.{" "}
+              <button onClick={onAdvice} className="text-brand cursor-pointer underline">
+                Try again
+              </button>
+            </p>
           )}
         </div>
 
@@ -705,6 +802,15 @@ function RewriteTab({
         <button onClick={() => onRun(null)} disabled={busy !== null || rebuilding} className="btn btn-primary">
           {rebuilding ? "Rebuilding…" : untargeted.length ? "Run again" : "Rebuild my resume"}
         </button>
+      </div>
+
+      {/* The choice belongs BEFORE the run, where it takes effect — the same
+          control also lives on the edit page, but a setting that changes what
+          the next rebuild prints must be visible at the moment of rebuilding,
+          not remembered from another screen. It carries its own measured
+          warning: "label" hides the address from every parser. */}
+      <div className="max-w-2xl">
+        <LinkStyleChoice resumeId={resume.id} value={resume.linkStyle} />
       </div>
 
       {untargeted.length === 0 ? (
@@ -920,6 +1026,12 @@ function TargetTab({
 }) {
   const [jd, setJd] = useState("");
   const [open, setOpen] = useState<string | null>(null);
+  // One box drives everything on this tab: it live-filters the curated packs
+  // as you type, and submitting it looks any other company up. It sits at the
+  // top because users typed a company into their heads before they arrived —
+  // making them scroll past ten cards to find the box taught them the cards
+  // were the whole feature.
+  const [query, setQuery] = useState("");
 
   // Said up front rather than discovered by hitting a 402. Aiming at a company
   // the resume is already aimed at reuses that target and costs nothing more,
@@ -927,6 +1039,13 @@ function TargetTab({
   const unlimited = isUnlimited(targetLimit);
   const used = resume.targets.length;
   const left = Math.max(0, targetLimit - used);
+
+  const q = query.trim().toLowerCase();
+  const shownPacks = q
+    ? packs.filter(
+        (p) => p.name.toLowerCase().includes(q) || p.summary.toLowerCase().includes(q),
+      )
+    : packs;
 
   return (
     <div className="flex flex-col gap-10">
@@ -937,6 +1056,16 @@ function TargetTab({
           you can check. Targeting changes what your resume <i>surfaces</i> — it can never
           add a skill, a date or a number you did not already have.
         </p>
+
+        <AnyCompany
+          resume={resume}
+          busy={busy}
+          rebuilding={rebuilding}
+          onTarget={onTarget}
+          targetsLeft={left}
+          query={query}
+          onQueryChange={setQuery}
+        />
         <p className="mt-3 max-w-2xl text-sm">
           {unlimited ? (
             <span className="text-muted">
@@ -959,8 +1088,14 @@ function TargetTab({
           )}
         </p>
 
+        {q && shownPacks.length === 0 && (
+          <p className="text-muted mt-6 text-sm">
+            No curated pack matches &ldquo;{query.trim()}&rdquo; — press{" "}
+            <b>Look it up</b> above and we will tell you what we actually know.
+          </p>
+        )}
         <ul className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {packs.map((p) => {
+          {shownPacks.map((p) => {
             const existing = resume.targets.find((t) => t.slug === p.slug);
             const variants = existing
               ? resume.variants.filter((v) => v.targetId === existing.id)
@@ -1049,14 +1184,6 @@ function TargetTab({
         </ul>
         <p className="text-muted mt-6 max-w-3xl text-xs leading-relaxed">{disclaimer}</p>
       </section>
-
-      <AnyCompany
-        resume={resume}
-        busy={busy}
-        rebuilding={rebuilding}
-        onTarget={onTarget}
-        targetsLeft={left}
-      />
 
       <section className="border-border border-t pt-10">
         <h2 className="font-display text-2xl font-semibold">Or paste a job description</h2>
@@ -1193,6 +1320,8 @@ function AnyCompany({
   rebuilding,
   onTarget,
   targetsLeft,
+  query,
+  onQueryChange,
 }: {
   resume: ResumeView;
   busy: string | null;
@@ -1200,8 +1329,10 @@ function AnyCompany({
   onTarget: (body: Record<string, string>) => void;
   /** New company targets this plan still allows on this resume. */
   targetsLeft: number;
+  /** Owned by TargetTab: the same text live-filters the curated packs below. */
+  query: string;
+  onQueryChange: (value: string) => void;
 }) {
-  const [name, setName] = useState("");
   const [looking, setLooking] = useState(false);
   const [found, setFound] = useState<CompanyResearch | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1211,7 +1342,7 @@ function AnyCompany({
     : undefined;
 
   async function look() {
-    const typed = name.trim();
+    const typed = query.trim();
     if (typed.length < 2) return;
     setLooking(true);
     setError(null);
@@ -1236,41 +1367,55 @@ function AnyCompany({
   }
 
   return (
-    <section className="border-border border-t pt-10">
-      <h2 className="font-display text-2xl font-semibold">Any other company</h2>
-      <p className="text-muted mt-2 max-w-2xl leading-relaxed">
-        Type a name — the packs above are the ones a person has read the sources
-        for, not the only companies you can aim at. We will tell you what we actually
-        know about how they screen, and when the honest answer is &ldquo;nothing
-        specific&rdquo;, you will get that instead of a paragraph we made up.
-      </p>
-
+    <div className="mt-5">
       <form
         onSubmit={(e) => {
           e.preventDefault();
           look();
         }}
-        className="mt-5 flex flex-wrap gap-3"
+        className="flex max-w-2xl flex-wrap items-center gap-3"
       >
-        <label className="min-w-[16rem] flex-1">
+        {/* The one search box for the whole tab. Typing filters the curated
+            packs below it live; submitting looks anything else up. Deliberately
+            set larger than an ordinary field — it is the tab's front door. */}
+        <label className="relative min-w-[16rem] flex-1">
           <span className="sr-only">Company name</span>
+          <svg
+            aria-hidden
+            viewBox="0 0 24 24"
+            className="pointer-events-none absolute top-1/2 left-4 h-4.5 w-4.5 -translate-y-1/2"
+            style={{ color: "var(--muted)" }}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.2-3.2" />
+          </svg>
           <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            type="search"
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
             maxLength={80}
-            placeholder="Freshworks, Zoho, a 40-person startup…"
-            className="field w-full"
+            placeholder="Type any company — Freshworks, Zoho, a 40-person startup…"
+            className="bg-surface border-border w-full rounded-full border py-3 pr-5 pl-11 text-base shadow-sm transition-shadow focus:shadow-md focus:outline-2"
+            style={{ outlineColor: "var(--cta)" }}
           />
         </label>
         <button
           type="submit"
-          disabled={looking || name.trim().length < 2}
-          className="btn"
+          disabled={looking || query.trim().length < 2}
+          className="btn btn-primary"
         >
           {looking ? "Looking…" : "Look it up"}
         </button>
       </form>
+      <p className="text-muted mt-2 text-xs leading-relaxed">
+        Typing filters the packs below. Anything else, look it up — we say what we
+        actually know about how they screen, and when the honest answer is
+        &ldquo;nothing specific&rdquo;, you get that instead of a paragraph we made up.
+      </p>
 
       {error && (
         <p role="alert" className="mt-4 text-sm" style={{ color: "#a3271b" }}>
@@ -1364,7 +1509,7 @@ function AnyCompany({
           )}
         </div>
       )}
-    </section>
+    </div>
   );
 }
 

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AmbientBackground } from "@/components/AmbientBackground";
 import { Logo } from "@/components/Brand";
 import { MobileNav } from "@/components/MobileNav";
 import { ReportProblem } from "@/components/ReportProblem";
@@ -50,7 +51,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     );
 
   return (
-    <div className="flex min-h-full flex-col">
+    // The ambient layer is a SIBLING at fixed z-0, with the whole shell lifted
+    // above it at z-1 — inside the wrapper it would paint over the content it
+    // is meant to sit behind (positioned z-0 beats in-flow block content).
+    <div>
+      <AmbientBackground />
+      <div className="relative z-[1] flex min-h-full flex-col">
       {/* Two headers rather than one that wraps.
           On a phone the desktop header collapsed to three text links across two
           ragged lines with "Sign out" sitting a few pixels lower than the rest,
@@ -92,6 +98,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       {/* In the shell rather than on each page, so a page added later is
           reportable by existing rather than by someone remembering. */}
       <ReportProblem />
+      </div>
     </div>
   );
 }

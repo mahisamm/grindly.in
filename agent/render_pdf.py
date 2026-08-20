@@ -254,11 +254,26 @@ def _css(density: float = 1.0) -> str:
          collision: the descenders of the name land in the contact line's
          ascenders. 6pt reads as deliberate. */
       h1.name {{
-        font-size: {base * 2.2:.1f}pt;
+        font-size: {base * 2.3:.1f}pt;
         font-weight: 700;
         letter-spacing: -0.012em;
-        margin: 0 0 {6 * density:.1f}pt;
+        margin: 0 0 {3 * density:.1f}pt;
         line-height: 1.02;
+      }}
+      /* A short letterhead stroke under the name — the one purely aesthetic
+         mark on the page, and it is safe precisely because it is GENERATED
+         CONTENT: it paints and never enters the text layer, so no extractor
+         can misread it (unlike the full-width header underline this template
+         deliberately removed, this is a third the width of the name and reads
+         as a mark, not a form rule). Ink, not brand red: the document belongs
+         to the candidate, not to us. */
+      h1.name::after {{
+        content: "";
+        display: block;
+        width: {base * 3.2:.1f}pt;
+        height: 2pt;
+        margin: {3.5 * density:.1f}pt 0 {4 * density:.1f}pt;
+        background: {INK};
       }}
       p.contact {{
         font-size: {base * 0.88:.1f}pt;

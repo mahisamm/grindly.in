@@ -56,6 +56,7 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
           chars: resume.chars,
           truncated: resume.truncated,
           shareToken: resume.shareToken,
+          linkStyle: resume.linkStyle,
           text: resume.text,
           report: readReport(resume.reportJson),
           advice: readAdvice(resume.adviceJson),

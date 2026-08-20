@@ -648,30 +648,77 @@ textarea.field { resize: vertical; min-height: 6rem; }
   .has-mobile-nav { padding-bottom: 0; }
 }
 
-/* A tab row that scrolls sideways instead of wrapping.
-   Four tabs at 390px wrapped onto three ragged lines with the underline
-   indicator stranded on the first — the row stopped reading as one control. */
-.tab-strip {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-  scroll-snap-type: x proximity;
+/* ── Ambient background — see components/AmbientBackground.tsx ───────
+   z-index 0, not -1: both html and body paint the paper background, and a
+   negative-z fixed element renders BEHIND body's background — invisible. The
+   layout lifts its content above this with a positioned z-1 wrapper. */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
-.tab-strip::-webkit-scrollbar { display: none; }
-.tab-strip > * { flex: 0 0 auto; scroll-snap-align: start; }
-/* The scroll hint. A strip with a hard right edge reads as a row that simply
-   ends, so the fourth tab looks like it does not exist rather than like it is
-   one swipe away. The fade only exists where the strip actually scrolls. */
-@media (max-width: 639px) {
-  .tab-strip {
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
-    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+/* Scoped to a positioned, overflow-hidden pane instead of the viewport —
+   the auth pages, whose sibling columns are opaque. */
+.ambient-contain { position: absolute; }
+.ambient-drift { position: absolute; }
+.ambient-a {
+  top: -16rem;
+  right: -12rem;
+  animation: ambient-drift 26s ease-in-out infinite alternate;
+}
+.ambient-b {
+  bottom: -14rem;
+  left: -10rem;
+  animation: ambient-drift 34s ease-in-out infinite alternate-reverse;
+}
+.ambient-wash,
+.ambient-drift::before {
+  display: block;
+  width: 44rem;
+  height: 44rem;
+  border-radius: 50%;
+  filter: blur(80px);
+}
+/* The wash itself. On the motion path it is a child div; on the
+   reduced-motion path the ::before carries it so the component can render
+   two bare divs with no library involved. */
+.ambient-wash {
+  background: radial-gradient(circle, color-mix(in srgb, var(--vermilion) 8%, transparent), transparent 62%);
+}
+.ambient-b .ambient-wash {
+  background: radial-gradient(circle, color-mix(in srgb, var(--vermilion-deep) 6%, transparent), transparent 62%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ambient-drift { animation: none; }
+  .ambient-a::before {
+    content: "";
+    background: radial-gradient(circle, color-mix(in srgb, var(--vermilion) 8%, transparent), transparent 62%);
+  }
+  .ambient-b::before {
+    content: "";
+    background: radial-gradient(circle, color-mix(in srgb, var(--vermilion-deep) 6%, transparent), transparent 62%);
   }
 }
-@media (min-width: 640px) {
-  .tab-strip { flex-wrap: wrap; overflow-x: visible; }
+@keyframes ambient-drift {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(-3rem, 2rem) scale(1.06); }
+}
+
+/* ── Disclosure — a menu that unfolds rather than teleports ──────────
+   grid-template-rows 0fr → 1fr is the modern height animation: no measured
+   pixel heights, no max-height guesses that clip a long list. The child needs
+   min-height: 0 (set in markup) so the collapsed row can actually reach zero. */
+.disclose {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s var(--ease);
+}
+.disclose.open { grid-template-rows: 1fr; }
+.disclose > * { overflow: hidden; }
+@media (prefers-reduced-motion: reduce) {
+  .disclose { transition: none; }
 }
 
 /* ── Report a problem — the floating beta feedback control ───────────
