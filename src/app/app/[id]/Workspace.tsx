@@ -398,32 +398,41 @@ function ReportTab({
         <ReportPanel report={resume.report} />
       </div>
       <aside>
-        <div className="bg-surface border-border rounded-xl border p-5">
-          <h3 className="font-display text-lg font-semibold">A recruiter&rsquo;s read</h3>
-          <p className="text-muted mt-1.5 text-sm leading-snug">
-            The score above is arithmetic. This is a model&rsquo;s opinion on the writing —
-            it never produces a number and it can never suggest a fact you did not
-            already claim.
-          </p>
-          {resume.advice ? (
+        {resume.advice ? (
+          // The box, the heading and the disclaimer only earn their place once
+          // there is a real opinion inside them to qualify. "A recruiter's
+          // read" tested as confusing before that — read as a human reviewer,
+          // not a model — so the launcher below drops all three.
+          <div className="bg-surface border-border rounded-xl border p-5">
+            <h3 className="font-display text-lg font-semibold">Model&rsquo;s read</h3>
+            <p className="text-muted mt-1.5 text-sm leading-snug">
+              The score above is arithmetic. This is a model&rsquo;s opinion on the writing —
+              it never produces a number and it can never suggest a fact you did not
+              already claim.
+            </p>
             <div className="mt-4 flex flex-col gap-4 text-sm">
               <AdviceList title="Working" items={resume.advice.strengths} />
               <AdviceList title="Weak" items={resume.advice.issues} />
               <AdviceList title="Do this" items={resume.advice.suggestions} />
             </div>
-          ) : (
-            // Capped, not full-bleed: in the one-column layout below `lg` this
-            // aside spans the whole page, and a button stretched across 700px
-            // of tablet reads as a banner rather than a control.
+          </div>
+        ) : (
+          <div>
+            <p className="text-muted text-sm leading-snug">
+              Want a model&rsquo;s opinion on the writing, not just the score?
+            </p>
+            {/* Capped, not full-bleed: in the one-column layout below `lg` this
+                aside spans the whole page, and a button stretched across 700px
+                of tablet reads as a banner rather than a control. */}
             <button
               onClick={onAdvice}
               disabled={busy !== null}
-              className="btn mt-4 w-full justify-center sm:w-auto sm:min-w-52"
+              className="btn mt-2 w-full justify-center sm:w-auto sm:min-w-52"
             >
               {busy === "advice" ? "Reading…" : "Ask for a review"}
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         <ShareLink resumeId={resume.id} initialToken={resume.shareToken} />
 
