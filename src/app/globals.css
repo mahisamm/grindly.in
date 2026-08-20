@@ -468,6 +468,19 @@ input:focus-visible, textarea:focus-visible, select:focus-visible {
 .scrollbar-none { scrollbar-width: none; -ms-overflow-style: none; }
 .scrollbar-none::-webkit-scrollbar { display: none; }
 
+/* type="search" without Safari's costume. iOS draws its own inset field and
+   a grey cancel button over ours; the reset keeps the one styled search box
+   (the company search) identical on every platform. */
+input[type="search"] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-in { animation: none; }
   .report-reveal { animation: none; }
@@ -704,6 +717,26 @@ textarea.field { resize: vertical; min-height: 6rem; }
 @keyframes ambient-drift {
   from { transform: translate(0, 0) scale(1); }
   to { transform: translate(-3rem, 2rem) scale(1.06); }
+}
+/* Phones: smaller, brighter, hugging the corners. Desktop's 44rem wash at
+   blur(80px) covers most of a 390px viewport and reads as a smudge over the
+   content rather than as light behind it — and at 8% the tilt response was
+   invisible, which testers reported as "there is no gyro feature". */
+@media (max-width: 640px) {
+  .ambient-wash,
+  .ambient-drift::before {
+    width: 26rem;
+    height: 26rem;
+    filter: blur(52px);
+  }
+  .ambient-a { top: -11rem; right: -12rem; }
+  .ambient-b { bottom: -11rem; left: -13rem; }
+  .ambient-wash {
+    background: radial-gradient(circle, color-mix(in srgb, var(--vermilion) 13%, transparent), transparent 62%);
+  }
+  .ambient-b .ambient-wash {
+    background: radial-gradient(circle, color-mix(in srgb, var(--vermilion-deep) 10%, transparent), transparent 62%);
+  }
 }
 
 /* ── Disclosure — a menu that unfolds rather than teleports ──────────

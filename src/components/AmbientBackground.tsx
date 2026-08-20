@@ -22,9 +22,12 @@ import { motion, useMotionValue, useSpring, useTransform, useReducedMotion } fro
  *   * `useReducedMotion` renders the static washes with no listeners at all,
  *     and the CSS drift is likewise disabled under the same media query.
  *
- * iOS never fires deviceorientation without a permission dialog, and a
- * permission dialog for a background is an absurd trade — so there the phone
- * simply gets the autonomous drift.
+ * iOS fires deviceorientation only after DeviceOrientationEvent
+ * .requestPermission() — which itself only works inside a user gesture. So on
+ * browsers that expose it, the FIRST tap anywhere asks once; granted wires
+ * the tilt, denied leaves the drift. The operator chose this trade
+ * deliberately: phones with no tilt at all read as "the feature does not
+ * exist", which is what beta testers reported.
  */
 export function AmbientBackground({
   contain = false,
@@ -51,17 +54,51 @@ export function AmbientBackground({
       mx.set((e.clientX / window.innerWidth - 0.5) * 36);
       my.set((e.clientY / window.innerHeight - 0.5) * 36);
     };
+    // ±44px on tilt against ±18px on the pointer, and that asymmetry is the
+    // fix for "there is no gyro feature": a phone's washes are smaller and
+    // mostly off-canvas, so the lean that reads as atmosphere under a mouse
+    // is invisible under a thumb. 22° of tilt = full lean.
     const onTilt = (e: DeviceOrientationEvent) => {
       if (e.gamma === null || e.beta === null) return;
-      // gamma: left/right tilt, beta: front/back. 30° of tilt = full lean.
-      mx.set(Math.max(-1, Math.min(1, e.gamma / 30)) * 18);
-      my.set(Math.max(-1, Math.min(1, (e.beta - 40) / 30)) * 18);
+      mx.set(Math.max(-1, Math.min(1, e.gamma / 22)) * 44);
+      my.set(Math.max(-1, Math.min(1, (e.beta - 40) / 22)) * 44);
     };
     window.addEventListener("mousemove", onPointer, { passive: true });
-    window.addEventListener("deviceorientation", onTilt);
+
+    // Safari on iOS gates deviceorientation behind a permission call that
+    // must run inside a user gesture. The first tap anywhere asks, once;
+    // everything else (Android, desktop) wires directly and the extra
+    // listener never exists.
+    let tiltWired = false;
+    const wireTilt = () => {
+      if (tiltWired) return;
+      tiltWired = true;
+      window.addEventListener("deviceorientation", onTilt);
+    };
+    type PermissionedDOE = { requestPermission?: () => Promise<string> };
+    const doe = (window as unknown as { DeviceOrientationEvent?: PermissionedDOE })
+      .DeviceOrientationEvent;
+    let onFirstTouch: (() => void) | null = null;
+    if (typeof doe?.requestPermission === "function") {
+      onFirstTouch = () => {
+        window.removeEventListener("touchend", onFirstTouch!);
+        doe.requestPermission!()
+          .then((state) => {
+            if (state === "granted") wireTilt();
+          })
+          .catch(() => {
+            /* denied or unavailable — the drift carries the background */
+          });
+      };
+      window.addEventListener("touchend", onFirstTouch);
+    } else {
+      wireTilt();
+    }
+
     return () => {
       window.removeEventListener("mousemove", onPointer);
-      window.removeEventListener("deviceorientation", onTilt);
+      if (onFirstTouch) window.removeEventListener("touchend", onFirstTouch);
+      if (tiltWired) window.removeEventListener("deviceorientation", onTilt);
     };
   }, [reduce, mx, my]);
 
