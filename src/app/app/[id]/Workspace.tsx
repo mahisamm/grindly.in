@@ -883,20 +883,25 @@ function RewriteTab({
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="max-w-2xl">
-          <h2 className="font-display text-2xl font-semibold">Three rebuilds, measured</h2>
+          <h2 className="font-display text-2xl font-semibold">Rebuild your resume</h2>
+          {/* Plain words on purpose — beta feedback called this tab confusing.
+              The mechanism (render, extract back, score) still matters, but it
+              belongs one sentence deep, after "what does the button do". */}
           <p className="text-muted mt-2 leading-relaxed">
-            Each one is rendered to a real PDF, read back with the extractor a parser uses,
-            and scored on the same ruler as your original. Anything that scores{" "}
-            <i>below</i> your resume is discarded; anything level with it is kept and
-            labelled, because the same score on a clean single-column layout is still a
-            win for a parser.
+            One press writes up to three new versions of your resume — same facts,
+            same jobs, cleaner wording, and a layout that hiring software reads
+            without mistakes. It takes a minute or two.
           </p>
           <p className="text-muted mt-2 leading-relaxed">
-            We aim for {SHIPPABLE_FLOOR} and above. Everything mechanical — clean
-            extraction, contact fields a parser can lift, standard headings, one column —
-            is ours to get right, and a rebuild that still lands short says which one
-            thing is missing rather than quietly handing you a weaker document. The part
-            we will never do to reach the number is write a fact you did not.
+            Every version gets the same 0–100 score as your original (the one on
+            your Readiness tab), so you can see whether it is actually better. A
+            version that scores <i>worse</i> than yours is thrown away instead of
+            shown to you. We aim for {SHIPPABLE_FLOOR} and above — and when a
+            version lands short, its card tells you the one thing that is missing.
+          </p>
+          <p className="text-muted mt-2 leading-relaxed">
+            One promise above all: it will never invent a skill, an employer or a
+            number that is not already in your resume.
           </p>
         </div>
         <button onClick={() => onRun(null)} disabled={busy !== null || rebuilding} className="btn btn-primary">
@@ -914,7 +919,7 @@ function RewriteTab({
       </div>
 
       {untargeted.length === 0 ? (
-        <p className="text-muted mt-8 text-sm">No rewrites yet.</p>
+        <p className="text-muted mt-8 text-sm">No versions yet — press the button above and give it a minute or two. Your original is never touched.</p>
       ) : (
         <ul className="mt-8 grid gap-5 lg:grid-cols-3">
           {untargeted.map((v) => (
