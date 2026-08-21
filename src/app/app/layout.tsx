@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AccountMenu } from "@/components/AccountMenu";
 import { AmbientBackground } from "@/components/AmbientBackground";
 import { Logo } from "@/components/Brand";
 import { MobileNav } from "@/components/MobileNav";
@@ -70,25 +71,27 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Logo size={26} />
           </Link>
 
-          {/* phone + tablet: plan only */}
+          {/* phone + tablet: plan only — the bottom bar carries the rest */}
           <div className="flex min-w-0 items-center lg:hidden">{planChip}</div>
 
-          {/* desktop: the full row */}
+          {/* desktop: the plan at a glance, and everything personal behind
+              the avatar — the pattern every product people already use wears,
+              so nobody has to learn ours */}
           <div className="hidden items-center gap-5 text-sm lg:flex">
             {planChip}
-            {user.role === "admin" && (
-              <Link href="/admin" className="text-muted hover:text-ink">
-                Admin
-              </Link>
-            )}
-            <Link href="/app/settings" className="text-muted hover:text-ink">
-              Account
-            </Link>
-            <form action="/api/logout" method="post">
-              <button type="submit" className="text-muted hover:text-ink cursor-pointer">
-                Sign out
-              </button>
-            </form>
+            <AccountMenu
+              email={user.email}
+              name={user.name}
+              planLabel={
+                plan === "admin"
+                  ? "Admin · no limits"
+                  : plan === "pass"
+                    ? `Season Pass · ${left} day${left === 1 ? "" : "s"} left`
+                    : "Free plan"
+              }
+              isAdmin={user.role === "admin"}
+              showUpgrade={plan !== "admin" && plan !== "pass"}
+            />
           </div>
         </nav>
       </header>
