@@ -230,6 +230,8 @@ export default async function Home() {
             <Link href="/pricing" className="hover:text-ink">Pricing</Link>
             <Link href="/privacy" className="hover:text-ink">Privacy</Link>
             <Link href="/terms" className="hover:text-ink">Terms</Link>
+            <Link href="/refunds" className="hover:text-ink">Refunds</Link>
+            <Link href="/contact" className="hover:text-ink">Contact</Link>
             {/* Reachable without an account: someone reading the landing page at
                 midnight is exactly who needs it, and they have not signed up
                 yet. */}

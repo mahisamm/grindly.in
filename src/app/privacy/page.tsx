@@ -138,9 +138,11 @@ export default function PrivacyPage() {
       </main>
 
       <footer className="border-border border-t">
-        <div className="text-muted mx-auto flex max-w-4xl gap-5 px-5 py-8 sm:px-6 text-sm">
+        <div className="text-muted mx-auto flex max-w-4xl flex-wrap gap-5 px-5 py-8 sm:px-6 text-sm">
           <Link href="/" className="hover:text-ink">Home</Link>
           <Link href="/terms" className="hover:text-ink">Terms</Link>
+          <Link href="/refunds" className="hover:text-ink">Refunds</Link>
+          <Link href="/contact" className="hover:text-ink">Contact</Link>
         </div>
       </footer>
     </>

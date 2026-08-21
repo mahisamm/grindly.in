@@ -110,7 +110,11 @@ export default function TermsPage() {
             If the product does not work as described, email us within 7 days of
             paying and we will refund you. We will not refund a pass because a
             job application was unsuccessful — that is outside anything we control
-            or promise.
+            or promise. The full policy, including how to ask and how long a
+            refund takes, is at{" "}
+            <Link href="/refunds" className="text-brand underline">
+              cancellations &amp; refunds
+            </Link>.
           </p>
         </Section>
 
@@ -139,9 +143,11 @@ export default function TermsPage() {
       </main>
 
       <footer className="border-border border-t">
-        <div className="text-muted mx-auto flex max-w-4xl gap-5 px-5 py-8 sm:px-6 text-sm">
+        <div className="text-muted mx-auto flex max-w-4xl flex-wrap gap-5 px-5 py-8 sm:px-6 text-sm">
           <Link href="/" className="hover:text-ink">Home</Link>
           <Link href="/privacy" className="hover:text-ink">Privacy</Link>
+          <Link href="/refunds" className="hover:text-ink">Refunds</Link>
+          <Link href="/contact" className="hover:text-ink">Contact</Link>
         </div>
       </footer>
     </>
