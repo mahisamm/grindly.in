@@ -107,6 +107,11 @@ services:
       MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       XAI_API_KEY: ${XAI_API_KEY:-}
+      # The paid last-resort provider (agent/llm.py). Without this passthrough
+      # a key set in the box's .env never reaches the container, and "I
+      # configured the paid fallback and it never runs" is undebuggable from
+      # inside the app — the health check reports keys the PROCESS can see.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       XAI_MODEL: ${XAI_MODEL:-}
       GRINDLY_REDACT_PII: ${GRINDLY_REDACT_PII:-1}
       # Explicit switch — see lib/config.ts. Keys alone must never mean "live".
