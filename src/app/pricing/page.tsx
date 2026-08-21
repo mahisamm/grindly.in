@@ -30,8 +30,8 @@ export default async function PricingPage() {
           A pass, not a subscription
         </h1>
         <p className="mt-5 max-w-2xl text-lg leading-relaxed">
-          A job search is weeks, not years — a placement season runs six to ten, and
-          changing companies with four years behind you takes about the same. Charging
+          A job search is weeks, not years — six to ten of them, whether it is your
+          first job or a company change with a decade behind you. Charging
           every month for a product you need once is how a company makes money from
           people forgetting to cancel. Buy a pass, it ends on its own, and you keep
           everything you made.

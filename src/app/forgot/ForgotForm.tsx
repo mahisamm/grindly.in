@@ -100,7 +100,7 @@ export function ForgotForm({ mailAvailable = true }: { mailAvailable?: boolean }
                 autoComplete="email"
                 onChange={(e) => setEmail(e.target.value)}
                 className="field w-full"
-                placeholder="you@college.edu.in"
+                placeholder="you@example.com"
               />
             </label>
             {error && (
