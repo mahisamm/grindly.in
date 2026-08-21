@@ -4,7 +4,8 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { ParticleField } from "@/components/ParticleField";
 import { Reveal } from "@/components/Motion";
 import { runAgent, type CompanyPack } from "@/lib/agent";
-import { PRODUCTS, formatAmount } from "@/lib/plans";
+import { LIMITS, PRODUCTS, USD_PRICES, formatAmount } from "@/lib/plans";
+import { RegionPrice } from "@/components/Region";
 
 export const revalidate = 300;
 
@@ -84,7 +85,7 @@ export default async function Home() {
                 </Link>
               </div>
               <p className="text-muted mt-4 text-sm">
-                No card. Your first resume, the full report and one company pack are free.
+                No card. Your score, the full report and three clean rebuilds are free.
               </p>
               <p className="text-muted mt-2 text-sm">
                 First job or eleventh year — the same file goes through the same parser
@@ -119,6 +120,44 @@ export default async function Home() {
               </p>
             </aside>
           </div>
+        </section>
+
+        {/* how it works — the plain-words version.
+            The hero above argues a position, and the argument is the brand —
+            but a person who has never heard of parsing needs three sentences
+            that say what pressing the button DOES. This is that, and nothing
+            in it needs a glossary. */}
+        <section className="mx-auto max-w-6xl px-5 pb-12 sm:px-6 sm:pb-16">
+          <h2 className="font-display text-3xl font-bold">How it works</h2>
+          <ol className="mt-8 grid gap-6 md:grid-cols-3">
+            {[
+              [
+                "Upload your resume",
+                "PDF or Word, the file you already have. Nothing to fill in first.",
+              ],
+              [
+                "See what hiring software sees",
+                "In seconds: your score, what the software could and could not read, and exactly what to fix — in plain sentences, not jargon.",
+              ],
+              [
+                "Fix it, tailor it, download it",
+                "Rebuild your resume as a clean version that machines read perfectly, aim it at the company you want, and download the PDF. Done.",
+              ],
+            ].map(([h, body], i) => (
+              <Reveal as="li" key={h} delay={i * 90} className="flex gap-4">
+                <span
+                  aria-hidden
+                  className="font-display text-brand text-4xl font-bold leading-none"
+                >
+                  {i + 1}
+                </span>
+                <span>
+                  <h3 className="font-display text-lg font-semibold">{h}</h3>
+                  <p className="text-muted mt-1.5 leading-relaxed">{body}</p>
+                </span>
+              </Reveal>
+            ))}
+          </ol>
         </section>
 
         {/* the promise we refuse to break */}
@@ -198,9 +237,12 @@ export default async function Home() {
             <div className="mt-8 flex flex-wrap gap-4">
               <Reveal className="bg-surface border-border min-w-[220px] flex-1 rounded-xl border p-6">
                 <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">Free</p>
-                <p className="font-display mt-2 text-3xl font-bold">₹0</p>
+                <p className="font-display mt-2 text-3xl font-bold">
+                  <RegionPrice inrPaise={0} usdCents={0} />
+                </p>
                 <p className="text-muted mt-2 text-sm">
-                  Full report, one resume, one company pack. No watermark.
+                  The full report and score, {LIMITS.free.resumes} resumes, three clean
+                  rebuilds. No watermark.
                 </p>
               </Reveal>
               {(["pass90", "pack1"] as const).map((sku, i) => (
@@ -213,7 +255,7 @@ export default async function Home() {
                     {PRODUCTS[sku].name}
                   </p>
                   <p className="font-display mt-2 text-3xl font-bold">
-                    {formatAmount(PRODUCTS[sku].amount)}
+                    <RegionPrice inrPaise={PRODUCTS[sku].amount} usdCents={USD_PRICES[sku]} />
                   </p>
                   <p className="text-muted mt-2 text-sm">{PRODUCTS[sku].blurb}</p>
                 </Reveal>
