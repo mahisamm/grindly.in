@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Logo } from "@/components/Brand";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ParticleField } from "@/components/ParticleField";
+import { IntroSplash } from "@/components/IntroSplash";
 import { Reveal } from "@/components/Motion";
 import { runAgent, type CompanyPack } from "@/lib/agent";
 import { LIMITS, PRODUCTS, USD_PRICES, formatAmount } from "@/lib/plans";
@@ -26,8 +27,12 @@ export default async function Home() {
 
   return (
     <>
+      {/* Once per session: GRINDLY rises, the curtain lifts, the page is
+          already underneath. Skippable, and absent under reduced motion. */}
+      <IntroSplash />
+
       {/* Behind everything, and everything below is lifted to `relative z-10`
-          so it stays behind. It is the only client component on this page. */}
+          so it stays behind. */}
       <ParticleField />
 
       <header className="border-border relative z-10 border-b">

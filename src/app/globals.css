@@ -739,6 +739,50 @@ textarea.field { resize: vertical; min-height: 6rem; }
   }
 }
 
+/* ── Intro splash — see components/IntroSplash.tsx ───────────────────
+   The curtain fades in over the landing, the letters rise through it, and
+   the whole thing lifts. Paper-on-paper: the brand moment uses the brand's
+   own canvas, not a black card. */
+.intro-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+  animation: intro-curtain-in 0.25s ease-out both;
+  transition: opacity 0.55s var(--ease), transform 0.55s var(--ease);
+}
+.intro-splash--out {
+  opacity: 0;
+  transform: translateY(-2.5%);
+  pointer-events: none;
+}
+@keyframes intro-curtain-in { from { opacity: 0; } to { opacity: 1; } }
+.intro-word {
+  display: inline-flex;
+  font-size: clamp(3rem, 10vw, 6.5rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--ink-color);
+}
+.intro-letter {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(0.35em);
+  animation: intro-rise 0.5s var(--ease) both;
+}
+.intro-dot { color: var(--vermilion); }
+@keyframes intro-rise {
+  from { opacity: 0; transform: translateY(0.35em); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Belt and braces: the component also skips itself entirely. */
+  .intro-splash { display: none; }
+}
+
 /* ── Disclosure — a menu that unfolds rather than teleports ──────────
    grid-template-rows 0fr → 1fr is the modern height animation: no measured
    pixel heights, no max-height guesses that clip a long list. The child needs

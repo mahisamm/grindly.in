@@ -21,11 +21,15 @@ import { ParticleField } from "@/components/ParticleField";
  * form is the point.
  */
 export function BrandPanel() {
+  // Plain words, deliberately. This panel greets people who have never heard
+  // of parsing, and the earlier version spoke to people who had — beta
+  // feedback said new visitors could not tell what the product does. Every
+  // line here survives the "would my cousin get it" test.
   const points: [React.ComponentType<{ size?: number }>, string][] = [
-    [Magnifier, "See exactly what a parser recovers from your file"],
-    [Doc, "Three rebuilds, each measured against your original"],
-    [Target, "Tailored to a named company, every claim with its source"],
-    [Shield, "It cannot add a skill, employer or number you never had"],
+    [Magnifier, "See exactly what that software reads from your file"],
+    [Doc, "Get a score and a plain list of what to fix"],
+    [Target, "Rebuild it as a clean version machines read perfectly"],
+    [Shield, "It never invents skills or jobs you don't have"],
   ];
 
   return (
@@ -69,13 +73,15 @@ export function BrandPanel() {
           className="font-display leading-[1.06]"
           style={{ fontSize: "clamp(2.2rem,3.6vw,3.4rem)", color: "var(--paper)" }}
         >
-          There is no such thing
+          Software reads your resume
           <br />
-          as an <span className="accent-italic">ATS score.</span>
+          <span className="accent-italic">before any human does.</span>
         </h2>
         <p className="mt-4 max-w-md text-sm" style={{ color: "rgba(242,236,225,0.72)" }}>
-          So we measure something you can check instead: what a machine actually
-          recovers from your resume.
+          Apply to Amazon, and their system pulls your name, skills and dates out
+          of the file first. If your layout confuses it, the recruiter sees a
+          half-empty profile — and you never hear back, or why. Grindly shows you
+          what that software sees, and fixes it.
         </p>
 
         <ul className="mt-8 space-y-3.5">
