@@ -68,6 +68,80 @@ type Tab = "report" | "rewrite" | "target" | "progress" | "raw";
 
 const TABS: Tab[] = ["report", "rewrite", "target", "progress", "raw"];
 
+/**
+ * Small, official-style marks make the curated list scannable before a user
+ * reads a word. They are decorative because the company name stays visible.
+ * A graceful two-letter fallback keeps the tile useful if the CDN is offline
+ * or a logo changes upstream.
+ */
+const COMPANY_LOGOS: Record<string, { icon?: string; color?: string; domain: string }> = {
+  amazon: { domain: "amazon.com" },
+  qualcomm: { icon: "qualcomm", color: "3253DC", domain: "qualcomm.com" },
+  google: { icon: "google", color: "4285F4", domain: "google.com" },
+  microsoft: { domain: "microsoft.com" },
+  tcs: { icon: "tata", color: "1D4F91", domain: "tcs.com" },
+  infosys: { icon: "infosys", color: "007CC3", domain: "infosys.com" },
+  zoho: { icon: "zoho", color: "C8202F", domain: "zoho.com" },
+  flipkart: { domain: "flipkart.com" },
+  deloitte: { domain: "deloitte.com" },
+  accenture: { icon: "accenture", color: "A100FF", domain: "accenture.com" },
+  adobe: { domain: "adobe.com" },
+  netflix: { icon: "netflix", color: "E50914", domain: "netflix.com" },
+  uber: { icon: "uber", color: "000000", domain: "uber.com" },
+  wipro: { icon: "wipro", color: "341C79", domain: "wipro.com" },
+  cognizant: { domain: "cognizant.com" },
+  razorpay: { icon: "razorpay", color: "0C2451", domain: "razorpay.com" },
+  samsung: { icon: "samsung", color: "1428A0", domain: "samsung.com" },
+};
+
+function companyInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
+}
+
+function CompanyLogo({ company }: { company: Pick<CompanyPack, "slug" | "name"> }) {
+  const logo = COMPANY_LOGOS[company.slug];
+  const src = logo?.icon
+    ? `https://cdn.simpleicons.org/${logo.icon}/${logo.color}`
+    : logo
+      ? `https://www.google.com/s2/favicons?domain=${logo.domain}&sz=128`
+      : null;
+
+  return (
+    <span
+      aria-hidden="true"
+      className="border-border bg-surface-2 relative grid size-12 shrink-0 place-items-center overflow-hidden rounded-2xl border"
+    >
+      <span className="font-display text-sm font-bold tracking-tight" style={{ color: "var(--muted)" }}>
+        {companyInitials(company.name)}
+      </span>
+      {src && (
+        // These are small decorative SVG marks. The visible company name is
+        // the accessible label, and the initials behind the image are a
+        // deliberately useful fallback if a third-party mark cannot load.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src}
+          alt=""
+          width={32}
+          height={32}
+          loading="lazy"
+          decoding="async"
+          className="absolute size-8 object-contain"
+          onError={(event) => {
+            event.currentTarget.style.display = "none";
+          }}
+        />
+      )}
+    </span>
+  );
+}
+
 function isTab(value: string | null): value is Tab {
   return TABS.includes((value ?? "") as Tab);
 }
@@ -1094,7 +1168,13 @@ function TargetTab({
             <b>Look it up</b> above and we will tell you what we actually know.
           </p>
         )}
-        <ul className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-7 flex items-center justify-between gap-4">
+          <h3 className="font-display text-base font-semibold">Popular company packs</h3>
+          <span className="text-muted font-mono text-[10px] tracking-[0.12em] uppercase">
+            {shownPacks.length} curated
+          </span>
+        </div>
+        <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {shownPacks.map((p) => {
             const existing = resume.targets.find((t) => t.slug === p.slug);
             const variants = existing
@@ -1104,13 +1184,24 @@ function TargetTab({
               // flex-col with the action pushed to the bottom: the summaries
               // are two to four lines long, so without it every button in a row
               // sits at a different height and the grid reads as broken.
-              <li key={p.slug} className="bg-surface border-border flex flex-col rounded-xl border p-5">
-                <h3 className="font-display text-lg font-semibold">{p.name}</h3>
-                <p className="text-muted mt-1.5 text-sm leading-snug">{p.summary}</p>
+              <li
+                key={p.slug}
+                className="bg-surface border-border group flex min-h-60 flex-col rounded-2xl border p-4 transition-[border-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lg"
+              >
+                <div className="flex items-center gap-3">
+                  <CompanyLogo company={p} />
+                  <div className="min-w-0">
+                    <h3 className="font-display truncate text-lg font-semibold">{p.name}</h3>
+                    <p className="text-muted mt-0.5 font-mono text-[10px] tracking-[0.1em] uppercase">
+                      {p.best_for.slice(0, 2).join(" · ")}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-muted mt-4 text-sm leading-snug">{p.summary}</p>
 
                 <button
                   onClick={() => setOpen(open === p.slug ? null : p.slug)}
-                  className="text-muted hover:text-ink mt-3 text-xs underline"
+                  className="text-muted hover:text-ink mt-3 w-fit text-xs underline underline-offset-4"
                 >
                   {open === p.slug
                     ? "Hide sources"
