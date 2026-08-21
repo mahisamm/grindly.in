@@ -107,16 +107,19 @@ function companyInitials(name: string) {
 function CompanyLogo({ company }: { company: Pick<CompanyPack, "slug" | "name"> }) {
   const logo = COMPANY_LOGOS[company.slug];
   const src = logo ? `/company-logos/${logo}` : null;
+  const [failed, setFailed] = useState(false);
 
   return (
     <span
       aria-hidden="true"
       className="border-border bg-surface-2 relative grid size-12 shrink-0 place-items-center overflow-hidden rounded-2xl border"
     >
-      <span className="font-display text-sm font-bold tracking-tight" style={{ color: "var(--muted)" }}>
-        {companyInitials(company.name)}
-      </span>
-      {src && (
+      {(!src || failed) && (
+        <span className="font-display text-sm font-bold tracking-tight" style={{ color: "var(--muted)" }}>
+          {companyInitials(company.name)}
+        </span>
+      )}
+      {src && !failed && (
         // These small marks ship with the app, rather than making the target
         // picker depend on a third-party image request. The visible company
         // name is the accessible label and initials remain a useful fallback.
@@ -128,10 +131,8 @@ function CompanyLogo({ company }: { company: Pick<CompanyPack, "slug" | "name"> 
           height={32}
           loading="lazy"
           decoding="async"
-          className="absolute size-8 object-contain"
-          onError={(event) => {
-            event.currentTarget.style.display = "none";
-          }}
+          className="size-8 object-contain"
+          onError={() => setFailed(true)}
         />
       )}
     </span>
