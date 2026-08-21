@@ -71,11 +71,19 @@ export default async function SettingsPage() {
           </dd>
           <dt className="text-muted">Resumes</dt>
           <dd className="tabular-nums">{counts} of {formatLimit(limits.resumes)}</dd>
-          <dt className="text-muted">Rewrites today</dt>
+          {/* The label states the WINDOW: a free account's allowance is
+              lifetime (nothing resets at midnight — that is the pricing
+              model), while paid tiers count per day. A row reading "today"
+              beside a refusal about a total would look like a bug. */}
+          <dt className="text-muted">
+            Rewrites{usage.variantRuns.lifetime ? " (free total)" : " today"}
+          </dt>
           <dd className="tabular-nums">
             {usage.variantRuns.used} of {formatLimit(usage.variantRuns.limit)}
           </dd>
-          <dt className="text-muted">Reviews today</dt>
+          <dt className="text-muted">
+            Reviews{usage.adviceRuns.lifetime ? " (free total)" : " today"}
+          </dt>
           <dd className="tabular-nums">
             {usage.adviceRuns.used} of {formatLimit(usage.adviceRuns.limit)}
           </dd>

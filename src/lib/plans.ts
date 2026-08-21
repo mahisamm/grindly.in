@@ -15,9 +15,11 @@
  * lazy choice and would have priced out the entire target market.
  *
  * The free tier is deliberately useful rather than crippled: the full
- * machine-readability report, one resume, one company pack. A free tier that
- * shows a blurred score teaches people you are a paywall, and they leave before
- * seeing that the product works.
+ * machine-readability report and score forever, plus a LIFETIME taste of the
+ * expensive operations (see LIMITS.free). A free tier that shows a blurred
+ * score teaches people you are a paywall, and they leave before seeing that
+ * the product works — but a free tier that refills daily teaches patient
+ * people to never pay, which is the other cliff this shape steers between.
  */
 
 export type PlanId = "free" | "pack" | "pass" | "admin";

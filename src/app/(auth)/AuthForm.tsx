@@ -118,7 +118,7 @@ export function AuthForm({
         </h1>
         <p className="text-muted mt-2 text-sm leading-relaxed">
           {isSignup
-            ? "Your first resume, the full readiness report and one company pack are free."
+            ? "Your score, the full readiness report and three clean rebuilds are free."
             : "Sign in to pick up where you left off."}
         </p>
 
