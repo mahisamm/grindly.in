@@ -3,12 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Sku } from "@/lib/plans";
-
-declare global {
-  interface Window {
-    Razorpay?: new (options: Record<string, unknown>) => { open: () => void };
-  }
-}
+import { loadRazorpay } from "@/lib/razorpayClient";
 
 /**
  * Buy a pass.
@@ -162,25 +157,4 @@ export function Checkout({
       )}
     </div>
   );
-}
-
-let scriptPromise: Promise<boolean> | null = null;
-
-function loadRazorpay(): Promise<boolean> {
-  if (typeof window === "undefined") return Promise.resolve(false);
-  if (window.Razorpay) return Promise.resolve(true);
-  // Memoised: two buttons on the page must not inject two script tags.
-  if (scriptPromise) return scriptPromise;
-  scriptPromise = new Promise((resolve) => {
-    const el = document.createElement("script");
-    el.src = "https://checkout.razorpay.com/v1/checkout.js";
-    el.async = true;
-    el.onload = () => resolve(true);
-    el.onerror = () => {
-      scriptPromise = null;
-      resolve(false);
-    };
-    document.head.appendChild(el);
-  });
-  return scriptPromise;
 }

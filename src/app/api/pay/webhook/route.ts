@@ -111,6 +111,18 @@ export async function POST(req: Request) {
       // same webhook. Nothing to do — and crucially, no second grant.
       if (claimed.count === 0) return;
 
+      // Same branch the confirm path takes: a tier, or one target's unlock.
+      if (product.kind === "target") {
+        if (order.targetId) {
+          await tx.target.updateMany({
+            where: { id: order.targetId, userId: order.userId, unlockedAt: null },
+            data: { unlockedAt: new Date() },
+          });
+        }
+        await audit(order.userId, "pay_webhook", order.id, order.sku);
+        return;
+      }
+
       const current = await tx.user.findUnique({
         where: { id: order.userId },
         select: { plan: true, planExpiresAt: true },

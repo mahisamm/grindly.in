@@ -48,25 +48,45 @@ describe("effectivePlan", () => {
     expect(effectivePlan({ plan: "pass", planExpiresAt: null })).toBe("free");
   });
 
-  it("keeps the single-company pack out of the Season Pass tier", async () => {
-    // The ₹99 pack used to grant `pass`, so it bought the entire ₹399 tier for
-    // a week while the pricing card said "one company, three rebuilds".
-    const { effectivePlan, LIMITS, PRODUCTS } = await loadPlans();
-    const live = new Date(Date.now() + 86_400_000);
-    expect(effectivePlan({ plan: "pack", planExpiresAt: live })).toBe("pack");
-    expect(PRODUCTS.pack1.grants).toBe("pack");
+  it("sells the ₹99 product as a target unlock, never a tier", async () => {
+    // Its first life granted `pass` (₹99 bought the ₹399 tier); its second
+    // granted a 7-day `pack` tier. Both sold time. It now buys ONE company a
+    // permanent unlock and must never touch user.plan — the grant paths in
+    // pay/confirm and pay/webhook branch on exactly this shape.
+    const { PRODUCTS, TARGET_REGEN_LIMIT } = await loadPlans();
+    expect(PRODUCTS.pack1.kind).toBe("target");
+    expect("grants" in PRODUCTS.pack1).toBe(false);
+    expect(PRODUCTS.pass90.kind).toBe("plan");
     expect(PRODUCTS.pass90.grants).toBe("pass");
-    expect(LIMITS.pack.resumes).toBeLessThan(LIMITS.pass.resumes);
-    expect(LIMITS.pack.variantRunsPerDay).toBeLessThan(LIMITS.pass.variantRunsPerDay);
-    expect(LIMITS.pack.targetsPerResume).toBeLessThan(LIMITS.pass.targetsPerResume);
+    // The unlock is bounded per target, and meaningfully: enough runs for a
+    // person, a wall for a script.
+    expect(TARGET_REGEN_LIMIT).toBeGreaterThanOrEqual(3);
+    expect(TARGET_REGEN_LIMIT).toBeLessThanOrEqual(10);
   });
 
-  it("gives the free plan strictly less than every paid one", async () => {
+  it("keeps the legacy pack tier below the pass, and still honoured", async () => {
+    // Nobody can buy this tier any more, but accounts inside a purchased
+    // window keep it until expiry — silently downgrading a paid week would be
+    // taking back something sold.
+    const { effectivePlan, LIMITS } = await loadPlans();
+    const live = new Date(Date.now() + 86_400_000);
+    expect(effectivePlan({ plan: "pack", planExpiresAt: live })).toBe("pack");
+    expect(LIMITS.pack.resumes).toBeLessThan(LIMITS.pass.resumes);
+    expect(LIMITS.pack.variantRunsPerDay).toBeLessThan(LIMITS.pass.variantRunsPerDay);
+  });
+
+  it("gives the free plan strictly less usable allowance than the pass", async () => {
     const { LIMITS } = await loadPlans();
-    for (const key of ["resumes", "variantRunsPerDay", "targetsPerResume"] as const) {
-      expect(LIMITS.free[key]).toBeLessThanOrEqual(LIMITS.pack[key]);
-      expect(LIMITS.pack[key]).toBeLessThanOrEqual(LIMITS.pass[key]);
+    // `targetsPerResume` is deliberately NOT compared: on free it is a
+    // row-count sanity cap (creating targets and reading gap reports is free;
+    // RUNNING against one is what the unlock gates), so a large number there
+    // is not a larger entitlement.
+    for (const key of ["resumes", "variantRunsPerDay", "adviceRunsPerDay"] as const) {
+      expect(LIMITS.free[key]).toBeLessThanOrEqual(LIMITS.pass[key]);
     }
+    // And the free variant allowance is LIFETIME (see quota.ts), so it must
+    // stay a number a taste justifies, not a workflow.
+    expect(LIMITS.free.variantRunsPerDay).toBeLessThanOrEqual(5);
   });
 });
 

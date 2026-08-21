@@ -490,6 +490,13 @@ model Target {
   /// JSON: parsed requirements — must_have, nice_to_have, skills.
   specJson Json?   @map("spec_json")
 
+  /// Set when the ₹99 per-company purchase for THIS target settles (or when a
+  /// stub deployment grants it). Null means tailored runs against this target
+  /// are refused for non-pass accounts — creating the target and reading its
+  /// gap report stay free, because that is the taste that sells the unlock.
+  /// A Season Pass ignores this column entirely.
+  unlockedAt DateTime? @map("unlocked_at")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   variants Variant[]
@@ -607,6 +614,12 @@ model Order {
   amount   Int // in the smallest unit (paise / cents)
   currency String      @default("INR")
   status   OrderStatus @default(created)
+
+  /// For sku=pack1 (a per-company unlock): WHICH target this order pays for,
+  /// validated against the buyer at checkout. Null for plan purchases. A plain
+  /// column rather than a relation: the unlock must survive the target being
+  /// deleted, because the order is the financial record.
+  targetId String? @map("target_id")
 
   providerOrderId String? @unique @map("provider_order_id")
   /// Unique, so one captured payment can only ever settle one order. Without

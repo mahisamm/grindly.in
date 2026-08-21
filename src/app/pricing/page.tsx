@@ -43,15 +43,41 @@ export default async function PricingPage() {
             <p className="font-display mt-3 text-4xl font-bold">₹0</p>
             <p className="text-muted mt-1 text-sm">forever</p>
             <ul className="mt-5 flex-1 space-y-2 text-sm">
-              <Feature>The complete readiness report</Feature>
+              <Feature>The complete readiness report and score, unlimited</Feature>
               <Feature>{LIMITS.free.resumes} resumes</Feature>
-              <Feature>{LIMITS.free.variantRunsPerDay} rebuilds a day</Feature>
-              <Feature>{LIMITS.free.targetsPerResume} company target per resume</Feature>
+              <Feature>{LIMITS.free.variantRunsPerDay} clean rebuilds of your resume — yours to keep</Feature>
+              <Feature>Gap reports for any company, free to read</Feature>
               <Feature>No watermark on your PDF</Feature>
             </ul>
             <Link href="/signup" className="btn mt-6 w-full justify-center">
               Start free
             </Link>
+          </div>
+
+          <div className="bg-surface border-border flex flex-col rounded-xl border p-6">
+            <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">
+              {PRODUCTS.pack1.name}
+            </p>
+            <p className="font-display mt-3 text-4xl font-bold">
+              {formatAmount(PRODUCTS.pack1.amount)}
+            </p>
+            <p className="text-muted mt-1 text-sm">per company · yours for good</p>
+            <ul className="mt-5 flex-1 space-y-2 text-sm">
+              <Feature>Tailored rebuilds aimed at that company</Feature>
+              <Feature>The gap report for that role</Feature>
+              <Feature>A cover letter in your own facts</Feature>
+              <Feature>No expiry — the unlock is permanent</Feature>
+            </ul>
+            <Link
+              href={user ? "/app" : "/signup"}
+              className="btn mt-6 w-full justify-center"
+            >
+              Pick your company in the app
+            </Link>
+            <p className="text-muted mt-2 text-xs leading-snug">
+              You buy it right where you tailor — pick a company on your resume and the
+              unlock is one tap.
+            </p>
           </div>
 
           <div
@@ -68,31 +94,21 @@ export default async function PricingPage() {
               {PRODUCTS.pass90.days} days · one payment · no auto-renew
             </p>
             <ul className="mt-5 flex-1 space-y-2 text-sm">
-              <Feature>{LIMITS.pass.resumes} resumes</Feature>
-              <Feature>{LIMITS.pass.variantRunsPerDay} rebuilds a day</Feature>
-              <Feature>Every company pack, unlimited</Feature>
+              <Feature>Every company, no per-company unlocks</Feature>
+              <Feature>Unlimited rebuilds, {LIMITS.pass.resumes} resumes</Feature>
               <Feature>Paste any job description</Feature>
-              <Feature>Every rewrite kept until you replace it</Feature>
+              <Feature>Cover letters for every target</Feature>
             </ul>
             <Checkout sku="pass90" signedIn={Boolean(user)} paymentsLive={paymentsLive} />
           </div>
-
-          <div className="bg-surface border-border flex flex-col rounded-xl border p-6">
-            <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">
-              {PRODUCTS.pack1.name}
-            </p>
-            <p className="font-display mt-3 text-4xl font-bold">
-              {formatAmount(PRODUCTS.pack1.amount)}
-            </p>
-            <p className="text-muted mt-1 text-sm">one company, {PRODUCTS.pack1.days} days</p>
-            <ul className="mt-5 flex-1 space-y-2 text-sm">
-              <Feature>Three tailored rebuilds</Feature>
-              <Feature>The gap report for that role</Feature>
-              <Feature>For the deadline that is tonight</Feature>
-            </ul>
-            <Checkout sku="pack1" signedIn={Boolean(user)} paymentsLive={paymentsLive} />
-          </div>
         </div>
+
+        <p className="text-muted mt-6 max-w-2xl text-sm leading-relaxed">
+          The arithmetic, out loud: four company unlocks would cost{" "}
+          {formatAmount(PRODUCTS.pack1.amount * 4)}. Applying to four or more companies,
+          the {formatAmount(PRODUCTS.pass90.amount)} pass is already the cheaper choice —
+          and it removes every cap while it runs.
+        </p>
 
         <section className="border-border mt-16 border-t pt-10">
           <h2 className="font-display text-2xl font-semibold">Questions people actually ask</h2>

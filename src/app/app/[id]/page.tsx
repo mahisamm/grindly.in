@@ -4,6 +4,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/auth";
 import { runAgent } from "@/lib/agent";
+import { paymentsEnabled } from "@/lib/config";
 import { limitsFor } from "@/lib/plans";
 import type { CompanyPack } from "@/lib/reportTypes";
 import {
@@ -112,6 +113,7 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
         // waits, and is answered with a 402 telling them to buy a pass — an
         // upgrade prompt as the response to a button that looked available.
         targetLimit={limitsFor(user).targetsPerResume}
+        paymentsLive={paymentsEnabled()}
       />
       </Suspense>
     </div>

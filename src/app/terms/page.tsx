@@ -99,8 +99,9 @@ export default function TermsPage() {
             The {PRODUCTS.pass90.name} costs {formatAmount(PRODUCTS.pass90.amount)}{" "}
             and lasts {PRODUCTS.pass90.days} days. It is a one-time payment.{" "}
             <b>It does not auto-renew</b>, so there is nothing to cancel and
-            nothing will be charged again. A single company pack costs{" "}
-            {formatAmount(PRODUCTS.pack1.amount)}.
+            nothing will be charged again. A company unlock costs{" "}
+            {formatAmount(PRODUCTS.pack1.amount)}, applies to one named company on one
+            resume, and never expires.
           </p>
           <p>
             When a pass ends you drop to the free plan and keep every resume and

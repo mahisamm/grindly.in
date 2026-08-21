@@ -34,8 +34,9 @@ export default function RefundsPage() {
           <p>
             Every purchase is a one-time payment. The {PRODUCTS.pass90.name} (
             {formatAmount(PRODUCTS.pass90.amount)}) lasts {PRODUCTS.pass90.days} days and{" "}
-            <b>does not auto-renew</b>; the single company pack (
-            {formatAmount(PRODUCTS.pack1.amount)}) is likewise a one-time purchase. No
+            <b>does not auto-renew</b>; a company unlock (
+            {formatAmount(PRODUCTS.pack1.amount)}) is likewise a one-time purchase — it
+            never expires, so there is nothing recurring about it either. No
             subscription exists, so nothing recurs, nothing needs cancelling, and you will
             never be charged again without buying again.
           </p>

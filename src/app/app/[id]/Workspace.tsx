@@ -15,6 +15,7 @@ import { CoverLetter } from "./CoverLetter";
 import { ProgressPanel, type ApplicationRow, type ScorePoint } from "./Progress";
 import { ShareLink } from "./ShareLink";
 import { LinkStyleChoice } from "./edit/LinkStyle";
+import { UnlockTarget } from "./UnlockTarget";
 
 type VariantView = {
   id: string;
@@ -148,12 +149,15 @@ export function ResumeWorkspace({
   packs,
   disclaimer,
   targetLimit,
+  paymentsLive,
 }: {
   resume: ResumeView;
   packs: CompanyPack[];
   disclaimer: string;
   /** Company targets this plan allows per resume. */
   targetLimit: number;
+  /** False on a stub deployment — the unlock card then says it grants free. */
+  paymentsLive: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -186,6 +190,10 @@ export function ResumeWorkspace({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // The company whose tailoring hit the paywall — the unlock card renders in
+  // place of a bare error, because "pay here, then it runs" converts and a
+  // trip to the pricing page does not.
+  const [lockedTarget, setLockedTarget] = useState<{ id: string; name: string } | null>(null);
 
   // The rebuild is a row on the server now, so this is the page catching up
   // with it rather than the page owning it. On a cold load it finds a batch
@@ -204,6 +212,12 @@ export function ResumeWorkspace({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        // The paywall answer is an OFFER, not an error: swap the alert strip
+        // for the unlock card that completes the purchase in place.
+        if (data?.code === "target_locked" && data?.targetId) {
+          setLockedTarget({ id: String(data.targetId), name: String(data.targetName ?? "") });
+          return null;
+        }
         setError(data?.error ?? "That did not work.");
         // A 409 means a batch is already in flight — usually a double click.
         // Picking the run up is more useful than the refusal message.
@@ -269,6 +283,21 @@ export function ResumeWorkspace({
 
         <div className="min-w-0 flex-1">
           <RunBanner run={run} onCancel={cancelRun} />
+
+          {lockedTarget && (
+            <UnlockTarget
+              targetId={lockedTarget.id}
+              targetName={lockedTarget.name}
+              paymentsLive={paymentsLive}
+              onUnlocked={() => {
+                const id = lockedTarget.id;
+                setLockedTarget(null);
+                setNote("Unlocked. Starting the tailored rebuild…");
+                void post(`/api/resumes/${resume.id}/variants`, { targetId: id }, "rewrite");
+              }}
+              onDismiss={() => setLockedTarget(null)}
+            />
+          )}
 
           {(error || note) && (
             <p

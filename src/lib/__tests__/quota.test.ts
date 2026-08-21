@@ -11,7 +11,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const { mockUser, mockUsage } = vi.hoisted(() => ({
   mockUser: { findUnique: vi.fn() },
-  mockUsage: { upsert: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn() },
+  mockUsage: {
+    upsert: vi.fn(), update: vi.fn(), updateMany: vi.fn(), findUnique: vi.fn(),
+    aggregate: vi.fn(),
+  },
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -27,6 +30,11 @@ beforeEach(() => {
   mockUser.findUnique.mockResolvedValue({ plan: "free", planExpiresAt: null });
   mockUsage.update.mockResolvedValue({});
   mockUsage.updateMany.mockResolvedValue({ count: 1 });
+  // Lifetime sums (the free plan's window) default to "today's row is all
+  // there is", so single-day tests read the same as before the pivot.
+  mockUsage.aggregate.mockImplementation(() =>
+    Promise.resolve({ _sum: { variantRuns: null, adviceRuns: null } }),
+  );
 });
 
 describe("localDate", () => {
@@ -47,20 +55,49 @@ describe("localDate", () => {
 describe("reserve", () => {
   it("allows a request inside the limit and reports what is left", async () => {
     mockUsage.upsert.mockResolvedValue({ variantRuns: 1 });
+    mockUsage.aggregate.mockResolvedValue({ _sum: { variantRuns: 1 } });
     const verdict = await reserve("u1", "variantRuns");
     expect(verdict.allowed).toBe(true);
     if (verdict.allowed) {
       expect(verdict.used).toBe(1);
-      expect(verdict.limit).toBe(2); // free plan
-      expect(verdict.remaining).toBe(1);
+      expect(verdict.limit).toBe(3); // free plan, lifetime
+      expect(verdict.remaining).toBe(2);
     }
     expect(mockUsage.update).not.toHaveBeenCalled();
+  });
+
+  it("counts a free account's rebuilds across its LIFETIME, not its day", async () => {
+    // The daily reset taught patient users to wait for midnight and never
+    // pay. Today's row says 1, but history says 3 — the request is refused
+    // and the message must not promise a midnight reset that will not help.
+    mockUsage.upsert.mockResolvedValue({ variantRuns: 1 });
+    mockUsage.aggregate.mockResolvedValue({ _sum: { variantRuns: 4 } });
+    const verdict = await reserve("u1", "variantRuns");
+    expect(verdict.allowed).toBe(false);
+    if (!verdict.allowed) {
+      expect(verdict.message).not.toContain("midnight");
+      expect(verdict.message).toContain("in total");
+    }
+    // The refused unit is still handed back to today's row.
+    expect(mockUsage.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { variantRuns: { decrement: 1 } } }),
+    );
+  });
+
+  it("keeps UPLOADS daily even for free accounts", async () => {
+    // Uploads cost local parsing, not provider quota; a lifetime cap there
+    // would strand someone iterating on their file.
+    mockUsage.upsert.mockResolvedValue({ uploads: 2 });
+    const verdict = await reserve("u1", "uploads");
+    expect(verdict.allowed).toBe(true);
+    expect(mockUsage.aggregate).not.toHaveBeenCalled();
   });
 
   it("refuses past the limit AND hands the reserved unit back", async () => {
     // The rollback is the whole point: without it every refused retry burns
     // another unit and the counter climbs forever.
-    mockUsage.upsert.mockResolvedValue({ variantRuns: 3 });
+    mockUsage.upsert.mockResolvedValue({ variantRuns: 4 });
+    mockUsage.aggregate.mockResolvedValue({ _sum: { variantRuns: 4 } });
     const verdict = await reserve("u1", "variantRuns");
     expect(verdict.allowed).toBe(false);
     expect(mockUsage.update).toHaveBeenCalledWith(
@@ -160,10 +197,12 @@ describe("refund", () => {
 describe("usageToday", () => {
   it("reports every meter and never mutates", async () => {
     mockUsage.findUnique.mockResolvedValue({ variantRuns: 1, adviceRuns: 0, uploads: 2 });
+    mockUsage.aggregate.mockResolvedValue({ _sum: { variantRuns: 1, adviceRuns: 0 } });
     const usage = await usageToday("u1");
-    expect(usage.variantRuns).toEqual({ used: 1, limit: 2 });
-    expect(usage.adviceRuns).toEqual({ used: 0, limit: 3 });
-    expect(usage.uploads).toEqual({ used: 2, limit: 5 });
+    // Free plan: the model-priced meters report their LIFETIME window.
+    expect(usage.variantRuns).toEqual({ used: 1, limit: 3, lifetime: true });
+    expect(usage.adviceRuns).toEqual({ used: 0, limit: 3, lifetime: true });
+    expect(usage.uploads).toEqual({ used: 2, limit: 5, lifetime: false });
     expect(mockUsage.upsert).not.toHaveBeenCalled();
     expect(mockUsage.update).not.toHaveBeenCalled();
   });

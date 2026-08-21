@@ -746,7 +746,10 @@ async function Settings({ user }: { user: SessionUser }) {
               <p className="text-sm font-semibold">{p.name}</p>
               <p className="font-display mt-1 text-xl font-bold">{formatAmount(p.amount, p.currency)}</p>
               <p className="text-muted mt-1 text-xs leading-snug">
-                Grants {p.grants} for {p.days} days. {p.blurb}
+                {p.kind === "plan"
+                  ? `Grants ${p.grants} for ${p.days} days.`
+                  : "Unlocks one company target, permanently."}{" "}
+                {p.blurb}
               </p>
             </div>
           ))}

@@ -25,7 +25,7 @@
  *     concurrent requests through the check before any of them has counted.
  */
 import { prisma } from "@/lib/prisma";
-import { limitsFor, type Limits } from "@/lib/plans";
+import { effectivePlan, limitsFor, type Limits } from "@/lib/plans";
 
 export type Meter = "variantRuns" | "adviceRuns" | "uploads";
 
@@ -89,6 +89,12 @@ export async function reserve(userId: string, meter: Meter): Promise<QuotaVerdic
 
   const limit = limitsFor(user)[LIMIT_KEY[meter]];
   const date = localDate(user.timezone ?? DEFAULT_TIMEZONE);
+  // Free accounts spend a LIFETIME allowance on the model-priced meters, not a
+  // daily one. The daily reset taught patient users to wait for midnight and
+  // never pay — the operator's explicit objection to the old shape. Uploads
+  // stay daily for everyone: they cost local parsing, not provider quota, and
+  // a lifetime upload cap would strand someone who iterates on their file.
+  const lifetime = meter !== "uploads" && effectivePlan(user) === "free";
 
   // Atomic: upsert-then-increment in a single round trip. `update` on the
   // composite unique key maps to one UPDATE ... SET n = n + 1 RETURNING n.
@@ -98,7 +104,19 @@ export async function reserve(userId: string, meter: Meter): Promise<QuotaVerdic
     update: { [meter]: { increment: 1 } },
   });
 
-  const used = (row as unknown as Record<string, number>)[meter] ?? 0;
+  // Lifetime = the SUM across every daily row, today's increment included.
+  // The increment still lands on today's row either way, so a same-day refund
+  // decrements the row that was actually charged.
+  let used = (row as unknown as Record<string, number>)[meter] ?? 0;
+  if (lifetime) {
+    const total = await prisma.dailyUsage.aggregate({
+      where: { userId },
+      _sum: { [meter]: true },
+    } as never);
+    used =
+      ((total as { _sum?: Record<string, number | null> })._sum?.[meter] ?? used) || used;
+  }
+
   if (used > limit) {
     // Give it back. Without this, every refused attempt still burns a unit, so
     // a user who hits the cap at 10am cannot use the product even after the
@@ -116,7 +134,9 @@ export async function reserve(userId: string, meter: Meter): Promise<QuotaVerdic
       message:
         limit === 0
           ? `${LABEL[meter]} are not included on your plan.`
-          : `You have used all ${limit} ${LABEL[meter]} for today. The limit resets at midnight in your timezone.`,
+          : lifetime
+            ? `The free plan includes ${limit} ${LABEL[meter]} in total, and you have used them. Unlock a company for ₹99 or get a Season Pass — there is nothing to wait for.`
+            : `You have used all ${limit} ${LABEL[meter]} for today. The limit resets at midnight in your timezone.`,
     };
   }
 
@@ -146,26 +166,40 @@ export async function refund(userId: string, meter: Meter): Promise<void> {
     .catch(() => null);
 }
 
-/** Read-only snapshot for the dashboard. Never mutates. */
+/** Read-only snapshot for the dashboard. Never mutates. Reports the same
+ *  window `reserve` counts: lifetime totals for a free account's model-priced
+ *  meters, today for everything else — a dashboard that showed "0 used today"
+ *  beside a refusal about a lifetime cap would look like a bug. */
 export async function usageToday(
   userId: string,
-): Promise<Record<Meter, { used: number; limit: number }>> {
+): Promise<Record<Meter, { used: number; limit: number; lifetime: boolean }>> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: { plan: true, planExpiresAt: true, role: true, timezone: true },
   });
   const limits = limitsFor(user ?? {});
+  const isFree = effectivePlan(user ?? {}) === "free";
   const row = await prisma.dailyUsage.findUnique({
     where: {
       userId_localDate: { userId, localDate: localDate(user?.timezone ?? DEFAULT_TIMEZONE) },
     },
   });
+  const totals = isFree
+    ? await prisma.dailyUsage.aggregate({
+        where: { userId },
+        _sum: { variantRuns: true, adviceRuns: true },
+      })
+    : null;
   const meters: Meter[] = ["variantRuns", "adviceRuns", "uploads"];
-  const out = {} as Record<Meter, { used: number; limit: number }>;
+  const out = {} as Record<Meter, { used: number; limit: number; lifetime: boolean }>;
   for (const m of meters) {
+    const lifetime = isFree && m !== "uploads";
     out[m] = {
-      used: (row as unknown as Record<string, number> | null)?.[m] ?? 0,
+      used: lifetime
+        ? ((totals?._sum as Record<string, number | null> | undefined)?.[m] ?? 0)
+        : ((row as unknown as Record<string, number> | null)?.[m] ?? 0),
       limit: limits[LIMIT_KEY[m]],
+      lifetime,
     };
   }
   return out;

@@ -8,7 +8,7 @@ import { runAgent, VARIANT_DIR, type Report, type Fidelity } from "@/lib/agent";
 import { readContact, readStrings, readTargetSpec } from "@/lib/reportTypes";
 import { toJsonColumn } from "@/lib/jsonColumn";
 import { reserve, refund } from "@/lib/quota";
-import { formatLimit, limitsFor } from "@/lib/plans";
+import { TARGET_REGEN_LIMIT, effectivePlan, formatLimit, limitsFor } from "@/lib/plans";
 import { audit } from "@/lib/audit";
 import { report } from "@/lib/errors";
 import { activeRun, holdRun, releaseRun } from "@/lib/variantRuns";
@@ -113,19 +113,60 @@ export async function POST(req: Request, { params }: Ctx) {
     );
   }
 
-  // Quota BEFORE the target is created. The other order committed a Target row
-  // and then 429'd — so a free user (1 target per resume) who had already used
-  // their daily runs permanently burned their only target slot on a request
-  // that produced nothing, and every attempt after it hit the 402 plan limit.
-  const quota = await reserve(user.id, "variantRuns");
-  if (!quota.allowed) {
-    return NextResponse.json({ error: quota.message, code: "quota" }, { status: 429 });
-  }
-
+  // Who is running, and against what, decides which wall applies:
+  //
+  //   pass / admin / legacy pack — the daily meter, as always.
+  //   free, untargeted           — the LIFETIME meter (3, ever). The taste.
+  //   free, targeted             — no meter at all. The TARGET is the wall:
+  //     locked → 402 with the unlock offer; unlocked → capped at
+  //     TARGET_REGEN_LIMIT runs for that target, counted below.
+  //
+  // The target is therefore resolved BEFORE any quota is spent — under this
+  // model creating the row (and its free gap report) costs nothing, so the
+  // old "quota first, or a refused run burns the target slot" ordering is no
+  // longer load-bearing.
+  const plan = effectivePlan(user);
   const target = await resolveTarget(user.id, resume.id, body);
-  if ("error" in target) {
-    await refund(user.id, "variantRuns");
-    return target.error;
+  if ("error" in target) return target.error;
+
+  let metered = false;
+  if (plan === "free" && target.id) {
+    const targetRow = await prisma.target.findUnique({
+      where: { id: target.id },
+      select: { unlockedAt: true },
+    });
+    if (!targetRow?.unlockedAt) {
+      return NextResponse.json(
+        {
+          error: `Tailoring for ${target.name || "this company"} is a paid unlock — ₹99, once, for this company forever. A Season Pass covers every company.`,
+          code: "target_locked",
+          targetId: target.id,
+          targetName: target.name,
+        },
+        { status: 402 },
+      );
+    }
+    // Count only runs that produced (or are producing) something — a failed
+    // or cancelled batch was refunded everywhere else in this file, and a
+    // regeneration cap that counts our own failures is charging for outages.
+    const spent = await prisma.variantRun.count({
+      where: { targetId: target.id, status: { in: ["running", "done", "empty"] } },
+    });
+    if (spent >= TARGET_REGEN_LIMIT) {
+      return NextResponse.json(
+        {
+          error: `This company's unlock includes ${TARGET_REGEN_LIMIT} tailored runs and you have used them. A Season Pass removes the cap for every company.`,
+          code: "quota",
+        },
+        { status: 429 },
+      );
+    }
+  } else {
+    const quota = await reserve(user.id, "variantRuns");
+    if (!quota.allowed) {
+      return NextResponse.json({ error: quota.message, code: "quota" }, { status: 429 });
+    }
+    metered = true;
   }
 
   // Each run writes into its OWN directory.
@@ -175,7 +216,7 @@ export async function POST(req: Request, { params }: Ctx) {
         data: { status: "cancelled", stage: "Superseded", finishedAt: new Date() },
       })
       .catch(() => null);
-    await refund(user.id, "variantRuns");
+    if (metered) await refund(user.id, "variantRuns");
     return NextResponse.json(
       {
         error: "This resume is already being rebuilt. Wait for that to finish.",
@@ -201,6 +242,7 @@ export async function POST(req: Request, { params }: Ctx) {
       userId: user.id,
       resume,
       target,
+      metered,
     });
   });
 
@@ -232,10 +274,16 @@ async function executeRun({
   userId,
   resume,
   target,
+  metered,
 }: {
   runId: string;
   runDir: string;
   userId: string;
+  /** Whether a daily/lifetime quota unit was reserved for this run — false
+      for a free user's runs against an unlocked target, whose only wall is
+      the per-target count (which failed runs never enter, see the status
+      filter where it is counted). */
+  metered: boolean;
   resume: {
     id: string;
     text: string;
@@ -313,7 +361,7 @@ async function executeRun({
     // exception escaping an `after` callback is an unhandled rejection with
     // nobody left to catch it, and the row would sit on `running` until the
     // reaper found it ten minutes later.
-    await refund(userId, "variantRuns");
+    if (metered) await refund(userId, "variantRuns");
     await finish({
       status: "failed",
       stage: "Stopped",
@@ -324,7 +372,7 @@ async function executeRun({
   }
 
   if (!result.ok) {
-    await refund(userId, "variantRuns");
+    if (metered) await refund(userId, "variantRuns");
     await finish({ status: "failed", stage: "Stopped", error: result.error });
     return;
   }
@@ -332,7 +380,7 @@ async function executeRun({
   if (result.aborted) {
     // Our side failed, or the input could not be worked with. Either way the
     // user did not get anything, so they are not charged for it.
-    await refund(userId, "variantRuns");
+    if (metered) await refund(userId, "variantRuns");
     await finish({ status: "failed", stage: "Stopped", error: abortMessage(result.aborted) });
     return;
   }
@@ -341,7 +389,7 @@ async function executeRun({
     // A real and valid outcome: the rewrites ran and none beat the master. NOT
     // a failure, and not charged for either — a button was pressed and no
     // document came back.
-    await refund(userId, "variantRuns");
+    if (metered) await refund(userId, "variantRuns");
     await finish({ status: "empty", stage: "Nothing beat your resume", variantsMade: 0 });
     return;
   }
@@ -404,7 +452,7 @@ async function executeRun({
   } catch (e) {
     // The documents are on disk but nothing points at them. Charging for a
     // batch the user cannot reach would be charging for our own bug.
-    await refund(userId, "variantRuns");
+    if (metered) await refund(userId, "variantRuns");
     await finish({
       status: "failed",
       stage: "Stopped",
@@ -484,6 +532,10 @@ async function resolveTarget(
     return { error: badRequest("Write a little more — that is too short to read anything from.") };
   }
 
+  // A cap on ROWS, not on value. Creating a target — and the free gap report
+  // that comes with it — costs nothing under the unlock model; running against
+  // it is what the target's lock gates. This exists only so a script cannot
+  // grow the table unboundedly through one resume.
   const limit = limitsFor(
     (await prisma.user.findUnique({
       where: { id: userId },
@@ -498,7 +550,7 @@ async function resolveTarget(
     return {
       error: NextResponse.json(
         {
-          error: `Your plan allows ${formatLimit(limit)} target${limit === 1 ? "" : "s"} per resume. Get a Season Pass for more.`,
+          error: `This resume already has ${formatLimit(limit)} targets. Remove one, or use another resume slot.`,
           code: "plan_limit",
         },
         { status: 402 },
@@ -507,6 +559,15 @@ async function resolveTarget(
   }
 
   if (body.company) {
+    // Reuse before create. Under the unlock model a repeated "Tailor for
+    // Google" MUST resolve to the same row: the ₹99 purchase hangs off the
+    // target's id, and a duplicate would let someone pay for one copy and
+    // keep being refused on the other.
+    const existing = await prisma.target.findFirst({
+      where: { resumeId, slug: body.company },
+      orderBy: { createdAt: "asc" },
+    });
+    if (existing) return targetToResolved(existing);
     const pack = await runAgent<{ pack: { name: string; keywords: string[]; emphasis: string[] } }>(
       "companies",
       { slug: body.company },
@@ -569,6 +630,18 @@ async function resolveTarget(
   // to a rewrite, and instructions must not be round-tripped through a page
   // anyone can edit.
   if (body.companyName) {
+    // Same reuse-before-create rule as the curated branch, for the same
+    // money reason. Matched on the typed name case-insensitively — "google"
+    // and "Google" must not become two rows with one unlock between them.
+    const existingByName = await prisma.target.findFirst({
+      where: {
+        resumeId,
+        kind: "company",
+        name: { equals: body.companyName.trim(), mode: "insensitive" },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    if (existingByName) return targetToResolved(existingByName);
     const found = await runAgent<{
       tailoring: "curated" | "generated" | "not_required";
       name: string; slug?: string; keywords: string[]; emphasis: string[];

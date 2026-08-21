@@ -23,15 +23,17 @@
 export type PlanId = "free" | "pack" | "pass" | "admin";
 
 /**
- * What a payment can actually grant.
+ * What a payment can actually grant as a TIER.
  *
  * `Product.grants` used to be `Exclude<PlanId, "free">`, which includes "admin"
  * — a tier that is granted by a role on the user row and is deliberately not
  * reachable by paying. Nothing ever set it, but the type said a product could,
  * and the compiler had to be told otherwise the moment `User.plan` became an
- * enum that does not contain it. The narrower type is the true one.
+ * enum that does not contain it. "pack" left this type when the ₹99 product
+ * became a per-target unlock — no purchase grants that tier any more, it only
+ * survives on accounts that bought it before the change.
  */
-export type PurchasablePlan = Extract<PlanId, "pack" | "pass">;
+export type PurchasablePlan = Extract<PlanId, "pass">;
 
 /**
  * The stand-in for "no cap".
@@ -61,28 +63,39 @@ export function isUnlimited(n: number): boolean {
 export type Limits = {
   /** Resumes stored at once. */
   resumes: number;
-  /** Variant batches per day — the expensive operation (models + Chromium). */
+  /** Variant batches — the expensive operation (models + Chromium). PER DAY
+      for paid tiers; for `free` this is a LIFETIME total (see quota.ts): a
+      daily reset just taught patient users to wait for midnight. */
   variantRunsPerDay: number;
-  /** Model-written advice calls per day. */
+  /** Model-written advice calls. Per day for paid tiers, lifetime for free —
+      same reasoning as variant runs. */
   adviceRunsPerDay: number;
-  /** Uploads per day, to bound the parse work a single account can cause. */
+  /** Uploads per day, to bound the parse work a single account can cause.
+      Daily for every tier — an upload costs parsing, not model calls. */
   uploadsPerDay: number;
-  /** Distinct company/JD targets a resume may have. */
+  /** Distinct company/JD targets a resume may have. For `free` this is a
+      sanity cap on ROWS, not on value: creating a target and reading its gap
+      report is free for everyone; RUNNING against one needs that target
+      unlocked (₹99) or a pass. */
   targetsPerResume: number;
 };
 
 export const LIMITS: Record<PlanId, Limits> = {
+  // The free taste: the full report forever, three rebuilds EVER. The old
+  // shape (2/day) reset at midnight, so anyone patient drank free
+  // indefinitely — the operator's explicit objection. Lifetime totals leave
+  // nothing to wait for.
   free: {
     resumes: 2,
-    variantRunsPerDay: 2,
+    variantRunsPerDay: 3,
     adviceRunsPerDay: 3,
     uploadsPerDay: 5,
-    targetsPerResume: 1,
+    targetsPerResume: 20,
   },
-  // The ₹99 single-company pack. It used to grant `pass` outright, so ₹99 bought
-  // the entire ₹399 tier for a week — 25 resumes, 40 rewrites a day, every
-  // company pack — while the pricing card said "one company, three rebuilds".
-  // Its own tier now matches what is being sold.
+  // LEGACY: the old ₹99 product granted this 7-day tier. It is no longer
+  // sold — pack1 now unlocks a single target instead (see PRODUCTS) — but
+  // accounts still inside a previously-bought window keep these limits until
+  // it expires and effectivePlan sends them back to free.
   pack: {
     resumes: 2,
     variantRunsPerDay: 4,
@@ -117,38 +130,70 @@ export const LIMITS: Record<PlanId, Limits> = {
 
 export type Sku = "pass90" | "pack1";
 
-export type Product = {
-  sku: Sku;
-  name: string;
-  /** Smallest currency unit — paise. Razorpay wants paise; so does arithmetic. */
-  amount: number;
-  currency: "INR";
-  /** Which tier this grants. Written on the product, not assumed at confirm time. */
-  grants: PurchasablePlan;
-  days: number;
-  blurb: string;
-};
+/**
+ * What a purchase IS, structurally. Two shapes on purpose:
+ *
+ *   kind "plan"   — buys the user a tier for `days` (the Season Pass).
+ *   kind "target" — buys ONE company target a permanent unlock on one resume.
+ *     No tier, no expiry, no user.plan change; the grant is a timestamp on the
+ *     target row. This replaced the 7-day "pack" tier, which sold time when
+ *     what people were buying was a company.
+ *
+ * A discriminated union rather than optional fields, so the grant paths in
+ * pay/confirm and pay/webhook cannot read `days` off a product that has none.
+ */
+export type Product =
+  | {
+      sku: Sku;
+      kind: "plan";
+      name: string;
+      /** Smallest currency unit — paise. Razorpay wants paise; so does arithmetic. */
+      amount: number;
+      currency: "INR";
+      /** Which tier this grants. Written on the product, not assumed at confirm time. */
+      grants: PurchasablePlan;
+      days: number;
+      blurb: string;
+    }
+  | {
+      sku: Sku;
+      kind: "target";
+      name: string;
+      amount: number;
+      currency: "INR";
+      blurb: string;
+    };
 
-export const PRODUCTS: Record<Sku, Product> = {
+/**
+ * Tailored runs allowed against one unlocked target. Each run is up to three
+ * rendered variants, so this is fifteen documents per ₹99 — generous for a
+ * person, a wall for a script. A pass ignores it.
+ */
+export const TARGET_REGEN_LIMIT = 5;
+
+// `satisfies` rather than an annotation, so each entry keeps its NARROW type:
+// `PRODUCTS.pass90.days` compiles because pass90 is known to be kind "plan",
+// and `PRODUCTS.pack1.days` is a compile error because an unlock has none.
+export const PRODUCTS = {
   pass90: {
     sku: "pass90",
+    kind: "plan",
     name: "Season Pass",
     amount: 39900, // ₹399
     currency: "INR",
     grants: "pass",
     days: 90,
-    blurb: "Everything, for one job search. One payment, no auto-renew.",
+    blurb: "Every company, everything unlimited, for one job search. One payment, no auto-renew.",
   },
   pack1: {
     sku: "pack1",
-    name: "Single company pack",
+    kind: "target",
+    name: "Company unlock",
     amount: 9900, // ₹99
     currency: "INR",
-    grants: "pack",
-    days: 7,
-    blurb: "Three tailored variants for one company, plus the gap report.",
+    blurb: "One company, unlocked for good: tailored rebuilds, the gap report, a cover letter.",
   },
-};
+} satisfies Record<Sku, Product>;
 
 export function isSku(value: string): value is Sku {
   return value === "pass90" || value === "pack1";

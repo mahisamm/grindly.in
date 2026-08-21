@@ -115,17 +115,24 @@ export async function POST(req: Request) {
       });
       if (claimed.count === 0) return;
 
+      // Grant what the PRODUCT says it grants — a tier for `days`, or a
+      // permanent unlock of the one target this order was created against.
+      if (product.kind === "target") {
+        if (order.targetId) {
+          await tx.target.updateMany({
+            where: { id: order.targetId, userId: user.id, unlockedAt: null },
+            data: { unlockedAt: new Date() },
+          });
+        }
+        return;
+      }
+
       const current = await tx.user.findUnique({
         where: { id: user.id },
         select: { plan: true, planExpiresAt: true },
       });
-      // Grant what the PRODUCT says it grants. This used to set `plan: "pass"`
-      // unconditionally, so the ₹99 single-company pack bought the full ₹399
-      // tier for a week.
-      //
-      // A smaller purchase never downgrades a live larger one: buying a pack
-      // while a Season Pass is running extends the pass rather than replacing
-      // it with the lesser tier.
+      // A smaller purchase never downgrades a live larger one: extending is
+      // always against the plan the user actually holds.
       const live = effectivePlan(current ?? {});
       const nextPlan = live === "pass" ? "pass" : product.grants;
       await tx.user.update({

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApprovedUser, badRequest, serverError } from "@/lib/auth";
-import { PRODUCTS, isSku } from "@/lib/plans";
+import { PRODUCTS, effectivePlan, isSku } from "@/lib/plans";
 import { createOrder } from "@/lib/payment";
 import { isRateLimited } from "@/lib/rateLimit";
 import { audit } from "@/lib/audit";
@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Too many checkout attempts. Try again later." }, { status: 429 });
   }
 
-  let body: { sku?: string };
+  let body: { sku?: string; targetId?: string };
   try {
     body = await req.json();
   } catch {
@@ -32,6 +32,29 @@ export async function POST(req: Request) {
   const sku = String(body.sku ?? "");
   if (!isSku(sku)) return badRequest("Unknown product.");
   const product = PRODUCTS[sku];
+
+  // A per-target product must name its target at CHECKOUT, validated against
+  // the buyer — the grant path applies whatever this order row says and never
+  // reads the confirmation request, so this is the one moment the claim
+  // "this target is mine to unlock" gets checked.
+  let targetId: string | null = null;
+  if (product.kind === "target") {
+    targetId = String(body.targetId ?? "");
+    if (!targetId) return badRequest("Pick the company to unlock first.");
+    const target = await prisma.target.findFirst({
+      where: { id: targetId, userId: user.id },
+      select: { id: true, unlockedAt: true },
+    });
+    if (!target) return badRequest("That company target does not exist on your account.");
+    if (target.unlockedAt) {
+      return badRequest("That company is already unlocked on this resume.");
+    }
+    // A live pass already covers every company. Selling an unlock on top of it
+    // is taking money for nothing, so it is refused rather than allowed.
+    if (effectivePlan(user) === "pass") {
+      return badRequest("Your Season Pass already covers every company.");
+    }
+  }
 
   // The order row is created FIRST, carrying the price we decided. The
   // confirmation path then reads the amount and the product off this row rather
@@ -46,6 +69,7 @@ export async function POST(req: Request) {
         amount: product.amount,
         currency: product.currency,
         status: "created",
+        targetId,
       },
       select: { id: true },
     });
@@ -76,6 +100,10 @@ export async function POST(req: Request) {
     amount: created.amount,
     currency: created.currency,
     keyId: created.keyId ?? null,
-    product: { sku: product.sku, name: product.name, days: product.days },
+    product: {
+      sku: product.sku,
+      name: product.name,
+      days: product.kind === "plan" ? product.days : null,
+    },
   });
 }
