@@ -1,0 +1,43 @@
+# Free uptime alerting, using the only always-on machine this project has
+# that is not the VPS itself: GitHub's cron runners.
+#
+# The error table and the admin Health page only work while the app is up —
+# when the box dies at 2am, the thing that would have reported it dies with
+# it. This probe runs from outside, and a failed run makes GitHub email the
+# repo owner (the default notification for failed workflows on your own
+# repo). That is the whole feature: no dashboard, no account on a third
+# service, one email when the site stops answering.
+#
+# NOTE: scheduled workflows run from the DEFAULT branch only (master), and
+# GitHub treats */5 as best-effort — expect 5-15 minute granularity, which is
+# alerting, not monitoring. Also: GitHub disables schedules after 60 days
+# without repo activity; a push resets the clock.
+name: uptime
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe https://grindly.in/api/health
+        run: |
+          # Three attempts 30s apart, so a single dropped packet or a deploy's
+          # build window (the site is 502 for ~3 minutes during one) does not
+          # page anyone. Three consecutive failures over a minute is real.
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o /tmp/health.json -m 20 -w '%{http_code}' https://grindly.in/api/health || echo 000)
+            if [ "$code" = "200" ] && grep -q '"ok":true' /tmp/health.json; then
+              echo "healthy (attempt $attempt)"
+              exit 0
+            fi
+            echo "attempt $attempt: HTTP $code"
+            cat /tmp/health.json 2>/dev/null || true
+            [ "$attempt" -lt 3 ] && sleep 30
+          done
+          echo "grindly.in health check failed three times in a row"
+          exit 1
