@@ -82,9 +82,18 @@ export default async function PricingPage() {
           </div>
 
           <div
-            className="bg-surface flex flex-col rounded-xl border-2 p-6"
+            className="bg-surface relative flex flex-col rounded-xl border-2 p-6"
             style={{ borderColor: "var(--brand)" }}
           >
+            {/* The recommendation, worn on the card rather than argued in
+                prose. One badge on one card — a "popular" sticker on
+                everything is a popular sticker on nothing. */}
+            <span
+              className="absolute -top-3 left-6 rounded-full px-3 py-1 font-mono text-[10px] font-semibold tracking-[0.12em] uppercase"
+              style={{ background: "var(--brand)", color: "var(--on-cta)" }}
+            >
+              Most popular
+            </span>
             <p className="text-brand font-mono text-[11px] tracking-[0.14em] uppercase">
               {PRODUCTS.pass90.name}
             </p>

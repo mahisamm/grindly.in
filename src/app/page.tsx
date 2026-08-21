@@ -245,19 +245,35 @@ export default async function Home() {
                   rebuilds. No watermark.
                 </p>
               </Reveal>
-              {(["pass90", "pack1"] as const).map((sku, i) => (
-                <Reveal
-                  key={sku}
-                  delay={(i + 1) * 90}
-                  className="bg-surface border-border min-w-[220px] flex-1 rounded-xl border p-6"
-                >
-                  <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">
-                    {PRODUCTS[sku].name}
-                  </p>
-                  <p className="font-display mt-2 text-3xl font-bold">
-                    <RegionPrice inrPaise={PRODUCTS[sku].amount} usdCents={USD_PRICES[sku]} />
-                  </p>
-                  <p className="text-muted mt-2 text-sm">{PRODUCTS[sku].blurb}</p>
+              {/* Free, then per-company, then the pass — the same ascent the
+                  pricing page walks, with the recommendation on the same card. */}
+              {(["pack1", "pass90"] as const).map((sku, i) => (
+                <Reveal key={sku} delay={(i + 1) * 90} className="min-w-[220px] flex-1">
+                  {/* Card chrome on an inner div: Reveal owns its own style
+                      (the stagger delay variable), so the brand border rides
+                      inside it rather than fighting for the attribute. */}
+                  <div
+                    className={`bg-surface relative h-full rounded-xl p-6 ${
+                      sku === "pass90" ? "border-2" : "border-border border"
+                    }`}
+                    style={sku === "pass90" ? { borderColor: "var(--brand)" } : undefined}
+                  >
+                    {sku === "pass90" && (
+                      <span
+                        className="absolute -top-3 left-6 rounded-full px-3 py-1 font-mono text-[10px] font-semibold tracking-[0.12em] uppercase"
+                        style={{ background: "var(--brand)", color: "var(--on-cta)" }}
+                      >
+                        Most popular
+                      </span>
+                    )}
+                    <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">
+                      {PRODUCTS[sku].name}
+                    </p>
+                    <p className="font-display mt-2 text-3xl font-bold">
+                      <RegionPrice inrPaise={PRODUCTS[sku].amount} usdCents={USD_PRICES[sku]} />
+                    </p>
+                    <p className="text-muted mt-2 text-sm">{PRODUCTS[sku].blurb}</p>
+                  </div>
                 </Reveal>
               ))}
             </div>
