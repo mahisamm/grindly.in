@@ -3,7 +3,8 @@ import type { Metadata } from "next";
 import { Logo } from "@/components/Brand";
 import { currentUser } from "@/lib/auth";
 import { paymentsEnabled } from "@/lib/config";
-import { LIMITS, PRODUCTS, formatAmount } from "@/lib/plans";
+import { LIMITS, PRODUCTS, USD_PRICES } from "@/lib/plans";
+import { IndiaOnly, RegionPrice } from "@/components/Region";
 import { Checkout } from "./Checkout";
 
 export const metadata: Metadata = { title: "Pricing — Grindly" };
@@ -40,7 +41,7 @@ export default async function PricingPage() {
         <div className="mt-12 grid gap-5 md:grid-cols-3">
           <div className="bg-surface border-border flex flex-col rounded-xl border p-6">
             <p className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">Free</p>
-            <p className="font-display mt-3 text-4xl font-bold">₹0</p>
+            <p className="font-display mt-3 text-4xl font-bold"><RegionPrice inrPaise={0} usdCents={0} /></p>
             <p className="text-muted mt-1 text-sm">forever</p>
             <ul className="mt-5 flex-1 space-y-2 text-sm">
               <Feature>The complete readiness report and score, unlimited</Feature>
@@ -59,7 +60,7 @@ export default async function PricingPage() {
               {PRODUCTS.pack1.name}
             </p>
             <p className="font-display mt-3 text-4xl font-bold">
-              {formatAmount(PRODUCTS.pack1.amount)}
+              <RegionPrice inrPaise={PRODUCTS.pack1.amount} usdCents={USD_PRICES.pack1} />
             </p>
             <p className="text-muted mt-1 text-sm">per company · yours for good</p>
             <ul className="mt-5 flex-1 space-y-2 text-sm">
@@ -88,7 +89,7 @@ export default async function PricingPage() {
               {PRODUCTS.pass90.name}
             </p>
             <p className="font-display mt-3 text-4xl font-bold">
-              {formatAmount(PRODUCTS.pass90.amount)}
+              <RegionPrice inrPaise={PRODUCTS.pass90.amount} usdCents={USD_PRICES.pass90} />
             </p>
             <p className="text-muted mt-1 text-sm">
               {PRODUCTS.pass90.days} days · one payment · no auto-renew
@@ -99,15 +100,30 @@ export default async function PricingPage() {
               <Feature>Paste any job description</Feature>
               <Feature>Cover letters for every target</Feature>
             </ul>
-            <Checkout sku="pass90" signedIn={Boolean(user)} paymentsLive={paymentsLive} />
+            <IndiaOnly
+              fallback={
+                <div className="mt-6">
+                  <button disabled className="btn w-full cursor-not-allowed justify-center opacity-60">
+                    Coming soon in your region
+                  </button>
+                  <p className="text-muted mt-2 text-xs leading-snug">
+                    Paid checkout outside India is on its way. Everything on the free
+                    tier works everywhere, today.
+                  </p>
+                </div>
+              }
+            >
+              <Checkout sku="pass90" signedIn={Boolean(user)} paymentsLive={paymentsLive} />
+            </IndiaOnly>
           </div>
         </div>
 
         <p className="text-muted mt-6 max-w-2xl text-sm leading-relaxed">
           The arithmetic, out loud: four company unlocks would cost{" "}
-          {formatAmount(PRODUCTS.pack1.amount * 4)}. Applying to four or more companies,
-          the {formatAmount(PRODUCTS.pass90.amount)} pass is already the cheaper choice —
-          and it removes every cap while it runs.
+          <RegionPrice inrPaise={PRODUCTS.pack1.amount * 4} usdCents={USD_PRICES.pack1 * 4} />.
+          Applying to four or more companies, the{" "}
+          <RegionPrice inrPaise={PRODUCTS.pass90.amount} usdCents={USD_PRICES.pass90} /> pass
+          is already the cheaper choice — and it removes every cap while it runs.
         </p>
 
         <section className="border-border mt-16 border-t pt-10">

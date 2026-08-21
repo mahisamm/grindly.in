@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { loadRazorpay } from "@/lib/razorpayClient";
+import { useIsIndia } from "@/components/Region";
 
 /**
  * The purchase moment, exactly where it happens.
@@ -34,6 +35,7 @@ export function UnlockTarget({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const india = useIsIndia();
 
   async function buy() {
     setBusy(true);
@@ -110,6 +112,39 @@ export function UnlockTarget({
       setError("We could not confirm that payment.");
       setBusy(false);
     }
+  }
+
+  // The rupee rail cannot take a foreign card cleanly, and a checkout that
+  // declines is worse than an honest "not yet". The dollar sheet ($7.99)
+  // arrives with the merchant-of-record integration.
+  if (!india) {
+    return (
+      <div
+        className="bg-surface border-border mt-5 rounded-xl border p-5"
+        role="region"
+        aria-label="Paid unlocks are not available in your region yet"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-display text-lg font-semibold">
+              Tailoring for {targetName || "this company"} is a paid unlock
+            </h3>
+            <p className="text-muted mt-1.5 max-w-xl text-sm leading-relaxed">
+              Paid checkout is not available in your region yet — it is coming.
+              Everything on the free tier — your score, the full report, gap reports
+              for any company, and your free rebuilds — works everywhere today.
+            </p>
+          </div>
+          <button
+            onClick={onDismiss}
+            aria-label="Dismiss"
+            className="text-muted hover:text-ink cursor-pointer text-sm underline"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

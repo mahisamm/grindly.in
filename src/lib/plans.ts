@@ -199,6 +199,20 @@ export function isSku(value: string): value is Sku {
   return value === "pass90" || value === "pack1";
 }
 
+/**
+ * The dollar sheet, in cents — what non-Indian visitors SEE today and will
+ * pay when the merchant-of-record rail exists. Deliberately not a currency
+ * conversion of the rupee prices: abroad these compete with $29-a-MONTH
+ * subscriptions, and a converted ₹99 (~$1.15) both signals "toy" and loses
+ * half of itself to fixed processor fees. Nothing sells in USD yet — the
+ * pricing page's foreign buttons say "coming soon" and every purchase path
+ * still runs INR through Razorpay only.
+ */
+export const USD_PRICES: Record<Sku, number> = {
+  pass90: 2900, // $29
+  pack1: 799, // $7.99
+};
+
 /** ₹399 from 39900. Uses the Indian grouping the audience reads. */
 export function formatAmount(paise: number, currency = "INR"): string {
   const major = paise / 100;
