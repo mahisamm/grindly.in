@@ -416,6 +416,20 @@ PROVIDERS: list[Provider] = [
     Provider("openrouter-nemotron-3-super-120b", _openrouter("nvidia/nemotron-3-super-120b-a12b:free"),
              "OPENROUTER_API_KEY", "openrouter", metered=True),
     # Paid, and therefore last whatever this list says — see `paid` above.
+    #
+    # The cheap one first. Same key as the free OpenRouter slots; this is the
+    # PAID id (no :free suffix), so it only ever answers on an account with
+    # credits — creditless, it 402s and the ensemble moves on, which is
+    # today's behaviour exactly. The model is the same family the Groq
+    # primary runs every day, so its clean-JSON output is proven in this
+    # product rather than assumed — chosen off the live catalogue on
+    # 21 Aug 2026 at $0.03/M in, $0.17/M out: a full rewrite lands around a
+    # twentieth of a rupee. Routed by OpenRouter across hosts independent of
+    # Groq's free tier, so the two do not rate-limit together. A $10 top-up
+    # also lifts the :free slots above from 50 to 1000 requests/day — the
+    # top-up pays for itself in free-tier depth before a single paid token.
+    Provider("openrouter-paid-gpt-oss-120b", _openrouter("openai/gpt-oss-120b"),
+             "OPENROUTER_API_KEY", "openrouter-paid", paid=True),
     Provider("claude-opus-5", _anthropic, "ANTHROPIC_API_KEY", "anthropic", paid=True),
 ]
 
