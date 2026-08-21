@@ -3,20 +3,39 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export type Switches = { signupsPaused: boolean; rebuildsPaused: boolean };
+export type Switches = { signupsPaused: boolean; rebuildsPaused: boolean; openSignups: boolean };
 
-const ROWS: { key: keyof Switches; label: string; note: string; onNote: string }[] = [
+const ROWS: {
+  key: keyof Switches;
+  label: string;
+  note: string;
+  onNote: string;
+  /** "warn" for switches whose ON state is an intervention; "go" for ones
+      whose ON state is the healthy default. The colour is the difference
+      between a dashboard that reads "something is off" and one that reads
+      "all normal". */
+  tone: "warn" | "go";
+}[] = [
+  {
+    key: "openSignups",
+    label: "Open sign-ups",
+    note: "OFF: every new account waits in the approval queue on the Access page until you let them in.",
+    onNote: "New accounts go straight in — no approval queue. Blocking a bad actor afterwards is what the Access page's Block button is for.",
+    tone: "go",
+  },
   {
     key: "signupsPaused",
     label: "Pause new sign-ups",
-    note: "New accounts (password or Google) are refused with a plain message. Existing accounts sign in as normal, and the owner email always gets through.",
+    note: "New accounts (password or Google) are refused with a plain message. Existing accounts sign in as normal, and the owner email always gets through. Beats “Open sign-ups” while on.",
     onNote: "Sign-ups are paused. New visitors cannot create an account.",
+    tone: "warn",
   },
   {
     key: "rebuildsPaused",
     label: "Pause rebuilds",
     note: "No new rebuild starts, for anyone — including admin. Use this immediately before a deploy or a database migration, and turn it off right after.",
     onNote: "Rebuilds are paused. Nobody can start a new one until this is off.",
+    tone: "warn",
   },
 ];
 
@@ -74,7 +93,11 @@ export function SettingsSwitches({ initial }: { initial: Switches }) {
                 className="rounded-full border px-3 py-1 font-mono text-[10px] tracking-[0.1em] uppercase"
                 style={
                   on
-                    ? { background: "var(--warn)", color: "var(--on-cta)", borderColor: "var(--warn)" }
+                    ? {
+                        background: row.tone === "go" ? "var(--brand)" : "var(--warn)",
+                        color: "var(--on-cta)",
+                        borderColor: row.tone === "go" ? "var(--brand)" : "var(--warn)",
+                      }
                     : { color: "var(--muted)", borderColor: "var(--line-2)" }
                 }
               >

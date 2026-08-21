@@ -295,7 +295,7 @@ async function Access() {
     <>
       <Section
         title={`Waiting${pending.length ? ` · ${pending.length}` : ""}`}
-        note="Anyone who signs up lands here. They see a page telling them they are waiting; approving lets them straight in with no further step. Blocking stops an account without deleting anything — they keep their data and can still export it."
+        note="Who waits here depends on the “Open sign-ups” switch in Settings: open (the default) sends new accounts straight in and this queue stays empty; closed, everyone lands here until approved. Blocking stops an account without deleting anything — they keep their data and can still export it."
       >
         <AccessQueue
           users={pending.map(serialiseUser)}
@@ -682,7 +682,11 @@ async function Settings({ user }: { user: SessionUser }) {
         note="File-backed, not database-backed — flipping one of these cannot itself fail because the database is having a bad night. Takes effect immediately, no redeploy."
       >
         <SettingsSwitches
-          initial={{ signupsPaused: settings.signupsPaused, rebuildsPaused: settings.rebuildsPaused }}
+          initial={{
+            signupsPaused: settings.signupsPaused,
+            rebuildsPaused: settings.rebuildsPaused,
+            openSignups: settings.openSignups,
+          }}
         />
       </Section>
 

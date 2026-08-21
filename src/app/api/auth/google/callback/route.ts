@@ -97,12 +97,15 @@ export async function GET(req: Request) {
   try {
     if (!user) {
       const isFirst = (await prisma.user.count()) === 0;
+      // Same front door the password path checks — see api/auth/signup.
+      const openDoor = readAdminSettings().openSignups;
       user = await prisma.user.create({
         data: {
           email,
           googleId: profile.sub,
           name: profile.name?.slice(0, 80) ?? null,
           role: isFirst || (adminEmail() && email === adminEmail()) ? "admin" : "user",
+          ...(openDoor ? { accessStatus: "approved" as const, approvedAt: new Date() } : {}),
         },
         select: { id: true, googleId: true, deletedAt: true },
       });

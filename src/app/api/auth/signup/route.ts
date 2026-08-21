@@ -90,6 +90,12 @@ export async function POST(req: Request) {
   const isFirst = (await prisma.user.count()) === 0;
   const role = isFirst || (adminEmail() && email === adminEmail()) ? "admin" : "user";
 
+  // The front door. Open (the default) approves the account at creation;
+  // closed leaves the schema's `pending` and the /admin queue decides. Read
+  // once, so the status and its timestamp cannot disagree about which policy
+  // was in force.
+  const openDoor = readAdminSettings().openSignups;
+
   let user;
   try {
     user = await prisma.user.create({
@@ -98,6 +104,7 @@ export async function POST(req: Request) {
         name,
         passwordHash,
         role,
+        ...(openDoor ? { accessStatus: "approved" as const, approvedAt: new Date() } : {}),
         // Validated, not trusted: this comes off a request body, and an
         // unusable zone stored here makes every later quota check for this one
         // account throw. Null when the browser would not say — quota.ts falls

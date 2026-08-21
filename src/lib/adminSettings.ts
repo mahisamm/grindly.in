@@ -34,12 +34,21 @@ export type AdminSettings = {
    *  to every account, including admin — this is for a deploy or a migration,
    *  where "except the operator" would defeat the point. */
   rebuildsPaused: boolean;
+  /** New accounts are approved on creation instead of joining the /admin
+   *  approval queue. Distinct from `signupsPaused`, which stops accounts
+   *  existing at all: paused beats open. Flipping this OFF later gates only
+   *  FUTURE signups — accounts already approved stay approved. */
+  openSignups: boolean;
   updatedAt: string | null;
 };
 
 const DEFAULTS: AdminSettings = {
   signupsPaused: false,
   rebuildsPaused: false,
+  // Open by default — the operator's launch decision (21 Aug 2026). The
+  // approval queue remains one switch away, and blocking a bad actor after
+  // the fact is what the access page's Block button is for.
+  openSignups: true,
   updatedAt: null,
 };
 
@@ -50,6 +59,7 @@ export function readAdminSettings(): AdminSettings {
     return {
       signupsPaused: typeof parsed.signupsPaused === "boolean" ? parsed.signupsPaused : DEFAULTS.signupsPaused,
       rebuildsPaused: typeof parsed.rebuildsPaused === "boolean" ? parsed.rebuildsPaused : DEFAULTS.rebuildsPaused,
+      openSignups: typeof parsed.openSignups === "boolean" ? parsed.openSignups : DEFAULTS.openSignups,
       updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : null,
     };
   } catch {

@@ -7,9 +7,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Flip one of the two global switches. Body is `{ signupsPaused: boolean }`
- * or `{ rebuildsPaused: boolean }` — one key, so a stray field in the body
- * can never flip a switch nobody asked to touch.
+ * Flip one of the global switches. Body carries exactly the keys being
+ * changed, so a stray field in the body can never flip a switch nobody asked
+ * to touch.
  */
 export async function POST(req: Request) {
   const auth = await requireAdmin();
@@ -20,11 +20,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 });
   }
 
-  const patch: { signupsPaused?: boolean; rebuildsPaused?: boolean } = {};
+  const patch: { signupsPaused?: boolean; rebuildsPaused?: boolean; openSignups?: boolean } = {};
   if (typeof body.signupsPaused === "boolean") patch.signupsPaused = body.signupsPaused;
   if (typeof body.rebuildsPaused === "boolean") patch.rebuildsPaused = body.rebuildsPaused;
+  if (typeof body.openSignups === "boolean") patch.openSignups = body.openSignups;
   if (Object.keys(patch).length === 0) {
-    return NextResponse.json({ error: "Send signupsPaused or rebuildsPaused as a boolean." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Send signupsPaused, rebuildsPaused or openSignups as a boolean." },
+      { status: 400 },
+    );
   }
 
   const updated = writeAdminSettings(patch);
