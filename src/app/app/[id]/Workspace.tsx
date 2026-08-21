@@ -74,24 +74,24 @@ const TABS: Tab[] = ["report", "rewrite", "target", "progress", "raw"];
  * A graceful two-letter fallback keeps the tile useful if the CDN is offline
  * or a logo changes upstream.
  */
-const COMPANY_LOGOS: Record<string, { icon?: string; color?: string; domain: string }> = {
-  amazon: { domain: "amazon.com" },
-  qualcomm: { icon: "qualcomm", color: "3253DC", domain: "qualcomm.com" },
-  google: { icon: "google", color: "4285F4", domain: "google.com" },
-  microsoft: { domain: "microsoft.com" },
-  tcs: { icon: "tata", color: "1D4F91", domain: "tcs.com" },
-  infosys: { icon: "infosys", color: "007CC3", domain: "infosys.com" },
-  zoho: { icon: "zoho", color: "C8202F", domain: "zoho.com" },
-  flipkart: { domain: "flipkart.com" },
-  deloitte: { domain: "deloitte.com" },
-  accenture: { icon: "accenture", color: "A100FF", domain: "accenture.com" },
-  adobe: { domain: "adobe.com" },
-  netflix: { icon: "netflix", color: "E50914", domain: "netflix.com" },
-  uber: { icon: "uber", color: "000000", domain: "uber.com" },
-  wipro: { icon: "wipro", color: "341C79", domain: "wipro.com" },
-  cognizant: { domain: "cognizant.com" },
-  razorpay: { icon: "razorpay", color: "0C2451", domain: "razorpay.com" },
-  samsung: { icon: "samsung", color: "1428A0", domain: "samsung.com" },
+const COMPANY_LOGOS: Record<string, string> = {
+  amazon: "amazon.png",
+  qualcomm: "qualcomm.svg",
+  google: "google.svg",
+  microsoft: "microsoft.png",
+  tcs: "tcs.svg",
+  infosys: "infosys.svg",
+  zoho: "zoho.svg",
+  flipkart: "flipkart.png",
+  deloitte: "deloitte.png",
+  accenture: "accenture.svg",
+  adobe: "adobe.png",
+  netflix: "netflix.svg",
+  uber: "uber.svg",
+  wipro: "wipro.svg",
+  cognizant: "cognizant.png",
+  razorpay: "razorpay.svg",
+  samsung: "samsung.svg",
 };
 
 function companyInitials(name: string) {
@@ -106,11 +106,7 @@ function companyInitials(name: string) {
 
 function CompanyLogo({ company }: { company: Pick<CompanyPack, "slug" | "name"> }) {
   const logo = COMPANY_LOGOS[company.slug];
-  const src = logo?.icon
-    ? `https://cdn.simpleicons.org/${logo.icon}/${logo.color}`
-    : logo
-      ? `https://www.google.com/s2/favicons?domain=${logo.domain}&sz=128`
-      : null;
+  const src = logo ? `/company-logos/${logo}` : null;
 
   return (
     <span
@@ -121,9 +117,9 @@ function CompanyLogo({ company }: { company: Pick<CompanyPack, "slug" | "name"> 
         {companyInitials(company.name)}
       </span>
       {src && (
-        // These are small decorative SVG marks. The visible company name is
-        // the accessible label, and the initials behind the image are a
-        // deliberately useful fallback if a third-party mark cannot load.
+        // These small marks ship with the app, rather than making the target
+        // picker depend on a third-party image request. The visible company
+        // name is the accessible label and initials remain a useful fallback.
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={src}

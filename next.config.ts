@@ -24,7 +24,7 @@ const securityHeaders = [
       `script-src 'self' 'unsafe-inline' https://checkout.razorpay.com${isDev ? " 'unsafe-eval'" : ""}`,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
-      "img-src 'self' data: blob: https://*.razorpay.com https://cdn.simpleicons.org https://www.google.com",
+      "img-src 'self' data: blob: https://*.razorpay.com",
       "connect-src 'self' https://*.razorpay.com",
       // 'self' is here for the PDF preview beside a rebuild — the document is
       // served by our own ownership-checked route and framed on the compare
