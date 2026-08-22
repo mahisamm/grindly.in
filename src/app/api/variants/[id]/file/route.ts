@@ -34,7 +34,11 @@ export async function GET(req: Request, { params }: Ctx) {
       // The target is what makes this document company-specific, and its name
       // is the first word of the filename.
       target: { select: { name: true } },
-      resume: { select: { label: true, contactJson: true } },
+      // `targetName` on the resume: a document promoted from a company-tailored
+      // rebuild carries its company forward, and a PDF built from its editor
+      // has no target of its own — without this the company fell off the
+      // filename exactly when the user was saving "the Amazon one".
+      resume: { select: { label: true, contactJson: true, targetName: true } },
     },
   });
   if (!variant) return notFound();
@@ -69,7 +73,11 @@ export async function GET(req: Request, { params }: Ctx) {
   // name, then to nothing — `resumeFileStem` handles the empty case.
   const printed = readStruct(variant.structJson)?.name;
   const person = printed || readContact(variant.resume.contactJson).name || auth.user.name;
-  const download = `${resumeFileStem(person, variant.target?.name)}.pdf`;
+  // Company first, from the target this rebuild was aimed at — or, for a
+  // rebuild of a resume that was itself promoted from a company-tailored
+  // version, from the company that resume still remembers.
+  const company = variant.target?.name || variant.resume.targetName || null;
+  const download = `${resumeFileStem(person, company)}.pdf`;
   return new NextResponse(new Uint8Array(bytes), {
     headers: {
       "Content-Type": "application/pdf",
