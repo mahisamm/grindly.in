@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { baseUrl } from "@/lib/baseUrl";
 import { getUid, clearUid, revokeSessions } from "@/lib/session";
 
 export const runtime = "nodejs";
@@ -47,9 +48,12 @@ export async function POST(req: Request) {
   if (uid) await revokeSessions(uid);
   await clearUid();
 
-  // Built from the request rather than from a configured base URL: this has to
-  // work on localhost, on a preview host and behind Caddy without anyone
-  // remembering to set a variable, and the destination is a relative path on
-  // this same origin either way.
-  return NextResponse.redirect(new URL("/", req.url), { status: 303 });
+  // The PUBLIC base, never `req.url`. Behind Caddy the request Next sees is
+  // addressed to the container — req.url is `https://localhost:3000/...` —
+  // and the previous `new URL("/", req.url)` sent every signed-out browser on
+  // production to https://localhost:3000/, which does not exist. The cookie
+  // was cleared and the user was shown a dead page: "sign out does not
+  // work", reported live. baseUrl() prefers NEXT_PUBLIC_APP_URL and falls
+  // back to the request origin only on a box that has not set it.
+  return NextResponse.redirect(`${baseUrl(new URL(req.url).origin)}/`, { status: 303 });
 }

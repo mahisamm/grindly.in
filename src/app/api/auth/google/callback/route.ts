@@ -10,6 +10,7 @@ import { normalizeEmail } from "@/lib/password";
 import { adminEmail } from "@/lib/config";
 import { readAdminSettings } from "@/lib/adminSettings";
 import { audit } from "@/lib/audit";
+import { safeReturnPath } from "@/lib/returnPath";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -124,7 +125,12 @@ export async function GET(req: Request) {
 
   await setUid(user.id);
   await audit(user.id, "login", email, "google");
-  return NextResponse.redirect(`${base}/app`);
+  // Back to where they started (pricing, usually) — validated a second time
+  // on the way out, and the cookie is cleared so it cannot steer a later
+  // sign-in.
+  const next = safeReturnPath(jar.get("g_oauth_next")?.value);
+  jar.delete("g_oauth_next");
+  return NextResponse.redirect(`${base}${next}`);
 }
 
 function safeEqual(a: string, b: string): boolean {

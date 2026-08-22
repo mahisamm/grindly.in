@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { baseUrl } from "@/lib/baseUrl";
 import { loginClient } from "@/lib/googleOAuth";
+import { safeReturnPath } from "@/lib/returnPath";
 
 export const runtime = "nodejs";
 
@@ -26,6 +27,20 @@ export async function GET(req: Request) {
     maxAge: 600, // 10 min
     secure: process.env.NODE_ENV === "production",
   });
+  // Where to land after Google hands back. Carried in a short-lived cookie
+  // rather than in `state` — state is the CSRF token and stays opaque — and
+  // validated to a same-origin path both here and again when read, so a
+  // crafted link cannot turn the OAuth round trip into an open redirect.
+  const next = safeReturnPath(new URL(req.url).searchParams.get("next"));
+  if (next !== "/app") {
+    c.set("g_oauth_next", next, {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 600,
+      secure: process.env.NODE_ENV === "production",
+    });
+  }
 
   // Non-sensitive scopes only — keep it that way. Adding a sensitive or
   // restricted scope here puts the login flow behind Google verification.

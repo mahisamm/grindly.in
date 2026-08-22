@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Logo } from "@/components/Brand";
+import { safeReturnPath } from "@/lib/returnPath";
 
 /**
  * Codes the Google callback redirects with, turned into sentences here.
@@ -63,6 +64,10 @@ export function AuthForm({
   // verbatim is a text-injection footgun on the one page people trust most.
   const oauthError = OAUTH_ERRORS[params.get("error") ?? ""] ?? null;
   const [error, setError] = useState<string | null>(oauthError);
+  // Where to land afterwards. Pricing sends buyers here with ?next=/pricing
+  // and for a while nothing read it — they signed up, landed on /app, and the
+  // pass they were buying was forgotten. Validated to a same-origin path.
+  const next = safeReturnPath(params.get("next"));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -86,7 +91,7 @@ export function AuthForm({
       }
       // A full navigation, not router.push: the session cookie was just set and
       // every server component needs to re-render against it.
-      window.location.href = "/app";
+      window.location.href = next;
     } catch {
       setError("We could not reach the server. Check your connection.");
       setBusy(false);
@@ -142,7 +147,7 @@ export function AuthForm({
       {googleAuth && (
         <>
           <a
-            href="/api/auth/google"
+            href={next === "/app" ? "/api/auth/google" : `/api/auth/google?next=${encodeURIComponent(next)}`}
             className="press mt-7 flex w-full items-center justify-center gap-2.5 rounded-full border px-4 py-3.5 font-semibold transition"
             style={{ borderColor: "var(--line-2)", background: "var(--paper)" }}
           >

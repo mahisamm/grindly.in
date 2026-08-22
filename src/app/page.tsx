@@ -3,6 +3,7 @@ import { Logo } from "@/components/Brand";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ParticleField } from "@/components/ParticleField";
 import { IntroSplash } from "@/components/IntroSplash";
+import { SessionNav } from "@/components/SessionNav";
 import { Reveal } from "@/components/Motion";
 import { runAgent, type CompanyPack } from "@/lib/agent";
 import { LIMITS, PRODUCTS, USD_PRICES, formatAmount } from "@/lib/plans";
@@ -48,12 +49,9 @@ export default async function Home() {
             <Link href="/pricing" className="text-muted hover:text-ink hidden text-sm sm:inline">
               Pricing
             </Link>
-            <Link href="/login" className="text-muted hover:text-ink text-sm whitespace-nowrap">
-              Sign in
-            </Link>
-            <Link href="/signup" className="btn btn-primary text-sm whitespace-nowrap">
-              Start free
-            </Link>
+            {/* Session-aware: a signed-in visitor sees "Your resumes", not a
+                Start free that would only bounce them into the app. */}
+            <SessionNav />
           </div>
         </nav>
       </header>
