@@ -694,9 +694,11 @@ textarea.field { resize: vertical; min-height: 6rem; }
   border-radius: 50%;
   filter: blur(80px);
 }
-/* The wash itself. On the motion path it is a child div; on the
-   reduced-motion path the ::before carries it so the component can render
-   two bare divs with no library involved. */
+/* The wash itself — always a real child div (see AmbientBackground.tsx: the
+   component renders ONE structure regardless of motion preference, so it never
+   trips a hydration mismatch). Reduced motion is handled by disabling the
+   drift animation below; the spring lean stays at zero because the component's
+   effect skips its listeners, so the wash simply sits still. */
 .ambient-wash {
   background: radial-gradient(circle, color-mix(in srgb, var(--vermilion) 8%, transparent), transparent 62%);
 }
@@ -705,14 +707,6 @@ textarea.field { resize: vertical; min-height: 6rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   .ambient-drift { animation: none; }
-  .ambient-a::before {
-    content: "";
-    background: radial-gradient(circle, color-mix(in srgb, var(--vermilion) 8%, transparent), transparent 62%);
-  }
-  .ambient-b::before {
-    content: "";
-    background: radial-gradient(circle, color-mix(in srgb, var(--vermilion-deep) 6%, transparent), transparent 62%);
-  }
 }
 @keyframes ambient-drift {
   from { transform: translate(0, 0) scale(1); }

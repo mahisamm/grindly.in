@@ -19,8 +19,11 @@ import { motion, useMotionValue, useSpring, useTransform, useReducedMotion } fro
  *   * The interactive lean is ±18px through a slack spring. Movement you track
  *     with your eyes is distraction; movement you only notice stopping is
  *     atmosphere.
- *   * `useReducedMotion` renders the static washes with no listeners at all,
- *     and the CSS drift is likewise disabled under the same media query.
+ *   * Under `useReducedMotion` the washes sit still — the effect attaches no
+ *     pointer/tilt listeners and the CSS drift is disabled under the same
+ *     media query. The rendered structure never changes, so hydration is
+ *     always consistent (a reduce-only DOM branch here threw React #418 on
+ *     every app page for anyone with reduced motion on).
  *
  * iOS fires deviceorientation only after DeviceOrientationEvent
  * .requestPermission() — which itself only works inside a user gesture. So on
@@ -102,15 +105,14 @@ export function AmbientBackground({
     };
   }, [reduce, mx, my]);
 
-  if (reduce) {
-    return (
-      <div aria-hidden className={contain ? "ambient ambient-contain" : "ambient"}>
-        <div className="ambient-drift ambient-a" />
-        <div className="ambient-drift ambient-b" />
-      </div>
-    );
-  }
-
+  // ONE structure, server and client alike — never branch the rendered DOM on
+  // `reduce`. The server cannot know the viewer's motion preference, so a
+  // reduce-only branch here rendered different HTML than the client hydrated
+  // and threw React #418 on every app page for anyone with reduced motion on.
+  // Reduced motion is honoured WITHOUT changing structure: the CSS drift is
+  // disabled under `@media (prefers-reduced-motion: reduce)`, and the spring
+  // lean never moves because the effect above skips its listeners when
+  // `reduce` — the washes simply sit still, which is exactly the intent.
   return (
     <div aria-hidden className={contain ? "ambient ambient-contain" : "ambient"}>
       {/* Two layers per wash: the OUTER carries the CSS drift keyframes, the
