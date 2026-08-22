@@ -686,8 +686,7 @@ textarea.field { resize: vertical; min-height: 6rem; }
   left: -10rem;
   animation: ambient-drift 34s ease-in-out infinite alternate-reverse;
 }
-.ambient-wash,
-.ambient-drift::before {
+.ambient-wash {
   display: block;
   width: 44rem;
   height: 44rem;
@@ -717,8 +716,7 @@ textarea.field { resize: vertical; min-height: 6rem; }
    content rather than as light behind it — and at 8% the tilt response was
    invisible, which testers reported as "there is no gyro feature". */
 @media (max-width: 640px) {
-  .ambient-wash,
-  .ambient-drift::before {
+  .ambient-wash {
     width: 26rem;
     height: 26rem;
     filter: blur(52px);
