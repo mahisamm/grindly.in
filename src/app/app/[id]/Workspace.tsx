@@ -1453,13 +1453,24 @@ function TargetTab({
                       <li key={v.id} className="flex items-center justify-between gap-2 text-sm">
                         <span>{v.label}</span>
                         <span className="flex items-center gap-2">
+                          {/* Was "{score} · open" — a bare number and a word
+                              read as one cryptic token. Now the number wears
+                              its meaning (ATS, coloured by band) and the link
+                              says plainly what it does. */}
+                          <span
+                            className="text-xs font-semibold tabular-nums"
+                            style={{ color: scoreColor(v.score) }}
+                            title="ATS readiness score out of 100"
+                          >
+                            ATS {v.score}
+                          </span>
                           <a
                             href={`/api/variants/${v.id}/file`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-brand text-xs underline"
                           >
-                            {v.score} · open
+                            Open PDF
                           </a>
                           <DeleteVariant variantId={v.id} />
                         </span>
