@@ -79,6 +79,7 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
             // and nothing on the page renders either of them — all the card
             // needs to know is whether the button can be offered at all.
             canPromote: Boolean(v.structJson) && v.text.trim().length > 0,
+            createdAt: v.createdAt.toISOString(),
           })),
           history: resume.scores.map((h) => ({
             id: h.id,

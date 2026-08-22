@@ -32,6 +32,9 @@ type VariantView = {
   fidelity: Fidelity | null;
   /** False for rebuilds made before we started keeping their editable fields. */
   canPromote: boolean;
+  /** When this rebuild was made — used to flag an AI rewrite as older than the
+      user's latest editor build ("made before your latest edits"). ISO string. */
+  createdAt: string;
 };
 
 type TargetView = {
@@ -65,6 +68,11 @@ type ResumeView = {
   history: ScorePoint[];
   applications: ApplicationRow[];
 };
+
+/** The label the editor's "Build and score it" gives its variant — the one
+ *  version in the Rewrite tab that is the user's OWN edit rather than an AI
+ *  rewrite. Must match OWN_EDIT_LABEL in api/resumes/[id]/build/route.ts. */
+const OWN_EDIT_LABEL = "Yours";
 
 type Tab = "report" | "rewrite" | "target" | "progress" | "raw";
 
@@ -909,6 +917,13 @@ function RewriteTab({
   onRun: (targetId: string | null) => void;
 }) {
   const untargeted = resume.variants.filter((v) => !v.targetId);
+  // Two different things share this list and were confusing side by side: the
+  // "Yours" build is the user's OWN edited resume rendered clean; the rest are
+  // AI-written alternatives. Split them, and flag any AI rewrite made before
+  // the latest "Yours" build as describing an older version.
+  const ownBuild = untargeted.find((v) => v.label === OWN_EDIT_LABEL);
+  const aiRewrites = untargeted.filter((v) => v.label !== OWN_EDIT_LABEL);
+  const ownBuildAt = ownBuild ? Date.parse(ownBuild.createdAt) : 0;
 
   return (
     <div>
@@ -950,16 +965,45 @@ function RewriteTab({
       {untargeted.length === 0 ? (
         <p className="text-muted mt-8 text-sm">No versions yet — press the button above and give it a minute or two. Your original is never touched.</p>
       ) : (
-        <ul className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-          {untargeted.map((v) => (
-            <VariantCard
-              key={v.id}
-              variant={v}
-              baseline={resume.report}
-              originalText={resume.text}
-            />
-          ))}
-        </ul>
+        <>
+          {ownBuild && (
+            <section className="mt-9">
+              <h3 className="font-display text-lg font-semibold">Your edited version</h3>
+              <p className="text-muted mt-1 max-w-3xl text-sm leading-snug">
+                Your own resume from the editor, rendered clean and scored — this is
+                yours, not an AI rewrite.
+              </p>
+              <ul className="mt-3 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                <VariantCard
+                  variant={ownBuild}
+                  baseline={resume.report}
+                  originalText={resume.text}
+                />
+              </ul>
+            </section>
+          )}
+
+          {aiRewrites.length > 0 && (
+            <section className="mt-9">
+              <h3 className="font-display text-lg font-semibold">AI rewrites</h3>
+              <p className="text-muted mt-1 max-w-3xl text-sm leading-snug">
+                Machine-written versions of your resume — same facts, different
+                wording. Send whichever scores highest; delete the ones you do not want.
+              </p>
+              <ul className="mt-3 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                {aiRewrites.map((v) => (
+                  <VariantCard
+                    key={v.id}
+                    variant={v}
+                    baseline={resume.report}
+                    originalText={resume.text}
+                    stale={ownBuildAt > 0 && Date.parse(v.createdAt) < ownBuildAt}
+                  />
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
       )}
     </div>
   );
@@ -969,11 +1013,15 @@ function VariantCard({
   variant,
   baseline,
   originalText,
+  stale = false,
 }: {
   variant: VariantView;
   /** The user's own resume, for the side-by-side. */
   baseline: Report | null;
   originalText: string;
+  /** This AI rewrite predates the user's latest editor build — it describes an
+      older version of the resume, so it wears a note saying so. */
+  stale?: boolean;
 }) {
   const [comparing, setComparing] = useState(false);
   const delta = variant.score - variant.baselineScore;
@@ -999,6 +1047,15 @@ function VariantCard({
         </div>
         <ScoreDial score={variant.score} grade={variant.grade} size={72} />
       </div>
+
+      {stale && (
+        <p
+          className="mt-3 rounded-lg px-3 py-2 text-xs leading-snug"
+          style={{ background: "var(--surface-2)", color: "var(--muted)" }}
+        >
+          Made before your latest edits. Rebuild to refresh it, or delete it.
+        </p>
+      )}
 
       {belowFloor && (
         <div
@@ -1059,6 +1116,10 @@ function VariantCard({
 
       {variant.canPromote && <Promote variantId={variant.id} />}
 
+      <div className="mt-3">
+        <DeleteVariant variantId={variant.id} />
+      </div>
+
       {/* Expanded inside the card rather than in a modal: the comparison is the
           evidence for the number printed six inches above it, and putting it
           behind an overlay separates the claim from its proof. */}
@@ -1076,6 +1137,68 @@ function VariantCard({
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * Delete one rebuild.
+ *
+ * Two-step (arm, then confirm) rather than a browser `confirm()`, matching
+ * DeleteResume: the native dialog is unstyleable and reads as a bug on a page
+ * with its own visual language, and a rebuild removed by a mis-click is a
+ * minute of Chromium the user has to spend again. The confirm is inline and
+ * quiet — this is housekeeping, not a dangerous action.
+ */
+function DeleteVariant({ variantId }: { variantId: string }) {
+  const router = useRouter();
+  const [arming, setArming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/variants/${variantId}`, { method: "DELETE" });
+      if (!res.ok) {
+        setError("Could not delete it.");
+        setBusy(false);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("We could not reach the server.");
+      setBusy(false);
+    }
+  }
+
+  if (!arming) {
+    return (
+      <button
+        onClick={() => setArming(true)}
+        className="text-muted hover:text-ink cursor-pointer text-xs underline"
+      >
+        Delete this rebuild
+      </button>
+    );
+  }
+
+  return (
+    <span className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="text-muted">Delete it?</span>
+      <button
+        onClick={remove}
+        disabled={busy}
+        className="cursor-pointer font-semibold underline"
+        style={{ color: "#a3271b" }}
+      >
+        {busy ? "Deleting…" : "Yes, delete"}
+      </button>
+      <button onClick={() => setArming(false)} className="text-muted cursor-pointer underline">
+        Keep
+      </button>
+      {error && <span style={{ color: "#a3271b" }}>{error}</span>}
+    </span>
   );
 }
 
@@ -1329,14 +1452,17 @@ function TargetTab({
                     {variants.map((v) => (
                       <li key={v.id} className="flex items-center justify-between gap-2 text-sm">
                         <span>{v.label}</span>
-                        <a
-                          href={`/api/variants/${v.id}/file`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-brand text-xs underline"
-                        >
-                          {v.score} · open
-                        </a>
+                        <span className="flex items-center gap-2">
+                          <a
+                            href={`/api/variants/${v.id}/file`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-brand text-xs underline"
+                          >
+                            {v.score} · open
+                          </a>
+                          <DeleteVariant variantId={v.id} />
+                        </span>
                       </li>
                     ))}
                   </ul>
