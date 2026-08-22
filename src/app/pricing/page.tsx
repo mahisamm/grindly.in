@@ -21,7 +21,7 @@ export default async function PricingPage() {
         <nav className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-4 sm:px-6 sm:py-5">
           <Link href="/"><Logo /></Link>
           <Link href={user ? "/app" : "/signup"} className="btn btn-primary text-sm">
-            {user ? "Your resumes" : "Start free"}
+            {user ? "Go to dashboard" : "Start free"}
           </Link>
         </nav>
       </header>

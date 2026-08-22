@@ -39,7 +39,7 @@ export default async function SettingsPage() {
         // one, it is the only way back on a phone.
         className="text-muted hover:text-ink inline-flex min-h-6 items-center text-sm"
       >
-        ← All resumes
+        ← Dashboard
       </Link>
       <h1 className="font-display mt-4 text-3xl font-bold">Account</h1>
 

@@ -90,7 +90,10 @@ export function AccountMenu({
 
           <div className="mt-1 flex flex-col">
             <MenuLink href="/app" onPick={() => setOpen(false)}>
-              My resumes
+              Dashboard
+            </MenuLink>
+            <MenuLink href="/app/resumes" onPick={() => setOpen(false)}>
+              All resumes
             </MenuLink>
             <MenuLink href="/app/settings" onPick={() => setOpen(false)}>
               Account settings

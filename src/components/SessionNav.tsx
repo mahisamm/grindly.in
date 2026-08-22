@@ -35,7 +35,7 @@ export function SessionNav() {
   if (signedIn) {
     return (
       <Link href="/app" className="btn btn-primary text-sm whitespace-nowrap">
-        Your resumes
+        Go to dashboard
       </Link>
     );
   }

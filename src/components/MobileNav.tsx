@@ -34,10 +34,24 @@ const STROKE = { fill: "none", strokeWidth: 1.6, strokeLinecap: "round", strokeL
 const ITEMS: Item[] = [
   {
     href: "/app",
+    label: "Home",
+    // The dashboard — the primary resume's workspace — and any other single
+    // resume's workspace, which is where people spend their time.
+    match: (p) =>
+      p === "/app" ||
+      (p.startsWith("/app/") && p !== "/app/settings" && p !== "/app/resumes"),
+    icon: ({ active }) => (
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor" {...STROKE}>
+        <path d="M4 11.5 12 5l8 6.5" />
+        <path d="M6.5 10v9.5h11V10" />
+        {active && <path d="M10 19.5v-5h4v5" />}
+      </svg>
+    ),
+  },
+  {
+    href: "/app/resumes",
     label: "Resumes",
-    // Anything under /app that is not one of the other tabs — including a
-    // single resume's workspace, which is where people spend their time.
-    match: (p) => p === "/app" || (p.startsWith("/app/") && p !== "/app/settings"),
+    match: (p) => p === "/app/resumes",
     icon: ({ active }) => (
       <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor" {...STROKE}>
         <path d="M7 3h7l4 4v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />

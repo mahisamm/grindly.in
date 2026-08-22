@@ -79,7 +79,7 @@ export function VerifyForm() {
             )}
           </p>
           <Link href="/app" className="btn btn-primary mt-8 justify-center">
-            Back to my resumes
+            Go to my dashboard
           </Link>
         </>
       ) : (

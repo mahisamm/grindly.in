@@ -37,7 +37,7 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
   return (
     <div className="mx-auto max-w-6xl px-5 py-8 sm:px-6 sm:py-10">
       <Link
-        href="/app"
+        href="/app/resumes"
         // min-h-6 + inline-flex: a standalone navigation link needs a target a
         // thumb can hit. WCAG 2.2 exempts links inside a sentence; this is not
         // one, it is the only way back on a phone.
