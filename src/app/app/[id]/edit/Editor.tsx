@@ -33,6 +33,66 @@ import { ScoreDial } from "@/components/Score";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
+/**
+ * The sections people actually come here to add, as one-tap presets.
+ *
+ * Beta feedback: "I want to add my projects and I cannot find where." The
+ * only control was "Add a section" at the very bottom of a long page, which
+ * produced a blank card with a blank heading — two decisions before anyone
+ * could type a project name. A preset names the section and opens its first
+ * entry; if the section already exists, the tap jumps to it instead of
+ * making a twin.
+ */
+const SECTION_PRESETS: { heading: string; label: string }[] = [
+  { heading: "Projects", label: "Projects" },
+  { heading: "Experience", label: "Experience" },
+  { heading: "Education", label: "Education" },
+  { heading: "Technical Skills", label: "Skills" },
+  { heading: "Certifications", label: "Certifications" },
+  { heading: "Achievements", label: "Achievements" },
+  { heading: "Professional Summary", label: "Summary" },
+];
+
+/** What kind of thing an entry in this section is, for labels and hints. */
+function sectionKind(heading: string): "project" | "job" | "study" | "other" {
+  const h = heading.toLowerCase();
+  if (/project|portfolio|open[- ]source/.test(h)) return "project";
+  if (/experience|work|employment|internship|career/.test(h)) return "job";
+  if (/education|academic|qualification|school|university|college/.test(h)) return "study";
+  return "other";
+}
+
+const ENTRY_COPY = {
+  project: {
+    add: "Add a project",
+    title: "Project name",
+    titleHint: "e.g. Campus placement tracker",
+    sub: "Tech used, and dates",
+    subHint: "React, FastAPI, PostgreSQL · Jan 2026 – Mar 2026",
+  },
+  job: {
+    add: "Add a job",
+    title: "Job title",
+    titleHint: "e.g. Software Engineer",
+    sub: "Company, dates, location",
+    subHint: "Acme Data Systems · 2024 – Present · Hyderabad",
+  },
+  study: {
+    add: "Add a qualification",
+    title: "Degree or course",
+    titleHint: "e.g. B.Tech in Computer Science",
+    sub: "Institution, dates, grade",
+    subHint: "JNTU Hyderabad · 2019 – 2023 · CGPA 8.1",
+  },
+  other: {
+    add: "Add an entry",
+    title: "Title",
+    titleHint: "",
+    sub: "Organisation and dates",
+    subHint: "",
+  },
+} as const;
+
 export function Editor({
   resumeId,
   resumeLabel,
@@ -53,6 +113,17 @@ export function Editor({
     null,
   );
   const [error, setError] = useState<string | null>(null);
+  // The section to bring into view after an add — set in the click handler,
+  // consumed by the effect below, so adding "Projects" from the toolbar lands
+  // the user on the new card instead of leaving it somewhere below the fold.
+  const [focusSection, setFocusSection] = useState<number | null>(null);
+  const sectionRefs = useRef<(HTMLElement | null)[]>([]);
+  useEffect(() => {
+    if (focusSection === null) return;
+    const el = sectionRefs.current[focusSection];
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    el?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+  }, [focusSection, struct.sections.length]);
 
   // What was last written to the server, so an autosave that would be a no-op
   // does not fire. Compared as JSON because the structure is a plain tree and
@@ -186,6 +257,56 @@ export function Editor({
           because it is your resume and you are the source.
         </p>
 
+        {/* The front door for "I want to add my projects": one tap names the
+            section, opens its first entry and scrolls there. Existing sections
+            are jumped to, not duplicated. The generic "Add a section" survives
+            at the bottom for anything without a preset. */}
+        <div className="bg-surface border-border mt-6 rounded-xl border p-4">
+          <p className="font-mono text-[10px] tracking-[0.14em] uppercase opacity-60">
+            Add to your resume
+          </p>
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            {SECTION_PRESETS.map((preset) => {
+              const existing = struct.sections.findIndex(
+                (sec) => sec.heading.trim().toLowerCase() === preset.heading.toLowerCase(),
+              );
+              return (
+                <button
+                  key={preset.heading}
+                  type="button"
+                  onClick={() => {
+                    if (existing >= 0) {
+                      setFocusSection(existing);
+                      return;
+                    }
+                    if (struct.sections.length >= LIMITS.sections) return;
+                    edit((d) =>
+                      void d.sections.push({
+                        heading: preset.heading,
+                        items: [{ head: "", sub: "", bullets: [""] }],
+                      }),
+                    );
+                    setFocusSection(struct.sections.length);
+                  }}
+                  className="cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors"
+                  style={
+                    existing >= 0
+                      ? { borderColor: "var(--line-2)", color: "var(--muted)" }
+                      : { borderColor: "var(--cta)", color: "var(--brand)" }
+                  }
+                  title={existing >= 0 ? `Jump to ${preset.heading}` : `Add a ${preset.label} section`}
+                >
+                  {existing >= 0 ? preset.label : `+ ${preset.label}`}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-muted mt-2 text-xs">
+            Faded ones already exist — tap to jump there. Anything else: &ldquo;Add a
+            section&rdquo; at the bottom.
+          </p>
+        </div>
+
         {error && (
           <p
             role="alert"
@@ -214,8 +335,16 @@ export function Editor({
           </div>
         </div>
 
-        {struct.sections.map((section, si) => (
-          <section key={si} className="bg-surface border-border mt-5 rounded-xl border p-5">
+        {struct.sections.map((section, si) => {
+          const copy = ENTRY_COPY[sectionKind(section.heading)];
+          return (
+          <section
+            key={si}
+            ref={(el) => {
+              sectionRefs.current[si] = el;
+            }}
+            className="bg-surface border-border mt-5 scroll-mt-6 rounded-xl border p-5"
+          >
             <div className="flex flex-wrap items-center justify-between gap-3">
               <input
                 value={section.heading}
@@ -237,15 +366,17 @@ export function Editor({
               <div key={ii} className="border-border mt-4 border-t pt-4">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Field
-                    label="Title"
+                    label={copy.title}
                     value={item.head}
                     maxLength={LIMITS.headChars}
+                    placeholder={copy.titleHint}
                     onChange={(v) => edit((d) => void (d.sections[si].items[ii].head = v))}
                   />
                   <Field
-                    label="Organisation and dates"
+                    label={copy.sub}
                     value={item.sub}
                     maxLength={LIMITS.headChars}
+                    placeholder={copy.subHint}
                     hint="Keep dates on this line. Right-aligning them is what a good-looking resume does and what breaks extraction."
                     onChange={(v) => edit((d) => void (d.sections[si].items[ii].sub = v))}
                   />
@@ -302,17 +433,19 @@ export function Editor({
               disabled={section.items.length >= LIMITS.itemsPerSection}
               className="btn mt-4 text-sm"
             >
-              Add an entry
+              {copy.add}
             </button>
           </section>
-        ))}
+          );
+        })}
 
         <button
-          onClick={() =>
+          onClick={() => {
             edit((d) =>
               void d.sections.push({ heading: "", items: [{ head: "", sub: "", bullets: [""] }] }),
-            )
-          }
+            );
+            setFocusSection(struct.sections.length);
+          }}
           disabled={struct.sections.length >= LIMITS.sections}
           className="btn mt-5"
         >
@@ -421,12 +554,16 @@ function Field({
   label,
   value,
   hint,
+  placeholder,
   maxLength,
   onChange,
 }: {
   label: string;
   value: string;
   hint?: string;
+  /** An example value, greyed inside the box — what a good answer looks like
+      for THIS kind of section, so a blank project card is not a blank page. */
+  placeholder?: string;
   maxLength: number;
   onChange: (value: string) => void;
 }) {
@@ -436,6 +573,7 @@ function Field({
       <input
         value={value}
         maxLength={maxLength}
+        placeholder={placeholder || undefined}
         onChange={(e) => onChange(e.target.value)}
         className="field w-full"
       />

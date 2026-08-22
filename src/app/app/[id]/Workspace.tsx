@@ -266,7 +266,7 @@ export function ResumeWorkspace({
           {/* The way to act on everything this page says. Without it the report
               names a problem and the only place to fix it is Word. */}
           <Link href={`/app/${resume.id}/edit`} className="btn text-sm">
-            Edit
+            Edit resume
           </Link>
           <DeleteResume id={resume.id} label={resume.label} />
         </div>
@@ -279,7 +279,7 @@ export function ResumeWorkspace({
           centred in the content column and read as part of the page rather
           than as its navigation. */}
       <div className="mt-6 flex flex-col gap-2 lg:flex-row lg:gap-10">
-        <WorkspaceNav tabs={tabs} active={tab} onPick={setTab} />
+        <WorkspaceNav tabs={tabs} active={tab} onPick={setTab} editHref={`/app/${resume.id}/edit`} />
 
         <div className="min-w-0 flex-1">
           <RunBanner run={run} onCancel={cancelRun} />
@@ -378,10 +378,14 @@ function WorkspaceNav({
   tabs,
   active,
   onPick,
+  editHref,
 }: {
   tabs: [Tab, string][];
   active: Tab;
   onPick: (tab: Tab) => void;
+  /** The editor is a page, not a panel — it rides in the menu as a link so
+      "where do I add my projects" has an answer in the one place people look. */
+  editHref: string;
 }) {
   const [open, setOpen] = useState(false);
   const activeLabel = tabs.find(([k]) => k === active)?.[1] ?? "";
@@ -433,6 +437,14 @@ function WorkspaceNav({
                 </button>
               </li>
             ))}
+            <li className="border-border mt-1 border-t pt-1">
+              <Link
+                href={editHref}
+                className="text-brand block w-full rounded-lg px-4 py-2.5 text-left text-sm font-semibold"
+              >
+                Edit resume →
+              </Link>
+            </li>
           </ul>
         </div>
       </div>
@@ -478,6 +490,12 @@ function WorkspaceNav({
             </li>
           ))}
         </ul>
+        <Link
+          href={editHref}
+          className="text-brand border-border mt-3 block rounded-lg border px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors hover:border-ink"
+        >
+          Edit resume →
+        </Link>
       </div>
     </nav>
   );
@@ -701,6 +719,18 @@ function ReportTab({
         {/* The dial counts up and the bars grow only on the cinematic
             entrance — a return visit renders the finished fact. */}
         <ReportPanel report={resume.report} animate={entrance === "cinematic"} />
+        {/* The way to act on everything above, where the reading ends. Beta
+            feedback: people finished the report and could not find where to
+            add a project — the editor link was a small button by the title. */}
+        <div className="border-border mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4">
+          <p className="text-sm">
+            <b>Want to change something?</b> Add projects, fix a bullet, rewrite a
+            line — then rebuild and see the new score.
+          </p>
+          <Link href={`/app/${resume.id}/edit`} className="btn btn-primary text-sm whitespace-nowrap">
+            Edit my resume
+          </Link>
+        </div>
       </div>
       <aside>
         <div {...rise(700)}>
