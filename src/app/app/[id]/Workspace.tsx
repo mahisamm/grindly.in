@@ -16,6 +16,7 @@ import { ProgressPanel, type ApplicationRow, type ScorePoint } from "./Progress"
 import { ShareLink } from "./ShareLink";
 import { LinkStyleChoice } from "./edit/LinkStyle";
 import { UnlockTarget } from "./UnlockTarget";
+import { SkillGapModal } from "./SkillGapModal";
 
 type VariantView = {
   id: string;
@@ -1159,6 +1160,33 @@ function TargetTab({
 }) {
   const [jd, setJd] = useState("");
   const [open, setOpen] = useState<string | null>(null);
+  // The skill-gap dialog: which target's missing skills we are asking the user
+  // to claim, so a tailored rebuild can print them and lift the coverage score.
+  const [skillModal, setSkillModal] = useState<{ id: string; name: string; gaps: string[] } | null>(null);
+  const [addingSkills, setAddingSkills] = useState(false);
+
+  async function approveSkills(skills: string[]) {
+    if (!skillModal) return;
+    const target = skillModal;
+    setAddingSkills(true);
+    try {
+      if (skills.length > 0) {
+        await fetch(`/api/resumes/${resume.id}/skills`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ add: skills }),
+        });
+      }
+    } catch {
+      /* the rebuild below still runs; a failed add just means fewer skills */
+    }
+    setAddingSkills(false);
+    setSkillModal(null);
+    // Re-run the tailored rebuild against the same target — now with the newly
+    // claimed skills on the resume, so they are printed and scored.
+    onTarget({ targetId: target.id });
+  }
+
   // One box drives everything on this tab: it live-filters the curated packs
   // as you type, and submitting it looks any other company up. It sits at the
   // top because users typed a company into their heads before they arrived —
@@ -1239,6 +1267,17 @@ function TargetTab({
             const variants = existing
               ? resume.variants.filter((v) => v.targetId === existing.id)
               : [];
+            // Skills this company screens for that the resume does not show —
+            // the honest cap on a tailored score, and what the skill-gap dialog
+            // asks the user to claim. Computed only once tailoring exists.
+            const packHave = new Set(resume.skills.map((s) => s.toLowerCase()));
+            const packText = resume.text.toLowerCase();
+            const packGaps =
+              existing && variants.length
+                ? (existing.spec?.skills ?? []).filter(
+                    (s) => !packHave.has(s.toLowerCase()) && !packText.includes(s.toLowerCase()),
+                  )
+                : [];
             return (
               // flex-col with the action pushed to the bottom: the summaries
               // are two to four lines long, so without it every button in a row
@@ -1301,6 +1340,15 @@ function TargetTab({
                       </li>
                     ))}
                   </ul>
+                )}
+
+                {packGaps.length > 0 && (
+                  <button
+                    onClick={() => setSkillModal({ id: existing!.id, name: p.name, gaps: packGaps })}
+                    className="text-brand mt-3 w-fit text-xs font-semibold underline underline-offset-4"
+                  >
+                    Raise your match: {packGaps.length} skill{packGaps.length === 1 ? "" : "s"} you may have →
+                  </button>
                 )}
 
                 {/* mt-auto on the WRAPPER, not the button: the auto margin
@@ -1416,10 +1464,17 @@ function TargetTab({
                       Not visible on your resume: {gaps.join(", ")}
                     </p>
                     <p className="text-muted mt-1 leading-snug">
-                      If you have any of these, add them yourself in a bullet or in
-                      Technical Skills — a recruiter searches for the exact word. If you
-                      do not, leave them off. We will never add them for you.
+                      A recruiter searches for the exact word, so a skill you have but
+                      never listed costs you the match. If you genuinely have any of
+                      these, add them and we will re-tailor — it raises your score. We
+                      never claim a skill for you.
                     </p>
+                    <button
+                      onClick={() => setSkillModal({ id: t.id, name: t.name, gaps })}
+                      className="btn btn-primary mt-3 text-sm"
+                    >
+                      I have some of these →
+                    </button>
                   </div>
                 ) : required.length > 0 ? (
                   <p className="mt-3 text-sm">
@@ -1447,6 +1502,17 @@ function TargetTab({
         resumeId={resume.id}
         targets={resume.targets.map((t) => ({ id: t.id, name: t.name }))}
       />
+
+      {skillModal && (
+        <SkillGapModal
+          targetName={skillModal.name}
+          gaps={skillModal.gaps}
+          busy={addingSkills}
+          rebuilding={rebuilding}
+          onApprove={approveSkills}
+          onClose={() => setSkillModal(null)}
+        />
+      )}
     </div>
   );
 }
