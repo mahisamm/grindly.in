@@ -244,7 +244,7 @@ export function ResumeWorkspace({
   const rebuilding = busy === "rewrite" || isRunning;
 
   const tabs: [Tab, string][] = [
-    ["report", "Readiness"],
+    ["report", "Scorecard"],
     ["rewrite", `Rewrite${resume.variants.length ? ` (${resume.variants.length})` : ""}`],
     ["target", `Target a company${resume.targets.length ? ` (${resume.targets.length})` : ""}`],
     ["progress", `Progress${resume.applications.length ? ` (${resume.applications.length})` : ""}`],
@@ -911,47 +911,45 @@ function RewriteTab({
 
   return (
     <div>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="max-w-2xl">
-          <h2 className="font-display text-2xl font-semibold">Rebuild your resume</h2>
-          {/* Plain words on purpose — beta feedback called this tab confusing.
-              The mechanism (render, extract back, score) still matters, but it
-              belongs one sentence deep, after "what does the button do". */}
-          <p className="text-muted mt-2 leading-relaxed">
-            One press writes up to three new versions of your resume — same facts,
-            same jobs, cleaner wording, and a layout that hiring software reads
-            without mistakes. It takes a minute or two.
-          </p>
-          <p className="text-muted mt-2 leading-relaxed">
-            Every version gets the same 0–100 score as your original (the one on
-            your Readiness tab), so you can see whether it is actually better. A
-            version that scores <i>worse</i> than yours is thrown away instead of
-            shown to you. We aim for {SHIPPABLE_FLOOR} and above — and when a
-            version lands short, its card tells you the one thing that is missing.
-          </p>
-          <p className="text-muted mt-2 leading-relaxed">
-            One promise above all: it will never invent a skill, an employer or a
-            number that is not already in your resume.
-          </p>
-        </div>
-        <button onClick={() => onRun(null)} disabled={busy !== null || rebuilding} className="btn btn-primary">
+      {/* Heading and action GROUPED (not justify-between) so the button sits
+          right beside the title instead of being flung to the far page edge —
+          that stranded button over empty space was the "compact middle" a
+          desktop user saw. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <h2 className="font-display text-2xl font-semibold">Rebuild your resume</h2>
+        <button
+          onClick={() => onRun(null)}
+          disabled={busy !== null || rebuilding}
+          className="btn btn-primary shrink-0"
+        >
           {rebuilding ? "Rebuilding…" : untargeted.length ? "Run again" : "Rebuild my resume"}
         </button>
       </div>
+      {/* Plain words on purpose — beta feedback called this tab confusing. The
+          mechanism (render, extract back, score) still matters, but it belongs
+          after "what does the button do". */}
+      <p className="text-muted mt-3 max-w-3xl leading-relaxed">
+        One press writes up to three new versions of your resume — same facts,
+        same jobs, cleaner wording, and a layout that hiring software reads
+        without mistakes. Every version is scored on the same 0–100 ruler as your
+        original; anything <i>worse</i> is thrown away, and a version that lands
+        short tells you the one thing missing. It will never invent a skill, an
+        employer or a number that is not already in your resume.
+      </p>
 
       {/* The choice belongs BEFORE the run, where it takes effect — the same
           control also lives on the edit page, but a setting that changes what
-          the next rebuild prints must be visible at the moment of rebuilding,
-          not remembered from another screen. It carries its own measured
-          warning: "label" hides the address from every parser. */}
-      <div className="max-w-2xl">
+          the next rebuild prints must be visible at the moment of rebuilding.
+          It carries its own measured warning: "label" hides the address from
+          every parser. */}
+      <div className="mt-5 max-w-3xl">
         <LinkStyleChoice resumeId={resume.id} value={resume.linkStyle} />
       </div>
 
       {untargeted.length === 0 ? (
         <p className="text-muted mt-8 text-sm">No versions yet — press the button above and give it a minute or two. Your original is never touched.</p>
       ) : (
-        <ul className="mt-8 grid gap-5 lg:grid-cols-3">
+        <ul className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
           {untargeted.map((v) => (
             <VariantCard
               key={v.id}

@@ -35,7 +35,7 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
   const packs = await runAgent<{ packs: CompanyPack[]; disclaimer: string }>("companies");
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-8 sm:px-6 sm:py-10">
+    <div className="mx-auto max-w-7xl px-5 py-8 sm:px-6 sm:py-10">
       <Link
         href="/app/resumes"
         // min-h-6 + inline-flex: a standalone navigation link needs a target a

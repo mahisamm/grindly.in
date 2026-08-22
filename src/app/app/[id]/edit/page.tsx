@@ -36,7 +36,7 @@ export default async function EditPage({ params }: { params: Promise<{ id: strin
   const struct = readStruct(resume.structJson);
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-8 sm:px-6 sm:py-10">
+    <div className="mx-auto max-w-7xl px-5 py-8 sm:px-6 sm:py-10">
       <Link
         href={`/app/${resume.id}`}
         className="text-muted hover:text-ink inline-flex min-h-6 items-center text-sm"

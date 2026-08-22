@@ -40,8 +40,17 @@ export default async function AllResumesPage() {
   const primary = pickPrimary(resumes, user.primaryResumeId);
 
   return (
-    <div className="mx-auto max-w-6xl px-5 py-8 sm:px-6 sm:py-10">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <div className="mx-auto max-w-7xl px-5 py-8 sm:px-6 sm:py-10">
+      {/* This is a side page, not the front door — the dashboard (a resume's
+          own workspace) is. A person who opened "All resumes" from the menu
+          needs an obvious way back, or the library feels like a dead end. */}
+      <Link
+        href="/app"
+        className="text-muted hover:text-ink inline-flex min-h-6 items-center text-sm"
+      >
+        ← Back to dashboard
+      </Link>
+      <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl font-bold sm:text-3xl">
             {resumes.length === 0 ? "Upload your resume" : "All resumes"}
