@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Logo } from "@/components/Brand";
+import { SUPPORT_EMAIL } from "@/lib/support";
 
 export const metadata: Metadata = { title: "Contact — Grindly" };
 
@@ -28,8 +29,8 @@ export default function ContactPage() {
 
         <Section title="Email">
           <p>
-            <a href="mailto:mahendharsammeta21@gmail.com" className="text-brand underline">
-              mahendharsammeta21@gmail.com
+            <a href={`mailto:${SUPPORT_EMAIL}`} className="text-brand underline">
+              {SUPPORT_EMAIL}
             </a>{" "}
             — for anything: a question before paying, a refund request, a problem with
             your account, something the product got wrong. We aim to reply within{" "}

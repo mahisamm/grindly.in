@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
+import { SUPPORT_EMAIL } from "@/lib/support";
 
 /**
  * "Contact & feedback", in two shapes built on one form.
@@ -81,8 +82,8 @@ function FeedbackForm({ onDone, autoFocus }: { onDone: () => void; autoFocus: bo
         A one-way note: something that looked wrong, something confusing, something you liked,
         something you wish it did. We record the page you are on, so you do not have to describe
         it. Need an answer back? Use <b>Support</b> — that one is a conversation. Prefer email?{" "}
-        <a href="mailto:mahendharsammeta21@gmail.com" className="text-brand underline">
-          mahendharsammeta21@gmail.com
+        <a href={`mailto:${SUPPORT_EMAIL}`} className="text-brand underline">
+          {SUPPORT_EMAIL}
         </a>
         .
       </p>

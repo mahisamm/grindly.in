@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { Logo } from "@/components/Brand";
 import { PRODUCTS, formatAmount } from "@/lib/plans";
+import { SUPPORT_EMAIL } from "@/lib/support";
 
 export const metadata: Metadata = { title: "Cancellations & refunds — Grindly" };
 
@@ -63,8 +64,8 @@ export default function RefundsPage() {
         <Section title="How to ask">
           <p>
             Email{" "}
-            <a href="mailto:mahendharsammeta21@gmail.com" className="text-brand underline">
-              mahendharsammeta21@gmail.com
+            <a href={`mailto:${SUPPORT_EMAIL}`} className="text-brand underline">
+              {SUPPORT_EMAIL}
             </a>{" "}
             from the address on your Grindly account, with the payment reference from your
             payment confirmation. A person reads these — say what did not work as

@@ -110,3 +110,13 @@ export const TICKET_LIMITS = {
   /** Messages per account per hour. */
   messagesPerHour: 40,
 } as const;
+
+/**
+ * The one address people can write to. Shown on /contact, /refunds and the
+ * Contact & feedback dialog — change it HERE only.
+ *
+ * Today it is the operator's personal Gmail. The intended value is
+ * support@grindly.in forwarding to that Gmail (a forwarder at the DNS host,
+ * not a new mailbox) — flip this line once the forwarder is live.
+ */
+export const SUPPORT_EMAIL = "mahendharsammeta21@gmail.com";
