@@ -395,6 +395,20 @@ async function executeRun({
     // empty result here can only mean the builds themselves failed — telling
     // that user "nothing beat your resume, good sign" would be wrong twice.
     const targeted = Boolean(target.name || target.keywords.length);
+    // The agent says, per rewrite, WHY it was dropped ("tightening lost 6
+    // bullets", "render failed", "scored below"...). Until now those reasons
+    // reached nobody: the route discarded them, so an empty run was a dead
+    // end for the user AND undiagnosable for the admin. Lifted into the
+    // error table (admin Health page) and the container log — the one time
+    // the audit trail matters is exactly when nothing shipped.
+    const why = (result.reasons ?? []).filter(Boolean).join(" | ").slice(0, 400);
+    console.warn(`[variants] run ${runId} produced nothing (targeted=${targeted}): ${why}`);
+    report({
+      source: "agent",
+      kind: targeted ? "rewrite-empty-targeted" : "rewrite-empty",
+      message: why || "agent returned no variants and no reasons",
+      context: `run:${runId} resume:${resume.id}`,
+    });
     if (targeted) {
       await finish({
         status: "failed",
