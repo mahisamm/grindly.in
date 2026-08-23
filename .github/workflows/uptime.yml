@@ -13,18 +13,19 @@
 # which is alerting, not monitoring. Also: GitHub disables schedules after 60
 # days without repo activity; a push resets the clock.
 #
-# BILLING, learned the hard way: on a PRIVATE repo every probe minute bills
-# against the account's 2,000 free Actions minutes a month. The original
-# */5 cron demanded ~8,600 — it exhausted the whole allowance in days, after
-# which EVERY scheduled job failed at start ("payments have failed or your
-# spending limit needs to be increased") and each failure sent an email.
-# Every-30-minutes is ~1,440 minutes a month worst case and far less in
-# practice (a healthy probe exits in seconds): alerting that fits the tier.
+# BILLING, learned the hard way: on a PRIVATE repo every probe run bills
+# against the account's 2,000 free Actions minutes a month, and each run is
+# ROUNDED UP to a whole minute even when the probe answers in five seconds.
+# The original */5 cron demanded ~8,600 minutes — it exhausted the whole
+# allowance in days, after which EVERY scheduled job failed at start
+# ("payments have failed or your spending limit needs to be increased") and
+# each failure sent an email. Hourly is ~745 minutes a month: alerting that
+# leaves the other ~1,250 free minutes for CI and image builds.
 name: uptime
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 jobs:
