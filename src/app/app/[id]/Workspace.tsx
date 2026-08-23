@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type {
@@ -1288,6 +1288,44 @@ function TargetTab({
   const [skillModal, setSkillModal] = useState<{ id: string; name: string; gaps: string[] } | null>(null);
   const [addingSkills, setAddingSkills] = useState(false);
 
+  // WHICH button started the running rebuild, so only that one says
+  // "Working…". `rebuilding` alone flipped every card on the tab to
+  // "Working…" at once — seventeen cards all claiming to be busy because one
+  // was. A rebuild found on a cold page load has no local key; then no card
+  // claims it and the run banner above carries the news. Never cleared —
+  // every reader gates on `rebuilding`, so a key left over from a finished
+  // build is simply never looked at.
+  const [building, setBuilding] = useState<{ key: string; name: string } | null>(null);
+
+  // The "one at a time" note, shown when a build is running and the user
+  // presses a DIFFERENT tailor button. Near the pointer and self-dismissing —
+  // the alternative was disabling sixteen buttons with no explanation.
+  const [busyPop, setBusyPop] = useState<string | null>(null);
+  const popTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (popTimer.current) clearTimeout(popTimer.current); }, []);
+  function tellBusy() {
+    setBusyPop(
+      rebuilding
+        ? building
+          ? `Still tailoring for ${building.name} — one rebuild at a time. This one is ready to press the moment it finishes.`
+          : "A rebuild is already running — give it a moment, then press again."
+        : "Another request is still running — give it a moment, then press again.",
+    );
+    if (popTimer.current) clearTimeout(popTimer.current);
+    popTimer.current = setTimeout(() => setBusyPop(null), 4500);
+  }
+
+  /** Start a rebuild from one named button — or, if one is already running,
+      say so instead of silently ignoring the press. */
+  function startBuild(key: string, name: string, body: Record<string, string>) {
+    if (rebuilding || busy !== null) {
+      tellBusy();
+      return;
+    }
+    setBuilding({ key, name });
+    onTarget(body);
+  }
+
   async function approveSkills(skills: string[]) {
     if (!skillModal) return;
     const target = skillModal;
@@ -1306,7 +1344,10 @@ function TargetTab({
     setAddingSkills(false);
     setSkillModal(null);
     // Re-run the tailored rebuild against the same target — now with the newly
-    // claimed skills on the resume, so they are printed and scored.
+    // claimed skills on the resume, so they are printed and scored. Claim the
+    // key directly rather than via startBuild: the modal's approve button is
+    // already disabled while a rebuild runs, so there is nothing to refuse.
+    setBuilding({ key: `target:${target.id}`, name: target.name });
     onTarget({ targetId: target.id });
   }
 
@@ -1343,9 +1384,8 @@ function TargetTab({
 
         <AnyCompany
           resume={resume}
-          busy={busy}
-          rebuilding={rebuilding}
-          onTarget={onTarget}
+          buildingKey={rebuilding ? (building?.key ?? "elsewhere") : null}
+          onStart={startBuild}
           targetsLeft={left}
           query={query}
           onQueryChange={setQuery}
@@ -1401,6 +1441,13 @@ function TargetTab({
                     (s) => !packHave.has(s.toLowerCase()) && !packText.includes(s.toLowerCase()),
                   )
                 : [];
+            // This card is the one whose button started the running build —
+            // matched by target id when the pack has one (the skill-gap
+            // modal's re-run claims the same id), by slug before it exists.
+            const thisBuilding =
+              rebuilding &&
+              (building?.key === `pack:${p.slug}` ||
+                (existing != null && building?.key === `target:${existing.id}`));
             return (
               // flex-col with the action pushed to the bottom: the summaries
               // are two to four lines long, so without it every button in a row
@@ -1493,18 +1540,26 @@ function TargetTab({
                     line, and pt-4 keeps a real gap on the tallest card, where
                     there is no slack left to take up. */}
                 <div className="mt-auto pt-4">
+                  {/* Only the card that STARTED the build says "Working…" —
+                      every other card keeps its own label, and pressing one
+                      while a build runs answers with the one-at-a-time note
+                      instead of going dead with no explanation. */}
                   <button
                     onClick={() =>
-                      onTarget(existing ? { targetId: existing.id } : { company: p.slug })
+                      startBuild(
+                        existing ? `target:${existing.id}` : `pack:${p.slug}`,
+                        p.name,
+                        existing ? { targetId: existing.id } : { company: p.slug },
+                      )
                     }
-                    // Disabled rather than allowed-and-then-refused. Setting up
-                    // a NEW target is what the plan caps; re-running one that
-                    // already exists is always available.
-                    disabled={busy !== null || rebuilding || (!existing && left === 0)}
+                    // Disabled only for this card's OWN reasons: it is the one
+                    // building, or setting up a NEW target is what the plan
+                    // caps. Another card's build does not grey this one out.
+                    disabled={thisBuilding || (!existing && left === 0)}
                     title={!existing && left === 0 ? "No targets left on this resume" : undefined}
                     className="btn w-full justify-center text-sm"
                   >
-                    {rebuilding
+                    {thisBuilding
                       ? "Working…"
                       : variants.length
                         ? "Rebuild"
@@ -1541,11 +1596,11 @@ function TargetTab({
         />
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button
-            onClick={() => onTarget({ jd })}
-            disabled={busy !== null || rebuilding || jd.trim().length < 60}
+            onClick={() => startBuild("jd", "this role", { jd })}
+            disabled={(rebuilding && building?.key === "jd") || jd.trim().length < 60}
             className="btn btn-primary"
           >
-            {rebuilding ? "Working…" : "Tailor to this role"}
+            {rebuilding && building?.key === "jd" ? "Working…" : "Tailor to this role"}
           </button>
           <span className="text-muted text-xs">
             {jd.trim().length < 60
@@ -1640,6 +1695,20 @@ function TargetTab({
         targets={resume.targets.map((t) => ({ id: t.id, name: t.name }))}
       />
 
+      {/* The one-at-a-time note. role="status" so a screen reader hears the
+          same answer a sighted user sees; self-dismisses, and pressing
+          another button while it shows just restarts its clock. */}
+      {busyPop && (
+        <p
+          role="status"
+          aria-live="polite"
+          className="border-border fixed bottom-6 left-1/2 z-50 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-full border px-5 py-2.5 text-center text-sm shadow-lg"
+          style={{ background: "var(--surface)", color: "var(--ink-color)" }}
+        >
+          {busyPop}
+        </p>
+      )}
+
       {skillModal && (
         <SkillGapModal
           targetName={skillModal.name}
@@ -1669,17 +1738,19 @@ function TargetTab({
  */
 function AnyCompany({
   resume,
-  busy,
-  rebuilding,
-  onTarget,
+  buildingKey,
+  onStart,
   targetsLeft,
   query,
   onQueryChange,
 }: {
   resume: ResumeView;
-  busy: string | null;
-  rebuilding: boolean;
-  onTarget: (body: Record<string, string>) => void;
+  /** The key of the tailor button that started the running build, or null
+      when nothing is building. Only the button whose key matches says
+      "Working…"; the rest keep their labels and answer a press with the
+      one-at-a-time note (which onStart shows). */
+  buildingKey: string | null;
+  onStart: (key: string, name: string, body: Record<string, string>) => void;
   /** New company targets this plan still allows on this resume. */
   targetsLeft: number;
   /** Owned by TargetTab: the same text live-filters the curated packs below. */
@@ -1806,10 +1877,9 @@ function AnyCompany({
                   end, which is exactly what it is not. */}
               <SupplyEvidence
                 company={found.name}
-                busy={busy}
-                rebuilding={rebuilding}
+                buildingKey={buildingKey}
                 disabled={!existing && targetsLeft === 0}
-                onTarget={onTarget}
+                onStart={onStart}
               />
             </>
           ) : (
@@ -1838,14 +1908,19 @@ function AnyCompany({
               )}
               <button
                 onClick={() =>
-                  onTarget(
+                  onStart(
+                    existing ? `target:${existing.id}` : "lookup",
+                    found.name,
                     existing ? { targetId: existing.id } : { companyName: found.name },
                   )
                 }
-                disabled={busy !== null || rebuilding || (!existing && targetsLeft === 0)}
+                disabled={
+                  (existing ? buildingKey === `target:${existing.id}` : buildingKey === "lookup") ||
+                  (!existing && targetsLeft === 0)
+                }
                 className="btn btn-primary mt-5"
               >
-                {rebuilding
+                {(existing ? buildingKey === `target:${existing.id}` : buildingKey === "lookup")
                   ? "Working…"
                   : !existing && targetsLeft === 0
                     ? "No targets left on this resume"
@@ -1884,16 +1959,15 @@ function AnyCompany({
  */
 function SupplyEvidence({
   company,
-  busy,
-  rebuilding,
+  buildingKey,
   disabled,
-  onTarget,
+  onStart,
 }: {
   company: string;
-  busy: string | null;
-  rebuilding: boolean;
+  /** See AnyCompany: the running build's key, or null. */
+  buildingKey: string | null;
   disabled: boolean;
-  onTarget: (body: Record<string, string>) => void;
+  onStart: (key: string, name: string, body: Record<string, string>) => void;
 }) {
   const [kind, setKind] = useState<"jd" | "notes">("jd");
   const [text, setText] = useState("");
@@ -1964,16 +2038,18 @@ function SupplyEvidence({
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button
           onClick={() =>
-            onTarget(
+            onStart(
+              "supply",
+              company,
               kind === "jd"
                 ? { jd: text }
                 : { notes: text, companyName: company },
             )
           }
-          disabled={busy !== null || rebuilding || short || disabled}
+          disabled={buildingKey === "supply" || short || disabled}
           className="btn btn-primary text-sm"
         >
-          {rebuilding
+          {buildingKey === "supply"
             ? "Working…"
             : disabled
               ? "No targets left on this resume"
