@@ -9,14 +9,22 @@
 # service, one email when the site stops answering.
 #
 # NOTE: scheduled workflows run from the DEFAULT branch only (master), and
-# GitHub treats */5 as best-effort — expect 5-15 minute granularity, which is
-# alerting, not monitoring. Also: GitHub disables schedules after 60 days
-# without repo activity; a push resets the clock.
+# GitHub treats the cron as best-effort — expect several minutes of slack,
+# which is alerting, not monitoring. Also: GitHub disables schedules after 60
+# days without repo activity; a push resets the clock.
+#
+# BILLING, learned the hard way: on a PRIVATE repo every probe minute bills
+# against the account's 2,000 free Actions minutes a month. The original
+# */5 cron demanded ~8,600 — it exhausted the whole allowance in days, after
+# which EVERY scheduled job failed at start ("payments have failed or your
+# spending limit needs to be increased") and each failure sent an email.
+# Every-30-minutes is ~1,440 minutes a month worst case and far less in
+# practice (a healthy probe exits in seconds): alerting that fits the tier.
 name: uptime
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 jobs:
