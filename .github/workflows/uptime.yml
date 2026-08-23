@@ -9,27 +9,39 @@
 # service, one email when the site stops answering.
 #
 # NOTE: scheduled workflows run from the DEFAULT branch only (master), and
-# GitHub treats */5 as best-effort — expect 5-15 minute granularity, which is
-# alerting, not monitoring. Also: GitHub disables schedules after 60 days
-# without repo activity; a push resets the clock.
+# GitHub treats the cron as best-effort — expect several minutes of slack,
+# which is alerting, not monitoring. Also: GitHub disables schedules after 60
+# days without repo activity; a push resets the clock.
+#
+# BILLING, learned the hard way: on a PRIVATE repo every probe minute bills
+# against the account's 2,000 free Actions minutes a month. The original
+# */5 cron demanded ~8,600 — it exhausted the whole allowance in days, after
+# which EVERY scheduled job failed at start ("payments have failed or your
+# spending limit needs to be increased") and each failure sent an email.
+# Every-30-minutes is ~1,440 minutes a month worst case and far less in
+# practice (a healthy probe exits in seconds): alerting that fits the tier.
 name: uptime
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Must outlast the probe's worst case (8 attempts x 60s + curl timeouts).
+    timeout-minutes: 12
     steps:
       - name: Probe https://grindly.in/api/health
         run: |
-          # Three attempts 30s apart, so a single dropped packet or a deploy's
-          # build window (the site is 502 for ~3 minutes during one) does not
-          # page anyone. Three consecutive failures over a minute is real.
-          for attempt in 1 2 3; do
+          # Eight attempts 60s apart (~7 minutes of tolerance). The previous
+          # three-attempts-over-a-minute paged on every DEPLOY: the box builds
+          # the image in place and the site is 502 for 2-7 minutes during one,
+          # so each ship produced a "Run failed: uptime" email that meant
+          # nothing. Seven-plus minutes of consecutive failure is longer than
+          # any build window this box has ever had — that is an outage.
+          for attempt in 1 2 3 4 5 6 7 8; do
             code=$(curl -sS -o /tmp/health.json -m 20 -w '%{http_code}' https://grindly.in/api/health || echo 000)
             if [ "$code" = "200" ] && grep -q '"ok":true' /tmp/health.json; then
               echo "healthy (attempt $attempt)"
@@ -37,7 +49,7 @@ jobs:
             fi
             echo "attempt $attempt: HTTP $code"
             cat /tmp/health.json 2>/dev/null || true
-            [ "$attempt" -lt 3 ] && sleep 30
+            [ "$attempt" -lt 8 ] && sleep 60
           done
-          echo "grindly.in health check failed three times in a row"
+          echo "grindly.in health check failed for over seven minutes"
           exit 1
