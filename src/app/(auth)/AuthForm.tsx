@@ -139,8 +139,8 @@ export function AuthForm({
             className="mt-4 rounded-lg border px-3 py-2.5 text-xs leading-relaxed"
             style={{ borderColor: "var(--line-2)", background: "var(--surface-2)" }}
           >
-            Grindly is in a <b>closed beta</b>. You can create an account now; someone
-            approves it by hand before you can upload, usually the same day.
+            <b>Free to start.</b> Your account works the moment you create it — upload
+            your resume and the score is ready in seconds. No card, ever, for the free tier.
           </p>
         )}
 

@@ -41,7 +41,7 @@ export default async function PendingPage() {
       </Link>
 
       <p className="text-brand font-mono text-xs tracking-[0.16em] uppercase">
-        {blocked ? "Account suspended" : "Closed beta"}
+        {blocked ? "Account suspended" : "Account review"}
       </p>
 
       <h1 className="font-display mt-3 text-3xl font-bold text-balance">
@@ -57,8 +57,8 @@ export default async function PendingPage() {
       ) : (
         <>
           <p className="text-muted mt-4 leading-relaxed">
-            Grindly is in a closed beta, so accounts are let in by hand. Yours was
-            created and is waiting for approval — nothing more is needed from you.
+            New accounts are occasionally held for a quick review. Yours was created and
+            is in the queue — nothing more is needed from you.
           </p>
           <p className="text-muted mt-3 leading-relaxed">
             You will be able to sign in and use everything the moment it is approved.
@@ -98,8 +98,7 @@ export default async function PendingPage() {
       </section>
 
       <p className="text-muted mt-8 text-xs leading-relaxed">
-        Nothing you do here costs anything, and no card is involved at any point in the
-        beta.
+        Nothing you do here costs anything, and no card is ever needed to start.
       </p>
       <ReportProblem />
     </main>
