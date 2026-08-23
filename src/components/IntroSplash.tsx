@@ -53,12 +53,12 @@ export function IntroSplash() {
 
   useEffect(() => {
     if (phase !== "out") return;
-    // Past the curtain's 0.65s transition; then the attribute goes so the CSS
-    // gate closes for the rest of the session even before a soft navigation.
+    // Past the curtain's 0.9s lift; then the attribute goes so the CSS gate
+    // closes for the rest of the session even before a soft navigation.
     const gone = setTimeout(() => {
       document.documentElement.removeAttribute("data-intro");
       setPhase("hidden");
-    }, 700);
+    }, 950);
     return () => clearTimeout(gone);
   }, [phase]);
 
