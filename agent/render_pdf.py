@@ -164,7 +164,17 @@ def clean(value: object) -> str:
     return s.strip()
 
 
-def _css(density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.0) -> str:
+def _inline_subs_css(base: float) -> str:
+    """Compact rungs: the title and its meta share one line — the densest
+    standard resume typography. Same DOM, same extraction order; the separator
+    glyph keeps the fields readable to eye and parser alike."""
+    return (
+        "p.item-head { display: inline; } "
+        "p.item-sub { display: inline; margin: 0 0 0 " + f"{base * 0.5:.1f}" + "pt; }"
+    )
+
+
+def _css(density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.0, inline_subs: bool = False) -> str:
     """The whole stylesheet. `density` < 1 tightens leading to win a page.
 
     Nothing here uses a webfont, a background image, or a colour that is not
@@ -361,6 +371,7 @@ def _css(density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.
         line-height: 1.3;
       }}
       p.item-sub .date {{ color: {INK}; }}
+      {_inline_subs_css(base) if inline_subs else ""}
       p.item-sub .sep {{ color: #999999; padding: 0 {base * 0.30:.1f}pt; }}
       /* list-style is NONE and the glyph is real text inside the <li>. A CSS
          marker is generated content: it paints on the page and never reaches
@@ -574,7 +585,7 @@ def contact_field_html(field: str, link_style: str = "url") -> str:
     return f'<span class="f"><a href="{_esc(href)}">{_esc(text)}</a></span>'
 
 
-def build_html(struct: dict, density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.0) -> str:
+def build_html(struct: dict, density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.0, inline_subs: bool = False) -> str:
     """The full HTML document for a resume struct.
 
     `struct` is the shape `resume_optimize` already produces::
@@ -593,7 +604,7 @@ def build_html(struct: dict, density: float = 1.0, type_scale: float = 1.0, marg
     parts: list[str] = [
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
         f"<title>{_esc(name or 'Resume')}</title>",
-        f"<style>{_css(density, type_scale, margin_scale)}</style></head><body><div class=\"doc\">",
+        f"<style>{_css(density, type_scale, margin_scale, inline_subs)}</style></head><body><div class=\"doc\">",
     ]
 
     if name or contact:
@@ -728,21 +739,21 @@ def renderer_available() -> bool:
     return True
 
 
-def render(struct: dict, out_pdf: str, density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.0) -> RenderResult:
+def render(struct: dict, out_pdf: str, density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.0, inline_subs: bool = False) -> RenderResult:
     """Render `struct` to `out_pdf`. Returns a RenderResult; never raises."""
     try:
-        return _render(struct, out_pdf, density, type_scale, margin_scale)
+        return _render(struct, out_pdf, density, type_scale, margin_scale, inline_subs)
     except Exception as e:  # noqa: BLE001
         return RenderResult(False, reason=f"{type(e).__name__}: {e}")
 
 
-def _render(struct: dict, out_pdf: str, density: float, type_scale: float = 1.0, margin_scale: float = 1.0) -> RenderResult:
+def _render(struct: dict, out_pdf: str, density: float, type_scale: float = 1.0, margin_scale: float = 1.0, inline_subs: bool = False) -> RenderResult:
     try:
         from playwright.sync_api import sync_playwright
     except Exception as e:  # noqa: BLE001
         return RenderResult(False, reason=f"playwright unavailable: {e}")
 
-    doc = build_html(struct, density, type_scale, margin_scale)
+    doc = build_html(struct, density, type_scale, margin_scale, inline_subs)
     os.makedirs(os.path.dirname(os.path.abspath(out_pdf)) or ".", exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="grindly-render-") as tmp:
@@ -792,11 +803,16 @@ def _render(struct: dict, out_pdf: str, density: float, type_scale: float = 1.0,
 # type and margins together — measured to gain ~15%, ~30% and ~45% of a page
 # respectively over the normal layout, with 9.0pt/12mm as the floor before
 # the document reads as cramped.
-FIT_RUNGS: tuple[tuple[float, float, float], ...] = (
-    (1.0, 1.0, 1.0),
-    (0.88, 0.97, 0.93),
-    (0.82, 0.94, 0.87),
-    (0.78, 0.92, 0.80),
+FIT_RUNGS: tuple[tuple[float, float, float, bool], ...] = (
+    (1.0, 1.0, 1.0, False),
+    (0.88, 0.97, 0.93, False),
+    (0.82, 0.94, 0.87, True),
+    (0.78, 0.92, 0.80, True),
+    # The floor: ~8.6pt type, 9mm margins, title and meta inline. Dense but
+    # ordinary for a one-page resume; measured on a live resume that spilled
+    # 309 characters at the old floor — the inline line alone recovers a line
+    # per entry, which is far more than such tails need.
+    (0.72, 0.88, 0.60, True),
 )
 
 
@@ -822,8 +838,11 @@ def render_fitted(
     """
     best: RenderResult | None = None
     for rung in densities:
-        d, ts, ms = rung if isinstance(rung, tuple) else (rung, 1.0, 1.0)
-        r = render(struct, out_pdf, density=d, type_scale=ts, margin_scale=ms)
+        if isinstance(rung, tuple):
+            d, ts, ms, il = rung if len(rung) == 4 else (*rung, False)
+        else:
+            d, ts, ms, il = rung, 1.0, 1.0, False
+        r = render(struct, out_pdf, density=d, type_scale=ts, margin_scale=ms, inline_subs=il)
         if not r.ok:
             if best is None:
                 best = r
@@ -843,8 +862,11 @@ def render_fitted(
         last_d = last[0] if isinstance(last, tuple) else last
         if best.density != last_d:
             rung = next((x for x in densities if (x[0] if isinstance(x, tuple) else x) == best.density), best.density)
-            d, ts, ms = rung if isinstance(rung, tuple) else (rung, 1.0, 1.0)
-            again = render(struct, out_pdf, density=d, type_scale=ts, margin_scale=ms)
+            if isinstance(rung, tuple):
+                d, ts, ms, il = rung if len(rung) == 4 else (*rung, False)
+            else:
+                d, ts, ms, il = rung, 1.0, 1.0, False
+            again = render(struct, out_pdf, density=d, type_scale=ts, margin_scale=ms, inline_subs=il)
             if again.ok:
                 again.density = best.density
                 again.reason = best.reason
