@@ -104,6 +104,20 @@ def cmd_ingest(payload: dict) -> dict:
     # have to rediscover the constant to work it out — a resume longer than the
     # cap is scored, rewritten and fidelity-checked on a fragment, and the
     # product has to be able to say so.
+    # How long the document physically is. Real for a PDF (the page objects),
+    # an honest estimate for DOCX/TXT (~3,200 characters of extracted text per
+    # printed page) — used for one suggestion ("this reads as early-career and
+    # runs 2 pages") and nothing finer.
+    pages: int | None = None
+    if path.lower().endswith(".pdf"):
+        try:
+            import render_pdf
+            pages = render_pdf.page_count(path)
+        except Exception:  # noqa: BLE001
+            pages = None
+    if pages is None and text.strip():
+        pages = max(1, -(-len(text.strip()) // 3200))
+
     return {
         "ok": True,
         "text": text[:MAX_TEXT],
@@ -111,6 +125,7 @@ def cmd_ingest(payload: dict) -> dict:
         "truncated": len(text) > MAX_TEXT,
         "links": links[:12],
         "contact": contact,
+        "pages": pages,
     }
 
 
@@ -134,6 +149,11 @@ def cmd_report(payload: dict) -> dict:
     text = str(payload.get("text") or "")[:MAX_TEXT]
     skills = _str_list(payload.get("target_keywords"))
     report = readiness.score(text, skills)
+    # Who this is — student / fresher / early / experienced — read off the
+    # resume. Beside the report, not inside it: score() is a pure function of
+    # the text and the clock stays out here.
+    import datetime as _dt
+    profile = readiness.career_stage(text, _dt.date.today().year)
 
     if payload.get("with_advice"):
         import resume_ai
@@ -143,7 +163,7 @@ def cmd_report(payload: dict) -> dict:
             print(f"[cli] advise failed: {e}", file=sys.stderr)
             report["advice"] = None
 
-    return {"ok": True, "report": report}
+    return {"ok": True, "report": report, "profile": profile}
 
 
 def cmd_jd(payload: dict) -> dict:
@@ -209,6 +229,8 @@ def cmd_variants(payload: dict) -> dict:
         return _fail("out_dir required")
     os.makedirs(out_dir, exist_ok=True)
 
+    max_pages_raw = payload.get("max_pages")
+    max_pages = int(max_pages_raw) if isinstance(max_pages_raw, (int, float)) and int(max_pages_raw) >= 1 else None
     result = resume_optimize.generate_variants(
         text,
         skills,
@@ -216,6 +238,7 @@ def cmd_variants(payload: dict) -> dict:
         target_keywords=target_keywords,
         emphasis=emphasis,
         target_name=target_name,
+        max_pages=max_pages,
         # The PDF's link annotations, from `ingest`. A resume that shows the
         # word "LinkedIn" behind a hyperlink carries an address no text
         # extractor sees — printing it as text is how the rebuild stops losing it.

@@ -124,6 +124,26 @@ _SCORE_NOISE = 0
 _PROMPT_TEXT_CHARS = 24000
 _PROMPT_JSON_CHARS = 40000
 
+# The one-page budget, when the user has chosen it (Resume.targetPages = 1).
+# Appended to every strategy so the model writes to the page from the first
+# draft; a second, firmer pass runs only if the first render spills.
+_PAGE_BUDGET_SUFFIX = (
+    "\n\nHARD LENGTH CONSTRAINT: the finished resume must fit on ONE printed page. "
+    "Keep EVERY section, role, project, degree, certification, date, number and "
+    "skill — nothing may be removed. Get there by tightening: one line per bullet "
+    "where possible, merge bullets that say the same thing, cut filler words and "
+    "repeated tool names, shorten a summary to two lines. Fewer words, not fewer facts."
+)
+_TIGHTEN_INSTRUCTION = (
+    "Your previous rewrite rendered at {pages} pages; the hard limit is {budget} page. "
+    "Return the SAME resume — every section, role, project, degree, date, number and "
+    "skill present and in the same order — but shorter: every bullet on one line "
+    "(under 110 characters), merge bullets that overlap, drop filler words and repeated "
+    "stack mentions, cut the summary to one line or remove it (its facts live in the "
+    "entries). Do not remove any entry. Return the usual {{\"resume\": ..., "
+    "\"changes\": ...}} JSON."
+)
+
 # Filled by _rewrite_struct, read by _one_variant — see the note at the loop.
 _REWRITE_DIAG: dict[str, int] = {"answers": 0, "parsed": 0}
 
@@ -291,6 +311,7 @@ def generate_variants(
     target_name: str = "",
     source_links: list[str] | None = None,
     link_style: str = "url",
+    max_pages: int | None = None,
 ) -> dict:
     """Produce up to 3 compiled, measured resume variants + why any were dropped.
 
@@ -406,6 +427,11 @@ def generate_variants(
     strategies = _targeted_strategies(
         _strategies_for(text, base_struct), emphasis, target_name,
     )
+    # A page budget is a constraint on every strategy, not a strategy of its
+    # own: the user asked for the same rewrites, shorter.
+    if max_pages:
+        strategies = [(label, instr + _PAGE_BUDGET_SUFFIX) for label, instr in strategies]
+        print(f"[optimize] page budget: {max_pages}")
 
     # A targeted run must end with a company-shaped document in hand — see the
     # docstring. Untargeted runs keep the strict rule: worse-than-master is
@@ -420,7 +446,7 @@ def generate_variants(
         variant, reason = _one_variant(
             label, instruction, base_struct, allowed, master_skills, baseline_score,
             identity, stems, debug_dir, target_keywords,
-            keep_worse=targeted, target_name=target_name,
+            keep_worse=targeted, target_name=target_name, max_pages=max_pages,
         )
         _progress(f"Rendered and re-measured {index} of {total}")
         reasons.append(reason)
@@ -449,6 +475,7 @@ def generate_variants(
         # instead of making the user compare three numbers to a threshold they
         # were never told about.
         "floor": readiness.SHIPPABLE_FLOOR,
+        "page_budget": max_pages,
         "meets_floor": bool(shipped) and all(v["meets_floor"] for v in shipped),
         "floor_gap": next((v["floor_gap"] for v in shipped if not v["meets_floor"]), ""),
         "aborted": None,
@@ -470,6 +497,7 @@ def _one_variant(
     target_keywords: list[str] | None = None,
     keep_worse: bool = False,
     target_name: str = "",
+    max_pages: int | None = None,
 ) -> tuple[dict | None, str]:
     """Build one variant. Returns (variant_or_None, human-readable reason).
 
@@ -540,7 +568,11 @@ def _one_variant(
     # gives the user a true reason instead of an ambiguous one.
     base_bullets = _bullet_count(base_struct)
     kept_bullets = _bullet_count(struct)
-    if base_bullets >= 4 and kept_bullets < base_bullets * 0.7:
+    # Under a one-page budget, MERGING bullets is the instruction, so the bullet
+    # count legitimately falls. Entries are still protected by the drift check
+    # above; the bullet floor relaxes to half, not to nothing.
+    min_keep = 0.5 if max_pages else 0.7
+    if base_bullets >= 4 and kept_bullets < base_bullets * min_keep:
         print(f"[optimize] {label}: content loss — {kept_bullets}/{base_bullets} bullets")
         return None, (f"{label}: dropped — tightening went too far and lost "
                       f"{base_bullets - kept_bullets} of your {base_bullets} bullet points")
@@ -574,6 +606,53 @@ def _one_variant(
                         pdf_path if built.get("rendered") else None)
             print(f"[optimize] {label}: {built['error']}")
             return None, f"{label}: {built['error']}"
+
+        # The page budget, measured on the real PDF. If the first draft spilled,
+        # one firmer pass: same facts, fewer words, re-rendered. If it still
+        # spills, the better (shorter) one ships and SAYS it is over budget —
+        # the user chose a page count, not a silent cut.
+        over_budget = False
+        if max_pages and (built["result"].pages or 0) > max_pages:
+            first_pages = built["result"].pages or 0
+            print(f"[optimize] {label}: {first_pages} pages against a {max_pages}-page budget — tightening")
+            # Identity stays out of prompts (module docstring): the struct we
+            # re-send has its stamped name/contact blanked; they are stamped
+            # back onto the result.
+            anon = dict(struct)
+            anon["name"] = ""
+            anon["contact_line"] = ""
+            tighter = _rewrite_struct(
+                anon, _TIGHTEN_INSTRUCTION.format(pages=first_pages, budget=max_pages),
+                master_skills, stems,
+            )
+            tight_struct = _sanitize_struct(tighter.get("resume")) if tighter else None
+            if (
+                tight_struct
+                and any(sec["items"] for sec in tight_struct["sections"])
+                and _factual_item_count(tight_struct) * 2 >= _factual_item_count(base_struct)
+                and not _fabricated_skills(tight_struct, allowed)
+            ):
+                _stamp_identity(tight_struct, identity)
+                tight_struct["link_style"] = struct.get("link_style", "url")
+                retry = _render_and_score(tight_struct, pdf_path, target_keywords)
+                if not retry.get("error") and (retry["result"].pages or 0) < first_pages:
+                    print(f"[optimize] {label}: tightened {first_pages} → {retry['result'].pages} page(s)")
+                    struct = tight_struct
+                    built = retry
+                    merged = max(0, kept_bullets - _bullet_count(tight_struct))
+                    changes = ([
+                        f"Tightened to fit {max_pages} page{'s' if max_pages != 1 else ''}"
+                        + (f": merged or shortened {merged} bullet{'s' if merged != 1 else ''}" if merged else "")
+                        + " — every role, project and skill kept"
+                    ] + changes)[:5]
+                else:
+                    print(f"[optimize] {label}: tightening did not fit ({(retry or {}).get('error') or (retry['result'].pages if retry else '?')}) — keeping the first")
+            over_budget = (built["result"].pages or 0) > max_pages
+            if over_budget:
+                changes = ([
+                    f"Came out at {built['result'].pages} pages against your {max_pages}-page budget — "
+                    "trim an older entry or a project to fit"
+                ] + changes)[:5]
 
         # Below the floor, try the repairs that are ours to make and measure
         # again. One extra render, once, and only for a document that would
@@ -654,6 +733,9 @@ def _one_variant(
         # the same fact off score < baseline_score; this flag is for the
         # shipping filter, which must not let losers ride beside winners.
         "materially_worse": materially_worse,
+        # Page budget, when one was set, and whether this document met it.
+        "page_budget": max_pages,
+        "over_budget": bool(max_pages) and over_budget,
         "changes": changes,
         "report": report,
         "fidelity": fidelity,

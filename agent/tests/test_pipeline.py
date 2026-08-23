@@ -565,3 +565,55 @@ def test_an_extraction_that_returns_nothing_aborts_rather_than_inventing(model):
     out = ro.generate_variants(SENIOR_RESUME, SENIOR_SKILLS)
     assert out["aborted"] == "extraction_failed"
     assert out["variants"] == []
+
+
+# ---------------------------------------------------------------------------
+# the one-page budget
+# ---------------------------------------------------------------------------
+
+def _long_struct(n_roles: int = 14) -> dict:
+    """A resume that cannot fit one page: many roles, three bullets each."""
+    roles = [{
+        "head": f"Software Engineer {i}",
+        "sub": f"Company {i} | Jan 20{10 + i % 10} - Dec 20{11 + i % 10} | Pune",
+        "bullets": [
+            f"Built the reporting service in Python and PostgreSQL, used by {300 + i} staff daily",
+            f"Automated release verification, removing {10 + i} hours of manual testing per week",
+            f"Migrated {30 + i} batch jobs off cron onto a scheduler with retries and alerting",
+        ],
+    } for i in range(n_roles)]
+    s = json.loads(json.dumps(EXTRACTED))
+    s["sections"][1]["items"] = roles
+    return s
+
+
+@requires_chromium
+def test_a_page_budget_is_measured_and_reported_honestly(model):
+    """The user chose one page. The model (stubbed) cannot shorten — it returns
+    the same long resume to the tightening pass too — so the document still
+    renders at two pages. It must SHIP, flagged over budget, with the change
+    list saying so, rather than be dropped or silently cut.
+    """
+    long = _long_struct()
+    model(extracted=long, rewrites=long)
+    text = "\n".join(
+        f"{it['head']}, {it['sub']}\n" + "\n".join("- " + b for b in it["bullets"])
+        for it in long["sections"][1]["items"]
+    ) + "\nTechnical Skills: Java, Python, SQL, AWS, Docker, Kubernetes, Kafka, PostgreSQL, Redis\n"
+    out = ro.generate_variants(text, SENIOR_SKILLS, max_pages=1)
+    assert out["page_budget"] == 1
+    assert out["variants"], out["reasons"]
+    v = out["variants"][0]
+    assert v["page_budget"] == 1
+    assert v["pages"] >= 2
+    assert v["over_budget"] is True
+    assert any("page" in c.lower() and "budget" in c.lower() for c in v["changes"]), v["changes"]
+
+
+@requires_chromium
+def test_without_a_budget_nothing_about_pages_is_claimed(model):
+    model()
+    out = ro.generate_variants(SENIOR_RESUME, SENIOR_SKILLS)
+    assert out["page_budget"] is None
+    assert out["variants"], out["reasons"]
+    assert out["variants"][0]["over_budget"] is False

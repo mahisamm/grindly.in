@@ -545,3 +545,62 @@ def test_empty_input_does_not_raise():
         r = readiness.score(value)  # type: ignore[arg-type]
         assert r["score"] == 0 or r["score"] <= 15
         assert r["findings"]
+
+
+# ---------------------------------------------------------------------------
+# career stage — read off the resume, used for the one-page suggestion
+# ---------------------------------------------------------------------------
+
+def test_career_stage_reads_a_student_from_the_degree_line():
+    text = (
+        "Priya Sharma\nB.Tech in Computer Science, Anurag University, 2023 - 2027 (expected)\n"
+        "EXPERIENCE\nSoftware Engineering Intern, Zenlytics, Jun 2025 - Aug 2025\n- Built a REST API\n"
+    )
+    got = readiness.career_stage(text, 2026)
+    assert got["stage"] == "student"
+    assert any("2027" in s for s in got["signals"])
+
+
+def test_career_stage_reads_a_fresher_from_a_recent_degree_and_internships():
+    text = (
+        "Arjun Mehta\nB.E. Computer Engineering, Pune University, 2021 - 2025\n"
+        "Internship: Data Analyst Intern, Acme, Jan 2025 - Apr 2025\nSKILLS python sql\n"
+    )
+    assert readiness.career_stage(text, 2026)["stage"] == "fresher"
+
+
+def test_career_stage_reads_early_career_from_dated_roles():
+    text = (
+        "Neha Rao\nSoftware Engineer, Flipkart, 2022 - Present\n"
+        "Backend Engineer, Zomato, 2020 - 2022\nB.Tech, VIT, 2016 - 2020\n"
+    )
+    got = readiness.career_stage(text, 2026)
+    assert got["stage"] == "early"
+    assert got["years"] == 6
+
+
+def test_career_stage_does_not_call_a_long_career_a_student():
+    text = (
+        "Vikram Singh\nSenior Engineering Manager, Infosys, 2015 - Present\n"
+        "Lead Engineer, TCS, 2010 - 2015\nSoftware Engineer, Wipro, 2007 - 2010\nB.Tech, NIT, 2003 - 2007\n"
+    )
+    assert readiness.career_stage(text, 2026)["stage"] == "experienced"
+
+
+def test_career_stage_is_pure_in_the_clock():
+    text = "B.Tech, 2022 - 2026 (expected)\nIntern, Acme, 2025 - 2025\n"
+    assert readiness.career_stage(text, 2025)["stage"] == "student"
+    # Three years later the same text reads as a fresher-turned-early, not a student.
+    assert readiness.career_stage(text, 2029)["stage"] != "student"
+
+
+def test_career_stage_is_not_fooled_by_title_words_in_project_names():
+    """Seen on a real two-page student resume: "Library Manager" (a project)
+    matched the senior-title words and tipped the read to "experienced"."""
+    text = (
+        "Priya Sharma\nB.Tech in Computer Science, Anurag University | Aug 2023 - May 2027 (expected)\n"
+        "Software Engineering Intern, Zenlytics | Jun 2025 - Aug 2025\n"
+        "Project: Library Manager | 2024 - 2025\n- Built an admin panel\n"
+        "Project: Team Lead tracker | 2024 - 2025\n"
+    )
+    assert readiness.career_stage(text, 2026)["stage"] == "student"

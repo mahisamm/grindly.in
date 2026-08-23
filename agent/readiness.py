@@ -340,6 +340,127 @@ def career_years(text: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# career stage — "is this a student, a fresher, early-career, or experienced?"
+# ---------------------------------------------------------------------------
+
+_DEGREE_RE = re.compile(
+    r"\b(b\.?\s?tech|b\.?\s?e\b|b\.?\s?sc|b\.?\s?com|b\.?\s?a\b|bca|bba|m\.?\s?tech|m\.?\s?sc|mca|mba|"
+    r"bachelor|master|diploma|ph\.?\s?d|undergraduate|graduate)\b",
+    re.I,
+)
+_STUDENT_WORD_RE = re.compile(
+    r"\b(pursuing|expected|anticipated|currently (?:studying|enrolled|in)|final[- ]year|"
+    r"(?:1st|2nd|3rd|4th|first|second|third|fourth)[- ]year|student|undergraduate|"
+    r"class of 20[2-4]\d|graduating)\b",
+    re.I,
+)
+_INTERN_RE = re.compile(r"\bintern(?:ship)?s?\b", re.I)
+_SENIOR_TITLE_RE = re.compile(
+    r"\b(senior|sr\.?|lead|principal|staff|manager|head of|director|vp|vice president|"
+    r"architect|chief|cto|ceo|founder)\b",
+    re.I,
+)
+_YEAR_RANGE_RE = re.compile(
+    r"\b(19[7-9]\d|20[0-4]\d)\s*[-–—to]+\s*(19[7-9]\d|20[0-4]\d|present|current|now|till date|ongoing)\b",
+    re.I,
+)
+
+EARLY_CAREER_YEARS = 8
+
+
+def career_stage(text: str, now_year: int) -> dict:
+    """Read the candidate's career stage OFF THE RESUME, deterministically.
+
+    Returns {"stage": "student"|"fresher"|"early"|"experienced",
+             "years": int, "signals": [str]}.
+
+    Used for exactly one decision: whether to SUGGEST a one-page rebuild.
+    Nothing finer is needed, so nothing finer is attempted — and the signals
+    are returned so the UI can say why ("reads as a student: B.Tech, expected
+    2027; two internships") instead of asserting a label.
+
+    Why `career_years` alone is not enough: it spans every year on the page,
+    so a 2022-2026 degree reads as four years of "career". The student and
+    fresher cases are read from the degree lines and the student vocabulary;
+    experience is read from date RANGES on non-degree lines, and from titles.
+
+    Pure: `now_year` is a parameter so the scorer stays clock-free.
+    """
+    raw = _norm(text or "")
+    lines = [ln.strip() for ln in raw.split("\n") if ln.strip()]
+    signals: list[str] = []
+
+    # 1. Degree lines and their years.
+    degree_years: list[int] = []
+    student_words = 0
+    for ln in lines:
+        if _DEGREE_RE.search(ln):
+            degree_years.extend(int(y) for y in _YEAR_RE.findall(ln))
+        if _STUDENT_WORD_RE.search(ln):
+            student_words += 1
+    grad_year = max(degree_years) if degree_years else None
+
+    # 2. Work experience: year RANGES on lines that are not degree lines.
+    work_spans: list[tuple[int, int]] = []
+    for ln in lines:
+        if _DEGREE_RE.search(ln):
+            continue
+        for m in _YEAR_RANGE_RE.finditer(ln):
+            start = int(m.group(1))
+            end_raw = m.group(2).lower()
+            end = now_year if not end_raw.isdigit() else int(end_raw)
+            if end >= start:
+                work_spans.append((start, min(end, now_year)))
+    work_years = 0
+    if work_spans:
+        first = min(s for s, _ in work_spans)
+        last = max(e for _, e in work_spans)
+        work_years = max(0, last - first)
+
+    interns = len(_INTERN_RE.findall(raw))
+    senior_titles = len(_SENIOR_TITLE_RE.findall(raw))
+    total_span = career_years(raw)
+
+    # 3. Decide, most specific first.
+    #
+    # A degree finishing in the future is the strongest student signal there
+    # is, and a title word cannot override it: "Library Manager" is a project,
+    # "Team Lead" on a college fest is not a career. Titles only count towards
+    # "experienced" together with YEARS of dated work. (A working professional
+    # doing an evening MBA has the years, so they are not caught here.)
+    if grad_year is not None and grad_year >= now_year and work_years <= 2:
+        signals.append(f"degree finishing {grad_year}")
+        if interns:
+            signals.append(f"{interns} internship mention{'s' if interns != 1 else ''}")
+        return {"stage": "student", "years": work_years, "signals": signals}
+
+    if student_words >= 2 and work_years <= 1:
+        signals.append("student wording (pursuing / expected / final year)")
+        return {"stage": "student", "years": work_years, "signals": signals}
+
+    if grad_year is not None and now_year - grad_year <= 1 and work_years <= 1:
+        signals.append(f"graduated {grad_year}")
+        if interns:
+            signals.append(f"{interns} internship mention{'s' if interns != 1 else ''}")
+        return {"stage": "fresher", "years": work_years, "signals": signals}
+
+    if work_years == 0 and total_span <= 2:
+        signals.append("no dated experience yet")
+        return {"stage": "fresher", "years": 0, "signals": signals}
+
+    years = work_years if work_years else total_span
+    if years >= EARLY_CAREER_YEARS or (senior_titles >= 2 and work_years >= 4):
+        if work_years:
+            signals.append(f"~{work_years} years of dated experience")
+        if senior_titles:
+            signals.append("senior titles")
+        return {"stage": "experienced", "years": years, "signals": signals}
+
+    signals.append(f"~{years} year{'s' if years != 1 else ''} of experience")
+    return {"stage": "early", "years": years, "signals": signals}
+
+
+# ---------------------------------------------------------------------------
 # bands
 # ---------------------------------------------------------------------------
 

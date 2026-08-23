@@ -334,6 +334,17 @@ model Resume {
   ext          String? // ".pdf" | ".docx" | ".txt" — null for built-from-scratch
   text         String  @default("")
   chars        Int     @default(0)
+  /// Printed pages of the uploaded file — real for a PDF, estimated for
+  /// DOCX/TXT. With `careerStage`, the only input to the one-page suggestion.
+  pages        Int?
+  /// student | fresher | early | experienced — read off the resume at upload
+  /// (readiness.career_stage), with the signals that led there.
+  careerStage   String? @map("career_stage")
+  careerSignals Json?   @map("career_signals")
+  /// The user's answer to "want a one-page version?": 1 = yes (every rebuild
+  /// carries a one-page budget), 0 = keep my length (never ask again),
+  /// null = not asked / not answered.
+  targetPages  Int?    @map("target_pages")
   /// True when the extracted text hit the 60 000-character ceiling and the tail
   /// was dropped. Everything downstream — the score, the rewrite, the fidelity
   /// count — then describes a fragment of the document, and the report says so

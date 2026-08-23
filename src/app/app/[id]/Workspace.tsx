@@ -17,6 +17,7 @@ import { ShareLink } from "./ShareLink";
 import { LinkStyleChoice } from "./edit/LinkStyle";
 import { UnlockTarget } from "./UnlockTarget";
 import { SkillGapModal } from "./SkillGapModal";
+import { OnePageCard, PageBudgetChip } from "./OnePageCard";
 
 type VariantView = {
   id: string;
@@ -63,6 +64,13 @@ type ResumeView = {
   report: Report | null;
   advice: Advice | null;
   skills: string[];
+  /** Printed pages of the upload (real for PDF, estimated otherwise). */
+  pages: number | null;
+  /** student | fresher | early | experienced, read off the resume at upload. */
+  careerStage: string | null;
+  careerSignals: string[];
+  /** 1 = one-page budget on every rebuild; 0 = keep my length; null = not asked. */
+  targetPages: number | null;
   variants: VariantView[];
   targets: TargetView[];
   history: ScorePoint[];
@@ -705,9 +713,22 @@ function ReportTab({
           style: { "--reveal-at": `${ms}ms` } as React.CSSProperties,
         };
 
+  const suggestOnePage =
+    resume.targetPages === null &&
+    (resume.pages ?? 1) >= 2 &&
+    (resume.careerStage === "student" || resume.careerStage === "fresher" || resume.careerStage === "early");
+
   return (
     <div className="grid gap-10 lg:grid-cols-[1.4fr_1fr]">
       <div {...rise(0)}>
+        {suggestOnePage && (
+          <OnePageCard
+            resumeId={resume.id}
+            stage={resume.careerStage ?? "early"}
+            signals={resume.careerSignals}
+            pages={resume.pages ?? 2}
+          />
+        )}
         {/* Said before the score, not after it. Every number on this page
             describes the first 60 000 characters of a longer document, and a
             partial reading presented as a complete one is the one thing this
@@ -931,8 +952,22 @@ function RewriteTab({
           right beside the title instead of being flung to the far page edge —
           that stranded button over empty space was the "compact middle" a
           desktop user saw. */}
+      {/* The one-page suggestion lives here as well as on the Scorecard —
+          this is where the rebuild is pressed, so the question belongs beside
+          the button. Same condition, same card, answered once. */}
+      {resume.targetPages === null &&
+        (resume.pages ?? 1) >= 2 &&
+        (resume.careerStage === "student" || resume.careerStage === "fresher" || resume.careerStage === "early") && (
+          <OnePageCard
+            resumeId={resume.id}
+            stage={resume.careerStage ?? "early"}
+            signals={resume.careerSignals}
+            pages={resume.pages ?? 2}
+          />
+        )}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <h2 className="font-display text-2xl font-semibold">Rebuild your resume</h2>
+        <PageBudgetChip resumeId={resume.id} on={resume.targetPages === 1} />
         <button
           onClick={() => onRun(null)}
           disabled={busy !== null || rebuilding}
@@ -1382,7 +1417,10 @@ function TargetTab({
   return (
     <div className="flex flex-col gap-10">
       <section>
-        <h2 className="font-display text-2xl font-semibold">Aim it at a company</h2>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <h2 className="font-display text-2xl font-semibold">Aim it at a company</h2>
+          <PageBudgetChip resumeId={resume.id} on={resume.targetPages === 1} />
+        </div>
         <p className="text-muted mt-2 max-w-2xl leading-relaxed">
           Each pack is what the employer has published about how it hires, with the link so
           you can check. Targeting changes what your resume <i>surfaces</i> — it can never

@@ -130,7 +130,7 @@ export async function POST(req: Request) {
 
   const ingested = await runAgent<{
     text: string; chars: number; truncated: boolean;
-    links: string[]; contact: Record<string, unknown>;
+    links: string[]; contact: Record<string, unknown>; pages?: number | null;
   }>("ingest", { path: dest });
 
   if (!ingested.ok) {
@@ -148,8 +148,12 @@ export async function POST(req: Request) {
   }
 
   const text = ingested.text ?? "";
-  const scored = await runAgent<{ report: Report }>("report", { text });
+  const scored = await runAgent<{
+    report: Report;
+    profile?: { stage: string; years: number; signals: string[] };
+  }>("report", { text });
   const report = scored.ok ? scored.report : null;
+  const profile = scored.ok ? scored.profile ?? null : null;
 
   const skills = await runAgent<{ skills: string[] }>("skills", { text });
 
@@ -166,6 +170,10 @@ export async function POST(req: Request) {
         score: report?.score ?? null,
         grade: report?.grade ?? null,
         reportJson: toJsonColumn(report),
+        // For the one-page suggestion: how long the file is, and who this is.
+        pages: typeof ingested.pages === "number" ? ingested.pages : null,
+        careerStage: profile?.stage ?? null,
+        careerSignals: toJsonColumn(profile?.signals ?? null),
       },
     });
   } catch (e) {

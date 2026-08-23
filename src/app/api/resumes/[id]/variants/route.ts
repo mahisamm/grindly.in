@@ -35,6 +35,8 @@ type AgentVariant = {
   meets_floor: boolean;
   floor: number;
   floor_gap: string;
+  page_budget?: number | null;
+  over_budget?: boolean;
   /** The fields this rebuild was printed from — what the editor and a
       promotion both need. `unknown` because it crosses a subprocess boundary
       and is written to a Json column unvalidated either way. */
@@ -73,6 +75,7 @@ export async function POST(req: Request, { params }: Ctx) {
     select: {
       id: true, text: true, chars: true,
       skillsJson: true, contactJson: true, linksJson: true, linkStyle: true,
+      targetPages: true,
     },
   });
   if (!resume) return notFound();
@@ -295,6 +298,7 @@ async function executeRun({
     contactJson: unknown;
     linksJson: unknown;
     linkStyle: string;
+    targetPages: number | null;
   };
   target: ResolvedTarget;
 }): Promise<void> {
@@ -354,6 +358,8 @@ async function executeRun({
         // the rebuild prints it out — see _merge_profile_links.
         links: readStrings(resume.linksJson),
         link_style: resume.linkStyle,
+        // The user's chosen page budget (1 = one page). null = no budget.
+        max_pages: resume.targetPages === 1 ? 1 : null,
       },
       {
         onProgress: setStage,

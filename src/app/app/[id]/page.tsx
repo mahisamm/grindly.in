@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { toJsonColumn } from "@/lib/jsonColumn";
 import { currentUser } from "@/lib/auth";
 import { runAgent } from "@/lib/agent";
 import { paymentsEnabled } from "@/lib/config";
@@ -31,6 +32,32 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
     },
   });
   if (!resume) notFound();
+
+  // Resumes uploaded before the career-stage read existed have no stage on
+  // the row. Read it once here (deterministic, well under a second) and keep
+  // it, so the one-page suggestion reaches existing users too. Pages, when
+  // the upload never recorded them, are estimated the way ingest does.
+  if (!resume.careerStage && resume.text.trim().length > 200) {
+    const scored = await runAgent<{ profile?: { stage: string; signals: string[] } }>("report", {
+      text: resume.text,
+    });
+    if (scored.ok && scored.profile) {
+      const pages = resume.pages ?? Math.max(1, Math.ceil(resume.text.trim().length / 3200));
+      await prisma.resume
+        .update({
+          where: { id: resume.id },
+          data: {
+            careerStage: scored.profile.stage,
+            careerSignals: toJsonColumn(scored.profile.signals),
+            pages,
+          },
+        })
+        .catch(() => null);
+      resume.careerStage = scored.profile.stage;
+      resume.careerSignals = scored.profile.signals;
+      resume.pages = pages;
+    }
+  }
 
   const packs = await runAgent<{ packs: CompanyPack[]; disclaimer: string }>("companies");
 
@@ -62,6 +89,10 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
           report: readReport(resume.reportJson),
           advice: readAdvice(resume.adviceJson),
           skills: readStrings(resume.skillsJson),
+          pages: resume.pages,
+          careerStage: resume.careerStage,
+          careerSignals: readStrings(resume.careerSignals),
+          targetPages: resume.targetPages,
           variants: resume.variants.map((v) => ({
             id: v.id,
             label: v.label,
