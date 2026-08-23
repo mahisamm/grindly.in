@@ -697,14 +697,16 @@ def build_html(struct: dict, density: float = 1.0) -> str:
 class RenderResult:
     """Outcome of one render. Never an exception."""
 
-    __slots__ = ("ok", "pages", "reason", "path")
+    __slots__ = ("ok", "pages", "reason", "path", "density")
 
     def __init__(self, ok: bool, pages: int | None = None,
-                 reason: str = "", path: str | None = None):
+                 reason: str = "", path: str | None = None,
+                 density: float = 1.0):
         self.ok = ok
         self.pages = pages
         self.reason = reason
         self.path = path
+        self.density = density
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"RenderResult(ok={self.ok}, pages={self.pages}, reason={self.reason!r})"
@@ -779,23 +781,51 @@ def _render(struct: dict, out_pdf: str, density: float) -> RenderResult:
         return RenderResult(True, pages=pages, path=out_pdf)
 
 
-def render_fitted(struct: dict, out_pdf: str, max_pages: int = MAX_PAGES) -> RenderResult:
-    """Render, tightening leading once if the document overflows `max_pages`.
+def render_fitted(
+    struct: dict,
+    out_pdf: str,
+    max_pages: int = MAX_PAGES,
+    densities: tuple[float, ...] = (1.0, 0.88),
+) -> RenderResult:
+    """Render down a ladder of densities until the document fits `max_pages`.
 
-    One retry, not a search. A resume that is still three pages at 0.88 density
-    is three pages of content, and squeezing further produces a document nobody
-    can read — which is a worse outcome than reporting that it did not fit.
+    Density scales the leading and the gaps between items — never the
+    letter-spacing (the measured parse cliff) and never the content — so the
+    extracted text is identical at every rung. The default ladder is the old
+    behaviour (one retry at 0.88). A one-page budget passes a deeper ladder;
+    its floor is the last rung before the page looks cramped, because a
+    document nobody can read is worse than reporting that it did not fit.
+
+    Returns the first rung that fits, else the best (fewest pages) that
+    rendered, with `reason` saying it is still over. `density` on the result
+    says which rung shipped, so the caller can tell the user the layout was
+    compacted.
     """
-    first = render(struct, out_pdf, density=1.0)
-    if not first.ok:
-        return first
-    if first.pages is not None and first.pages > max_pages:
-        tighter = render(struct, out_pdf, density=0.88)
-        if tighter.ok:
-            if tighter.pages is not None and tighter.pages > max_pages:
-                tighter.reason = f"still {tighter.pages} pages after tightening"
-            return tighter
-    return first
+    best: RenderResult | None = None
+    for d in densities:
+        r = render(struct, out_pdf, density=d)
+        if not r.ok:
+            if best is None:
+                best = r
+            continue
+        r.density = d
+        if r.pages is not None and r.pages <= max_pages:
+            return r
+        if best is None or not best.ok or (
+            r.pages is not None and (best.pages is None or r.pages < best.pages)
+        ):
+            best = r
+    if best is not None and best.ok and best.pages is not None and best.pages > max_pages:
+        best.reason = f"still {best.pages} pages at density {best.density}"
+        # The best rung's PDF must be the one on disk — re-render it if a
+        # later, worse rung overwrote the file.
+        if best.density != densities[-1]:
+            again = render(struct, out_pdf, density=best.density)
+            if again.ok:
+                again.density = best.density
+                again.reason = best.reason
+                best = again
+    return best if best is not None else RenderResult(False, reason="no density rendered")
 
 
 def page_count(pdf_path: str) -> int | None:

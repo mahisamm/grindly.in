@@ -20,6 +20,7 @@ import os
 
 import pytest
 
+import copy
 import readiness
 import render_pdf
 
@@ -548,3 +549,47 @@ def test_the_rule_under_a_heading_is_quieter_than_the_ink():
     """Six full-width lines at full-strength ink is a form, not a resume."""
     assert render_pdf.RULE != render_pdf.INK
     assert int(render_pdf.RULE.lstrip("#")[:2], 16) > int(render_pdf.INK.lstrip("#")[:2], 16)
+
+
+@requires_chromium
+def test_density_changes_layout_never_content(tmp_path):
+    """The page-fitting ladder's whole safety case: a compact render carries
+    byte-for-byte the same extracted text as the normal one — density moves
+    leading and gaps, never words — and never renders MORE pages."""
+    from test_variants import HONEST_STRUCT
+    struct = copy.deepcopy(HONEST_STRUCT)
+    struct["sections"][1]["items"] = struct["sections"][1]["items"] * 6  # long enough to spill
+    a, b = str(tmp_path / "n.pdf"), str(tmp_path / "c.pdf")
+    normal = render_pdf.render(struct, a, density=1.0)
+    compact = render_pdf.render(struct, b, density=0.78)
+    assert normal.ok and compact.ok
+    assert (compact.pages or 99) <= (normal.pages or 0)
+    assert render_pdf.extract_back(a).split() == render_pdf.extract_back(b).split()
+    report = readiness.score(render_pdf.extract_back(b))
+    assert report["bands"]["readable"]["score"] == 100
+
+
+@requires_chromium
+def test_render_fitted_walks_the_ladder_to_the_budget(tmp_path):
+    """A document that spills at normal density but fits compact must come
+    back fitted, and say which density did it."""
+    from test_variants import HONEST_STRUCT
+    struct = copy.deepcopy(HONEST_STRUCT)
+    # scale until it needs more than one page at density 1.0
+    for mult in range(2, 9):
+        struct["sections"][1]["items"] = copy.deepcopy(HONEST_STRUCT)["sections"][1]["items"] * mult
+        probe = render_pdf.render(struct, str(tmp_path / "p.pdf"), density=1.0)
+        assert probe.ok
+        if (probe.pages or 0) > 1:
+            break
+    else:
+        raise AssertionError("fixture never spilled — enlarge it")
+    fitted = render_pdf.render_fitted(
+        struct, str(tmp_path / "f.pdf"), max_pages=1, densities=(1.0, 0.85, 0.78),
+    )
+    assert fitted.ok
+    if fitted.pages == 1:
+        assert fitted.density < 1.0
+    else:
+        # genuinely too much content for a page even compact — must say so
+        assert "still" in fitted.reason

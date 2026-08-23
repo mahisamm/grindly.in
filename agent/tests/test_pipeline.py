@@ -571,7 +571,7 @@ def test_an_extraction_that_returns_nothing_aborts_rather_than_inventing(model):
 # the one-page budget
 # ---------------------------------------------------------------------------
 
-def _long_struct(n_roles: int = 14) -> dict:
+def _long_struct(n_roles: int = 18) -> dict:
     """A resume that cannot fit one page: many roles, three bullets each."""
     roles = [{
         "head": f"Software Engineer {i}",
@@ -596,10 +596,17 @@ def test_a_page_budget_is_measured_and_reported_honestly(model):
     """
     long = _long_struct()
     model(extracted=long, rewrites=long)
-    text = "\n".join(
-        f"{it['head']}, {it['sub']}\n" + "\n".join("- " + b for b in it["bullets"])
-        for it in long["sections"][1]["items"]
-    ) + "\nTechnical Skills: Java, Python, SQL, AWS, Docker, Kubernetes, Kafka, PostgreSQL, Redis\n"
+    # The source text must carry EVERY section of the struct, or grounding
+    # strips the "missing" ones and the remnant fits a page - the product
+    # working, not this test's premise.
+    parts = []
+    for sec in long["sections"]:
+        parts.append(sec["heading"].upper())
+        for it in sec["items"]:
+            if it["head"] or it["sub"]:
+                parts.append(", ".join(x for x in (it["head"], it["sub"]) if x))
+            parts.extend("- " + b for b in it["bullets"])
+    text = chr(10).join(parts) + chr(10)
     out = ro.generate_variants(text, SENIOR_SKILLS, max_pages=1)
     assert out["page_budget"] == 1
     assert out["variants"], out["reasons"]

@@ -127,6 +127,13 @@ _PROMPT_JSON_CHARS = 40000
 # The one-page budget, when the user has chosen it (Resume.targetPages = 1).
 # Appended to every strategy so the model writes to the page from the first
 # draft; a second, firmer pass runs only if the first render spills.
+# Layout densities for the page-fitting ladder (see render_pdf.render_fitted).
+# Density scales leading and gaps, never letter-spacing (the measured parse
+# cliff) and never content — extracted text is identical at every rung.
+# 0.85 reads as "efficient"; 0.78 is the floor before cramped.
+_COMPACT_DENSITY = 0.85
+_DENSE_DENSITY = 0.78
+
 _PAGE_BUDGET_SUFFIX = (
     "\n\nHARD LENGTH CONSTRAINT: the finished resume must fit on ONE printed page. "
     "Keep EVERY section, role, project, degree, certification, date, number and "
@@ -600,58 +607,66 @@ def _one_variant(
 
     with tempfile.TemporaryDirectory(prefix="grindly-opt-") as tmp:
         pdf_path = os.path.join(tmp, "variant.pdf")
-        built = _render_and_score(struct, pdf_path, target_keywords)
+        built = _render_and_score(struct, pdf_path, target_keywords, fit_pages=max_pages)
         if built.get("error"):
             _dump_debug(debug_dir, label, html_doc,
                         pdf_path if built.get("rendered") else None)
             print(f"[optimize] {label}: {built['error']}")
             return None, f"{label}: {built['error']}"
 
-        # The page budget, measured on the real PDF. If the first draft spilled,
-        # one firmer pass: same facts, fewer words, re-rendered. If it still
-        # spills, the better (shorter) one ships and SAYS it is over budget —
-        # the user chose a page count, not a silent cut.
+        # The page budget. The renderer has already walked its density ladder
+        # (normal → compact → extra-compact, content identical at every rung).
+        # Still over means the WORDS do not fit at any readable density, so one
+        # firmer model pass — same facts, fewer words — then the ladder again.
+        # Only a resume that spills through all of that ships over budget, and
+        # says so: the user chose a page count, not a silent cut.
         over_budget = False
-        if max_pages and (built["result"].pages or 0) > max_pages:
-            first_pages = built["result"].pages or 0
-            print(f"[optimize] {label}: {first_pages} pages against a {max_pages}-page budget — tightening")
-            # Identity stays out of prompts (module docstring): the struct we
-            # re-send has its stamped name/contact blanked; they are stamped
-            # back onto the result.
-            anon = dict(struct)
-            anon["name"] = ""
-            anon["contact_line"] = ""
-            tighter = _rewrite_struct(
-                anon, _TIGHTEN_INSTRUCTION.format(pages=first_pages, budget=max_pages),
-                master_skills, stems,
-            )
-            tight_struct = _sanitize_struct(tighter.get("resume")) if tighter else None
-            if (
-                tight_struct
-                and any(sec["items"] for sec in tight_struct["sections"])
-                and _factual_item_count(tight_struct) * 2 >= _factual_item_count(base_struct)
-                and not _fabricated_skills(tight_struct, allowed)
-            ):
-                _stamp_identity(tight_struct, identity)
-                tight_struct["link_style"] = struct.get("link_style", "url")
-                retry = _render_and_score(tight_struct, pdf_path, target_keywords)
-                if not retry.get("error") and (retry["result"].pages or 0) < first_pages:
-                    print(f"[optimize] {label}: tightened {first_pages} → {retry['result'].pages} page(s)")
-                    struct = tight_struct
-                    built = retry
-                    merged = max(0, kept_bullets - _bullet_count(tight_struct))
-                    changes = ([
-                        f"Tightened to fit {max_pages} page{'s' if max_pages != 1 else ''}"
-                        + (f": merged or shortened {merged} bullet{'s' if merged != 1 else ''}" if merged else "")
-                        + " — every role, project and skill kept"
-                    ] + changes)[:5]
-                else:
-                    print(f"[optimize] {label}: tightening did not fit ({(retry or {}).get('error') or (retry['result'].pages if retry else '?')}) — keeping the first")
+        if max_pages:
+            if (built["result"].pages or 0) > max_pages:
+                first_pages = built["result"].pages or 0
+                print(f"[optimize] {label}: {first_pages} pages against a {max_pages}-page budget — tightening the words")
+                # Identity stays out of prompts (module docstring): blanked
+                # before the call, stamped back after.
+                anon = dict(struct)
+                anon["name"] = ""
+                anon["contact_line"] = ""
+                tighter = _rewrite_struct(
+                    anon, _TIGHTEN_INSTRUCTION.format(pages=first_pages, budget=max_pages),
+                    master_skills, stems,
+                )
+                tight_struct = _sanitize_struct(tighter.get("resume")) if tighter else None
+                if (
+                    tight_struct
+                    and any(sec["items"] for sec in tight_struct["sections"])
+                    and _factual_item_count(tight_struct) * 2 >= _factual_item_count(base_struct)
+                    and not _fabricated_skills(tight_struct, allowed)
+                ):
+                    _stamp_identity(tight_struct, identity)
+                    tight_struct["link_style"] = struct.get("link_style", "url")
+                    retry = _render_and_score(tight_struct, pdf_path, target_keywords, fit_pages=max_pages)
+                    if not retry.get("error") and (retry["result"].pages or 0) < first_pages:
+                        merged = max(0, kept_bullets - _bullet_count(tight_struct))
+                        print(f"[optimize] {label}: tightened {first_pages} → {retry['result'].pages} page(s)")
+                        struct = tight_struct
+                        built = retry
+                        if merged:
+                            changes = ([
+                                f"Merged or shortened {merged} bullet{'s' if merged != 1 else ''} to fit "
+                                f"{max_pages} page{'s' if max_pages != 1 else ''} — every role, project and skill kept"
+                            ] + changes)[:5]
+                    else:
+                        print(f"[optimize] {label}: word-tightening did not help — keeping the first")
+
             over_budget = (built["result"].pages or 0) > max_pages
             if over_budget:
                 changes = ([
-                    f"Came out at {built['result'].pages} pages against your {max_pages}-page budget — "
-                    "trim an older entry or a project to fit"
+                    f"Came out at {built['result'].pages} pages against your {max_pages}-page budget even in a "
+                    "compact layout — this is more content than one page can hold; trim an older entry to fit"
+                ] + changes)[:5]
+            elif built["result"].density < 1.0:
+                changes = ([
+                    f"Set in a compact layout to fit {max_pages} page{'s' if max_pages != 1 else ''} — "
+                    "same content, tighter spacing"
                 ] + changes)[:5]
 
         # Below the floor, try the repairs that are ours to make and measure
@@ -668,7 +683,7 @@ def _one_variant(
             repairs = _repair_for_floor(struct, built["report"], master_skills)
             if repairs:
                 print(f"[optimize] {label}: {built['score']} is under the floor — repairing: {repairs}")
-                retry = _render_and_score(struct, pdf_path, target_keywords)
+                retry = _render_and_score(struct, pdf_path, target_keywords, fit_pages=max_pages)
                 if retry.get("error"):
                     print(f"[optimize] {label}: repaired render failed ({retry['error']}) — keeping the first")
                 elif retry["score"] > built["score"]:
@@ -768,7 +783,10 @@ def _one_variant(
     }, reason
 
 
-def _render_and_score(struct: dict, pdf_path: str, target_keywords: list[str] | None) -> dict:
+def _render_and_score(
+    struct: dict, pdf_path: str, target_keywords: list[str] | None,
+    fit_pages: int | None = None,
+) -> dict:
     """Render one struct, read the PDF back, score the text that came out.
 
     Returns either `{"error": str, "rendered": bool}` or a dict carrying the
@@ -781,7 +799,13 @@ def _render_and_score(struct: dict, pdf_path: str, target_keywords: list[str] | 
     artefact the employer actually receives, which is the only claim this
     product is allowed to make.
     """
-    result = render_pdf.render_fitted(struct, pdf_path, _MAX_PAGES)
+    # A user page budget gets a deeper density ladder than the default cap.
+    if fit_pages:
+        result = render_pdf.render_fitted(
+            struct, pdf_path, fit_pages, densities=(1.0, _COMPACT_DENSITY, _DENSE_DENSITY),
+        )
+    else:
+        result = render_pdf.render_fitted(struct, pdf_path, _MAX_PAGES)
     if not result.ok or not os.path.exists(pdf_path):
         return {"error": f"the document didn't render ({result.reason})", "rendered": False}
     if result.pages and result.pages > _MAX_PAGES:
