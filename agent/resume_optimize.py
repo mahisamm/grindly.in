@@ -460,6 +460,20 @@ def generate_variants(
         if variant:
             out.append(variant)
 
+    # A page budget is a promise: when at least one rebuild kept it, the ones
+    # that spilled are not offered — a two-page card under a one-page choice
+    # is exactly what the user said no to. They survive in `reasons`. Only
+    # when NOTHING fits does the flagged best ship, so the user always gets
+    # a document and always gets the truth.
+    if max_pages and any(not v.get("over_budget") for v in out):
+        for v in out:
+            if v.get("over_budget"):
+                reasons.append(
+                    f"{v['label']}: fit {v['pages']} pages against the {max_pages}-page "
+                    "budget — not offered, a sibling rebuild fit"
+                )
+        out = [v for v in out if not v.get("over_budget")]
+
     # Wins first, then ties, then (targeted only) the kept-worse rebuilds.
     out.sort(key=lambda v: (v["beats_baseline"], v["score"]), reverse=True)
     winners = [v for v in out if not v.get("materially_worse")]

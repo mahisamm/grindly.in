@@ -609,6 +609,7 @@ def test_a_page_budget_is_enforced_and_reported_honestly(model):
     out = ro.generate_variants(text, SENIOR_SKILLS, max_pages=1)
     assert out["page_budget"] == 1
     assert out["variants"], out["reasons"]
+    fits = [v for v in out["variants"] if not v["over_budget"]]
     for v in out["variants"]:
         assert v["page_budget"] == 1
         # the one honest invariant: the flag IS the measurement
@@ -617,6 +618,9 @@ def test_a_page_budget_is_enforced_and_reported_honestly(model):
             assert any("budget" in c.lower() for c in v["changes"]), v["changes"]
         else:
             assert v["pages"] == 1
+    # the budget promise: over-budget rebuilds ship ONLY when nothing fits
+    if fits:
+        assert all(not v["over_budget"] for v in out["variants"])
 
 
 @requires_chromium
