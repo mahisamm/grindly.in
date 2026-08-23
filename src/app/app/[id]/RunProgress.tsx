@@ -237,5 +237,23 @@ export function RunBanner({
     );
   }
 
+  if (run.status === "done") {
+    // The cards below are the real answer; this line is the handshake. It
+    // used to be nothing at all — the spinner vanished and the page refreshed
+    // — which on a slow connection read as "did it work?" for ten seconds.
+    const n = run.variantsMade;
+    return (
+      <p
+        role="status"
+        className="mt-6 rounded-lg border p-3 text-sm leading-snug"
+        style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}
+      >
+        Done — {n} rebuild{n === 1 ? "" : "s"} ready
+        {run.targetName ? ` for ${run.targetName}` : ""}. They are below
+        {run.targetId ? " on this company's card and in the Rewrite tab" : " in the Rewrite tab"}.
+      </p>
+    );
+  }
+
   return null;
 }

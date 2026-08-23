@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { report } from "@/lib/errors";
 import { requireApprovedUser, notFound, serverError } from "@/lib/auth";
 import { runAgent, type Report } from "@/lib/agent";
 import { reserve, refund } from "@/lib/quota";
@@ -62,7 +63,12 @@ export async function POST(_req: Request, { params }: Ctx) {
 
   await prisma.resume
     .update({ where: { id: resume.id }, data: { adviceJson: JSON.stringify(advice) } })
-    .catch((e) => console.error("[advice] save failed:", e));
+    .catch((e) => {
+      // The advice still goes back in this response, so the user sees it now
+      // — but it will be gone on reload. Visible to the admin, not just a log.
+      console.error("[advice] save failed:", e);
+      report({ source: "web", kind: "advice-save-failed", message: String(e), context: `resume:${id}` });
+    });
 
   await audit(user.id, "advice", resume.id);
   return NextResponse.json({ ok: true, advice, remaining: quota.remaining });

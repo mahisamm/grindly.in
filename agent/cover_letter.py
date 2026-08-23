@@ -274,7 +274,7 @@ def write(
 
     wants = ", ".join((requirements or [])[:12])
     prompt = (
-        f'Resume:\n"""\n{text[:6000]}\n"""\n\n'
+        f'Resume:\n"""\n{text[:24000]}\n"""\n\n'
         + (f"Company: {company}\n" if company else "")
         + (f"Role: {role}\n" if role else "")
         + (f"The role asks for: {wants}\n" if wants else "")

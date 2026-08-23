@@ -299,3 +299,31 @@ def test_the_derivational_fold_does_not_defend_a_different_technology():
     assert "kubernetes" in bad
     assert any(b.startswith("spring") for b in bad), bad
     assert "go" not in bad
+
+
+def test_the_rewriter_is_shown_the_whole_resume(monkeypatch):
+    """The rewrite prompt used to slice the resume JSON at 6,000 characters.
+    Extracted JSON runs ~1.4x the text, so any resume past ~4,400 characters
+    was handed to the model cut mid-object — later sections simply absent —
+    and the content-loss gate then rejected the model for "losing" bullets it
+    was never shown. Every two-page resume hit this. Pin: a 40-item struct's
+    JSON reaches the model intact, and the input cap is not the old 6,000."""
+    import json
+    struct = {"name": "", "contact_line": "", "sections": [
+        {"heading": "Experience", "items": [
+            {"head": f"Role {i} at Company {i}", "sub": f"Jan 20{10+i%10} - Dec 20{11+i%10}",
+             "bullets": [f"Did measurable thing number {i} with tools, raising a metric by {i}%"
+                         for _ in range(3)]}
+            for i in range(40)
+        ]},
+    ]}
+    seen = {}
+    def fake_ensemble(prompt, system="", n=3, timeout=60, temperature=0.3):
+        seen["prompt"] = prompt
+        return []  # no answer needed; we only inspect what was asked
+    monkeypatch.setattr(RO.llm_mod, "chat_ensemble", fake_ensemble)
+    RO._rewrite_struct(struct, "strategy", ["python"], RO._source_stems("x"))
+    blob = json.dumps(struct, ensure_ascii=False)
+    assert len(blob) > 6000, "fixture must exceed the old cap to prove anything"
+    assert blob in seen["prompt"], "the resume JSON reached the model cut short"
+    assert RO._PROMPT_JSON_CHARS >= 30000 and RO._PROMPT_TEXT_CHARS >= 20000

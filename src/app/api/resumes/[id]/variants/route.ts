@@ -215,7 +215,11 @@ export async function POST(req: Request, { params }: Ctx) {
         where: { id: run.id },
         data: { status: "cancelled", stage: "Superseded", finishedAt: new Date() },
       })
-      .catch(() => null);
+      .catch((e) =>
+        // Left "running", this row sits on the user's page as a spinner until
+        // the reaper finds it. Not fatal, but not silent either.
+        report({ source: "web", kind: "run-cancel-failed", message: String(e), context: `run:${run.id}` }),
+      );
     if (metered) await refund(user.id, "variantRuns");
     return NextResponse.json(
       {
@@ -428,28 +432,21 @@ async function executeRun({
   // the first: the user pressed the button again because they wanted a new
   // answer, and showing six cards from two runs side by side invites them to
   // download the older one. Files go with the rows.
+  // The old rows go in the SAME transaction as the new ones, and the old
+  // FILES go only after it commits. This used to delete rows and files first
+  // and create afterwards — so a failed save (the catch below) left the user
+  // with neither the new rebuilds nor the ones they had. Replace means
+  // replace, not "remove, then hopefully add".
   const superseded = await prisma.variant.findMany({
     where: { resumeId: resume.id, targetId: target.id },
     select: { id: true, file: true },
   });
-  if (superseded.length) {
-    await prisma.variant
-      .deleteMany({ where: { id: { in: superseded.map((v) => v.id) } } })
-      .catch((e) => console.error("[variants] supersede failed:", e));
-    for (const old of superseded) {
-      const dir = path.dirname(old.file);
-      if (dir && dir !== ".") {
-        await fsp
-          .rm(path.join(VARIANT_DIR, resume.id, dir), { recursive: true, force: true })
-          .catch(() => {});
-      }
-    }
-  }
 
   let created;
   try {
-    created = await prisma.$transaction(
-      result.variants.map((v) =>
+    const rows = await prisma.$transaction([
+      prisma.variant.deleteMany({ where: { id: { in: superseded.map((v) => v.id) } } }),
+      ...result.variants.map((v) =>
         prisma.variant.create({
           data: {
             resumeId: resume.id,
@@ -476,7 +473,18 @@ async function executeRun({
           },
         }),
       ),
-    );
+    ]);
+    // rows[0] is the deleteMany count; the rest are the created variants.
+    created = rows.slice(1) as Awaited<ReturnType<typeof prisma.variant.create>>[];
+    // Committed: now the superseded documents can go.
+    for (const old of superseded) {
+      const dir = path.dirname(old.file);
+      if (dir && dir !== ".") {
+        await fsp
+          .rm(path.join(VARIANT_DIR, resume.id, dir), { recursive: true, force: true })
+          .catch(() => {});
+      }
+    }
   } catch (e) {
     // The documents are on disk but nothing points at them. Charging for a
     // batch the user cannot reach would be charging for our own bug.

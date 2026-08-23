@@ -132,7 +132,11 @@ export function UnlockTarget({
             <p className="text-muted mt-1.5 max-w-xl text-sm leading-relaxed">
               Paid checkout is not available in your region yet — it is coming.
               Everything on the free tier — your score, the full report, gap reports
-              for any company, and your free rebuilds — works everywhere today.
+              for any company, and your free rebuilds — works everywhere today.{" "}
+              <a href="/pricing" className="text-brand underline">
+                See what the plans will cost in your currency
+              </a>
+              .
             </p>
           </div>
           <button

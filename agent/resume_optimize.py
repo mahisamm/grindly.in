@@ -111,6 +111,22 @@ _MIN_BASE_ITEMS = 3
 # a measurement error we no longer have.
 _SCORE_NOISE = 0
 
+# How much of the resume the model is SHOWN. These used to be 6,000 characters
+# for both the text and the JSON — and the JSON of an extracted resume runs
+# ~1.4x its text, so any resume past ~4,400 characters (most one-pagers, every
+# two-pager) had its rewrite input cut MID-JSON. The model was handed a broken
+# object with the later sections missing and, naturally, returned a resume
+# without them: the content-loss gate then rejected its own input's absence
+# as "tightening went too far". Found while chasing a targeted run that
+# produced nothing. 24k/40k characters is ~6k/10k tokens — inside every
+# current model's context with room for the instructions — and no real
+# resume approaches it; the cap bounds a pathological paste, never a normal one.
+_PROMPT_TEXT_CHARS = 24000
+_PROMPT_JSON_CHARS = 40000
+
+# Filled by _rewrite_struct, read by _one_variant — see the note at the loop.
+_REWRITE_DIAG: dict[str, int] = {"answers": 0, "parsed": 0}
+
 # Each strategy is (label, instruction). Order is display order before re-scoring
 # re-sorts by measured score. Three genuinely different levers, none of which
 # require inventing anything the candidate can't defend in an interview.
@@ -361,6 +377,22 @@ def generate_variants(
     # that is indistinguishable from a bad rewrite.
     print(f"[optimize] extracted {len(base_struct['sections'])} section(s), "
           f"{sum(len(s['items']) for s in base_struct['sections'])} item(s)")
+    # The scorer already counted the SOURCE's bullets from the raw text. If the
+    # structured extraction kept materially fewer, every rebuild will be
+    # thinner than the original — not because a model compressed it, but
+    # because it was never shown the rest. Said out loud in the audit trail,
+    # so a thin batch is explained instead of mistaken for a model's choice.
+    extraction_note: list[str] = []
+    try:
+        source_bullets = int(baseline_report["facts"]["structure"]["bullets"])
+    except (KeyError, TypeError, ValueError):
+        source_bullets = 0
+    extracted_bullets = _bullet_count(base_struct)
+    if source_bullets >= 6 and extracted_bullets < source_bullets * 0.6:
+        msg = (f"Reading your resume kept only {extracted_bullets} of its {source_bullets} "
+               f"bullet points — the rebuilds below are measured against what was read")
+        print(f"[optimize] {msg}")
+        extraction_note.append(msg)
 
     # How addresses print, carried on the struct every variant is built from.
     # Set once here rather than at each render site: a rebuild that printed its
@@ -381,7 +413,7 @@ def generate_variants(
     targeted = bool(target_keywords or (target_name or "").strip())
 
     out: list[dict] = []
-    reasons: list[str] = []
+    reasons: list[str] = list(extraction_note)
     total = len(strategies)
     for index, (label, instruction) in enumerate(strategies, start=1):
         _progress(f"Writing the {label.lower()} rebuild ({index} of {total})")
@@ -447,8 +479,16 @@ def _one_variant(
     """
     rewritten = _rewrite_struct(base_struct, instruction, master_skills, stems)
     if not rewritten:
-        print(f"[optimize] {label}: rewrite produced nothing")
-        return None, f"{label}: the rewrite step returned nothing (model unavailable)"
+        answers, parsed = _REWRITE_DIAG["answers"], _REWRITE_DIAG["parsed"]
+        if answers == 0:
+            why = "every model provider failed or was rate-limited — try again in a minute"
+        elif parsed == 0:
+            why = (f"{answers} model answer{'s' if answers != 1 else ''} came back but none "
+                   f"could be read as JSON (cut off or malformed)")
+        else:
+            why = "the model answers held no usable content"
+        print(f"[optimize] {label}: rewrite produced nothing — {why}")
+        return None, f"{label}: the rewrite step returned nothing ({why})"
     # _rewrite_struct already sanitized and ground-checked every candidate and
     # returned the richest SURVIVING one. Sanitizing the model's JSON matters
     # because a "bullets" that arrived as a plain string is otherwise iterated
@@ -910,7 +950,7 @@ def _extract_struct(text: str) -> dict | None:
     already does.
     """
     prompt = (
-        f'Resume text:\n"""\n{text[:6000]}\n"""\n\n'
+        f'Resume text:\n"""\n{text[:_PROMPT_TEXT_CHARS]}\n"""\n\n'
         "Return the structured JSON object described in your instructions."
     )
     # One round of provider calls, merged locally. chat_json_ensemble would do the
@@ -920,7 +960,8 @@ def _extract_struct(text: str) -> dict | None:
     # six provider calls and twice the latency for the same three answers.
     dicts = [
         parsed for parsed in (llm_mod._extract_json(raw)
-                              for raw in llm_mod.chat_ensemble(prompt, system=_EXTRACT_SYS, n=3, timeout=90)
+                              for raw in llm_mod.chat_ensemble(prompt, system=_EXTRACT_SYS, n=3, timeout=90,
+                                                               temperature=0.0)
                               if raw)
         if isinstance(parsed, dict)
     ]
@@ -972,7 +1013,7 @@ def _rewrite_struct(
         f"Strategy: {instruction}\n\n"
         f"The candidate's real, defensible skills (using anything outside this set "
         f"is forbidden): {skills_line}\n\n"
-        f"Resume JSON to rewrite:\n{json.dumps(base_struct, ensure_ascii=False)[:6000]}\n\n"
+        f"Resume JSON to rewrite:\n{json.dumps(base_struct, ensure_ascii=False)[:_PROMPT_JSON_CHARS]}\n\n"
         "Return the {\"resume\": ..., \"changes\": ...} JSON object."
     )
     # NOT chat_json_ensemble. That MERGES the N responses, and the merge votes on
@@ -1008,10 +1049,18 @@ def _rewrite_struct(
     # weigh what's left: a hallucinated response weighs ~0 and can't win.
     fallback = None
     best, best_weight = None, -1
+    # Why a rewrite came back empty is two different sentences to the user:
+    # "every provider failed" versus "the providers answered but none of the
+    # answers could be read as JSON" (cut off, malformed). The second used to
+    # be reported as the first. Counted here, read by _one_variant.
+    _REWRITE_DIAG["answers"] = 0
+    _REWRITE_DIAG["parsed"] = 0
     for raw in llm_mod.chat_ensemble(prompt, system=_REWRITE_SYS, n=3, timeout=120):
+        _REWRITE_DIAG["answers"] += 1
         parsed = llm_mod._extract_json(raw)
         if not isinstance(parsed, dict):
             continue
+        _REWRITE_DIAG["parsed"] += 1
         raw_struct = parsed.get("resume") if isinstance(parsed.get("resume"), dict) else parsed
         if not isinstance(raw_struct, dict):
             continue

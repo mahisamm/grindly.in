@@ -43,8 +43,9 @@ _UA = "grindly/1.0 (+https://grindly.in)"
 # resume enough to fit — which the content-loss gate then rejected for
 # losing 11 of 18 bullets. Seen live: a targeted run produced nothing at all
 # for a perfectly ordinary resume. The cap is a ceiling, not spend: a short
-# answer costs the same either way. Every current free model allows ≥8k out.
-_DEFAULT_MAX_TOKENS = max(256, int(os.environ.get("GRINDLY_LLM_MAX_TOKENS", "6144")))
+# answer costs the same either way. Every current free model allows ≥8k out;
+# 8192 gives a two-page resume's JSON room to come back whole.
+_DEFAULT_MAX_TOKENS = max(256, int(os.environ.get("GRINDLY_LLM_MAX_TOKENS", "8192")))
 _REASONING_MAX_TOKENS = max(
     _DEFAULT_MAX_TOKENS, int(os.environ.get("GRINDLY_LLM_REASONING_MAX_TOKENS", "8192"))
 )

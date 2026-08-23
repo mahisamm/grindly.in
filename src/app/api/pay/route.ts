@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { report } from "@/lib/errors";
 import { requireApprovedUser, badRequest, serverError } from "@/lib/auth";
 import { PRODUCTS, effectivePlan, isSku } from "@/lib/plans";
 import { createOrder } from "@/lib/payment";
@@ -87,9 +88,27 @@ export async function POST(req: Request) {
     return serverError("The payment provider did not respond. Try again in a moment.");
   }
 
-  await prisma.order
-    .update({ where: { id: order.id }, data: { providerOrderId: created.providerOrderId } })
-    .catch(() => null);
+  // This write is the ONLY link between our order row and the provider's.
+  // If it fails and we hand the provider order to the client anyway, the
+  // user can pay it, the webhook arrives with a providerOrderId no row
+  // carries, and nothing unlocks — money taken, product withheld. So a failed
+  // link refuses the checkout (the unpaid provider order is harmless) and
+  // says so where the admin will see it.
+  try {
+    await prisma.order.update({
+      where: { id: order.id },
+      data: { providerOrderId: created.providerOrderId },
+    });
+  } catch (e) {
+    report({
+      source: "web",
+      kind: "pay-link-failed",
+      message: String(e),
+      context: `order:${order.id} provider:${created.providerOrderId}`,
+    });
+    await prisma.order.update({ where: { id: order.id }, data: { status: "failed" } }).catch(() => null);
+    return serverError("We could not start the checkout. You have not been charged — try again in a moment.");
+  }
 
   await audit(user.id, "pay_start", order.id, sku);
   return NextResponse.json({

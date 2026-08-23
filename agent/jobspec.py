@@ -222,7 +222,7 @@ def _llm_extra_skills(jd_text: str, known: set[str]) -> list[str]:
         return []
     known_line = ", ".join(sorted(known)) if known else "(none)"
     prompt = (
-        f"Job description:\n\"\"\"\n{jd_text[:5000]}\n\"\"\"\n\n"
+        f"Job description:\n\"\"\"\n{jd_text[:12000]}\n\"\"\"\n\n"
         f"Already extracted, do not repeat: {known_line}\n\n"
         "Return the JSON array of any ADDITIONAL required skills stated in the text."
     )

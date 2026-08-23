@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
+import { report } from "@/lib/errors";
 import { requireApprovedUser, notFound, badRequest, serverError } from "@/lib/auth";
 import { runAgent, VARIANT_DIR, type Report } from "@/lib/agent";
 import { toJsonColumn } from "@/lib/jsonColumn";
@@ -100,27 +101,19 @@ export async function POST(_req: Request, { params }: Ctx) {
   // Replace the previous "Yours", the way a rebuild supersedes its own batch:
   // there is one current version of the document you are editing, and showing
   // two invites downloading the older one.
+  // Same transaction as the create, and the old FILES only after it commits —
+  // deleting first and creating second meant a failed save left the user
+  // with no "Yours" at all (see variants/route.ts for the same fix).
   const previous = await prisma.variant.findMany({
     where: { resumeId: resume.id, label: OWN_EDIT_LABEL },
     select: { id: true, file: true },
   });
-  if (previous.length) {
-    await prisma.variant
-      .deleteMany({ where: { id: { in: previous.map((v) => v.id) } } })
-      .catch((e) => console.error("[build] supersede failed:", e));
-    for (const old of previous) {
-      const dir = path.dirname(old.file);
-      if (dir && dir !== ".") {
-        await fsp
-          .rm(path.join(VARIANT_DIR, resume.id, dir), { recursive: true, force: true })
-          .catch(() => {});
-      }
-    }
-  }
 
   let variant;
   try {
-    variant = await prisma.variant.create({
+    [, variant] = await prisma.$transaction([
+      prisma.variant.deleteMany({ where: { id: { in: previous.map((v) => v.id) } } }),
+      prisma.variant.create({
       data: {
         resumeId: resume.id,
         targetId: null,
@@ -153,7 +146,16 @@ export async function POST(_req: Request, { params }: Ctx) {
         file: `${runDir}/variant-1.pdf`,
         bytes,
       },
-    });
+    }),
+    ]);
+    for (const old of previous) {
+      const dir = path.dirname(old.file);
+      if (dir && dir !== ".") {
+        await fsp
+          .rm(path.join(VARIANT_DIR, resume.id, dir), { recursive: true, force: true })
+          .catch(() => {});
+      }
+    }
   } catch (e) {
     await refund(user.id, "variantRuns");
     return serverError("We built it but could not save it.", `build:${resume.id}: ${String(e)}`);
@@ -176,6 +178,7 @@ export async function POST(_req: Request, { params }: Ctx) {
   // uploaded. Without this, someone fixes every finding, rebuilds, and the
   // report still lists the problems they just solved.
   const text = structToText(struct);
+  let resumeUpdateFailed = false;
   await prisma.resume
     .update({
       where: { id: resume.id },
@@ -190,7 +193,19 @@ export async function POST(_req: Request, { params }: Ctx) {
         adviceJson: toJsonColumn(null),
       },
     })
-    .catch((e) => console.error("[build] resume update failed:", e));
+    .catch((e) => {
+      // The variant is saved and the PDF exists, so this is not a refund — but
+      // the Scorecard would go on describing the previous draft. Said to the
+      // admin (error table) and to the user (the response), not just to a log.
+      console.error("[build] resume update failed:", e);
+      report({
+        source: "web",
+        kind: "build-resume-update-failed",
+        message: String(e),
+        context: `resume:${resume.id}`,
+      });
+      resumeUpdateFailed = true;
+    });
 
   await audit(user.id, "resume_built", resume.id, `score ${score}`);
 
@@ -202,5 +217,9 @@ export async function POST(_req: Request, { params }: Ctx) {
     baseline,
     pages: rendered.pages ?? null,
     report: rendered.report ?? null,
+    // Honest about the one thing that can fail after the document is safe:
+    // the editor surfaces this as "built, but the Scorecard may still show
+    // your previous draft — rebuild once more" rather than a clean success.
+    resumeUpdated: !resumeUpdateFailed,
   });
 }

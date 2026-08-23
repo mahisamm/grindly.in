@@ -136,7 +136,7 @@ def extract_skills(resume_text: str) -> list[str]:
         "no soft skills, no buzzwords, no sentences. "
         "Examples: [\"python\", \"react\", \"sql\", \"docker\", \"machine learning\"]"
     )
-    prompt = f"Resume:\n\"\"\"\n{text[:6000]}\n\"\"\"\n\nReturn the JSON array of skills only."
+    prompt = f"Resume:\n\"\"\"\n{text[:24000]}\n\"\"\"\n\nReturn the JSON array of skills only."
     out = chat_json_ensemble(prompt, system, n=3)
     if isinstance(out, list) and out:
         skills = []

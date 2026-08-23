@@ -214,6 +214,14 @@ export function Editor({
         return;
       }
       setBuilt({ score: data.score, grade: data.grade, report: data.report ?? null });
+      // The document is saved either way; this is the one follow-up write that
+      // can fail after it. Say so instead of letting the Scorecard quietly
+      // describe the previous draft.
+      if (data.resumeUpdated === false) {
+        setError(
+          "Built and saved — but the Scorecard could not be refreshed and may still describe your previous draft. Press Build once more.",
+        );
+      }
       router.refresh();
     } catch {
       setError("We could not reach the server.");
@@ -270,10 +278,15 @@ export function Editor({
               const existing = struct.sections.findIndex(
                 (sec) => sec.heading.trim().toLowerCase() === preset.heading.toLowerCase(),
               );
+              // At the section limit a NEW preset can't be added — disable it
+              // with the reason, the way the generic "Add a section" button
+              // already is. A button that swallows the click reads as broken.
+              const atLimit = existing < 0 && struct.sections.length >= LIMITS.sections;
               return (
                 <button
                   key={preset.heading}
                   type="button"
+                  disabled={atLimit}
                   onClick={() => {
                     if (existing >= 0) {
                       setFocusSection(existing);
@@ -290,11 +303,19 @@ export function Editor({
                   }}
                   className="cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors"
                   style={
-                    existing >= 0
-                      ? { borderColor: "var(--line-2)", color: "var(--muted)" }
-                      : { borderColor: "var(--cta)", color: "var(--brand)" }
+                    atLimit
+                      ? { borderColor: "var(--line-2)", color: "var(--muted)", opacity: 0.55, cursor: "not-allowed" }
+                      : existing >= 0
+                        ? { borderColor: "var(--line-2)", color: "var(--muted)" }
+                        : { borderColor: "var(--cta)", color: "var(--brand)" }
                   }
-                  title={existing >= 0 ? `Jump to ${preset.heading}` : `Add a ${preset.label} section`}
+                  title={
+                    atLimit
+                      ? `You have ${LIMITS.sections} sections — the most a resume can hold here`
+                      : existing >= 0
+                        ? `Jump to ${preset.heading}`
+                        : `Add a ${preset.label} section`
+                  }
                 >
                   {existing >= 0 ? preset.label : `+ ${preset.label}`}
                 </button>

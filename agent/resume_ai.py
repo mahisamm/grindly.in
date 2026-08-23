@@ -59,7 +59,7 @@ def _advise_uncached(resume_text: str) -> dict:
         return _fallback_advice("")
 
     prompt = (
-        f"Resume:\n\"\"\"\n{text[:6000]}\n\"\"\"\n\n"
+        f"Resume:\n\"\"\"\n{text[:24000]}\n\"\"\"\n\n"
         "Review this resume. Return valid JSON only."
     )
     # WHOLE responses, richest one wins. NOT chat_json_ensemble.
