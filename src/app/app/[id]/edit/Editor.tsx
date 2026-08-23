@@ -217,8 +217,10 @@ export function Editor({
       if (data.overBudget) {
         setError(
           `Built and scored — but it came out at ${data.pages} pages against your one-page ` +
-            "budget, even in a compact layout. These are your own words, so nothing was cut: " +
-            "trim an older entry or merge two bullets here in the editor, then build again.",
+            "budget, even in a compact layout. These are your own words, so nothing was cut. " +
+            "Two ways to one page: trim or merge bullets here and build again — or go to the " +
+            "Rewrite tab and press Rebuild, and the AI will tighten the wording to fit " +
+            "without dropping a single role, project or skill.",
         );
       }
       // The document is saved either way; this is the one follow-up write that
