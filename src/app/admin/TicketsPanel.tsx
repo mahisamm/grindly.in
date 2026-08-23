@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { TicketStatus } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { SessionUser } from "@/lib/auth";
 import { loadTicket, markSeen, actorOf } from "@/lib/tickets";
@@ -7,18 +7,34 @@ import { STATUS_LABEL, categoryLabel } from "@/lib/support";
 import { TicketThread } from "@/components/TicketThread";
 import { Section, StatGrid, Stat } from "./Panels";
 
-const FILTERS: { key: string; label: string; where: { status?: TicketStatus | { not: TicketStatus } } }[] = [
-  { key: "queue", label: "Needs a reply", where: { status: { not: "closed" } } },
-  { key: "open", label: "Open", where: { status: "open" } },
-  { key: "answered", label: "Answered", where: { status: "answered" } },
-  { key: "closed", label: "Closed", where: { status: "closed" } },
-  { key: "all", label: "All", where: {} },
+const FILTERS: { key: string; label: string; hint: string; where: Prisma.TicketWhereInput }[] = [
+  {
+    key: "queue",
+    label: "Needs a person",
+    hint: "Handed over to the team and the ball is with you — the user or the assistant spoke last.",
+    where: { status: { not: "closed" }, handledBy: "human", lastMessageBy: { not: "admin" } },
+  },
+  {
+    key: "human",
+    label: "With the team",
+    hint: "Every open conversation a person is handling.",
+    where: { status: { not: "closed" }, handledBy: "human" },
+  },
+  {
+    key: "assistant",
+    label: "With the assistant",
+    hint: "Open conversations the assistant is still handling — read, do not reply, unless you want to take over.",
+    where: { status: { not: "closed" }, handledBy: "assistant" },
+  },
+  { key: "closed", label: "Closed", hint: "Marked solved by either side.", where: { status: "closed" } },
+  { key: "all", label: "All", hint: "Everything.", where: {} },
 ];
 
 /**
- * The operator's ticket desk. List by default; `?t=<id>` opens one thread in
- * place, with the same chat component the user sees from their side. Opening
- * a thread marks it read for the operator, which is what clears the badge.
+ * The operator's support desk. The assistant has usually already talked to
+ * the user; what you read here first is its SUMMARY, not the thread. `?t=<id>`
+ * opens one conversation in place with the same chat component the user
+ * sees. Opening it marks it read; replying takes it over from the assistant.
  */
 export async function TicketsPanel({
   ticketId,
@@ -34,9 +50,9 @@ export async function TicketsPanel({
     const ticket = await loadTicket(ticketId, actor);
     if (!ticket) {
       return (
-        <Section title="Ticket" note="">
+        <Section title="Conversation" note="">
           <p className="text-muted mt-3 text-sm">
-            No such ticket.{" "}
+            No such conversation.{" "}
             <Link href="/admin?s=tickets" className="text-brand underline">
               Back to the list
             </Link>
@@ -47,51 +63,49 @@ export async function TicketsPanel({
     if (ticket.unread) await markSeen(ticketId, actor);
     return (
       <div className="bg-surface border-border rounded-xl border p-5 sm:p-6">
-        <TicketThread initial={ticket} viewer="admin" backHref="/admin?s=tickets" backLabel="All tickets" />
+        <TicketThread initial={ticket} viewer="admin" backHref="/admin?s=tickets" backLabel="All conversations" />
       </div>
     );
   }
 
   const filter = FILTERS.find((f) => f.key === status) ?? FILTERS[0];
-  const [rows, counts] = await Promise.all([
+  const [rows, queue, withTeam, withAssistant, closed] = await Promise.all([
     prisma.ticket.findMany({
-      where: filter.key === "queue" ? { status: { not: "closed" }, lastMessageBy: "user" } : filter.where,
+      where: filter.where,
       orderBy: { lastMessageAt: "desc" },
       take: 100,
       select: {
-        id: true, category: true, subject: true, status: true,
+        id: true, category: true, subject: true, status: true, handledBy: true, summary: true,
         lastMessageAt: true, lastMessageBy: true, adminSeenAt: true, createdAt: true,
         user: { select: { email: true } },
         _count: { select: { messages: true } },
       },
     }),
-    Promise.all([
-      prisma.ticket.count({ where: { status: { not: "closed" }, lastMessageBy: "user" } }),
-      prisma.ticket.count({ where: { status: "open" } }),
-      prisma.ticket.count({ where: { status: "answered" } }),
-      prisma.ticket.count({ where: { status: "closed" } }),
-    ]),
+    prisma.ticket.count({ where: FILTERS[0].where }),
+    prisma.ticket.count({ where: FILTERS[1].where }),
+    prisma.ticket.count({ where: FILTERS[2].where }),
+    prisma.ticket.count({ where: FILTERS[3].where }),
   ]);
-  const [queue, open, answered, closed] = counts;
 
   return (
     <Section
       title="Tickets"
-      note="Raised by users from Support in their account menu. 'Needs a reply' is every ticket where the user spoke last. Opening one marks it read; your reply sets it to Answered and emails the user; their reply reopens it."
+      note="Every conversation starts with Grindly's assistant, which answers from the product notes and writes you a running summary. It hands over when money, data, an unresolved bug, or a request for a person comes up — those land in 'Needs a person'. Your reply takes a conversation over for good and emails the user; their reply reopens it."
     >
       <StatGrid>
-        <Stat label="Needs a reply" value={queue} tone={queue > 0 ? "warn" : undefined} sub="user spoke last" />
-        <Stat label="Open" value={open} />
-        <Stat label="Answered" value={answered} sub="waiting on the user" />
+        <Stat label="Needs a person" value={queue} tone={queue > 0 ? "warn" : undefined} sub="handed over, ball with you" />
+        <Stat label="With the team" value={withTeam} sub="open, human-handled" />
+        <Stat label="With the assistant" value={withAssistant} sub="open, assistant-handled" />
         <Stat label="Closed" value={closed} />
       </StatGrid>
 
-      <div className="mt-4 flex flex-wrap gap-1.5" role="group" aria-label="Filter tickets">
+      <div className="mt-4 flex flex-wrap gap-1.5" role="group" aria-label="Filter conversations">
         {FILTERS.map((f) => (
           <Link
             key={f.key}
             href={`/admin?s=tickets&status=${f.key}`}
             aria-current={filter.key === f.key ? "page" : undefined}
+            title={f.hint}
             className="rounded-full border px-3 py-1.5 font-mono text-[10px] tracking-[0.08em] uppercase"
             style={
               filter.key === f.key
@@ -103,21 +117,25 @@ export async function TicketsPanel({
           </Link>
         ))}
       </div>
+      <p className="text-muted mt-2 text-xs">{filter.hint}</p>
 
       {rows.length === 0 ? (
         <p className="text-muted mt-4 text-sm">Nothing here.</p>
       ) : (
         <ul className="mt-3 divide-y rounded-xl border" style={{ borderColor: "var(--border)" }}>
           {rows.map((t) => {
-            const unread = t.lastMessageBy === "user" && (!t.adminSeenAt || t.adminSeenAt < t.lastMessageAt);
+            const unread =
+              t.handledBy === "human" &&
+              t.lastMessageBy !== "admin" &&
+              (!t.adminSeenAt || t.adminSeenAt < t.lastMessageAt);
             return (
               <li key={t.id}>
                 <Link
                   href={`/admin?s=tickets&t=${t.id}`}
-                  className="hover:bg-surface-2 flex flex-wrap items-center justify-between gap-2 px-4 py-3"
+                  className="hover:bg-surface-2 block px-4 py-3"
                 >
-                  <span className="min-w-0">
-                    <span className="flex items-center gap-2">
+                  <span className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
                       {unread && (
                         <span
                           aria-label="Unread"
@@ -127,19 +145,30 @@ export async function TicketsPanel({
                       )}
                       <span className={`truncate ${unread ? "font-semibold" : ""}`}>{t.subject}</span>
                     </span>
-                    <span className="text-muted mt-0.5 block font-mono text-[10px] tracking-[0.1em] uppercase">
-                      {t.user.email} · {categoryLabel(t.category)} · {t._count.messages} msg ·{" "}
-                      {t.lastMessageAt.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="rounded-full px-2 py-0.5 font-mono text-[10px] tracking-[0.1em] uppercase"
+                        style={{ background: "var(--surface-2)", color: "var(--muted)" }}
+                      >
+                        {t.status === "closed" ? "closed" : t.handledBy === "assistant" ? "assistant" : "team"}
+                      </span>
+                      <span
+                        className="rounded-full px-2 py-0.5 font-mono text-[10px] tracking-[0.1em] uppercase"
+                        style={{
+                          background: "var(--surface-2)",
+                          color: t.status === "closed" ? "var(--muted)" : "var(--brand)",
+                        }}
+                      >
+                        {STATUS_LABEL[t.status]}
+                      </span>
                     </span>
                   </span>
-                  <span
-                    className="rounded-full px-2.5 py-0.5 font-mono text-[10px] tracking-[0.1em] uppercase"
-                    style={{
-                      background: "var(--surface-2)",
-                      color: t.status === "closed" ? "var(--muted)" : "var(--brand)",
-                    }}
-                  >
-                    {STATUS_LABEL[t.status]}
+                  <span className="text-muted mt-1 block text-sm leading-snug">
+                    {t.summary || "No summary yet."}
+                  </span>
+                  <span className="text-muted mt-1 block font-mono text-[10px] tracking-[0.1em] uppercase">
+                    {t.user.email} · {categoryLabel(t.category)} · {t._count.messages} msg ·{" "}
+                    {t.lastMessageAt.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                   </span>
                 </Link>
               </li>

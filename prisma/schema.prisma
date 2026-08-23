@@ -56,9 +56,25 @@ enum TicketStatus {
   closed
 }
 
-/// What the ticket is about. Predefined so the support page can offer the
-/// right self-help first and the admin list can be filtered; `other` is the
-/// escape hatch.
+/// Who wrote a support message. Not `Role`: the assistant is neither a user
+/// nor an operator, and `lastMessageBy` needs to say "the bot spoke last".
+enum MessageAuthor {
+  user
+  admin
+  assistant
+}
+
+/// Who is carrying a conversation right now. Every conversation starts with
+/// the assistant; it becomes `human` when the assistant hands over or an
+/// operator replies, and stays human from then on.
+enum HandledBy {
+  assistant
+  human
+}
+
+/// What the ticket is about. Set by the assistant from the conversation (or
+/// `other` until it can tell); used for the admin filter, never shown as a
+/// picker to the user.
 enum TicketCategory {
   billing
   rebuild
@@ -730,14 +746,20 @@ model Ticket {
   userId String @map("user_id")
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  category TicketCategory
+  category TicketCategory @default(other)
   subject  String
   status   TicketStatus @default(open)
 
-  lastMessageAt DateTime  @default(now()) @map("last_message_at")
-  lastMessageBy Role      @default(user) @map("last_message_by")
-  userSeenAt    DateTime? @map("user_seen_at")
-  adminSeenAt   DateTime? @map("admin_seen_at")
+  /// The assistant's running one-paragraph summary of the problem — what the
+  /// operator reads instead of the whole thread.
+  summary     String?
+  handledBy   HandledBy @default(assistant) @map("handled_by")
+  escalatedAt DateTime? @map("escalated_at")
+
+  lastMessageAt DateTime      @default(now()) @map("last_message_at")
+  lastMessageBy MessageAuthor @default(user) @map("last_message_by")
+  userSeenAt    DateTime?     @map("user_seen_at")
+  adminSeenAt   DateTime?     @map("admin_seen_at")
 
   createdAt DateTime  @default(now()) @map("created_at")
   closedAt  DateTime? @map("closed_at")
@@ -745,6 +767,7 @@ model Ticket {
   messages TicketMessage[]
 
   @@index([status, lastMessageAt])
+  @@index([handledBy, status])
   @@index([userId, createdAt])
   @@map("tickets")
 }
@@ -754,10 +777,10 @@ model TicketMessage {
   ticketId String @map("ticket_id")
   ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
-  /// Who wrote it — the user, or an operator. `authorId` is informational
-  /// (which admin), never used for access decisions.
-  authorRole Role    @map("author_role")
-  authorId   String? @map("author_id")
+  /// Who wrote it — the user, an operator, or the assistant. `authorId` is
+  /// informational (which admin), never used for access decisions.
+  authorRole MessageAuthor @map("author_role")
+  authorId   String?       @map("author_id")
   body       String
 
   createdAt DateTime @default(now()) @map("created_at")

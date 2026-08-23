@@ -94,6 +94,24 @@ export function AccountMenu({
             </p>
           </div>
 
+          {/* The ONE admin thing in the user perspective: a door to the other
+              site. Separated and first, so it never reads as one more item in
+              the user's own list — everything admin lives behind it. */}
+          {isAdmin && (
+            <div className="border-border border-b px-1 py-2">
+              <a
+                href="/admin"
+                role="menuitem"
+                onClick={() => setOpen(false)}
+                className="flex items-center justify-between rounded-lg px-3 py-2.5 text-sm font-semibold"
+                style={{ background: "var(--cta)", color: "var(--on-cta)" }}
+              >
+                Go to admin dashboard
+                <span aria-hidden>→</span>
+              </a>
+            </div>
+          )}
+
           <div className="mt-1 flex flex-col">
             <MenuLink href="/app" onPick={() => setOpen(false)}>
               Dashboard
@@ -109,13 +127,13 @@ export function AccountMenu({
                 Get a Season Pass
               </MenuLink>
             )}
-            {isAdmin && (
-              <MenuLink href="/admin" onPick={() => setOpen(false)}>
-                Admin dashboard
-              </MenuLink>
-            )}
+          </div>
+
+          {/* Help, and only two doors to it: a conversation (the assistant,
+              then a person), or a one-way note with our address on it. */}
+          <div className="border-border mt-1 flex flex-col border-t pt-1">
             <MenuLink href="/app/support" onPick={() => setOpen(false)}>
-              Support &amp; tickets
+              Support
             </MenuLink>
             <button
               type="button"
@@ -126,11 +144,8 @@ export function AccountMenu({
               }}
               className="text-muted hover:text-ink hover:bg-surface-2 w-full cursor-pointer rounded-lg px-3 py-2 text-left text-sm"
             >
-              Send feedback
+              Contact &amp; feedback
             </button>
-            <MenuLink href="/contact" onPick={() => setOpen(false)}>
-              Help &amp; contact
-            </MenuLink>
           </div>
 
           <div className="border-border mt-1 border-t pt-1">

@@ -17,7 +17,7 @@ export default async function TicketPage({ params }: { params: Promise<{ id: str
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-8 sm:px-6 sm:py-10">
-      <TicketThread initial={ticket} viewer="user" backHref="/app/support" backLabel="All tickets" />
+      <TicketThread initial={ticket} viewer="user" backHref="/app/support" backLabel="All conversations" />
     </div>
   );
 }

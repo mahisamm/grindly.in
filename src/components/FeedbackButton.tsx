@@ -10,7 +10,7 @@ export function FeedbackButton({ className = "btn text-sm" }: { className?: stri
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} className={className}>
-        Send feedback
+        Contact &amp; feedback
       </button>
       <FeedbackDialog open={open} onClose={() => setOpen(false)} />
     </>

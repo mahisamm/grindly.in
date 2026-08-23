@@ -2,32 +2,25 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Role, TicketCategory, TicketStatus } from "@prisma/client";
+import type { MessageAuthor } from "@prisma/client";
+import type { TicketView } from "@/lib/tickets";
 import { STATUS_LABEL, TICKET_LIMITS, categoryLabel } from "@/lib/support";
-
-export type ThreadView = {
-  id: string;
-  category: TicketCategory;
-  subject: string;
-  status: TicketStatus;
-  createdAt: string;
-  lastMessageAt: string;
-  lastMessageBy: Role;
-  closedAt: string | null;
-  user: { id: string; email: string; name: string | null };
-  messages: { id: string; authorRole: Role; body: string; createdAt: string }[];
-};
 
 const POLL_MS = 4000;
 
 /**
- * The conversation. Used on both sides — the user's /app/support/[id] and the
- * admin's ticket panel — with `viewer` deciding which bubbles are "you".
+ * The support conversation — the same component on both sides.
  *
- * Polls every few seconds while open so a reply from the other side appears
- * without a refresh; this is the same lightweight pattern the rebuild banner
- * uses, and it means a user and the operator can genuinely talk in near real
- * time without a socket to keep alive.
+ *   viewer="user"  on /app/support/[id] (and /app/support/new with no ticket
+ *                  yet: the first message starts one and the page moves to
+ *                  its address).
+ *   viewer="admin" inside the admin Tickets section.
+ *
+ * Three voices: the user, Grindly's assistant, and a person on the team. The
+ * assistant answers inline (the send returns with its reply); "Talk to a
+ * person" hands over. Polls every few seconds while open, so a reply from
+ * the other side appears without a refresh — user and operator can genuinely
+ * talk in near real time without a socket to keep alive.
  */
 export function TicketThread({
   initial,
@@ -35,74 +28,107 @@ export function TicketThread({
   backHref,
   backLabel,
 }: {
-  initial: ThreadView;
-  viewer: Role;
+  initial: TicketView | null;
+  viewer: "user" | "admin";
   backHref: string;
   backLabel: string;
 }) {
   const router = useRouter();
-  const [ticket, setTicket] = useState<ThreadView>(initial);
+  const [ticket, setTicket] = useState<TicketView | null>(initial);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
-  const lastCount = useRef(initial.messages.length);
+  const lastCount = useRef(initial?.messages.length ?? 0);
 
+  // The id is the only thing polling depends on; holding it apart from the
+  // ticket object keeps the callback stable across every poll's setTicket.
+  const ticketId = ticket?.id ?? null;
   const refresh = useCallback(async () => {
+    if (!ticketId) return;
     try {
-      const res = await fetch(`/api/tickets/${initial.id}`, { cache: "no-store" });
+      const res = await fetch(`/api/tickets/${ticketId}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
-      if (data?.ticket) setTicket(data.ticket as ThreadView);
+      if (data?.ticket) setTicket(data.ticket as TicketView);
     } catch {
       /* next tick */
     }
-  }, [initial.id]);
+  }, [ticketId]);
 
   useEffect(() => {
+    if (!ticketId) return;
     const t = setInterval(refresh, POLL_MS);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, ticketId]);
 
   // Scroll to the newest message only when one ARRIVES — not on every poll,
   // which would yank the page out from under someone reading an older one.
   useEffect(() => {
-    if (ticket.messages.length > lastCount.current) {
+    const n = ticket?.messages.length ?? 0;
+    if (n > lastCount.current || thinking) {
       endRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
-    lastCount.current = ticket.messages.length;
-  }, [ticket.messages.length]);
+    lastCount.current = n;
+  }, [ticket?.messages.length, thinking]);
 
-  async function send(e: React.FormEvent) {
-    e.preventDefault();
+  async function send(e?: React.FormEvent) {
+    e?.preventDefault();
     const body = draft.trim();
-    if (!body) return;
+    if (!body || busy) return;
     setBusy(true);
     setError(null);
+    const willThink = viewer === "user" && (!ticket || ticket.handledBy === "assistant") && ticket?.status !== "closed";
+    if (willThink) setThinking(true);
     try {
-      const res = await fetch(`/api/tickets/${initial.id}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: body }),
-      });
+      const res = ticket
+        ? await fetch(`/api/tickets/${ticket.id}/messages`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: body }),
+          })
+        : await fetch("/api/tickets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: body }),
+          });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data?.error ?? "Could not send that.");
         return;
       }
-      setTicket(data.ticket as ThreadView);
       setDraft("");
+      setTicket(data.ticket as TicketView);
+      if (!ticket && data.ticket?.id) {
+        // The conversation now has an address; the list page will show it.
+        router.replace(`/app/support/${data.ticket.id}`);
+      }
     } catch {
       setError("We could not reach the server.");
+    } finally {
+      setBusy(false);
+      setThinking(false);
+    }
+  }
+
+  async function askHuman() {
+    if (!ticket) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/tickets/${ticket.id}/human`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.ticket) setTicket(data.ticket as TicketView);
     } finally {
       setBusy(false);
     }
   }
 
   async function close() {
+    if (!ticket) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/tickets/${initial.id}/close`, { method: "POST" });
+      const res = await fetch(`/api/tickets/${ticket.id}/close`, { method: "POST" });
       if (res.ok) {
         await refresh();
         router.refresh();
@@ -112,70 +138,138 @@ export function TicketThread({
     }
   }
 
-  const closed = ticket.status === "closed";
-  const you = viewer;
+  const closed = ticket?.status === "closed";
+  const withAssistant = !!ticket && ticket.handledBy === "assistant";
+
+  function who(author: MessageAuthor): string {
+    if (author === "assistant") return "Grindly assistant";
+    if (author === "admin") return viewer === "admin" ? "You" : "Grindly team";
+    return viewer === "user" ? "You" : "User";
+  }
+  function mine(author: MessageAuthor): boolean {
+    return viewer === "user" ? author === "user" : author === "admin";
+  }
 
   return (
     <div>
       <a href={backHref} className="text-muted hover:text-ink inline-flex min-h-6 items-center text-sm">
         ← {backLabel}
       </a>
+
       <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="font-display text-2xl font-bold break-words">{ticket.subject}</h1>
+          <h1 className="font-display text-2xl font-bold break-words">
+            {ticket ? ticket.subject : "New conversation"}
+          </h1>
           <p className="text-muted mt-1 font-mono text-[10px] tracking-[0.1em] uppercase">
-            {categoryLabel(ticket.category)} · opened {new Date(ticket.createdAt).toLocaleString()}
-            {viewer === "admin" ? ` · ${ticket.user.email}` : ""}
+            {ticket
+              ? `${categoryLabel(ticket.category)} · started ${new Date(ticket.createdAt).toLocaleString()}${
+                  viewer === "admin" ? ` · ${ticket.user.email}` : ""
+                }`
+              : "Grindly's assistant answers first; a person steps in when it matters"}
           </p>
         </div>
-        <span
-          className="rounded-full px-2.5 py-1 font-mono text-[10px] tracking-[0.1em] uppercase"
-          style={{ background: "var(--surface-2)", color: closed ? "var(--muted)" : "var(--brand)" }}
-        >
-          {STATUS_LABEL[ticket.status]}
-        </span>
+        {ticket && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className="rounded-full px-2.5 py-1 font-mono text-[10px] tracking-[0.1em] uppercase"
+              style={{ background: "var(--surface-2)", color: "var(--muted)" }}
+            >
+              {closed ? "closed" : withAssistant ? "with the assistant" : "with the team"}
+            </span>
+            <span
+              className="rounded-full px-2.5 py-1 font-mono text-[10px] tracking-[0.1em] uppercase"
+              style={{ background: "var(--surface-2)", color: closed ? "var(--muted)" : "var(--brand)" }}
+            >
+              {STATUS_LABEL[ticket.status]}
+            </span>
+          </div>
+        )}
       </div>
 
+      {viewer === "admin" && ticket && (
+        <div
+          className="mt-4 rounded-xl border p-4 text-sm leading-relaxed"
+          style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}
+        >
+          <p className="text-muted font-mono text-[10px] tracking-[0.12em] uppercase">Assistant&rsquo;s summary</p>
+          <p className="mt-1">{ticket.summary || "No summary yet — the assistant has not answered."}</p>
+          {withAssistant && !closed && (
+            <p className="text-muted mt-2 text-xs">
+              The assistant is handling this. Replying takes it over — the assistant goes quiet and the user
+              is emailed that a person answered.
+            </p>
+          )}
+        </div>
+      )}
+
       <ol className="mt-6 flex flex-col gap-3" aria-live="polite">
-        {ticket.messages.map((m) => {
-          const mine = m.authorRole === you;
+        {!ticket && (
+          <li className="flex justify-start">
+            <div
+              className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed sm:max-w-[70%]"
+              style={{ background: "var(--surface-2)", color: "var(--ink-color)" }}
+            >
+              <p>
+                Hi — tell me what is going on in your own words. Something that failed, a score that
+                surprised you, a payment, anything. If it is beyond me I will hand you to a person on the
+                team, and you can ask for one at any point.
+              </p>
+              <p className="mt-1 font-mono text-[10px] tracking-[0.08em] uppercase opacity-70">Grindly assistant</p>
+            </div>
+          </li>
+        )}
+        {ticket?.messages.map((m) => {
+          const own = mine(m.authorRole);
           return (
-            <li key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+            <li key={m.id} className={`flex ${own ? "justify-end" : "justify-start"}`}>
               <div
                 className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap sm:max-w-[70%]"
                 style={
-                  mine
+                  own
                     ? { background: "var(--cta)", color: "var(--on-cta)" }
-                    : { background: "var(--surface-2)", color: "var(--ink-color)" }
+                    : m.authorRole === "assistant"
+                      ? { background: "var(--surface-2)", color: "var(--ink-color)" }
+                      : { background: "var(--surface)", color: "var(--ink-color)", border: "1px solid var(--border)" }
                 }
               >
                 <p>{m.body}</p>
-                <p
-                  className="mt-1 font-mono text-[10px] tracking-[0.08em] uppercase opacity-70"
-                >
-                  {m.authorRole === "admin"
-                    ? viewer === "admin" ? "You" : "Grindly support"
-                    : viewer === "admin" ? "User" : "You"}{" "}
-                  · {new Date(m.createdAt).toLocaleString()}
+                <p className="mt-1 font-mono text-[10px] tracking-[0.08em] uppercase opacity-70">
+                  {who(m.authorRole)} · {new Date(m.createdAt).toLocaleString()}
                 </p>
               </div>
             </li>
           );
         })}
+        {thinking && (
+          <li className="flex justify-start" aria-label="Assistant is typing">
+            <div
+              className="rounded-2xl px-4 py-2.5 text-sm"
+              style={{ background: "var(--surface-2)", color: "var(--muted)" }}
+            >
+              <span className="typing-dots" aria-hidden>
+                <span />
+                <span />
+                <span />
+              </span>
+              <span className="sr-only">Assistant is typing</span>
+            </div>
+          </li>
+        )}
         <div ref={endRef} />
       </ol>
 
-      {closed ? (
+      {closed && (
         <div
           className="mt-6 rounded-xl border p-4 text-sm"
           style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}
         >
-          This ticket is closed.{" "}
+          This conversation is closed.{" "}
           {viewer === "user"
-            ? "If it is not actually solved, just reply below — that reopens it."
-            : "A reply from the user reopens it."}
+            ? "If it is not actually solved, just write below — that reopens it."
+            : "A message from the user reopens it."}
         </div>
-      ) : null}
+      )}
 
       <form onSubmit={send} className="mt-4">
         <label htmlFor="ticket-reply" className="sr-only">
@@ -187,10 +281,10 @@ export function TicketThread({
           onChange={(e) => setDraft(e.target.value)}
           rows={3}
           maxLength={TICKET_LIMITS.message}
-          placeholder={viewer === "admin" ? "Reply to the user…" : "Write a reply…"}
+          placeholder={viewer === "admin" ? "Reply as a person on the team…" : "Write here…"}
           className="field w-full text-sm"
           onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === "Enter") void send(e);
+            if ((e.ctrlKey || e.metaKey) && e.key === "Enter") void send();
           }}
         />
         {error && (
@@ -202,9 +296,14 @@ export function TicketThread({
           <button type="submit" disabled={busy || !draft.trim()} className="btn btn-primary text-sm">
             {busy ? "Sending…" : "Send"}
           </button>
-          {!closed && (
+          {viewer === "user" && ticket && withAssistant && !closed && (
+            <button type="button" onClick={askHuman} disabled={busy} className="btn text-sm">
+              Talk to a person
+            </button>
+          )}
+          {ticket && !closed && (
             <button type="button" onClick={close} disabled={busy} className="btn text-sm">
-              {viewer === "admin" ? "Close ticket" : "Mark solved"}
+              {viewer === "admin" ? "Close conversation" : "Mark solved"}
             </button>
           )}
           <span className="text-muted text-xs">Ctrl/⌘ + Enter sends.</span>

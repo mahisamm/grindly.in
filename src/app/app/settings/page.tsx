@@ -134,12 +134,13 @@ export default async function SettingsPage() {
       <section className="bg-surface border-border mt-6 rounded-xl border p-6">
         <h2 className="font-display text-lg font-semibold">Help</h2>
         <p className="text-muted mt-2 text-sm leading-relaxed">
-          A ticket is a conversation with us — we reply there and email you when we do.
-          Feedback is a one-way note: anything you noticed, no answer expected.
+          <b>Support</b> is a conversation: the assistant answers straight away and a person
+          steps in when it matters. <b>Contact &amp; feedback</b> is a one-way note — anything
+          you noticed, no answer expected — with our email on it.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <Link href="/app/support" className="btn btn-primary inline-flex text-sm">
-            Support &amp; tickets
+            Support
           </Link>
           <FeedbackButton />
         </div>
@@ -149,10 +150,11 @@ export default async function SettingsPage() {
         <section className="bg-surface border-border mt-6 rounded-xl border p-6">
           <h2 className="font-display text-lg font-semibold">Admin</h2>
           <p className="text-muted mt-2 text-sm">
-            You have an admin account on this server.
+            You have an admin account. Everything for running the service lives on a separate
+            dashboard — this app is the user&rsquo;s view of Grindly.
           </p>
-          <Link href="/admin" className="btn mt-4 inline-flex">
-            Open the admin page
+          <Link href="/admin" className="btn btn-primary mt-4 inline-flex">
+            Go to admin dashboard →
           </Link>
         </section>
       )}

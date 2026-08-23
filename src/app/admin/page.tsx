@@ -5,7 +5,7 @@ import { currentUser, type SessionUser } from "@/lib/auth";
 import { describe } from "@/lib/config";
 import { formatAmount, LIMITS, PRODUCTS, formatLimit } from "@/lib/plans";
 import {
-  adminStats, signupsByDay, conversionStats, trafficStats, revenueSeries, ticketStats,
+  adminStats, signupsByDay, conversionStats, trafficStats, revenueSeries, ticketStats, strugglingNow,
 } from "@/lib/adminStats";
 import { readAdminSettings } from "@/lib/adminSettings";
 import { classifyPending } from "@/lib/feedback";
@@ -71,26 +71,21 @@ export default async function AdminPage({
 
   return (
     <main className="mx-auto max-w-7xl px-5 py-6 sm:px-6 sm:py-8">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="font-display text-2xl font-bold sm:text-3xl">Admin</h1>
-          <p className="text-muted mt-1 font-mono text-[10px] tracking-[0.1em] uppercase">
-            {user.email} · {caps.env}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
+      {/* The bar above (admin/layout.tsx) carries identity and the door
+          back; this row is only what needs attention right now. */}
+      {(stats.health.unresolvedErrors > 0 || pendingCount > 0 || tickets.awaitingYou > 0) && (
+        <div className="mb-5 flex flex-wrap items-center gap-2">
           {stats.health.unresolvedErrors > 0 && (
             <StatusPill tone="bad">{stats.health.unresolvedErrors} errors</StatusPill>
           )}
-          {pendingCount > 0 && <StatusPill tone="warn">{pendingCount} waiting</StatusPill>}
+          {pendingCount > 0 && <StatusPill tone="warn">{pendingCount} waiting for approval</StatusPill>}
           {tickets.awaitingYou > 0 && (
-            <StatusPill tone="warn">{tickets.awaitingYou} ticket{tickets.awaitingYou === 1 ? "" : "s"}</StatusPill>
+            <StatusPill tone="warn">
+              {tickets.awaitingYou} conversation{tickets.awaitingYou === 1 ? "" : "s"} need a person
+            </StatusPill>
           )}
-          <Link href="/app" className="text-muted hover:text-ink text-sm whitespace-nowrap">
-            ← Back to the app
-          </Link>
         </div>
-      </header>
+      )}
 
       <div className="flex flex-col gap-6 lg:flex-row lg:gap-10">
         <AdminNav active={section} waiting={pendingCount} tickets={tickets.unread} />
@@ -98,6 +93,7 @@ export default async function AdminPage({
           {section === "dashboard" && (
             <>
               <Conversion />
+              <Struggling />
               <Overview stats={stats} signups={signups} days={days} />
             </>
           )}
@@ -137,6 +133,40 @@ type Caps = ReturnType<typeof describe>;
 async function Conversion() {
   const c = await conversionStats();
   return <ConversionRow c={c} />;
+}
+
+/* ── what users are struggling with (dashboard) ─────────────────── */
+
+async function Struggling() {
+  const rows = await strugglingNow(6);
+  return (
+    <Section
+      title="What users are struggling with"
+      note="The assistant's one-paragraph summary of every conversation that currently needs a person — written for you, so you never have to read a thread to know what it is about. Empty is good."
+    >
+      {rows.length === 0 ? (
+        <p className="text-muted mt-3 text-sm">Nothing is waiting on a person right now.</p>
+      ) : (
+        <ul className="mt-3 divide-y rounded-xl border" style={{ borderColor: "var(--border)" }}>
+          {rows.map((t) => (
+            <li key={t.id} className="px-4 py-3">
+              <Link href={`/admin?s=tickets&t=${t.id}`} className="hover:text-brand block">
+                <span className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="font-medium">{t.subject}</span>
+                  <span className="text-muted font-mono text-[10px] tracking-[0.1em] uppercase">
+                    {t.user.email} · {t.category} · {t.lastMessageBy === "admin" ? "you spoke last" : "waiting on you"}
+                  </span>
+                </span>
+                <span className="text-muted mt-1 block text-sm leading-snug">
+                  {t.summary || "No summary yet."}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
 }
 
 /* ── traffic + revenue (analytics) ──────────────────────────────── */

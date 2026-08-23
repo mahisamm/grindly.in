@@ -516,6 +516,29 @@ def cmd_classify_feedback(payload: dict) -> dict:
     }
 
 
+def cmd_support_chat(payload: dict) -> dict:
+    """One support-assistant turn. See support_chat.py."""
+    import support_chat
+
+    raw_msgs = payload.get("messages")
+    messages = []
+    if isinstance(raw_msgs, list):
+        for m in raw_msgs[:40]:
+            if isinstance(m, dict) and str(m.get("content") or "").strip():
+                messages.append({
+                    "role": str(m.get("role") or "user")[:12],
+                    "content": str(m.get("content"))[:4000],
+                })
+    if not messages:
+        return _fail("messages required")
+    result = support_chat.answer(
+        messages,
+        knowledge=str(payload.get("knowledge") or ""),
+        user_context=str(payload.get("user_context") or ""),
+    )
+    return {"ok": True, **result}
+
+
 COMMANDS = {
     "ingest": cmd_ingest,
     "skills": cmd_skills,
@@ -530,6 +553,7 @@ COMMANDS = {
     "cover": cmd_cover,
     "health": cmd_health,
     "classify_feedback": cmd_classify_feedback,
+    "support_chat": cmd_support_chat,
 }
 
 

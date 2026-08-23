@@ -4,12 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
 /**
- * Feedback, in two shapes built on one form.
+ * "Contact & feedback", in two shapes built on one form.
  *
  *   <FeedbackDialog open onClose />  — the form as a centred modal. Opened
- *     from the Account menu ("Send feedback") inside the signed-in app, where
- *     it used to be a floating corner button that competed with the phone nav
- *     and read as "report a complaint" rather than "tell us anything".
+ *     from the Account menu inside the signed-in app, where it used to be a
+ *     floating corner button that competed with the phone nav and read as
+ *     "report a complaint" rather than "tell us anything". It carries our
+ *     email address, so it is also the contact card.
  *   <ReportProblem />                — the old floating trigger + the same
  *     form, still mounted on the pages with no account menu (/contact, the
  *     approval-pending page).
@@ -75,11 +76,15 @@ function FeedbackForm({ onDone, autoFocus }: { onDone: () => void; autoFocus: bo
 
   return (
     <form onSubmit={submit}>
-      <p className="text-sm font-medium">Tell us anything</p>
+      <p className="text-sm font-medium">Contact &amp; feedback</p>
       <p className="text-muted mt-1 text-xs leading-relaxed">
-        Something that looked wrong, something confusing, something you liked, something
-        you wish it did. We record the page you are on, so you do not have to describe it.
-        Need an answer back? Raise a ticket instead — that one is a conversation.
+        A one-way note: something that looked wrong, something confusing, something you liked,
+        something you wish it did. We record the page you are on, so you do not have to describe
+        it. Need an answer back? Use <b>Support</b> — that one is a conversation. Prefer email?{" "}
+        <a href="mailto:mahendharsammeta21@gmail.com" className="text-brand underline">
+          mahendharsammeta21@gmail.com
+        </a>
+        .
       </p>
       <label htmlFor="feedback-message" className="sr-only">
         Your feedback
@@ -105,7 +110,7 @@ function FeedbackForm({ onDone, autoFocus }: { onDone: () => void; autoFocus: bo
           disabled={busy || message.trim().length < 10}
           className="btn btn-primary flex-1 justify-center text-sm"
         >
-          {busy ? "Sending…" : "Send feedback"}
+          {busy ? "Sending…" : "Send"}
         </button>
         <button type="button" onClick={onDone} className="btn text-sm">
           Cancel
@@ -136,7 +141,7 @@ export function FeedbackDialog({ open, onClose }: { open: boolean; onClose: () =
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Send feedback"
+        aria-label="Contact and feedback"
         className="bg-surface border-border w-full max-w-md rounded-2xl border p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
@@ -164,14 +169,14 @@ export function ReportProblem() {
       {open && (
         <div
           role="dialog"
-          aria-label="Send feedback"
+          aria-label="Contact and feedback"
           className="bg-surface border-border mb-2 w-[min(22rem,calc(100vw-2rem))] rounded-xl border p-4 shadow-lg"
         >
           <FeedbackForm onDone={() => setOpen(false)} autoFocus />
         </div>
       )}
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="report-problem__trigger">
-        {open ? "Close" : "Send feedback"}
+        {open ? "Close" : "Contact & feedback"}
       </button>
     </div>
   );

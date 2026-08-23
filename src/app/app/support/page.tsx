@@ -7,13 +7,10 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Support — Grindly" };
 
 /**
- * The user's support desk: their tickets, and the form to raise one.
- *
- * The form leads with self-help for the chosen category BEFORE the text box
- * (see lib/support.ts). Most "it failed" tickets are resolved by the sentence
- * that says "press Rebuild once more — you were not charged"; showing that
- * first is faster than any reply, and the tickets that do get raised are the
- * ones that genuinely need a person.
+ * The user's support desk: their conversations, and the door to a new one.
+ * There is no form and no category picker — the assistant IS the front door
+ * (lib/tickets.ts), carrying the product notes in lib/support.ts and handing
+ * over to a person when it matters.
  */
 export default async function SupportPage() {
   const user = await currentUser();
@@ -24,7 +21,7 @@ export default async function SupportPage() {
     orderBy: { lastMessageAt: "desc" },
     take: 50,
     select: {
-      id: true, category: true, subject: true, status: true,
+      id: true, category: true, subject: true, status: true, handledBy: true,
       createdAt: true, lastMessageAt: true, lastMessageBy: true, userSeenAt: true,
     },
   });
@@ -36,9 +33,10 @@ export default async function SupportPage() {
       </Link>
       <h1 className="font-display mt-3 text-2xl font-bold sm:text-3xl">Support</h1>
       <p className="text-muted mt-2 max-w-2xl leading-relaxed">
-        A ticket is a conversation with us — we reply here, and you get an email when we
-        do. For a quick note that needs no answer, use <b>Send feedback</b> in the account
-        menu instead.
+        Talk to us. Grindly&rsquo;s assistant answers straight away, knows the product, and hands
+        you to a person on the team when it matters — or the moment you ask. You get an email
+        when a person replies. For a one-way note that needs no answer, use{" "}
+        <b>Contact &amp; feedback</b> in the account menu.
       </p>
       <SupportDesk
         tickets={tickets.map((t) => ({
@@ -46,9 +44,10 @@ export default async function SupportPage() {
           category: t.category,
           subject: t.subject,
           status: t.status,
+          handledBy: t.handledBy,
           createdAt: t.createdAt.toISOString(),
           lastMessageAt: t.lastMessageAt.toISOString(),
-          unread: t.lastMessageBy === "admin" && (!t.userSeenAt || t.userSeenAt < t.lastMessageAt),
+          unread: t.lastMessageBy !== "user" && (!t.userSeenAt || t.userSeenAt < t.lastMessageAt),
         }))}
       />
     </div>

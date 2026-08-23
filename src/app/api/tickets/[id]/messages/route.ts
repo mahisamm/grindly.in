@@ -6,6 +6,8 @@ import { TICKET_LIMITS } from "@/lib/support";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// A user message may be answered by the assistant before this returns.
+export const maxDuration = 90;
 
 type Ctx = { params: Promise<{ id: string }> };
 

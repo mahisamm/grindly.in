@@ -589,26 +589,45 @@ export async function revenueSeries(now = new Date()): Promise<RevenueSeries> {
 
 export type TicketStats = {
   open: number;
-  /** Open or answered tickets where the USER spoke last — the operator's queue. */
+  /** Human-handled, not closed, and the ball is with the team (the user or the
+      assistant's hand-over note spoke last). Assistant-handled conversations
+      are not in it: the assistant is replying. */
   awaitingYou: number;
+  /** Still with the assistant and not closed. */
+  withAssistant: number;
   answered: number;
   closed: number;
-  /** Tickets with a user message the operator has not opened yet. */
+  /** Human-handled conversations with something the operator has not opened yet. */
   unread: number;
 };
 
 export async function ticketStats(): Promise<TicketStats> {
-  const [open, answered, closed, awaitingYou, unread] = await Promise.all([
+  const [open, answered, closed, awaitingYou, withAssistant, unread] = await Promise.all([
     prisma.ticket.count({ where: { status: "open" } }),
     prisma.ticket.count({ where: { status: "answered" } }),
     prisma.ticket.count({ where: { status: "closed" } }),
-    prisma.ticket.count({ where: { status: { not: "closed" }, lastMessageBy: "user" } }),
+    prisma.ticket.count({ where: { status: { not: "closed" }, handledBy: "human", lastMessageBy: { not: "admin" } } }),
+    prisma.ticket.count({ where: { status: { not: "closed" }, handledBy: "assistant" } }),
     prisma.$queryRaw<{ n: bigint }[]>`
       SELECT COUNT(*) AS n FROM tickets
-      WHERE last_message_by = 'user'
+      WHERE handled_by = 'human' AND last_message_by <> 'admin' AND status <> 'closed'
         AND (admin_seen_at IS NULL OR admin_seen_at < last_message_at)`
       .then((r) => Number(r[0]?.n ?? 0))
       .catch(() => 0),
   ]);
-  return { open, answered, closed, awaitingYou, unread };
+  return { open, answered, closed, awaitingYou, withAssistant, unread };
+}
+
+/** The assistant's summaries of every conversation that currently needs a
+    person — what the dashboard shows as "what users are struggling with". */
+export async function strugglingNow(limit = 6) {
+  return prisma.ticket.findMany({
+    where: { status: { not: "closed" }, handledBy: "human" },
+    orderBy: { lastMessageAt: "desc" },
+    take: limit,
+    select: {
+      id: true, subject: true, summary: true, category: true, lastMessageAt: true, lastMessageBy: true,
+      user: { select: { email: true } },
+    },
+  });
 }

@@ -1,25 +1,25 @@
 /**
- * The support desk's vocabulary — shared by the user's "Raise a ticket" form,
- * the admin ticket list and the notification emails, so a category means the
- * same thing on every side.
+ * The support desk's vocabulary — what the ASSISTANT knows about the product
+ * (lib/tickets.ts feeds the self-help below into its prompt), how the admin
+ * list labels a conversation, and what the notification emails say. The user
+ * never sees a picker: they just write, and the assistant sorts it.
  *
- * Each category carries its SELF-HELP first: the two or three things that
- * resolve the common version of that problem without a ticket at all. They
- * are shown before the text box, not after it — a person who finds their
- * answer there has been helped faster than any reply could manage, and the
- * tickets that do get raised are the ones that genuinely need a human.
+ * Each category carries its SELF-HELP: the two or three things that resolve
+ * the common version of that problem. The assistant says them in its own
+ * words; keeping them here, not in the prompt, means one edit updates what
+ * it knows.
  */
 import type { TicketCategory, TicketStatus } from "@prisma/client";
 
 export type SupportCategory = {
   key: TicketCategory;
   label: string;
-  /** One line under the label in the picker. */
+  /** One line describing the category, for the admin list. */
   hint: string;
-  /** Plain-words self-help, shown once the category is picked. */
+  /** Plain-words self-help — the assistant's knowledge for this category. */
   selfHelp: string[];
-  /** Placeholder for the message box — a prompt for the details that let
-      the operator answer in one reply instead of three. */
+  /** The details that let a person answer in one reply — the assistant asks
+      for these when it hands over. */
   prompt: string;
 };
 
@@ -98,7 +98,7 @@ export function categoryLabel(key: TicketCategory): string {
 
 export const STATUS_LABEL: Record<TicketStatus, string> = {
   open: "Open",
-  answered: "Answered — your turn",
+  answered: "Answered",
   closed: "Closed",
 };
 
