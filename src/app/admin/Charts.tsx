@@ -21,6 +21,7 @@
  * invented ATS score.
  */
 import type { ReactNode } from "react";
+import { CountUp } from "./CountUp";
 
 /* ── numbers ─────────────────────────────────────────────────────── */
 
@@ -61,6 +62,7 @@ export function KpiCard({
   sub,
   trend,
   accent,
+  index = 0,
 }: {
   label: string;
   value: ReactNode;
@@ -68,9 +70,18 @@ export function KpiCard({
   trend?: { now: number; before: number };
   /** Paints the number in the brand colour. One card per row at most. */
   accent?: boolean;
+  /** Position in its row, for the staggered reveal. */
+  index?: number;
 }) {
+  // A plain string or number rolls up on arrival (CountUp); anything richer
+  // is rendered as given.
+  const shown =
+    typeof value === "string" || typeof value === "number" ? <CountUp text={String(value)} /> : value;
   return (
-    <div className="bg-surface border-border rounded-xl border p-4">
+    <div
+      className="bg-surface border-border adm-card adm-reveal rounded-xl border p-4"
+      style={{ ["--i" as string]: index }}
+    >
       <div className="flex items-start justify-between gap-2">
         <p className="text-muted font-mono text-[10px] tracking-[0.12em] uppercase">{label}</p>
         {trend && <TrendChip now={trend.now} before={trend.before} />}
@@ -79,7 +90,7 @@ export function KpiCard({
         className="font-display mt-2 text-3xl leading-none font-bold tabular-nums"
         style={accent ? { color: "var(--brand)" } : undefined}
       >
-        {value}
+        {shown}
       </p>
       {sub && <p className="text-muted mt-2 text-xs leading-snug">{sub}</p>}
     </div>
@@ -127,9 +138,23 @@ export type DayPoint = { date: string; count: number };
  * The empty days are IN the data (see `signupsByDay`), so a quiet fortnight is
  * a flat line at zero rather than two ticks pushed together.
  */
-export function SignupArea({ points, height = 132 }: { points: DayPoint[]; height?: number }) {
+export function SignupArea({
+  points,
+  height = 132,
+  id = "area",
+  format = (v: number) => String(v),
+  label = "per day",
+}: {
+  points: DayPoint[];
+  height?: number;
+  /** Unique per chart on a page — gradient and title ids. */
+  id?: string;
+  /** How a value prints in the hover label and the caption. */
+  format?: (v: number) => string;
+  label?: string;
+}) {
   const width = 720;
-  const pad = { top: 8, right: 4, bottom: 18, left: 4 };
+  const pad = { top: 16, right: 4, bottom: 18, left: 4 };
   const plotW = width - pad.left - pad.right;
   const plotH = height - pad.top - pad.bottom;
   const peak = Math.max(1, ...points.map((p) => p.count));
@@ -139,52 +164,186 @@ export function SignupArea({ points, height = 132 }: { points: DayPoint[]; heigh
     pad.left + (points.length <= 1 ? plotW / 2 : (i / (points.length - 1)) * plotW);
   const y = (v: number) => pad.top + plotH - (v / peak) * plotH;
 
-  const line = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.count).toFixed(1)}`).join(" ");
+  const line = points
+    .map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.count).toFixed(1)}`)
+    .join(" ");
   const area = `${line} L${x(points.length - 1).toFixed(1)},${(pad.top + plotH).toFixed(1)} L${x(0).toFixed(1)},${(pad.top + plotH).toFixed(1)} Z`;
   const busiest = points.reduce((best, p, i) => (p.count > points[best].count ? i : best), 0);
+  const colW = points.length > 1 ? plotW / (points.length - 1) : plotW;
 
   return (
-    <figure className="m-0">
+    <figure className="adm-reveal m-0" style={{ ["--i" as string]: 2 }}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         width="100%"
         height={height}
         role="img"
-        aria-labelledby="signup-area-title"
+        aria-labelledby={`${id}-title`}
         preserveAspectRatio="none"
+        style={{ overflow: "visible" }}
       >
-        <title id="signup-area-title">
-          {`Signups per day over the last ${points.length} days. ${total} in total, busiest day ${points[busiest]?.date} with ${points[busiest]?.count}.`}
+        <title id={`${id}-title`}>
+          {`${label}, last ${points.length} days. ${format(total)} in total, peak ${format(points[busiest]?.count ?? 0)} on ${points[busiest]?.date}.`}
         </title>
         <defs>
-          <linearGradient id="signup-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--brand)" stopOpacity="0.22" />
+          <linearGradient id={`${id}-fill`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="var(--brand)" stopOpacity="0.28" />
             <stop offset="100%" stopColor="var(--brand)" stopOpacity="0.02" />
           </linearGradient>
         </defs>
         {[0.5, 1].map((frac) => (
-          <line
-            key={frac}
-            x1={pad.left}
-            x2={width - pad.right}
-            y1={y(peak * frac)}
-            y2={y(peak * frac)}
-            stroke="var(--border)"
-            strokeWidth="1"
-            strokeDasharray="3 4"
-          />
+          <g key={frac}>
+            <line
+              x1={pad.left}
+              x2={width - pad.right}
+              y1={y(peak * frac)}
+              y2={y(peak * frac)}
+              stroke="var(--border)"
+              strokeWidth="1"
+              strokeDasharray="3 4"
+            />
+            <text
+              x={width - pad.right}
+              y={y(peak * frac) - 3}
+              textAnchor="end"
+              style={{ fontSize: "9px", fill: "var(--muted)", fontFamily: "var(--ff-mono)" }}
+            >
+              {format(Math.round(peak * frac))}
+            </text>
+          </g>
         ))}
-        <path d={area} fill="url(#signup-fill)" />
-        <path d={line} fill="none" stroke="var(--brand)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        <path d={area} fill={`url(#${id}-fill)`} className="adm-fill" />
+        <path
+          d={line}
+          fill="none"
+          stroke="var(--brand)"
+          strokeWidth="2"
+          vectorEffect="non-scaling-stroke"
+          pathLength={1}
+          className="adm-draw"
+        />
+        {/* One hover column per day: the value appears where the pointer is.
+            Pure CSS (.adm-hover) — no script — and a <title> for the keyboard
+            and screen-reader path. */}
+        {points.map((p, i) => (
+          <g key={p.date} className="adm-hover">
+            <title>{`${p.date}: ${format(p.count)}`}</title>
+            <rect className="adm-hover-col" x={x(i) - colW / 2} y={0} width={colW} height={height} />
+            <circle
+              cx={x(i)}
+              cy={y(p.count)}
+              r="3.5"
+              fill="var(--brand)"
+              stroke="var(--surface)"
+              strokeWidth="1.5"
+            />
+            <text
+              className="adm-hover-val"
+              x={x(i)}
+              y={Math.max(10, y(p.count) - 8)}
+              textAnchor={i < 3 ? "start" : i > points.length - 4 ? "end" : "middle"}
+              style={{ fontSize: "10px", fill: "var(--ink-color)", fontFamily: "var(--ff-mono)", fontWeight: 600 }}
+            >
+              {format(p.count)}
+            </text>
+          </g>
+        ))}
         {points[busiest] && points[busiest].count > 0 && (
           <circle cx={x(busiest)} cy={y(points[busiest].count)} r="3.5" fill="var(--brand)" />
         )}
       </svg>
       <figcaption className="text-muted mt-1 flex justify-between font-mono text-[10px] tracking-[0.08em] uppercase">
         <span>{points[0]?.date}</span>
-        <span>peak {peak} on {points[busiest]?.date}</span>
+        <span>
+          peak {format(points[busiest]?.count ?? 0)} on {points[busiest]?.date}
+        </span>
         <span>{points[points.length - 1]?.date}</span>
       </figcaption>
+    </figure>
+  );
+}
+
+/**
+ * Vertical bars — one per month (or any small series). They grow from the
+ * baseline with a stagger; hovering shows the value; the peak is painted
+ * brand-red so the eye lands on it first.
+ */
+export function Bars({
+  data,
+  height = 132,
+  width = 360,
+  format = (v: number) => String(v),
+}: {
+  data: { label: string; value: number; note?: string }[];
+  height?: number;
+  /** Coordinate width — match it roughly to the column it sits in, or the
+      labels scale down to nothing. */
+  width?: number;
+  format?: (v: number) => string;
+}) {
+  const pad = { top: 16, right: 4, bottom: 22, left: 4 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const peak = Math.max(1, ...data.map((d) => d.value));
+  const n = Math.max(1, data.length);
+  const slot = plotW / n;
+  const barW = Math.max(6, slot * 0.62);
+  return (
+    <figure className="adm-reveal m-0" style={{ ["--i" as string]: 2 }}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        width="100%"
+        height={height}
+        role="img"
+        aria-label={`Bars: ${data.map((d) => `${d.label} ${format(d.value)}`).join(", ")}`}
+      >
+        <line
+          x1={pad.left}
+          x2={width - pad.right}
+          y1={pad.top + plotH}
+          y2={pad.top + plotH}
+          stroke="var(--border)"
+        />
+        {data.map((d, i) => {
+          const h = (d.value / peak) * plotH;
+          const cx = pad.left + i * slot + slot / 2;
+          const isPeak = d.value === peak && d.value > 0;
+          return (
+            <g key={d.label} className="adm-hover">
+              <title>{`${d.label}: ${format(d.value)}${d.note ? ` · ${d.note}` : ""}`}</title>
+              <rect className="adm-hover-col" x={cx - slot / 2} y={0} width={slot} height={height} />
+              <rect
+                x={cx - barW / 2}
+                y={pad.top + plotH - h}
+                width={barW}
+                height={Math.max(h, d.value > 0 ? 2 : 0)}
+                rx="3"
+                fill={isPeak ? "var(--brand)" : "var(--cta)"}
+                opacity={isPeak ? 1 : 0.75}
+                className="adm-grow-y"
+                style={{ ["--i" as string]: i }}
+              />
+              <text
+                x={cx}
+                y={pad.top + plotH + 14}
+                textAnchor="middle"
+                style={{ fontSize: "9px", fill: "var(--muted)", fontFamily: "var(--ff-mono)", opacity: 1 }}
+              >
+                {d.label}
+              </text>
+              <text
+                className="adm-hover-val"
+                x={cx}
+                y={Math.max(10, pad.top + plotH - h - 6)}
+                textAnchor="middle"
+                style={{ fontSize: "10px", fill: "var(--ink-color)", fontFamily: "var(--ff-mono)", fontWeight: 600 }}
+              >
+                {format(d.value)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
     </figure>
   );
 }
@@ -220,7 +379,7 @@ export function Donut({
 
   return (
     <div className="flex flex-wrap items-center gap-6">
-      <svg width="132" height="132" viewBox="0 0 132 132" role="img" aria-labelledby="donut-title">
+      <svg width="132" height="132" viewBox="0 0 132 132" role="img" aria-labelledby="donut-title" className="adm-sweep">
         <title id="donut-title">
           {total === 0
             ? `${centreLabel}: nothing yet.`
@@ -300,7 +459,7 @@ export function BandBars({
   const peak = Math.max(1, ...rows.map((r) => r.count));
   return (
     <ul className="space-y-2.5">
-      {rows.map((r) => (
+      {rows.map((r, i) => (
         <li key={r.label}>
           <div className="flex items-baseline justify-between gap-3">
             <span className="text-sm font-medium">
@@ -311,8 +470,9 @@ export function BandBars({
           </div>
           <div className="bg-surface-2 mt-1 h-2 w-full overflow-hidden rounded-full">
             <div
-              className="h-full rounded-full"
+              className="adm-grow-x h-full rounded-full"
               style={{
+                ["--i" as string]: i,
                 width: `${(r.count / peak) * 100}%`,
                 background: r.tone ?? "var(--brand)",
                 minWidth: r.count > 0 ? "3px" : "0",

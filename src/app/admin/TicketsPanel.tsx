@@ -90,7 +90,8 @@ export async function TicketsPanel({
   return (
     <Section
       title="Tickets"
-      note="Every conversation starts with Grindly's assistant, which answers from the product notes and writes you a running summary. It hands over when money, data, an unresolved bug, or a request for a person comes up — those land in 'Needs a person'. Your reply takes a conversation over for good and emails the user; their reply reopens it."
+      note="Support conversations — the assistant's summary of each, newest first."
+      detail="Every conversation starts with Grindly's assistant, which answers from the product notes and writes you a running summary. It hands over when money, data, an unresolved bug, or a request for a person comes up — those land in 'Needs a person'. Your reply takes a conversation over for good and emails the user; their reply reopens it."
     >
       <StatGrid>
         <Stat label="Needs a person" value={queue} tone={queue > 0 ? "warn" : undefined} sub="handed over, ball with you" />

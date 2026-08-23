@@ -1,4 +1,5 @@
 import { scoreColor } from "@/lib/reportTypes";
+import { CountUp } from "./CountUp";
 
 /**
  * The reusable pieces of the admin page.
@@ -10,17 +11,40 @@ import { scoreColor } from "@/lib/reportTypes";
 export function Section({
   title,
   note,
+  detail,
   children,
+  index = 0,
 }: {
   title: string;
-  /** What the numbers below are counted FROM. Every panel has one. */
+  /** ONE short line under the title — what this panel answers. */
   note?: string;
+  /** The long form — exactly what was counted and how. Folded behind
+      "How this is counted", so the page reads as numbers first and the
+      method is one click away, never in the way. */
+  detail?: string;
   children: React.ReactNode;
+  /** Position on the page, for the staggered reveal. */
+  index?: number;
 }) {
   return (
-    <section className="mt-10">
-      <h2 className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-60">{title}</h2>
-      {note && <p className="text-muted mt-1.5 max-w-2xl text-xs leading-relaxed">{note}</p>}
+    <section className="adm-reveal mt-10 first:mt-0" style={{ ["--i" as string]: index }}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="font-display text-xl font-semibold tracking-tight">{title}</h2>
+        {detail && (
+          <details className="group relative">
+            <summary className="text-muted hover:text-ink cursor-pointer list-none font-mono text-[10px] tracking-[0.12em] uppercase underline-offset-4 hover:underline">
+              How this is counted
+            </summary>
+            <p
+              className="bg-surface border-border absolute right-0 z-20 mt-2 w-[min(28rem,80vw)] rounded-xl border p-4 text-xs leading-relaxed shadow-lg"
+              style={{ color: "var(--ink-color)" }}
+            >
+              {detail}
+            </p>
+          </details>
+        )}
+      </div>
+      {note && <p className="text-muted mt-1 max-w-2xl text-sm leading-relaxed">{note}</p>}
       {children}
     </section>
   );
@@ -35,20 +59,23 @@ export function Stat({
   value,
   sub,
   tone,
+  index = 0,
 }: {
   label: string;
   value: string | number;
   /** The second line. Use it for the denominator, never for a boast. */
   sub?: string;
   tone?: "good" | "bad" | "warn";
+  /** Position in its row, for the staggered reveal. */
+  index?: number;
 }) {
   const colour =
     tone === "good" ? "var(--brand)" : tone === "bad" ? "var(--danger)" : tone === "warn" ? "var(--warn)" : undefined;
   return (
-    <div className="bg-surface border-border rounded-xl border p-4">
+    <div className="bg-surface border-border adm-card adm-reveal rounded-xl border p-4" style={{ ["--i" as string]: index }}>
       <p className="font-mono text-[10px] tracking-[0.12em] uppercase opacity-60">{label}</p>
       <p className="font-display mt-1.5 text-2xl font-bold tabular-nums" style={{ color: colour }}>
-        {value}
+        <CountUp text={String(value)} />
       </p>
       {sub && <p className="text-muted mt-1 text-xs leading-snug">{sub}</p>}
     </div>
@@ -85,8 +112,8 @@ export function Funnel({ steps }: { steps: { label: string; count: number; note:
             </div>
             <div className="bg-surface-2 mt-1.5 h-2 w-full overflow-hidden rounded-full">
               <div
-                className="h-full rounded-full"
-                style={{ width: `${share}%`, background: "var(--brand)" }}
+                className="adm-grow-x h-full rounded-full"
+                style={{ width: `${share}%`, background: "var(--brand)", ["--i" as string]: i }}
               />
             </div>
             <p className="text-muted mt-1 text-xs leading-snug">{s.note}</p>

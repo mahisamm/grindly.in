@@ -915,3 +915,61 @@ html[data-intro] .intro-splash {
 .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes typing-dot { 0%, 80%, 100% { opacity: 0.35; } 40% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .typing-dots span { animation: none; opacity: 0.7; } }
+
+/* ── Admin motion ─────────────────────────────────────────────────────
+   Cards rise in with a stagger (--i), bars grow, lines draw. Everything is
+   transform/opacity/stroke-dashoffset — compositor-cheap — and all of it is
+   switched off under prefers-reduced-motion (things simply appear). */
+.adm-reveal {
+  animation: adm-reveal 0.55s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+@keyframes adm-reveal {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.adm-card {
+  transition: transform 0.25s var(--ease), box-shadow 0.25s var(--ease);
+}
+.adm-card:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(23, 20, 15, 0.08); }
+
+/* Horizontal bars grow from the left; vertical bars from the baseline. */
+.adm-grow-x {
+  transform-origin: left center;
+  animation: adm-grow-x 0.8s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 60ms + 120ms);
+}
+@keyframes adm-grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.adm-grow-y {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: adm-grow-y 0.8s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 40ms + 120ms);
+}
+@keyframes adm-grow-y { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+
+/* A line drawn left to right, then its area fading in under it. */
+.adm-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: adm-draw 1.1s var(--ease) 0.15s both;
+}
+@keyframes adm-draw { to { stroke-dashoffset: 0; } }
+.adm-fill { animation: adm-fade 0.8s var(--ease) 0.7s both; }
+@keyframes adm-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* The donut ring sweeps in. */
+.adm-sweep { transform-origin: center; animation: adm-sweep 0.9s var(--ease) both; }
+@keyframes adm-sweep { from { opacity: 0; transform: rotate(-40deg); } to { opacity: 1; transform: rotate(0); } }
+
+/* Hover columns on a chart: the value shows where the pointer is. */
+.adm-hover .adm-hover-col { fill: transparent; }
+.adm-hover circle, .adm-hover .adm-hover-val { opacity: 0; transition: opacity 0.15s var(--ease); }
+.adm-hover:hover circle, .adm-hover:hover .adm-hover-val { opacity: 1; }
+.adm-hover:hover .adm-hover-col { fill: rgba(23, 20, 15, 0.04); }
+
+@media (prefers-reduced-motion: reduce) {
+  .adm-reveal, .adm-grow-x, .adm-grow-y, .adm-draw, .adm-fill, .adm-sweep { animation: none; }
+  .adm-draw { stroke-dashoffset: 0; }
+  .adm-card, .adm-card:hover { transform: none; transition: none; }
+}

@@ -17,9 +17,9 @@ import { AdminsPanel } from "./AdminsPanel";
 import { SettingsSwitches } from "./SettingsSwitches";
 import { AdminNav, resolveSection, type SectionKey } from "./Nav";
 import { TicketsPanel } from "./TicketsPanel";
-import { TrafficPanel, RevenuePanel, ConversionRow } from "./Analytics";
-import { BandBars, Donut, KpiCard, SignupArea, StatusPill } from "./Charts";
-import { Funnel, ScoreStat, Section, Stat, StatGrid } from "./Panels";
+import { HeroStrip, TrafficPanel, RevenuePanel, ProductPanel } from "./Analytics";
+import { SignupArea, StatusPill } from "./Charts";
+import { Funnel, Section } from "./Panels";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Admin — Grindly" };
@@ -90,20 +90,8 @@ export default async function AdminPage({
       <div className="flex flex-col gap-6 lg:flex-row lg:gap-10">
         <AdminNav active={section} waiting={pendingCount} tickets={tickets.unread} />
         <div className="min-w-0 flex-1">
-          {section === "dashboard" && (
-            <>
-              <Conversion />
-              <Struggling />
-              <Overview stats={stats} signups={signups} days={days} />
-            </>
-          )}
-          {section === "analytics" && (
-            <>
-              <Traffic />
-              <Revenue stats={stats} caps={caps} />
-              <Quality stats={stats} />
-            </>
-          )}
+          {section === "dashboard" && <Dashboard stats={stats} signups={signups} days={days} tickets={tickets} />}
+          {section === "analytics" && <Analytics stats={stats} />}
           {section === "users" && (
             <>
               <Access />
@@ -128,222 +116,134 @@ export default async function AdminPage({
 type Stats = Awaited<ReturnType<typeof adminStats>>;
 type Caps = ReturnType<typeof describe>;
 
-/* ── conversion (dashboard top row) ─────────────────────────────── */
+/* ── dashboard ───────────────────────────────────────────────────── */
 
-async function Conversion() {
-  const c = await conversionStats();
-  return <ConversionRow c={c} />;
-}
-
-/* ── what users are struggling with (dashboard) ─────────────────── */
-
-async function Struggling() {
-  const rows = await strugglingNow(6);
-  return (
-    <Section
-      title="What users are struggling with"
-      note="The assistant's one-paragraph summary of every conversation that currently needs a person — written for you, so you never have to read a thread to know what it is about. Empty is good."
-    >
-      {rows.length === 0 ? (
-        <p className="text-muted mt-3 text-sm">Nothing is waiting on a person right now.</p>
-      ) : (
-        <ul className="mt-3 divide-y rounded-xl border" style={{ borderColor: "var(--border)" }}>
-          {rows.map((t) => (
-            <li key={t.id} className="px-4 py-3">
-              <Link href={`/admin?s=tickets&t=${t.id}`} className="hover:text-brand block">
-                <span className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="font-medium">{t.subject}</span>
-                  <span className="text-muted font-mono text-[10px] tracking-[0.1em] uppercase">
-                    {t.user.email} · {t.category} · {t.lastMessageBy === "admin" ? "you spoke last" : "waiting on you"}
-                  </span>
-                </span>
-                <span className="text-muted mt-1 block text-sm leading-snug">
-                  {t.summary || "No summary yet."}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Section>
-  );
-}
-
-/* ── traffic + revenue (analytics) ──────────────────────────────── */
-
-async function Traffic() {
-  const t = await trafficStats();
-  return <TrafficPanel t={t} />;
-}
-
-async function Revenue({ stats, caps }: { stats: Stats; caps: Caps }) {
-  const r = await revenueSeries();
-  return (
-    <>
-      <RevenuePanel r={r} />
-      <Money stats={stats} caps={caps} />
-    </>
-  );
-}
-
-/* ── overview ────────────────────────────────────────────────────── */
-
-function Overview({
+async function Dashboard({
   stats,
   signups,
   days,
+  tickets,
 }: {
   stats: Stats;
   signups: { date: string; count: number }[];
   days: number;
+  tickets: Awaited<ReturnType<typeof ticketStats>>;
 }) {
-  const runs = stats.work.runsByStatus;
-  const runTotal = Object.values(runs).reduce((a, b) => a + b, 0);
-
+  const [c, t, r, struggling] = await Promise.all([
+    conversionStats(),
+    trafficStats(),
+    revenueSeries(),
+    strugglingNow(6),
+  ]);
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard
-          label="Accounts"
-          value={stats.users.total}
-          trend={{ now: stats.users.newThisWeek, before: stats.users.newWeekBefore }}
-          sub={`${stats.users.approved} approved · ${stats.users.pending} waiting${
-            stats.users.blocked ? ` · ${stats.users.blocked} blocked` : ""
-          }`}
-        />
-        <KpiCard
-          label="Active this week"
-          value={stats.active.week}
-          trend={{ now: stats.active.week, before: stats.active.weekBefore }}
-          sub={`${stats.active.day} today · ${stats.active.month} in 30 days`}
-        />
-        <KpiCard
-          label="Resumes"
-          value={stats.work.resumes}
-          trend={{ now: stats.work.resumesThisWeek, before: stats.work.resumesWeekBefore }}
-          sub={`${stats.work.resumesThisWeek} uploaded this week`}
-        />
-        <KpiCard
-          label="Rebuild runs"
-          value={stats.work.rebuilds}
-          trend={{ now: stats.work.rebuildsThisWeek, before: stats.work.rebuildsWeekBefore }}
-          sub={`${stats.work.rebuildsThisWeek} this week`}
-          accent
-        />
-      </div>
+      <HeroStrip
+        c={c}
+        t={t}
+        r={r}
+        tk={tickets}
+        activeWeek={stats.active.week}
+        activeWeekBefore={stats.active.weekBefore}
+      />
 
-      <p className="text-muted mt-3 text-xs leading-relaxed">
-        The chip beside each number compares this period against the one before it — a real
-        count, not a projection. &ldquo;Active&rdquo; means an account that <i>did</i>{" "}
-        something, from the audit log; nothing here records page views, and a traffic number
-        invented by proxy would be the kind of unfalsifiable metric this product argues
-        against.
-      </p>
-
-      <Section title="Signups" note="One point per day, including the days nobody signed up.">
-        <div className="mb-3 flex gap-1.5">
-          {RANGES.map((r) => (
-            <Link
-              key={r}
-              href={r === 30 ? "/admin" : `/admin?days=${r}`}
-              aria-current={days === r ? "true" : undefined}
-              className="rounded-full border px-3 py-1 font-mono text-[10px] tracking-[0.08em] uppercase"
-              style={
-                days === r
-                  ? { background: "var(--cta)", color: "var(--on-cta)", borderColor: "var(--cta)" }
-                  : { color: "var(--muted)", borderColor: "var(--line-2)" }
-              }
-            >
-              {r} days
-            </Link>
-          ))}
+      <div className="mt-8 grid gap-6 xl:grid-cols-3">
+        <div className="xl:col-span-2">
+          <Section
+            index={1}
+            title="Signups"
+            note="New accounts per day."
+            detail="One point per day, including the days nobody signed up — a quiet fortnight is a flat line, not two ticks pushed together."
+          >
+            <div className="mb-3 mt-3 flex gap-1.5">
+              {RANGES.map((rg) => (
+                <Link
+                  key={rg}
+                  href={rg === 30 ? "/admin" : `/admin?days=${rg}`}
+                  aria-current={days === rg ? "true" : undefined}
+                  className="rounded-full border px-3 py-1 font-mono text-[10px] tracking-[0.08em] uppercase"
+                  style={
+                    days === rg
+                      ? { background: "var(--cta)", color: "var(--on-cta)", borderColor: "var(--cta)" }
+                      : { color: "var(--muted)", borderColor: "var(--line-2)" }
+                  }
+                >
+                  {rg} days
+                </Link>
+              ))}
+            </div>
+            <div className="bg-surface border-border adm-card rounded-xl border p-4">
+              <SignupArea points={signups} id="signups" label="Signups" height={180} />
+            </div>
+          </Section>
         </div>
-        <div className="bg-surface border-border rounded-xl border p-4">
-          <SignupArea points={signups} />
-        </div>
-      </Section>
-
-      <div className="mt-8 grid gap-6 xl:grid-cols-2">
         <div>
-          <h2 className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-70">
-            Rebuild outcomes
-          </h2>
-          <p className="text-muted mt-1.5 max-w-2xl text-xs leading-relaxed">
-            Every run ever started. &ldquo;Beaten by the original&rdquo; is a success: it means
-            nothing we produced was better than what the user already had, and we said so
-            instead of shipping it.
-          </p>
-          <div className="bg-surface border-border mt-3 rounded-xl border p-5">
-            <Donut
-              centreLabel="runs"
-              centreValue={runTotal}
-              // Failure is INK, not a second red. --brand is #b92b1a and the
-              // danger red is #a3271b: side by side in a 16px ring they are the
-              // same colour, and "kept" and "failed" are the two slices a
-              // reader most needs to tell apart at a glance.
-              slices={[
-                { label: "Kept a rebuild", count: runs.done ?? 0, tone: "var(--brand)" },
-                { label: "Beaten by the original", count: runs.empty ?? 0, tone: "var(--warn)" },
-                { label: "Failed", count: runs.failed ?? 0, tone: "var(--ink-color)" },
-                { label: "Cancelled", count: runs.cancelled ?? 0, tone: "var(--line-2)" },
-                { label: "Running now", count: runs.running ?? 0, tone: "var(--muted)" },
-              ]}
-            />
-          </div>
-        </div>
-
-        <div>
-          <h2 className="font-mono text-[11px] tracking-[0.14em] uppercase opacity-70">
-            Score distribution
-          </h2>
-          <p className="text-muted mt-1.5 max-w-2xl text-xs leading-relaxed">
-            Every scored resume, in the product&rsquo;s own grade bands — the same letters
-            printed on a user&rsquo;s report, so this chart cannot disagree with what they were
-            told.
-          </p>
-          <div className="bg-surface border-border mt-3 rounded-xl border p-5">
-            <BandBars
-              rows={stats.quality.scoreBands.map((b) => ({
-                label: b.label,
-                note: b.range,
-                count: b.count,
-                tone:
-                  b.label === "A" || b.label === "B"
-                    ? "var(--brand)"
-                    : b.label === "C"
-                      ? "var(--warn)"
-                      : "#a3271b",
-              }))}
-            />
-          </div>
+          <Section
+            index={2}
+            title="Does it work for them"
+            note="Distinct accounts reaching each step."
+            detail="Accounts, not events — one enthusiastic user running forty rebuilds must not read as forty people getting value. The widest bar is always the first step, so the shape of the drop-off is the thing you see."
+          >
+            <div className="mt-3">
+              <Funnel
+                steps={[
+                  { label: "Signed up", count: stats.funnel.signedUp, note: "Created an account." },
+                  { label: "Uploaded a resume", count: stats.funnel.uploaded, note: "Got a score — the first useful moment." },
+                  { label: "Ran a rebuild", count: stats.funnel.rebuilt, note: "Asked for rewrites or built from the editor." },
+                  { label: "Took a document", count: stats.funnel.tookADocument, note: "Exported or built their own — the point." },
+                ]}
+              />
+            </div>
+          </Section>
         </div>
       </div>
 
       <Section
-        title="Does the product work for them"
-        note="Distinct accounts reaching each step, not events — one enthusiastic user running forty rebuilds must not read as forty people getting value."
+        index={3}
+        title="What users are struggling with"
+        note={
+          struggling.length
+            ? `${struggling.length} conversation${struggling.length === 1 ? "" : "s"} waiting on a person — the assistant's summary of each.`
+            : "Nothing is waiting on a person right now."
+        }
+        detail="Every open conversation the assistant has handed over, newest activity first, with its one-paragraph summary written for you. Open one to read the thread and reply."
       >
-        <Funnel
-          steps={[
-            { label: "Signed up", count: stats.funnel.signedUp, note: "Created an account." },
-            {
-              label: "Uploaded a resume",
-              count: stats.funnel.uploaded,
-              note: "Got a readiness score. This is the first moment the product is useful.",
-            },
-            {
-              label: "Ran a rebuild",
-              count: stats.funnel.rebuilt,
-              note: "Asked for rewrites or built from the editor.",
-            },
-            {
-              label: "Took a document",
-              count: stats.funnel.tookADocument,
-              note: "Exported a file or built their own edit — the point of the whole thing.",
-            },
-          ]}
-        />
+        {struggling.length > 0 && (
+          <ul className="mt-3 divide-y rounded-xl border" style={{ borderColor: "var(--border)" }}>
+            {struggling.map((tk, i) => (
+              <li key={tk.id} className="adm-reveal px-4 py-3" style={{ ["--i" as string]: i + 4 }}>
+                <Link href={`/admin?s=tickets&t=${tk.id}`} className="hover:text-brand block">
+                  <span className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="font-medium">{tk.subject}</span>
+                    <span className="text-muted font-mono text-[10px] tracking-[0.1em] uppercase">
+                      {tk.user.email} · {tk.category} · {tk.lastMessageBy === "admin" ? "you spoke last" : "waiting on you"}
+                    </span>
+                  </span>
+                  <span className="text-muted mt-1 block text-sm leading-snug">{tk.summary || "No summary yet."}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
       </Section>
+    </>
+  );
+}
+
+/* ── analytics ───────────────────────────────────────────────────── */
+
+async function Analytics({ stats }: { stats: Stats }) {
+  const [t, r] = await Promise.all([trafficStats(), revenueSeries()]);
+  return (
+    <>
+      <TrafficPanel t={t} index={0} />
+      <RevenuePanel
+        r={r}
+        paidOrders={stats.money.paidOrders}
+        payingUsers={stats.money.payingUsers}
+        accounts={stats.users.total}
+        index={1}
+      />
+      <ProductPanel quality={stats.quality} work={stats.work} index={2} />
     </>
   );
 }
@@ -376,7 +276,8 @@ async function Access() {
     <>
       <Section
         title={`Waiting${pending.length ? ` · ${pending.length}` : ""}`}
-        note="Who waits here depends on the “Open sign-ups” switch in Settings: open (the default) sends new accounts straight in and this queue stays empty; closed, everyone lands here until approved. Blocking stops an account without deleting anything — they keep their data and can still export it."
+        note="Accounts waiting for a decision."
+        detail="Who waits here depends on the “Open sign-ups” switch in Settings: open (the default) sends new accounts straight in and this queue stays empty; closed, everyone lands here until approved. Blocking stops an account without deleting anything — they keep their data and can still export it."
       >
         <AccessQueue
           users={pending.map(serialiseUser)}
@@ -387,7 +288,8 @@ async function Access() {
       {decided.length > 0 && (
         <Section
           title="Recently decided"
-          note="The last eight decisions, newest first. Reversible — revoking keeps everything the account has made."
+          note="The last eight decisions, newest first."
+          detail="Reversible — revoking keeps everything the account has made."
         >
           <AccessQueue users={decided.map(serialiseUser)} emptyNote="" />
         </Section>
@@ -439,7 +341,8 @@ async function People() {
   return (
     <Section
       title="Accounts"
-      note="Every non-admin account (up to the 500 newest). Segments and the filter happen in the page. 'Last active' is the newest audit-log action — a sign-in, an upload, a rebuild — not a page view."
+      note="Every account, with segments to slice by."
+      detail="Every non-admin account (up to the 500 newest). Segments and the filter happen in the page. 'Last active' is the newest audit-log action — a sign-in, an upload, a rebuild — not a page view. 'Paying' means a live pass/pack or a per-company unlock right now."
     >
       <AccountTable
         now={now.getTime()}
@@ -467,122 +370,6 @@ async function People() {
   );
 }
 
-/* ── quality ─────────────────────────────────────────────────────── */
-
-function Quality({ stats }: { stats: Stats }) {
-  const runs = stats.work.runsByStatus;
-  const runTotal = Object.values(runs).reduce((a, b) => a + b, 0);
-  const failed = (runs.failed ?? 0) + (runs.cancelled ?? 0);
-
-  return (
-    <>
-      <Section
-        title="Is it any good"
-        note="The score is a pure function of the resume text, so these move only when documents do."
-      >
-        <StatGrid>
-          <ScoreStat label="Median score" score={stats.quality.medianScore} sub="Across every resume measured." />
-          <Stat
-            label="Median gain"
-            value={stats.quality.medianGain === null ? "—" : `+${stats.quality.medianGain}`}
-            sub="Points a kept rebuild adds over the resume it came from."
-            tone="good"
-          />
-          <Stat
-            label="At or above 80"
-            value={
-              stats.quality.keptVariants
-                ? `${Math.round((stats.quality.atOrAboveFloor / stats.quality.keptVariants) * 100)}%`
-                : "—"
-            }
-            sub={`${stats.quality.atOrAboveFloor} of ${stats.quality.keptVariants} rebuilds cleared the floor`}
-          />
-          <Stat
-            label="Applications logged"
-            value={stats.applications.logged}
-            sub={`${stats.applications.replied} moved past “sent”`}
-          />
-        </StatGrid>
-      </Section>
-
-      <Section title="What it produced">
-        <StatGrid>
-          <Stat label="Resumes" value={stats.work.resumes} sub={`${stats.work.resumesThisWeek} this week`} />
-          <Stat label="Rebuild runs" value={stats.work.rebuilds} sub={`${stats.work.rebuildsThisWeek} this week`} />
-          <Stat
-            label="Runs that failed"
-            value={runTotal ? `${Math.round((failed / runTotal) * 100)}%` : "—"}
-            sub={`${failed} of ${runTotal} · ${runs.empty ?? 0} beat by the original`}
-            tone={runTotal && failed / runTotal > 0.15 ? "bad" : undefined}
-          />
-          <Stat
-            label="Documents taken"
-            value={stats.work.exports + stats.work.editorBuilds}
-            sub={`${stats.work.exports} exports · ${stats.work.editorBuilds} editor builds · ${stats.work.coverLetters} letters`}
-          />
-        </StatGrid>
-      </Section>
-
-      <Section title="Score distribution" note="Every scored resume, in the product's own grade bands.">
-        <div className="bg-surface border-border mt-3 rounded-xl border p-5">
-          <BandBars
-            rows={stats.quality.scoreBands.map((b) => ({
-              label: b.label,
-              note: b.range,
-              count: b.count,
-            }))}
-          />
-        </div>
-      </Section>
-    </>
-  );
-}
-
-/* ── money ───────────────────────────────────────────────────────── */
-
-function Money({ stats, caps }: { stats: Stats; caps: Caps }) {
-  return (
-    <Section
-      title="Money"
-      note={
-        caps.payments.enabled
-          ? "Paid orders only. Amounts are in rupees."
-          : "Payments are in STUB mode — these orders were granted, not paid. Nobody has been charged."
-      }
-    >
-      <StatGrid>
-        <KpiCard
-          label={caps.payments.enabled ? "Revenue" : "Granted (stub)"}
-          value={formatAmount(stats.money.revenue)}
-          trend={{ now: stats.money.revenueThisMonth, before: stats.money.revenueMonthBefore }}
-          sub={`${formatAmount(stats.money.revenueThisMonth)} in the last 30 days`}
-        />
-        <Stat label="Paid orders" value={stats.money.paidOrders} />
-        <Stat
-          label="Free accounts"
-          value={stats.users.total - stats.money.payingUsers}
-          sub="Never bought a pass or a pack."
-        />
-        <Stat
-          label="Converted"
-          value={stats.money.payingUsers}
-          sub={
-            stats.users.total
-              ? `${Math.round((stats.money.payingUsers / stats.users.total) * 100)}% of accounts have paid at least once`
-              : "no accounts yet"
-          }
-          tone="good"
-        />
-        <Stat
-          label="Revenue per account"
-          value={stats.users.total ? formatAmount(Math.round(stats.money.revenue / stats.users.total)) : "—"}
-          sub="Total, divided by every account. Not a forecast."
-        />
-      </StatGrid>
-    </Section>
-  );
-}
-
 /* ── problems ────────────────────────────────────────────────────── */
 
 async function Problems({ stats }: { stats: Stats }) {
@@ -603,7 +390,8 @@ async function Problems({ stats }: { stats: Stats }) {
   return (
     <Section
       title={`Problems reported${stats.health.openProblemReports ? ` · ${stats.health.openProblemReports} open` : ""}`}
-      note="Typed by users from the widget in the corner of the app. These are the faults nothing threw — where the software did the wrong thing quietly, which in a product built on measurement is the more dangerous kind."
+      note="What users told us went wrong — open first."
+      detail="Typed by users into Contact & feedback. These are the faults nothing threw — where the software did the wrong thing quietly, which in a product built on measurement is the more dangerous kind. Resolve one once you have looked."
     >
       <ProblemReports
         reports={problems.map((p) => ({
@@ -647,7 +435,8 @@ async function Feedback() {
   return (
     <Section
       title="Feedback"
-      note='There is no separate feedback form — every row here started as a report typed into the "Problems" widget. A model reads the text and sorts it into these two columns and writes the one-line summary; nobody is asked to rate anything twice.'
+      note="The same notes, sorted by tone."
+      detail="Every row started as a note typed into Contact & feedback. A model reads the text, sorts it into these two columns and writes the one-line summary; nobody is asked to rate anything twice."
     >
       {unclassified > 0 && (
         <p className="text-muted mt-3 text-xs">
@@ -711,7 +500,8 @@ async function Health({ stats, caps }: { stats: Stats; caps: Caps }) {
     <>
       <Section
         title="This deployment"
-        note="What the server can actually do right now, read from its own configuration."
+        note="What this server can do right now."
+        detail="Read from the running configuration, not from a settings file: sign-in methods, payments, email, which model providers have keys."
       >
         <div className="bg-surface border-border mt-3 rounded-xl border p-5 text-sm">
           <dl className="grid gap-x-8 gap-y-2 sm:grid-cols-2">
@@ -741,7 +531,8 @@ async function Health({ stats, caps }: { stats: Stats; caps: Caps }) {
 
       <Section
         title={`Unresolved errors${stats.health.providerFailures ? " · a provider is failing" : ""}`}
-        note="Faults the software noticed, from the web app, the Python agent and the browser. Deduplicated by fingerprint, so one bad afternoon is one row with a count."
+        note="Faults the software noticed, newest first."
+        detail="From the web app, the Python agent and the browser. Deduplicated by fingerprint, so one bad afternoon is one row with a count. Mark one done once it is understood; it comes back if it recurs."
       >
         {recentErrors.length === 0 ? (
           <p className="text-muted mt-3 text-sm">
@@ -796,7 +587,8 @@ async function Settings({ user }: { user: SessionUser }) {
     <>
       <Section
         title="Feature flags"
-        note="File-backed, not database-backed — flipping one of these cannot itself fail because the database is having a bad night. Takes effect immediately, no redeploy."
+        note="Switches that take effect immediately."
+        detail="File-backed, not database-backed — flipping one of these cannot itself fail because the database is having a bad night. No redeploy."
       >
         <SettingsSwitches
           initial={{
@@ -809,7 +601,8 @@ async function Settings({ user }: { user: SessionUser }) {
 
       <Section
         title="Admin accounts"
-        note="Anyone listed here has full access to this page and to every account's data. The last admin cannot be revoked from here."
+        note="Who else can see this dashboard."
+        detail="Anyone listed here has full access to this page and to every account's data. The last admin cannot be revoked from here."
       >
         <AdminsPanel admins={admins} selfId={user.id} />
       </Section>
