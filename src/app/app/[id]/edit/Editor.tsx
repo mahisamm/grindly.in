@@ -214,6 +214,13 @@ export function Editor({
         return;
       }
       setBuilt({ score: data.score, grade: data.grade, report: data.report ?? null });
+      if (data.overBudget) {
+        setError(
+          `Built and scored — but it came out at ${data.pages} pages against your one-page ` +
+            "budget, even in a compact layout. These are your own words, so nothing was cut: " +
+            "trim an older entry or merge two bullets here in the editor, then build again.",
+        );
+      }
       // The document is saved either way; this is the one follow-up write that
       // can fail after it. Say so instead of letting the Scorecard quietly
       // describe the previous draft.

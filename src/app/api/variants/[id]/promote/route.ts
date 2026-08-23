@@ -72,8 +72,12 @@ export async function POST(_req: Request, { params }: Ctx) {
           linksJson: true,
           skillsJson: true,
           linkStyle: true,
+          targetPages: true,
+          careerStage: true,
+          careerSignals: true,
         },
       },
+      pages: true,
     },
   });
   if (!variant) return notFound();
@@ -140,6 +144,14 @@ export async function POST(_req: Request, { params }: Ctx) {
           // DbNull to write.
           skillsJson: toJsonValue(variant.resume.skillsJson ?? []),
           linkStyle: variant.resume.linkStyle,
+          // The person's choices and their read travel with them: the one-page
+          // budget, the career stage, and this document's own page count. A
+          // promoted resume that silently forgot the budget rebuilt at two
+          // pages — reported live.
+          targetPages: variant.resume.targetPages,
+          careerStage: variant.resume.careerStage,
+          careerSignals: toJsonColumn(variant.resume.careerSignals),
+          pages: variant.pages,
           fromVariantId: variant.id,
           parentResumeId: variant.resume.id,
           // Copied, not looked up later. The variant this came from is deleted

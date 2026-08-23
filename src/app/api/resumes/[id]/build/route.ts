@@ -49,7 +49,7 @@ export async function POST(_req: Request, { params }: Ctx) {
 
   const resume = await prisma.resume.findFirst({
     where: { id, userId: user.id },
-    select: { id: true, structJson: true, score: true, linkStyle: true },
+    select: { id: true, structJson: true, score: true, linkStyle: true, targetPages: true },
   });
   if (!resume) return notFound();
 
@@ -75,10 +75,16 @@ export async function POST(_req: Request, { params }: Ctx) {
     chars: number;
     text: string;
     report: Report;
+    over_budget?: boolean;
+    compacted?: boolean;
   }>("render", {
     struct,
     out: outPath,
     link_style: resume.linkStyle,
+    // The user's one-page choice applies to their own builds too — the
+    // renderer walks its compact ladder; the words are theirs and are never
+    // rewritten, so "still over" comes back honestly instead.
+    max_pages: resume.targetPages === 1 ? 1 : null,
   });
 
   if (!rendered.ok) {
@@ -217,6 +223,10 @@ export async function POST(_req: Request, { params }: Ctx) {
     baseline,
     pages: rendered.pages ?? null,
     report: rendered.report ?? null,
+    // The page budget, measured on the PDF just built. The editor shows it —
+    // this content is the user's own words, so over budget means "trim in
+    // the editor", never a silent rewrite.
+    overBudget: Boolean(rendered.over_budget),
     // Honest about the one thing that can fail after the document is safe:
     // the editor surfaces this as "built, but the Scorecard may still show
     // your previous draft — rebuild once more" rather than a clean success.

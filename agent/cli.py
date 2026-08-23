@@ -291,7 +291,15 @@ def cmd_render(payload: dict) -> dict:
     if payload.get("link_style") in ("url", "label"):
         struct["link_style"] = payload["link_style"]
 
-    result = render_pdf.render_fitted(struct, out)
+    # The user's page budget, when they chose one. The editor's content is
+    # THEIR OWN words — never rewritten here — so the only levers are the
+    # compact layout rungs; still over means the caller says so honestly.
+    mp_raw = payload.get("max_pages")
+    max_pages = int(mp_raw) if isinstance(mp_raw, (int, float)) and int(mp_raw) >= 1 else None
+    if max_pages:
+        result = render_pdf.render_fitted(struct, out, max_pages, densities=render_pdf.FIT_RUNGS)
+    else:
+        result = render_pdf.render_fitted(struct, out)
     if not result.ok:
         return _fail(f"render failed: {result.reason}")
 
@@ -299,6 +307,8 @@ def cmd_render(payload: dict) -> dict:
     return {
         "ok": True,
         "pages": result.pages,
+        "over_budget": bool(max_pages) and (result.pages or 0) > max_pages,
+        "compacted": result.density < 1.0,
         "chars": len(parsed.strip()),
         # The reading itself, not only its length. `chars` answers "did anything
         # come out"; `text` is what the score was computed from, and it is what a
