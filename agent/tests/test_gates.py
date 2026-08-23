@@ -257,3 +257,45 @@ def test_a_full_honest_rewrite_survives_intact(ctx):
     assert dropped == [], f"falsely dropped: {dropped}"
     # Every factual item survives, so the drift check downstream cannot fire.
     assert RO._factual_item_count(kept) == RO._factual_item_count(rewrite)
+
+
+# ---------------------------------------------------------------------------
+# derived forms: the gate must fold "analysis" onto a source that says "analyzing"
+# ---------------------------------------------------------------------------
+
+def test_a_derived_form_of_a_source_word_is_not_an_invented_skill():
+    """Seen live, Amazon target: the resume said "analyzing", the rewrite wrote
+    "data analysis" in the skills line, and the gate rejected the WHOLE variant
+    for inventing "analysis" — all three rewrites of the run died on wording.
+    Plural folding (`_morph_variants`) never reached this; derivation does.
+    """
+    allowed = RO._allowed_tokens(
+        "Built dashboards analyzing sales data in Python; managed a team of 3 engineers.",
+        ["python"],
+    )
+    struct = {
+        "name": "", "contact_line": "",
+        "sections": [{"heading": "Technical Skills", "items": [
+            {"head": "", "sub": "", "bullets": ["Python, data analysis, engineering management"]},
+        ]}],
+    }
+    assert RO._fabricated_skills(struct, allowed) == []
+
+
+def test_the_derivational_fold_does_not_defend_a_different_technology():
+    """The loosening must stay narrow: "sprint" (the ceremony) must not defend
+    "spring" (the framework), and an unrelated source never defends Kubernetes.
+    Short names are never folded at all."""
+    allowed = RO._allowed_tokens(
+        "Ran the weekly sprint; wrote Go services; analyzing metrics.", ["go"],
+    )
+    struct = {
+        "name": "", "contact_line": "",
+        "sections": [{"heading": "Technical Skills", "items": [
+            {"head": "", "sub": "", "bullets": ["Spring Boot, Kubernetes, Go"]},
+        ]}],
+    }
+    bad = RO._fabricated_skills(struct, allowed)
+    assert "kubernetes" in bad
+    assert any(b.startswith("spring") for b in bad), bad
+    assert "go" not in bad

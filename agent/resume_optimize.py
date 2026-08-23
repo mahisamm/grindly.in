@@ -1117,6 +1117,7 @@ def _fabricated_skills(struct: dict, allowed: set[str]) -> list[str]:
     # candidate named Ruby, or one whose employer is Kotlin Labs, would have hit
     # the same wall.
     blob = _flatten(struct, include_identity=False).lower()
+    allowed_stems = {_stem(a) for a in allowed if len(a) >= 6}
     bad: list[str] = []
     for sk in sorted(TECH_VOCAB):
         present = re.search(r"(?<![a-z])" + re.escape(sk) + r"(?![a-z])", blob)
@@ -1130,7 +1131,9 @@ def _fabricated_skills(struct: dict, allowed: set[str]) -> list[str]:
         # was rejected with "it invented skills you don't have (api)". The two
         # halves of one gate disagreed about English plurals.
         if all(
-            tok in allowed or bool(_morph_variants(tok) & allowed)
+            tok in allowed
+            or bool(_morph_variants(tok) & allowed)
+            or _stem_defended(tok, allowed_stems, allowed)
             for tok in re.findall(r"[a-z0-9+#.]+", sk)
         ):
             continue
@@ -1451,6 +1454,50 @@ _EQUIVALENTS: dict[str, tuple[str, ...]] = {
     "postgres": ("postgresql",), "postgresql": ("postgres",),
     "kubernetes": ("k8s",), "javascript": ("js",), "typescript": ("ts",),
 }
+
+
+# Derivational suffixes, longest first. Stripped once, and only when at least
+# four characters remain — "spring" → "spr" is too short to fold, so "spring"
+# (the framework) is NOT defended by "sprint" (the ceremony).
+_DERIV_SUFFIXES = (
+    "ization", "isation", "ations", "ation", "ments", "ment", "ings", "ing",
+    "ers", "ies", "ied", "ical", "ics", "ity", "ed", "er", "es", "is", "ic",
+    "ly", "al", "s",
+)
+
+
+def _stem(token: str) -> str:
+    """A crude, deliberately narrow stem for DERIVED forms of one English word.
+
+    `_morph_variants` folds plurals; this folds the next ring out — "analysis"
+    / "analyzing" / "analysed", "management" / "managed", "engineering" /
+    "engineer". Seen live: the resume said "analyzing", the rewrite wrote
+    "data analysis", and the gate rejected the WHOLE variant for inventing
+    "analysis" — all three rewrites of a targeted run died on wording.
+
+    Narrow on purpose, because this loosens the truthfulness gate: one suffix
+    stripped, never two; the stem must keep four characters; trailing e/y and
+    the American z are normalised so "analyse"/"analyze"/"analysis" agree.
+    Tech names rarely carry these suffixes, and the short ones ("go", "c",
+    "sql", "react") are never folded at all — see the length guard at the
+    call site.
+    """
+    t = token.lower().strip("./-")
+    for suf in _DERIV_SUFFIXES:
+        if t.endswith(suf) and len(t) - len(suf) >= 4:
+            t = t[: -len(suf)]
+            break
+    return t.rstrip("ey").replace("z", "s")
+
+
+def _stem_defended(token: str, allowed_stems: set[str], allowed_words: set[str]) -> bool:
+    """Is this rewrite token a derived form of a word the source wrote?"""
+    if len(token) < 6:
+        return False
+    stem = _stem(token)
+    # Either both reduce to one stem ("analysis"/"analyzing" → "analys"), or
+    # the stem IS a word the source wrote ("engineering" → "engineer").
+    return stem in allowed_stems or stem in allowed_words
 
 
 def _morph_variants(token: str) -> set[str]:

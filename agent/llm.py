@@ -31,10 +31,20 @@ import redact
 # Cloudflare, which answers a bare python-urllib with `403 error code: 1010`
 # and no explanation, so the header has to exist.
 _UA = "grindly/1.0 (+https://grindly.in)"
-# Completion budget. Ordinary chat models answer well inside the default; a
-# reasoning model bills its thinking against the same budget and needs headroom
-# for both, or it returns nothing at all (see _cerebras_glm).
-_DEFAULT_MAX_TOKENS = max(256, int(os.environ.get("GRINDLY_LLM_MAX_TOKENS", "2048")))
+# Completion budget. A reasoning model bills its thinking against the same
+# budget and needs headroom for both, or it returns nothing at all (see
+# _cerebras_glm).
+#
+# 6144, not the 2048 this used to be. The rewrite and extraction calls return
+# a WHOLE resume as JSON — for a 3,500-character resume that is ~2,500 output
+# tokens, for a two-pager more. At 2048 the honest, complete answers were cut
+# off mid-JSON (Groq said so: finish_reason=length) and discarded as
+# unparseable, and the only survivor was whichever model had COMPRESSED the
+# resume enough to fit — which the content-loss gate then rejected for
+# losing 11 of 18 bullets. Seen live: a targeted run produced nothing at all
+# for a perfectly ordinary resume. The cap is a ceiling, not spend: a short
+# answer costs the same either way. Every current free model allows ≥8k out.
+_DEFAULT_MAX_TOKENS = max(256, int(os.environ.get("GRINDLY_LLM_MAX_TOKENS", "6144")))
 _REASONING_MAX_TOKENS = max(
     _DEFAULT_MAX_TOKENS, int(os.environ.get("GRINDLY_LLM_REASONING_MAX_TOKENS", "8192"))
 )
@@ -170,7 +180,7 @@ def _gemini(messages: list, timeout: int, temperature: float = 0.3) -> str | Non
 
         payload: dict = {
             "contents": contents,
-            "generationConfig": {"temperature": temperature, "maxOutputTokens": 2048},
+            "generationConfig": {"temperature": temperature, "maxOutputTokens": _DEFAULT_MAX_TOKENS},
         }
         if system_text:
             payload["systemInstruction"] = {"parts": [{"text": system_text}]}

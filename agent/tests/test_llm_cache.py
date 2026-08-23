@@ -234,3 +234,14 @@ def test_advice_is_never_cached(cache_on, monkeypatch):
     resume_ai.advise("a resume with enough text in it to be worth reviewing")
     resume_ai.advise("a resume with enough text in it to be worth reviewing")
     assert len(calls) == 2
+
+
+def test_the_completion_budget_fits_a_whole_resume():
+    """The rewrite and extraction calls return an ENTIRE resume as JSON. At the
+    old 2048-token cap the complete, honest answers were cut off mid-JSON and
+    discarded; the only survivor was whichever model had compressed the resume
+    enough to fit, which the content-loss gate then rejected — a targeted run
+    produced nothing at all for an ordinary 3,500-character resume. Seen live.
+    """
+    import llm
+    assert llm._DEFAULT_MAX_TOKENS >= 4096
