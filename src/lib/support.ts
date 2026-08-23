@@ -115,8 +115,8 @@ export const TICKET_LIMITS = {
  * The one address people can write to. Shown on /contact, /refunds and the
  * Contact & feedback dialog — change it HERE only.
  *
- * Today it is the operator's personal Gmail. The intended value is
- * support@grindly.in forwarding to that Gmail (a forwarder at the DNS host,
- * not a new mailbox) — flip this line once the forwarder is live.
+ * support@grindly.in is an ImprovMX forwarder (free tier) to the operator's
+ * inbox; MX + SPF live at the apex in Hostinger DNS, Resend's sending
+ * records on send.grindly.in are separate and untouched.
  */
-export const SUPPORT_EMAIL = "mahendharsammeta21@gmail.com";
+export const SUPPORT_EMAIL = "support@grindly.in";
