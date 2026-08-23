@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { FeedbackDialog } from "@/components/ReportProblem";
 
 /**
  * The signed-in identity, as every professional product wears it: one avatar
@@ -35,6 +36,10 @@ export function AccountMenu({
   showUpgrade: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // The feedback form, opened from this menu — it used to be a floating
+  // corner button on every app page, which read as "report a complaint"
+  // and fought the phone nav for the same corner.
+  const [feedback, setFeedback] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -57,6 +62,7 @@ export function AccountMenu({
 
   return (
     <div ref={rootRef} className="relative">
+      <FeedbackDialog open={feedback} onClose={() => setFeedback(false)} />
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -108,6 +114,20 @@ export function AccountMenu({
                 Admin dashboard
               </MenuLink>
             )}
+            <MenuLink href="/app/support" onPick={() => setOpen(false)}>
+              Support &amp; tickets
+            </MenuLink>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                setFeedback(true);
+              }}
+              className="text-muted hover:text-ink hover:bg-surface-2 w-full cursor-pointer rounded-lg px-3 py-2 text-left text-sm"
+            >
+              Send feedback
+            </button>
             <MenuLink href="/contact" onPick={() => setOpen(false)}>
               Help &amp; contact
             </MenuLink>

@@ -346,3 +346,269 @@ export async function recentSignups(days = 7, now = new Date()) {
     },
   });
 }
+
+/* ── conversion ──────────────────────────────────────────────────── */
+
+export type ConversionStats = {
+  /** Non-admin, approved accounts — the population a conversion rate is over. */
+  approved: number;
+  /** Has at least one paid order, ever. */
+  everPaid: number;
+  /** Plan is pack/pass and has not expired, OR holds a per-company unlock. */
+  payingNow: number;
+  /** Did something in the last 30 days (audit log). */
+  activeMonth: number;
+  /** Paid in the last 30 days. */
+  paidThisMonth: number;
+  /** everPaid / approved, and paidThisMonth / activeMonth — both in percent. */
+  rateLifetime: number | null;
+  rateActive: number | null;
+};
+
+/**
+ * Who pays, out of whom. Two rates because they answer different questions:
+ * lifetime (of everyone we ever let in, how many ever paid) is the number a
+ * business plan wants; the 30-day active rate (of people actually using it
+ * this month, how many paid this month) is the one that moves when the
+ * product changes. Both are ratios of counted rows, nothing modelled.
+ */
+export async function conversionStats(now = new Date()): Promise<ConversionStats> {
+  const month = new Date(now.getTime() - 30 * DAY);
+  const nonAdmin = { role: { not: "admin" as const }, deletedAt: null };
+  const [approved, everPaid, payingPlan, unlocked, activeMonth, paidThisMonth] = await Promise.all([
+    prisma.user.count({ where: { ...nonAdmin, accessStatus: "approved" } }),
+    distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(DISTINCT o.user_id) AS n FROM orders o
+      JOIN users u ON u.id = o.user_id
+      WHERE o.status = 'paid' AND u.role <> 'admin'`),
+    prisma.user.count({
+      where: {
+        ...nonAdmin,
+        plan: { in: ["pack", "pass"] },
+        OR: [{ planExpiresAt: null }, { planExpiresAt: { gt: now } }],
+      },
+    }),
+    distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(DISTINCT t.user_id) AS n FROM targets t
+      JOIN users u ON u.id = t.user_id
+      WHERE t.unlocked_at IS NOT NULL AND u.role <> 'admin'
+        AND NOT (u.plan IN ('pack','pass') AND (u.plan_expires_at IS NULL OR u.plan_expires_at > NOW()))`),
+    activeSince(month),
+    distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(DISTINCT o.user_id) AS n FROM orders o
+      JOIN users u ON u.id = o.user_id
+      WHERE o.status = 'paid' AND o.paid_at >= ${month} AND u.role <> 'admin'`),
+  ]);
+  const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
+  return {
+    approved,
+    everPaid,
+    payingNow: payingPlan + unlocked,
+    activeMonth,
+    paidThisMonth,
+    rateLifetime: pct(everPaid, approved),
+    rateActive: pct(paidThisMonth, activeMonth),
+  };
+}
+
+/* ── traffic ─────────────────────────────────────────────────────── */
+
+export type TrafficWindow = { views: number; visitors: number; signedIn: number };
+export type TrafficStats = {
+  /** Distinct visitors with a page view in the last 5 minutes. */
+  activeNow: number;
+  today: TrafficWindow;
+  week: TrafficWindow;
+  month: TrafficWindow;
+  /** Most-viewed paths in the last 30 days. */
+  topPaths: { path: string; views: number }[];
+  /** Page views per day for the last 30 days, oldest first, empty days as 0. */
+  byDay: { date: string; count: number }[];
+  /** When the first view was recorded, so an empty panel can say so. */
+  firstSeen: Date | null;
+};
+
+/**
+ * Page views, from the beacon (components/TrafficBeacon.tsx → api/track).
+ * "Today" is the UTC day — said on the panel — because the operator and the
+ * box are in different timezones and a dashboard that rolls over at a
+ * different hour on each machine is a dashboard nobody can reconcile.
+ */
+export async function trafficStats(now = new Date()): Promise<TrafficStats> {
+  const fiveMin = new Date(now.getTime() - 5 * 60 * 1000);
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const week = new Date(now.getTime() - 7 * DAY);
+  const month = new Date(now.getTime() - 30 * DAY);
+
+  const win = async (since: Date): Promise<TrafficWindow> => {
+    const rows = await prisma.$queryRaw<{ views: bigint; visitors: bigint; signed_in: bigint }[]>`
+      SELECT COUNT(*) AS views,
+             COUNT(DISTINCT visitor_id) AS visitors,
+             COUNT(DISTINCT user_id) AS signed_in
+      FROM page_views WHERE created_at >= ${since}`.catch(() => []);
+    const r = rows[0];
+    return {
+      views: Number(r?.views ?? 0),
+      visitors: Number(r?.visitors ?? 0),
+      signedIn: Number(r?.signed_in ?? 0),
+    };
+  };
+
+  const [activeNow, today, wk, mo, top, days, first] = await Promise.all([
+    distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(DISTINCT visitor_id) AS n FROM page_views WHERE created_at >= ${fiveMin}`),
+    win(dayStart),
+    win(week),
+    win(month),
+    prisma.$queryRaw<{ path: string; views: bigint }[]>`
+      SELECT path, COUNT(*) AS views FROM page_views
+      WHERE created_at >= ${month}
+      GROUP BY path ORDER BY views DESC LIMIT 8`.catch(() => []),
+    prisma.$queryRaw<{ day: Date; n: bigint }[]>`
+      SELECT date_trunc('day', created_at) AS day, COUNT(*) AS n
+      FROM page_views WHERE created_at >= ${month}
+      GROUP BY 1 ORDER BY 1`.catch(() => []),
+    prisma.pageView.findFirst({ orderBy: { createdAt: "asc" }, select: { createdAt: true } }).catch(() => null),
+  ]);
+
+  const counts = new Map<string, number>();
+  for (let i = 0; i < 30; i++) {
+    counts.set(new Date(month.getTime() + i * DAY).toISOString().slice(0, 10), 0);
+  }
+  for (const row of days) {
+    const key = new Date(row.day).toISOString().slice(0, 10);
+    if (counts.has(key)) counts.set(key, Number(row.n));
+  }
+
+  return {
+    activeNow,
+    today,
+    week: wk,
+    month: mo,
+    topPaths: top.map((r) => ({ path: r.path, views: Number(r.views) })),
+    byDay: [...counts.entries()].map(([date, count]) => ({ date, count })),
+    firstSeen: first?.createdAt ?? null,
+  };
+}
+
+/* ── revenue ─────────────────────────────────────────────────────── */
+
+export type RevenueSeries = {
+  currency: string;
+  /** Smallest unit per day, last 30 days, oldest first, empty days as 0. */
+  byDay: { date: string; count: number }[];
+  /** Per calendar month, last 12, oldest first. */
+  byMonth: { month: string; amount: number; orders: number }[];
+  today: number;
+  week: number;
+  month: number;
+  allTime: number;
+  /** Paid orders in a currency other than the main one — listed apart rather
+      than silently summed into the wrong unit. */
+  otherCurrencies: { currency: string; amount: number; orders: number }[];
+};
+
+/**
+ * Money in, by when it was PAID (paid_at), never by when the order was created
+ * — an order created and abandoned is not revenue. Sums are in the smallest
+ * unit (paise); the panel formats. One main currency: the one with the most
+ * paid orders (INR today); anything else is listed apart.
+ */
+export async function revenueSeries(now = new Date()): Promise<RevenueSeries> {
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const week = new Date(now.getTime() - 7 * DAY);
+  const month = new Date(now.getTime() - 30 * DAY);
+  const year = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
+
+  const byCurrency = await prisma.order
+    .groupBy({
+      by: ["currency"],
+      where: { status: "paid" },
+      _sum: { amount: true },
+      _count: { _all: true },
+    })
+    .catch(() => []);
+  const sorted = [...byCurrency].sort((a, b) => b._count._all - a._count._all);
+  const main = sorted[0]?.currency ?? "INR";
+  const other = sorted
+    .filter((c) => c.currency !== main)
+    .map((c) => ({ currency: c.currency, amount: c._sum.amount ?? 0, orders: c._count._all }));
+
+  const sum = async (since: Date | null) => {
+    const r = await prisma.order.aggregate({
+      where: { status: "paid", currency: main, ...(since ? { paidAt: { gte: since } } : {}) },
+      _sum: { amount: true },
+    });
+    return r._sum.amount ?? 0;
+  };
+
+  const [today, wk, mo, all, dayRows, monthRows] = await Promise.all([
+    sum(dayStart),
+    sum(week),
+    sum(month),
+    sum(null),
+    prisma.$queryRaw<{ day: Date; amount: bigint }[]>`
+      SELECT date_trunc('day', paid_at) AS day, COALESCE(SUM(amount),0) AS amount
+      FROM orders WHERE status = 'paid' AND currency = ${main} AND paid_at >= ${month}
+      GROUP BY 1 ORDER BY 1`.catch(() => []),
+    prisma.$queryRaw<{ month: Date; amount: bigint; orders: bigint }[]>`
+      SELECT date_trunc('month', paid_at) AS month, COALESCE(SUM(amount),0) AS amount, COUNT(*) AS orders
+      FROM orders WHERE status = 'paid' AND currency = ${main} AND paid_at >= ${year}
+      GROUP BY 1 ORDER BY 1`.catch(() => []),
+  ]);
+
+  const days = new Map<string, number>();
+  for (let i = 0; i < 30; i++) days.set(new Date(month.getTime() + i * DAY).toISOString().slice(0, 10), 0);
+  for (const r of dayRows) {
+    const key = new Date(r.day).toISOString().slice(0, 10);
+    if (days.has(key)) days.set(key, Number(r.amount));
+  }
+  const months = new Map<string, { amount: number; orders: number }>();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(Date.UTC(year.getUTCFullYear(), year.getUTCMonth() + i, 1));
+    months.set(d.toISOString().slice(0, 7), { amount: 0, orders: 0 });
+  }
+  for (const r of monthRows) {
+    const key = new Date(r.month).toISOString().slice(0, 7);
+    if (months.has(key)) months.set(key, { amount: Number(r.amount), orders: Number(r.orders) });
+  }
+
+  return {
+    currency: main,
+    byDay: [...days.entries()].map(([date, count]) => ({ date, count })),
+    byMonth: [...months.entries()].map(([month, v]) => ({ month, ...v })),
+    today,
+    week: wk,
+    month: mo,
+    allTime: all,
+    otherCurrencies: other,
+  };
+}
+
+/* ── tickets ─────────────────────────────────────────────────────── */
+
+export type TicketStats = {
+  open: number;
+  /** Open or answered tickets where the USER spoke last — the operator's queue. */
+  awaitingYou: number;
+  answered: number;
+  closed: number;
+  /** Tickets with a user message the operator has not opened yet. */
+  unread: number;
+};
+
+export async function ticketStats(): Promise<TicketStats> {
+  const [open, answered, closed, awaitingYou, unread] = await Promise.all([
+    prisma.ticket.count({ where: { status: "open" } }),
+    prisma.ticket.count({ where: { status: "answered" } }),
+    prisma.ticket.count({ where: { status: "closed" } }),
+    prisma.ticket.count({ where: { status: { not: "closed" }, lastMessageBy: "user" } }),
+    prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(*) AS n FROM tickets
+      WHERE last_message_by = 'user'
+        AND (admin_seen_at IS NULL OR admin_seen_at < last_message_at)`
+      .then((r) => Number(r[0]?.n ?? 0))
+      .catch(() => 0),
+  ]);
+  return { open, answered, closed, awaitingYou, unread };
+}

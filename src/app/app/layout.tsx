@@ -4,7 +4,6 @@ import { AccountMenu } from "@/components/AccountMenu";
 import { AmbientBackground } from "@/components/AmbientBackground";
 import { Logo } from "@/components/Brand";
 import { MobileNav } from "@/components/MobileNav";
-import { ReportProblem } from "@/components/ReportProblem";
 import { currentUser, isApproved } from "@/lib/auth";
 import { daysRemaining, effectivePlan } from "@/lib/plans";
 
@@ -100,7 +99,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <MobileNav />
       {/* In the shell rather than on each page, so a page added later is
           reportable by existing rather than by someone remembering. */}
-      <ReportProblem />
       </div>
     </div>
   );

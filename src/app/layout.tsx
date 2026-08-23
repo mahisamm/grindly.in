@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Fraunces, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { TrafficBeacon } from "@/components/TrafficBeacon";
 
 const bodySans = Space_Grotesk({
   variable: "--ff-sans",
@@ -136,6 +137,10 @@ export default function RootLayout({
         >
           {children}
         </div>
+        {/* Page-view beacon — see components/TrafficBeacon.tsx for what it
+            does and does not record. Last in the body so it never delays
+            anything the visitor is waiting for. */}
+        <TrafficBeacon />
       </body>
     </html>
   );

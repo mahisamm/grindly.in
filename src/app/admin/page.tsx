@@ -4,7 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { currentUser, type SessionUser } from "@/lib/auth";
 import { describe } from "@/lib/config";
 import { formatAmount, LIMITS, PRODUCTS, formatLimit } from "@/lib/plans";
-import { adminStats, signupsByDay } from "@/lib/adminStats";
+import {
+  adminStats, signupsByDay, conversionStats, trafficStats, revenueSeries, ticketStats,
+} from "@/lib/adminStats";
 import { readAdminSettings } from "@/lib/adminSettings";
 import { classifyPending } from "@/lib/feedback";
 import { ResolveError } from "./ResolveError";
@@ -13,7 +15,9 @@ import { ProblemReports } from "./ProblemReports";
 import { AccountTable } from "./AccountTable";
 import { AdminsPanel } from "./AdminsPanel";
 import { SettingsSwitches } from "./SettingsSwitches";
-import { AdminNav, isSection, type SectionKey } from "./Nav";
+import { AdminNav, resolveSection, type SectionKey } from "./Nav";
+import { TicketsPanel } from "./TicketsPanel";
+import { TrafficPanel, RevenuePanel, ConversionRow } from "./Analytics";
 import { BandBars, Donut, KpiCard, SignupArea, StatusPill } from "./Charts";
 import { Funnel, ScoreStat, Section, Stat, StatGrid } from "./Panels";
 
@@ -43,7 +47,7 @@ const RANGES = [7, 30, 90] as const;
 export default async function AdminPage({
   searchParams,
 }: {
-  searchParams: Promise<{ s?: string; days?: string }>;
+  searchParams: Promise<{ s?: string; days?: string; t?: string; status?: string }>;
 }) {
   const user = await currentUser();
   // notFound() would be the same information; a redirect is friendlier for a
@@ -52,16 +56,17 @@ export default async function AdminPage({
   if (user.role !== "admin") redirect("/app");
 
   const params = await searchParams;
-  const section: SectionKey = isSection(params.s) ? params.s : "overview";
+  const section: SectionKey = resolveSection(params.s);
   const days = RANGES.includes(Number(params.days) as (typeof RANGES)[number])
     ? (Number(params.days) as (typeof RANGES)[number])
     : 30;
 
   const caps = describe();
-  const [stats, signups, pendingCount] = await Promise.all([
+  const [stats, signups, pendingCount, tickets] = await Promise.all([
     adminStats(),
-    section === "overview" ? signupsByDay(days) : Promise.resolve([]),
+    section === "dashboard" ? signupsByDay(days) : Promise.resolve([]),
     prisma.user.count({ where: { role: { not: "admin" }, accessStatus: "pending" } }),
+    ticketStats(),
   ]);
 
   return (
@@ -78,6 +83,9 @@ export default async function AdminPage({
             <StatusPill tone="bad">{stats.health.unresolvedErrors} errors</StatusPill>
           )}
           {pendingCount > 0 && <StatusPill tone="warn">{pendingCount} waiting</StatusPill>}
+          {tickets.awaitingYou > 0 && (
+            <StatusPill tone="warn">{tickets.awaitingYou} ticket{tickets.awaitingYou === 1 ? "" : "s"}</StatusPill>
+          )}
           <Link href="/app" className="text-muted hover:text-ink text-sm whitespace-nowrap">
             ← Back to the app
           </Link>
@@ -85,16 +93,35 @@ export default async function AdminPage({
       </header>
 
       <div className="flex flex-col gap-6 lg:flex-row lg:gap-10">
-        <AdminNav active={section} waiting={pendingCount} />
+        <AdminNav active={section} waiting={pendingCount} tickets={tickets.unread} />
         <div className="min-w-0 flex-1">
-          {section === "overview" && <Overview stats={stats} signups={signups} days={days} />}
-          {section === "access" && <Access />}
-          {section === "people" && <People />}
-          {section === "quality" && <Quality stats={stats} />}
-          {section === "money" && <Money stats={stats} caps={caps} />}
-          {section === "problems" && <Problems stats={stats} />}
-          {section === "feedback" && <Feedback />}
-          {section === "health" && <Health stats={stats} caps={caps} />}
+          {section === "dashboard" && (
+            <>
+              <Conversion />
+              <Overview stats={stats} signups={signups} days={days} />
+            </>
+          )}
+          {section === "analytics" && (
+            <>
+              <Traffic />
+              <Revenue stats={stats} caps={caps} />
+              <Quality stats={stats} />
+            </>
+          )}
+          {section === "users" && (
+            <>
+              <Access />
+              <People />
+            </>
+          )}
+          {section === "complaints" && (
+            <>
+              <Problems stats={stats} />
+              <Feedback />
+            </>
+          )}
+          {section === "tickets" && <TicketsPanel ticketId={params.t} status={params.status} adminUser={user} />}
+          {section === "errors" && <Health stats={stats} caps={caps} />}
           {section === "settings" && <Settings user={user} />}
         </div>
       </div>
@@ -104,6 +131,30 @@ export default async function AdminPage({
 
 type Stats = Awaited<ReturnType<typeof adminStats>>;
 type Caps = ReturnType<typeof describe>;
+
+/* ── conversion (dashboard top row) ─────────────────────────────── */
+
+async function Conversion() {
+  const c = await conversionStats();
+  return <ConversionRow c={c} />;
+}
+
+/* ── traffic + revenue (analytics) ──────────────────────────────── */
+
+async function Traffic() {
+  const t = await trafficStats();
+  return <TrafficPanel t={t} />;
+}
+
+async function Revenue({ stats, caps }: { stats: Stats; caps: Caps }) {
+  const r = await revenueSeries();
+  return (
+    <>
+      <RevenuePanel r={r} />
+      <Money stats={stats} caps={caps} />
+    </>
+  );
+}
 
 /* ── overview ────────────────────────────────────────────────────── */
 
@@ -318,33 +369,69 @@ async function Access() {
 /* ── people ──────────────────────────────────────────────────────── */
 
 async function People() {
+  const now = new Date();
   const rows = await prisma.user.findMany({
+    where: { role: { not: "admin" }, deletedAt: null },
     orderBy: { createdAt: "desc" },
-    take: 50,
+    take: 500,
     select: {
       id: true,
       email: true,
+      name: true,
       plan: true,
+      planExpiresAt: true,
       accessStatus: true,
       createdAt: true,
       _count: { select: { resumes: true } },
     },
   });
+  // Three side tables in three queries, joined in memory — a per-row
+  // sub-select for five hundred accounts is the kind of page that takes four
+  // seconds and gets closed before it paints.
+  const [lastActive, rebuilds, paid, unlocked] = await Promise.all([
+    prisma.$queryRaw<{ user_id: string; last: Date }[]>`
+      SELECT user_id, MAX(created_at) AS last FROM audit_logs
+      WHERE user_id IS NOT NULL GROUP BY user_id`.catch(() => []),
+    prisma.$queryRaw<{ user_id: string; n: bigint }[]>`
+      SELECT user_id, COUNT(*) AS n FROM variant_runs
+      WHERE status = 'done' GROUP BY user_id`.catch(() => []),
+    prisma.$queryRaw<{ user_id: string; amount: bigint; currency: string }[]>`
+      SELECT user_id, SUM(amount) AS amount, MIN(currency) AS currency FROM orders
+      WHERE status = 'paid' GROUP BY user_id`.catch(() => []),
+    prisma.$queryRaw<{ user_id: string }[]>`
+      SELECT DISTINCT user_id FROM targets WHERE unlocked_at IS NOT NULL`.catch(() => []),
+  ]);
+  const lastBy = new Map(lastActive.map((r) => [r.user_id, r.last]));
+  const runsBy = new Map(rebuilds.map((r) => [r.user_id, Number(r.n)]));
+  const paidBy = new Map(paid.map((r) => [r.user_id, { amount: Number(r.amount), currency: r.currency }]));
+  const unlockedSet = new Set(unlocked.map((r) => r.user_id));
 
   return (
     <Section
       title="Accounts"
-      note="The fifty most recent, newest first. Filtering happens in the page — there is nothing to wait for."
+      note="Every non-admin account (up to the 500 newest). Segments and the filter happen in the page. 'Last active' is the newest audit-log action — a sign-in, an upload, a rebuild — not a page view."
     >
       <AccountTable
-        rows={rows.map((r) => ({
-          id: r.id,
-          email: r.email,
-          plan: r.plan,
-          accessStatus: r.accessStatus,
-          resumes: r._count.resumes,
-          createdAt: r.createdAt.toISOString(),
-        }))}
+        now={now.getTime()}
+        rows={rows.map((r) => {
+          const planLive =
+            (r.plan === "pack" || r.plan === "pass") && (!r.planExpiresAt || r.planExpiresAt > now);
+          const p = paidBy.get(r.id);
+          return {
+            id: r.id,
+            email: r.email,
+            name: r.name,
+            plan: r.plan,
+            accessStatus: r.accessStatus,
+            resumes: r._count.resumes,
+            rebuilds: runsBy.get(r.id) ?? 0,
+            paid: p?.amount ?? 0,
+            currency: p?.currency ?? "INR",
+            paying: planLive || unlockedSet.has(r.id),
+            createdAt: r.createdAt.toISOString(),
+            lastActiveAt: lastBy.get(r.id)?.toISOString() ?? null,
+          };
+        })}
       />
     </Section>
   );

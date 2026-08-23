@@ -1,30 +1,44 @@
 import Link from "next/link";
 
 export type SectionKey =
-  | "overview"
-  | "access"
-  | "people"
-  | "quality"
-  | "money"
-  | "problems"
-  | "feedback"
-  | "health"
+  | "dashboard"
+  | "analytics"
+  | "users"
+  | "complaints"
+  | "tickets"
+  | "errors"
   | "settings";
 
 export const SECTIONS: { key: SectionKey; label: string; group: string }[] = [
-  { key: "overview", label: "Overview", group: "Dashboard" },
-  { key: "access", label: "Access requests", group: "Dashboard" },
-  { key: "people", label: "Accounts", group: "Dashboard" },
-  { key: "quality", label: "Quality", group: "Product" },
-  { key: "money", label: "Money", group: "Product" },
-  { key: "problems", label: "Problems", group: "Operations" },
-  { key: "feedback", label: "Feedback", group: "Operations" },
-  { key: "health", label: "Health", group: "Operations" },
+  { key: "dashboard", label: "Dashboard", group: "Overview" },
+  { key: "analytics", label: "Analytics", group: "Overview" },
+  { key: "users", label: "Users", group: "People" },
+  { key: "complaints", label: "Complaints & feedback", group: "People" },
+  { key: "tickets", label: "Tickets", group: "People" },
+  { key: "errors", label: "Errors", group: "Operations" },
   { key: "settings", label: "Settings", group: "Operations" },
 ];
 
+/** Old section names still in bookmarks and emails resolve to their new home. */
+const LEGACY: Record<string, SectionKey> = {
+  overview: "dashboard",
+  access: "users",
+  people: "users",
+  quality: "analytics",
+  money: "analytics",
+  problems: "complaints",
+  feedback: "complaints",
+  health: "errors",
+};
+
 export function isSection(value: string | undefined): value is SectionKey {
   return SECTIONS.some((s) => s.key === value);
+}
+
+export function resolveSection(value: string | undefined): SectionKey {
+  if (isSection(value)) return value;
+  if (value && LEGACY[value]) return LEGACY[value];
+  return "dashboard";
 }
 
 /**
@@ -40,7 +54,7 @@ export function isSection(value: string | undefined): value is SectionKey {
  * sidebar on a 412px screen is either a hamburger nobody opens or half the
  * width of the content; the strip keeps every destination one thumb away.
  */
-export function AdminNav({ active, waiting }: { active: SectionKey; waiting: number }) {
+export function AdminNav({ active, waiting, tickets = 0 }: { active: SectionKey; waiting: number; tickets?: number }) {
   const groups = [...new Set(SECTIONS.map((s) => s.group))];
 
   return (
@@ -49,7 +63,7 @@ export function AdminNav({ active, waiting }: { active: SectionKey; waiting: num
       <ul className="scrollbar-none -mx-5 flex gap-2 overflow-x-auto px-5 pb-1 lg:hidden">
         {SECTIONS.map((s) => (
           <li key={s.key}>
-            <NavLink section={s.key} label={s.label} active={active === s.key} badge={s.key === "access" ? waiting : 0} pill />
+            <NavLink section={s.key} label={s.label} active={active === s.key} badge={s.key === "users" ? waiting : s.key === "tickets" ? tickets : 0} pill />
           </li>
         ))}
       </ul>
@@ -71,7 +85,7 @@ export function AdminNav({ active, waiting }: { active: SectionKey; waiting: num
                     section={s.key}
                     label={s.label}
                     active={active === s.key}
-                    badge={s.key === "access" ? waiting : 0}
+                    badge={s.key === "users" ? waiting : s.key === "tickets" ? tickets : 0}
                   />
                 </li>
               ))}
@@ -100,7 +114,7 @@ function NavLink({
     <Link
       // The default section is expressed by absence, so the canonical URL for
       // this page has no query string at all.
-      href={section === "overview" ? "/admin" : `/admin?s=${section}`}
+      href={section === "dashboard" ? "/admin" : `/admin?s=${section}`}
       aria-current={active ? "page" : undefined}
       className={`flex items-center justify-between gap-2 whitespace-nowrap transition-colors ${
         pill ? "rounded-full border px-3.5 py-1.5 text-xs font-semibold" : "rounded-lg px-3 py-2 text-sm"

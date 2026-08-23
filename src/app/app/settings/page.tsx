@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { FeedbackButton } from "@/components/FeedbackButton";
 import { prisma } from "@/lib/prisma";
 import { currentUser } from "@/lib/auth";
 import { daysRemaining, effectivePlan, formatLimit, limitsFor } from "@/lib/plans";
@@ -128,6 +129,20 @@ export default async function SettingsPage() {
       <section className="bg-surface border-border mt-6 rounded-xl border p-6">
         <h2 className="font-display text-lg font-semibold">Your data</h2>
         <ExportData />
+      </section>
+
+      <section className="bg-surface border-border mt-6 rounded-xl border p-6">
+        <h2 className="font-display text-lg font-semibold">Help</h2>
+        <p className="text-muted mt-2 text-sm leading-relaxed">
+          A ticket is a conversation with us — we reply there and email you when we do.
+          Feedback is a one-way note: anything you noticed, no answer expected.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link href="/app/support" className="btn btn-primary inline-flex text-sm">
+            Support &amp; tickets
+          </Link>
+          <FeedbackButton />
+        </div>
       </section>
 
       {user.role === "admin" && (

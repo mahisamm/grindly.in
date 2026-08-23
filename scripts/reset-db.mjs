@@ -70,12 +70,15 @@ async function main() {
   await prisma.passwordResetToken.deleteMany();
   await prisma.emailVerificationToken.deleteMany();
   await prisma.problemReport.deleteMany();
+  await prisma.ticketMessage.deleteMany();
+  await prisma.ticket.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.user.deleteMany();
 
   // Standalone tables, no relations to respect.
   await prisma.rateLimitEntry.deleteMany();
   await prisma.errorEvent.deleteMany();
+  await prisma.pageView.deleteMany();
   // Written by scripts/backup-drill.sh rather than by the app, and cleared here
   // anyway: "reset" has to mean the database is empty, or a drill result from
   // before the reset is read afterwards as if it described the new state.

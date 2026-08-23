@@ -48,6 +48,27 @@ enum Role {
   admin
 }
 
+/// A support ticket's life: opened by the user, `answered` once the operator
+/// has replied and the ball is with the user, `closed` by either side.
+enum TicketStatus {
+  open
+  answered
+  closed
+}
+
+/// What the ticket is about. Predefined so the support page can offer the
+/// right self-help first and the admin list can be filtered; `other` is the
+/// escape hatch.
+enum TicketCategory {
+  billing
+  rebuild
+  upload
+  account
+  bug
+  feature
+  other
+}
+
 enum OrderStatus {
   created
   paid
@@ -220,6 +241,7 @@ model User {
   resetTokens  PasswordResetToken[]
   emailTokens  EmailVerificationToken[]
   problems     ProblemReport[]
+  tickets      Ticket[]
 
   @@index([plan])
   /// The admin queue reads pending accounts oldest-first on every load.
@@ -699,6 +721,67 @@ model ProblemReport {
 // ---------------------------------------------------------------------------
 // operations
 // ---------------------------------------------------------------------------
+
+/// A conversation between one user and the operator. The list the admin sees
+/// is ordered by `lastMessageAt`; `lastMessageBy` says whose turn it is, and
+/// the two `seenAt` stamps drive the unread badges on both sides.
+model Ticket {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  category TicketCategory
+  subject  String
+  status   TicketStatus @default(open)
+
+  lastMessageAt DateTime  @default(now()) @map("last_message_at")
+  lastMessageBy Role      @default(user) @map("last_message_by")
+  userSeenAt    DateTime? @map("user_seen_at")
+  adminSeenAt   DateTime? @map("admin_seen_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  closedAt  DateTime? @map("closed_at")
+
+  messages TicketMessage[]
+
+  @@index([status, lastMessageAt])
+  @@index([userId, createdAt])
+  @@map("tickets")
+}
+
+model TicketMessage {
+  id       String @id @default(cuid())
+  ticketId String @map("ticket_id")
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  /// Who wrote it — the user, or an operator. `authorId` is informational
+  /// (which admin), never used for access decisions.
+  authorRole Role    @map("author_role")
+  authorId   String? @map("author_id")
+  body       String
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_messages")
+}
+
+/// One row per page navigation, written by a client beacon (see
+/// components/TrafficBeacon.tsx and api/track). `visitorId` is a random
+/// first-party cookie value — not an IP, not a fingerprint — so "unique
+/// visitors" is honest about what it counts: browsers that kept our cookie.
+/// `path` is the pathname only, never the query string.
+model PageView {
+  id        String  @id @default(cuid())
+  path      String
+  visitorId String  @map("visitor_id")
+  userId    String? @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([visitorId, createdAt])
+  @@map("page_views")
+}
 
 model AuditLog {
   id     String  @id @default(cuid())
