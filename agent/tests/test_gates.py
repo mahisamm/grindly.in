@@ -327,3 +327,26 @@ def test_the_rewriter_is_shown_the_whole_resume(monkeypatch):
     assert len(blob) > 6000, "fixture must exceed the old cap to prove anything"
     assert blob in seen["prompt"], "the resume JSON reached the model cut short"
     assert RO._PROMPT_JSON_CHARS >= 30000 and RO._PROMPT_TEXT_CHARS >= 20000
+
+
+def test_an_acronym_and_its_expansion_defend_each_other():
+    """The resume writes "machine learning"; a rewrite saying "ML" is the same
+    fact. The resume writes "NLP"; a rewrite saying "natural language
+    processing" is the same fact. Neither is an invention, and before this the
+    gate rejected the whole variant for either. Phrase-level: "programming
+    language" alone must NOT grant "nlp", and an acronym the resume never
+    earned ("cv") stays rejected."""
+    allowed = RO._allowed_tokens(
+        "Machine learning pipelines in Python; NLP chatbots; a programming language course.",
+        ["python"],
+    )
+    struct = {"name": "", "contact_line": "", "sections": [{"heading": "Technical Skills", "items": [
+        {"head": "", "sub": "", "bullets": ["ML, natural language processing, Python"]},
+    ]}]}
+    assert RO._fabricated_skills(struct, allowed) == []
+    assert "nlp" in allowed and "ml" in allowed
+    # Not earned: "computer vision" never appears, so "cv" is still invented.
+    struct2 = {"name": "", "contact_line": "", "sections": [{"heading": "Technical Skills", "items": [
+        {"head": "", "sub": "", "bullets": ["computer vision"]},
+    ]}]}
+    assert RO._fabricated_skills(struct2, allowed) != []

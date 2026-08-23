@@ -1113,7 +1113,56 @@ def _allowed_tokens(source_text: str, master_skills: list[str]) -> set[str]:
     _add(allowed, (source_text or "").lower())
     for s in master_skills or []:
         _add(allowed, s.lower())
+
+    # Abbreviation <-> expansion, both directions. A resume that says "machine
+    # learning" has every right to be rewritten as "ML", and one that says
+    # "NLP" as "natural language processing" — the same fact, the other
+    # spelling. Without this the gate rejected the whole variant for
+    # "inventing" a skill the candidate had written out in full (the plural
+    # and derivation folds do not reach across an acronym). Phrase-level on
+    # purpose: the acronym is granted only when the WHOLE phrase is present,
+    # so "programming language" alone never defends "nlp".
+    text_l = (source_text or "").lower() + " " + " ".join(master_skills or []).lower()
+    text_l = re.sub(r"[\s\-]+", " ", text_l)
+    for abbr, phrase in _ABBREVIATIONS.items():
+        if phrase in text_l:
+            allowed.add(abbr)
+        if abbr in allowed:
+            allowed.update(phrase.split())
     return allowed
+
+
+# Acronyms a resume may spell out or not. Keys are the acronym as a token,
+# values the full phrase (lowercase, single-spaced). Used by _allowed_tokens
+# in both directions. Extend here, not in the gate.
+_ABBREVIATIONS: dict[str, str] = {
+    "ml": "machine learning",
+    "ai": "artificial intelligence",
+    "nlp": "natural language processing",
+    "cv": "computer vision",
+    "dl": "deep learning",
+    "rl": "reinforcement learning",
+    "llm": "large language model",
+    "llms": "large language models",
+    "genai": "generative ai",
+    "rag": "retrieval augmented generation",
+    "ci": "continuous integration",
+    "cd": "continuous delivery",
+    "ui": "user interface",
+    "ux": "user experience",
+    "api": "application programming interface",
+    "oop": "object oriented programming",
+    "dsa": "data structures and algorithms",
+    "sdlc": "software development life cycle",
+    "tdd": "test driven development",
+    "aws": "amazon web services",
+    "gcp": "google cloud platform",
+    "k8s": "kubernetes",
+    "db": "database",
+    "iot": "internet of things",
+    "etl": "extract transform load",
+    "bi": "business intelligence",
+}
 
 
 def _tech_vocab() -> frozenset[str]:
