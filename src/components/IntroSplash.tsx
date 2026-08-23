@@ -14,43 +14,52 @@ import { useEffect, useState } from "react";
  *   * Skippable: any click or key lifts the curtain immediately.
  *   * prefers-reduced-motion (or blocked storage) shows nothing at all.
  *
- * It mounts hidden and appears via effect, so the server-rendered page is
- * identical for everyone and repeat visitors never get a flash of curtain.
- * The one-frame glimpse of the landing a first-timer might catch reads as
- * the page the intro is drawn over — which is what it is.
+ * WHO decides it shows is not this component. The head script in layout.tsx
+ * sets `data-intro` on <html> BEFORE the first paint (the same pre-paint slot
+ * the theme uses), and the CSS only displays `.intro-splash` under that
+ * attribute. The component itself renders the same markup for everyone,
+ * server and client alike — no hydration branch (see AmbientBackground for
+ * the React #418 that pattern earns) and, more to the point, no jank: the
+ * old version mounted hidden and appeared via effect, so a first-time
+ * visitor watched the landing paint and THEN a curtain pop over it, letters
+ * starting only after hydration. Now the curtain is in the server HTML, the
+ * attribute is on <html> before frame one, and the letters are already
+ * rising while React is still waking up. All this effect does is end the
+ * show: lift the curtain on time (or on any click/key), then take the node
+ * out of the tree.
  */
 export function IntroSplash() {
-  const [phase, setPhase] = useState<"hidden" | "in" | "out">("hidden");
+  const [phase, setPhase] = useState<"show" | "out" | "hidden">("show");
 
   useEffect(() => {
-    try {
-      if (sessionStorage.getItem("grindly:intro-seen")) return;
-      sessionStorage.setItem("grindly:intro-seen", "1");
-    } catch {
-      return; // blocked storage: skip the theatre rather than replay it forever
+    // Not showing (repeat visit, reduced motion, blocked storage): the CSS
+    // never displayed it, so removing the node is housekeeping, not a flash.
+    // Deferred a tick — the initial "show" markup must survive hydration
+    // untouched, and a sync setState inside an effect cascades renders.
+    if (!document.documentElement.hasAttribute("data-intro")) {
+      const drop = setTimeout(() => setPhase("hidden"), 0);
+      return () => clearTimeout(drop);
     }
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const raf = requestAnimationFrame(() => setPhase("in"));
-    const lift = setTimeout(() => setPhase("out"), 1600);
-    const gone = setTimeout(() => setPhase("hidden"), 2250);
+    const lift = setTimeout(() => setPhase("out"), 1700);
+    const skip = () => setPhase("out");
+    window.addEventListener("pointerdown", skip);
+    window.addEventListener("keydown", skip);
     return () => {
-      cancelAnimationFrame(raf);
       clearTimeout(lift);
-      clearTimeout(gone);
+      window.removeEventListener("pointerdown", skip);
+      window.removeEventListener("keydown", skip);
     };
   }, []);
 
   useEffect(() => {
-    if (phase !== "in") return;
-    const skip = () => setPhase("out");
-    window.addEventListener("pointerdown", skip);
-    window.addEventListener("keydown", skip);
-    const gone = setTimeout(() => setPhase("hidden"), 2250);
-    return () => {
-      window.removeEventListener("pointerdown", skip);
-      window.removeEventListener("keydown", skip);
-      clearTimeout(gone);
-    };
+    if (phase !== "out") return;
+    // Past the curtain's 0.65s transition; then the attribute goes so the CSS
+    // gate closes for the rest of the session even before a soft navigation.
+    const gone = setTimeout(() => {
+      document.documentElement.removeAttribute("data-intro");
+      setPhase("hidden");
+    }, 700);
+    return () => clearTimeout(gone);
   }, [phase]);
 
   if (phase === "hidden") return null;
@@ -59,11 +68,11 @@ export function IntroSplash() {
     <div aria-hidden className={`intro-splash ${phase === "out" ? "intro-splash--out" : ""}`}>
       <span className="intro-word font-display" aria-hidden>
         {"GRINDLY".split("").map((ch, i) => (
-          <span key={i} className="intro-letter" style={{ animationDelay: `${140 + i * 70}ms` }}>
+          <span key={i} className="intro-letter" style={{ animationDelay: `${180 + i * 65}ms` }}>
             {ch}
           </span>
         ))}
-        <span className="intro-letter intro-dot" style={{ animationDelay: "680ms" }}>
+        <span className="intro-letter intro-dot" style={{ animationDelay: "700ms" }}>
           .
         </span>
       </span>

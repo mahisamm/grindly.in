@@ -6,7 +6,9 @@ const bodySans = Space_Grotesk({
   variable: "--ff-sans",
   subsets: ["latin"],
   display: "swap",
-  preload: false,
+  // Preloaded: it paints every page's first words, and un-preloaded it
+  // arrives mid-render — text visibly re-set a beat after appearing.
+  preload: true,
 });
 
 const codeMono = JetBrains_Mono({
@@ -22,7 +24,11 @@ const displayFont = Fraunces({
   subsets: ["latin"],
   style: ["normal", "italic"],
   display: "swap",
-  preload: false,
+  // Preloaded for one reason above all: the GRINDLY intro letters are set in
+  // this face, and without the preload a first-time visitor watched them rise
+  // in the fallback serif and SWAP to Fraunces mid-animation — the jank the
+  // splash exists to not have.
+  preload: true,
 });
 
 export const viewport: Viewport = {
@@ -96,7 +102,19 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html:
               "try{var t=localStorage.getItem('grindly-theme');" +
-              "if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}",
+              "if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}" +
+              // The intro decision, made pre-paint for the same reason as the
+              // theme: the splash used to appear only after React hydrated,
+              // so a first-time visitor saw the landing paint, THEN a curtain
+              // pop over it — the least smooth possible opening. Now the
+              // attribute is on <html> before the first frame; CSS shows the
+              // (always-rendered) splash instantly and the letters animate
+              // from paint one. Landing page only; once per session; never
+              // under reduced motion.
+              "try{if(location.pathname==='/'&&!sessionStorage.getItem('grindly:intro-seen')" +
+              "&&!matchMedia('(prefers-reduced-motion: reduce)').matches){" +
+              "document.documentElement.setAttribute('data-intro','1');" +
+              "sessionStorage.setItem('grindly:intro-seen','1');}}catch(e){}",
           }}
         />
         <link rel="manifest" href="/manifest.json" />

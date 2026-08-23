@@ -732,10 +732,17 @@ textarea.field { resize: vertical; min-height: 6rem; }
 }
 
 /* ── Intro splash — see components/IntroSplash.tsx ───────────────────
-   The curtain fades in over the landing, the letters rise through it, and
-   the whole thing lifts. Paper-on-paper: the brand moment uses the brand's
-   own canvas, not a black card. */
-.intro-splash {
+   The curtain is IN the server HTML for everyone and shown only under
+   `html[data-intro]`, which the layout's head script sets before the first
+   paint — so a first-timer's very first frame is the curtain, not the
+   landing with a curtain popping over it. Paper-on-paper: the brand moment
+   uses the brand's own canvas, not a black card.
+
+   Everything here animates transform/opacity/filter only — compositor
+   work, no layout, no paint storms — and the will-change lines promote the
+   layers before the first keyframe rather than mid-flight. */
+.intro-splash { display: none; }
+html[data-intro] .intro-splash {
   position: fixed;
   inset: 0;
   z-index: 80;
@@ -743,15 +750,14 @@ textarea.field { resize: vertical; min-height: 6rem; }
   align-items: center;
   justify-content: center;
   background: var(--paper);
-  animation: intro-curtain-in 0.25s ease-out both;
-  transition: opacity 0.55s var(--ease), transform 0.55s var(--ease);
+  will-change: opacity, transform;
+  transition: opacity 0.65s var(--ease-io), transform 0.65s var(--ease-io);
 }
 .intro-splash--out {
   opacity: 0;
-  transform: translateY(-2.5%);
+  transform: translateY(-3%) scale(0.995);
   pointer-events: none;
 }
-@keyframes intro-curtain-in { from { opacity: 0; } to { opacity: 1; } }
 .intro-word {
   display: inline-flex;
   font-size: clamp(3rem, 10vw, 6.5rem);
@@ -762,17 +768,45 @@ textarea.field { resize: vertical; min-height: 6rem; }
 .intro-letter {
   display: inline-block;
   opacity: 0;
-  transform: translateY(0.35em);
-  animation: intro-rise 0.5s var(--ease) both;
+  transform: translateY(0.4em);
+  will-change: opacity, transform, filter;
+  /* easeOutExpo-family curve: fast arrival, long soft settle — the letters
+     land rather than stop. The slight blur-in reads as focus pulling. */
+  animation: intro-rise 0.62s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .intro-dot { color: var(--vermilion); }
 @keyframes intro-rise {
-  from { opacity: 0; transform: translateY(0.35em); }
+  from { opacity: 0; transform: translateY(0.4em); filter: blur(6px); }
+  60% { filter: blur(0); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Belt and braces: the head script never sets data-intro under reduced
+     motion, and this hides the curtain even if something else did. */
+  html[data-intro] .intro-splash { display: none; }
+}
+
+/* ── Page hand-off — landing → sign-in / sign-up ─────────────────────
+   The auth pages' <main> is wrapped in a React <ViewTransition
+   enter="page-in"> (see login/signup/page.tsx), so arriving there from the
+   landing is a soft settle instead of a hard cut: the old page crossfades
+   out (the API's default root fade), the form pane rises the last few
+   pixels into place. Browsers without the View Transitions API simply
+   navigate — nothing to polyfill, nothing broken. */
+::view-transition-new(.page-in) {
+  animation: 0.45s var(--ease) both page-in;
+}
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(14px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  /* Belt and braces: the component also skips itself entirely. */
-  .intro-splash { display: none; }
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
 }
 
 /* ── Disclosure — a menu that unfolds rather than teleports ──────────

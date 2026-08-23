@@ -40,6 +40,13 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // React's <ViewTransition> for the landing → sign-in hand-off (see
+  // login/signup pages). Navigations elsewhere are untouched: a view
+  // transition only activates where a <ViewTransition> component takes part,
+  // and only the auth pages have one. Browsers without the API just navigate.
+  experimental: {
+    viewTransition: true,
+  },
   // Hide the on-screen dev route indicator (the floating "N" badge).
   devIndicators: false,
   // Pin the workspace root — a stray lockfile in the home dir was making Next
