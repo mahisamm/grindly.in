@@ -1041,7 +1041,14 @@ function VariantCard({
         <div>
           <h3 className="font-display text-lg leading-tight font-semibold">{variant.label}</h3>
           <p className="text-muted mt-1 font-mono text-[11px] tracking-[0.08em] uppercase">
-            {delta > 0 ? `+${delta} vs your original` : "level with your original"}
+            {/* A negative delta only exists on a targeted run where nothing
+                beat the master: the company-shaped version shipped anyway,
+                and it says so instead of pretending to be level. */}
+            {delta > 0
+              ? `+${delta} vs your original`
+              : delta < 0
+                ? `${delta} vs your original · shaped for the target`
+                : "level with your original"}
             {variant.pages ? ` · ${variant.pages} page${variant.pages === 1 ? "" : "s"}` : ""}
           </p>
         </div>

@@ -498,6 +498,48 @@ def test_targeting_scores_coverage_without_adding_anything(model):
     assert set(coverage["missing"]) == {"rust", "scala", "erlang"}
 
 
+@requires_chromium
+def test_a_targeted_run_ships_the_company_shaped_version_even_when_it_loses(model):
+    """A master that already scores high must not switch the Target feature off.
+
+    The user pressed "Tailor for Acme" wanting the Acme-shaped version of their
+    resume, not a contest against their own number. Under the old rule a 95
+    master silently discarded every tailored rebuild and answered "nothing beat
+    your resume — good sign", which reads as the feature refusing to work. Now
+    the best rebuild ships anyway — exactly one, flagged materially_worse and
+    carrying both numbers — while the untargeted Rewrite tab keeps the strict
+    rule, because there the score is the whole point.
+    """
+    import re
+
+    # Strip the figures out of every bullet: same structure, same content
+    # shape (so the content-loss guard stays quiet), strictly lower impact
+    # band — a rewrite that genuinely loses to a quantified master.
+    numberless = json.loads(json.dumps(EXTRACTED))
+    for section in numberless["sections"]:
+        for item in section["items"]:
+            item["bullets"] = [re.sub(r"\d+", "several", b) for b in item["bullets"]]
+    model(rewrites=numberless)
+
+    # Untargeted: the strict rule holds — nothing below the master ships.
+    out = ro.generate_variants(SENIOR_RESUME, SENIOR_SKILLS)
+    assert not out["variants"], "a numberless rewrite shipped against a quantified master"
+
+    # Targeted: the same losing rewrites still yield ONE company-shaped doc.
+    out = ro.generate_variants(
+        SENIOR_RESUME, SENIOR_SKILLS,
+        target_keywords=["java", "kafka"],
+        target_name="Acme",
+    )
+    assert len(out["variants"]) == 1, out["reasons"]
+    v = out["variants"][0]
+    assert v["score"] < v["baseline_score"], "fixture meant to lose; scorer moved?"
+    assert v["materially_worse"] is True
+    assert v["beats_baseline"] is False
+    # The audit trail says kept-for-the-target, not discarded.
+    assert any("shaped for Acme" in r for r in out["reasons"]), out["reasons"]
+
+
 # ---------------------------------------------------------------------------
 # refusals
 # ---------------------------------------------------------------------------

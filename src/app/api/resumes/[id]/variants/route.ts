@@ -390,7 +390,21 @@ async function executeRun({
     // a failure, and not charged for either — a button was pressed and no
     // document came back.
     if (metered) await refund(userId, "variantRuns");
-    await finish({ status: "empty", stage: "Nothing beat your resume", variantsMade: 0 });
+    // On a TARGETED run the agent ships the best company-shaped rebuild even
+    // when nothing beats the master (see resume_optimize.run_optimize), so an
+    // empty result here can only mean the builds themselves failed — telling
+    // that user "nothing beat your resume, good sign" would be wrong twice.
+    const targeted = Boolean(target.name || target.keywords.length);
+    if (targeted) {
+      await finish({
+        status: "failed",
+        stage: "Stopped",
+        error:
+          "We could not produce a tailored rebuild this time. You have not been charged — try again in a minute.",
+      });
+    } else {
+      await finish({ status: "empty", stage: "Nothing beat your resume", variantsMade: 0 });
+    }
     return;
   }
 

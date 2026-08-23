@@ -289,6 +289,16 @@ def generate_variants(
     document their master resume. A losing rewrite is noise wearing the same
     chrome as a win. It survives only in `reasons`.
 
+    EXCEPT on a targeted run. There the user's request is not "beat my number",
+    it is "give me the {company}-shaped version of my resume" — and a master
+    that already scores 95 would otherwise make every tailored rebuild
+    undeliverable, turning the whole Target feature off for exactly the users
+    who polished their resume most. So when a target is set and nothing won or
+    tied, the single best rebuild ships anyway, flagged materially_worse and
+    labelled with both numbers, so the user gets the company-shaped document
+    AND the honest comparison instead of an empty result. Winners and ties
+    still take precedence; losers still never ship beside a win.
+
     "Materially" is doing real work there — see _SCORE_NOISE. A variant level with
     the master is kept and flagged beats_baseline=False: same score on a clean,
     single-column template is a real (if modest) win for a parser, and the UI
@@ -365,6 +375,11 @@ def generate_variants(
         _strategies_for(text, base_struct), emphasis, target_name,
     )
 
+    # A targeted run must end with a company-shaped document in hand — see the
+    # docstring. Untargeted runs keep the strict rule: worse-than-master is
+    # dropped and only the audit trail remembers it.
+    targeted = bool(target_keywords or (target_name or "").strip())
+
     out: list[dict] = []
     reasons: list[str] = []
     total = len(strategies)
@@ -373,15 +388,24 @@ def generate_variants(
         variant, reason = _one_variant(
             label, instruction, base_struct, allowed, master_skills, baseline_score,
             identity, stems, debug_dir, target_keywords,
+            keep_worse=targeted, target_name=target_name,
         )
         _progress(f"Rendered and re-measured {index} of {total}")
         reasons.append(reason)
         if variant:
             out.append(variant)
 
-    # Wins first, then ties. Losers never reach this list (_one_variant drops them).
+    # Wins first, then ties, then (targeted only) the kept-worse rebuilds.
     out.sort(key=lambda v: (v["beats_baseline"], v["score"]), reverse=True)
-    shipped = out[:3]
+    winners = [v for v in out if not v.get("materially_worse")]
+    if winners:
+        shipped = winners[:3]
+    elif out:
+        # Targeted, and nothing won or tied: ship ONE best company-shaped
+        # rebuild rather than three losing documents wearing identical chrome.
+        shipped = out[:1]
+    else:
+        shipped = []
     _progress("Finishing up")
     return {
         "variants": shipped,
@@ -412,6 +436,8 @@ def _one_variant(
     stems: set[str],
     debug_dir: str | None = None,
     target_keywords: list[str] | None = None,
+    keep_worse: bool = False,
+    target_name: str = "",
 ) -> tuple[dict | None, str]:
     """Build one variant. Returns (variant_or_None, human-readable reason).
 
@@ -545,14 +571,23 @@ def _one_variant(
         # here — between the struct we rendered and the text we read back.
         fidelity = readiness.parse_fidelity(_fact_strings(struct), parsed)
 
-    if score < baseline_score - _SCORE_NOISE:
+    materially_worse = score < baseline_score - _SCORE_NOISE
+    if materially_worse and not keep_worse:
         # Never offered. A materially lower-scoring rebuild next to the user's own
         # resume is not information — it's a worse document wearing the same "Use
         # as my resume" button. The audit trail keeps it; the card doesn't.
         print(f"[optimize] {label}: discarded ({score} < baseline {baseline_score})")
         return None, f"{label}: scored {score} vs your {baseline_score} — discarded, it came out worse"
 
-    if beats:
+    if materially_worse:
+        # Targeted run: kept so the user still gets the company-shaped
+        # document they asked for. run_optimize ships it ONLY if no variant
+        # won or tied, and the card carries both numbers.
+        who = (target_name or "").strip() or "the role"
+        print(f"[optimize] {label}: kept for the target ({score} vs baseline {baseline_score})")
+        reason = (f"{label}: {score} vs your {baseline_score} — kept as the "
+                  f"version shaped for {who}")
+    elif beats:
         print(f"[optimize] {label}: kept ({score} > {baseline_score})")
         reason = f"{label}: {score} vs your {baseline_score} — kept"
     else:
@@ -574,6 +609,11 @@ def _one_variant(
         "grade": report.get("grade") or readiness.grade(score),
         "baseline_score": baseline_score,
         "beats_baseline": beats,
+        # Targeted-run keep: scored below the master but shipped anyway as the
+        # company-shaped version (see run_optimize's docstring). The UI reads
+        # the same fact off score < baseline_score; this flag is for the
+        # shipping filter, which must not let losers ride beside winners.
+        "materially_worse": materially_worse,
         "changes": changes,
         "report": report,
         "fidelity": fidelity,
