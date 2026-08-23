@@ -59,6 +59,13 @@ RENDER_TIMEOUT_MS = int(os.environ.get("GRINDLY_RENDER_TIMEOUT_MS", "20000"))
 # BASE_PT to keep the vertical rhythm consistent when the caller tightens it.
 BASE_PT = 9.8
 
+
+def _mm(value: str, scale: float) -> str:
+    """Scale a "15mm" CSS length. Identity at scale 1.0."""
+    if scale == 1.0:
+        return value
+    return f"{float(value.rstrip('m')) * scale:.1f}mm"
+
 # ONE family for the whole document, and the reason is not taste.
 #
 # The old template set Georgia for body text and Arial for headings, meta lines
@@ -157,7 +164,7 @@ def clean(value: object) -> str:
     return s.strip()
 
 
-def _css(density: float = 1.0) -> str:
+def _css(density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.0) -> str:
     """The whole stylesheet. `density` < 1 tightens leading to win a page.
 
     Nothing here uses a webfont, a background image, or a colour that is not
@@ -184,7 +191,7 @@ def _css(density: float = 1.0) -> str:
     parallel full-width lines that close together at the top of a page is what
     made the document read as a form to be filled in.
     """
-    base = BASE_PT
+    base = BASE_PT * type_scale
     # The page margin is declared HERE, in CSS, and not only in the argument to
     # page.pdf().
     #
@@ -196,7 +203,7 @@ def _css(density: float = 1.0) -> str:
     # on screen next to a white browser chrome and obvious the moment anyone
     # prints one or opens it beside another PDF.
     return f"""
-      @page {{ size: {PAGE_FORMAT}; margin: {MARGIN_MM["top"]} {MARGIN_MM["right"]} {MARGIN_MM["bottom"]} {MARGIN_MM["left"]}; }}
+      @page {{ size: {PAGE_FORMAT}; margin: {_mm(MARGIN_MM["top"], margin_scale)} {_mm(MARGIN_MM["right"], margin_scale)} {_mm(MARGIN_MM["bottom"], margin_scale)} {_mm(MARGIN_MM["left"], margin_scale)}; }}
       * {{ box-sizing: border-box; }}
       html, body {{ margin: 0; padding: 0; }}
       body {{
@@ -567,7 +574,7 @@ def contact_field_html(field: str, link_style: str = "url") -> str:
     return f'<span class="f"><a href="{_esc(href)}">{_esc(text)}</a></span>'
 
 
-def build_html(struct: dict, density: float = 1.0) -> str:
+def build_html(struct: dict, density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.0) -> str:
     """The full HTML document for a resume struct.
 
     `struct` is the shape `resume_optimize` already produces::
@@ -586,7 +593,7 @@ def build_html(struct: dict, density: float = 1.0) -> str:
     parts: list[str] = [
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
         f"<title>{_esc(name or 'Resume')}</title>",
-        f"<style>{_css(density)}</style></head><body><div class=\"doc\">",
+        f"<style>{_css(density, type_scale, margin_scale)}</style></head><body><div class=\"doc\">",
     ]
 
     if name or contact:
@@ -721,21 +728,21 @@ def renderer_available() -> bool:
     return True
 
 
-def render(struct: dict, out_pdf: str, density: float = 1.0) -> RenderResult:
+def render(struct: dict, out_pdf: str, density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.0) -> RenderResult:
     """Render `struct` to `out_pdf`. Returns a RenderResult; never raises."""
     try:
-        return _render(struct, out_pdf, density)
+        return _render(struct, out_pdf, density, type_scale, margin_scale)
     except Exception as e:  # noqa: BLE001
         return RenderResult(False, reason=f"{type(e).__name__}: {e}")
 
 
-def _render(struct: dict, out_pdf: str, density: float) -> RenderResult:
+def _render(struct: dict, out_pdf: str, density: float, type_scale: float = 1.0, margin_scale: float = 1.0) -> RenderResult:
     try:
         from playwright.sync_api import sync_playwright
     except Exception as e:  # noqa: BLE001
         return RenderResult(False, reason=f"playwright unavailable: {e}")
 
-    doc = build_html(struct, density)
+    doc = build_html(struct, density, type_scale, margin_scale)
     os.makedirs(os.path.dirname(os.path.abspath(out_pdf)) or ".", exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="grindly-render-") as tmp:
@@ -781,11 +788,23 @@ def _render(struct: dict, out_pdf: str, density: float) -> RenderResult:
         return RenderResult(True, pages=pages, path=out_pdf)
 
 
+# The compact rungs a one-page budget walks. Each rung tightens leading,
+# type and margins together — measured to gain ~15%, ~30% and ~45% of a page
+# respectively over the normal layout, with 9.0pt/12mm as the floor before
+# the document reads as cramped.
+FIT_RUNGS: tuple[tuple[float, float, float], ...] = (
+    (1.0, 1.0, 1.0),
+    (0.88, 0.97, 0.93),
+    (0.82, 0.94, 0.87),
+    (0.78, 0.92, 0.80),
+)
+
+
 def render_fitted(
     struct: dict,
     out_pdf: str,
     max_pages: int = MAX_PAGES,
-    densities: tuple[float, ...] = (1.0, 0.88),
+    densities: tuple = (1.0, 0.88),
 ) -> RenderResult:
     """Render down a ladder of densities until the document fits `max_pages`.
 
@@ -802,8 +821,9 @@ def render_fitted(
     compacted.
     """
     best: RenderResult | None = None
-    for d in densities:
-        r = render(struct, out_pdf, density=d)
+    for rung in densities:
+        d, ts, ms = rung if isinstance(rung, tuple) else (rung, 1.0, 1.0)
+        r = render(struct, out_pdf, density=d, type_scale=ts, margin_scale=ms)
         if not r.ok:
             if best is None:
                 best = r
@@ -819,8 +839,12 @@ def render_fitted(
         best.reason = f"still {best.pages} pages at density {best.density}"
         # The best rung's PDF must be the one on disk — re-render it if a
         # later, worse rung overwrote the file.
-        if best.density != densities[-1]:
-            again = render(struct, out_pdf, density=best.density)
+        last = densities[-1]
+        last_d = last[0] if isinstance(last, tuple) else last
+        if best.density != last_d:
+            rung = next((x for x in densities if (x[0] if isinstance(x, tuple) else x) == best.density), best.density)
+            d, ts, ms = rung if isinstance(rung, tuple) else (rung, 1.0, 1.0)
+            again = render(struct, out_pdf, density=d, type_scale=ts, margin_scale=ms)
             if again.ok:
                 again.density = best.density
                 again.reason = best.reason

@@ -571,7 +571,7 @@ def test_an_extraction_that_returns_nothing_aborts_rather_than_inventing(model):
 # the one-page budget
 # ---------------------------------------------------------------------------
 
-def _long_struct(n_roles: int = 18) -> dict:
+def _long_struct(n_roles: int = 26) -> dict:
     """A resume that cannot fit one page: many roles, three bullets each."""
     roles = [{
         "head": f"Software Engineer {i}",
@@ -588,17 +588,16 @@ def _long_struct(n_roles: int = 18) -> dict:
 
 
 @requires_chromium
-def test_a_page_budget_is_measured_and_reported_honestly(model):
-    """The user chose one page. The model (stubbed) cannot shorten — it returns
-    the same long resume to the tightening pass too — so the document still
-    renders at two pages. It must SHIP, flagged over budget, with the change
-    list saying so, rather than be dropped or silently cut.
+def test_a_page_budget_is_enforced_and_reported_honestly(model):
+    """The user chose one page. The pipeline walks its whole ladder — compact
+    layouts, then a firmer wording pass, then both — so the outcome must be
+    one of exactly two honest states: it FITS (pages == 1, no over-budget
+    claim), or it does not and SAYS so (over_budget True with the change note
+    naming the miss). What it may never do is drop entries to fit, ship over
+    budget silently, or claim a fit it did not measure.
     """
     long = _long_struct()
     model(extracted=long, rewrites=long)
-    # The source text must carry EVERY section of the struct, or grounding
-    # strips the "missing" ones and the remnant fits a page - the product
-    # working, not this test's premise.
     parts = []
     for sec in long["sections"]:
         parts.append(sec["heading"].upper())
@@ -610,11 +609,14 @@ def test_a_page_budget_is_measured_and_reported_honestly(model):
     out = ro.generate_variants(text, SENIOR_SKILLS, max_pages=1)
     assert out["page_budget"] == 1
     assert out["variants"], out["reasons"]
-    v = out["variants"][0]
-    assert v["page_budget"] == 1
-    assert v["pages"] >= 2
-    assert v["over_budget"] is True
-    assert any("page" in c.lower() and "budget" in c.lower() for c in v["changes"]), v["changes"]
+    for v in out["variants"]:
+        assert v["page_budget"] == 1
+        # the one honest invariant: the flag IS the measurement
+        assert v["over_budget"] == (v["pages"] > 1), (v["label"], v["pages"], v["over_budget"])
+        if v["over_budget"]:
+            assert any("budget" in c.lower() for c in v["changes"]), v["changes"]
+        else:
+            assert v["pages"] == 1
 
 
 @requires_chromium

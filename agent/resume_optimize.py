@@ -802,7 +802,7 @@ def _render_and_score(
     # A user page budget gets a deeper density ladder than the default cap.
     if fit_pages:
         result = render_pdf.render_fitted(
-            struct, pdf_path, fit_pages, densities=(1.0, _COMPACT_DENSITY, _DENSE_DENSITY),
+            struct, pdf_path, fit_pages, densities=render_pdf.FIT_RUNGS,
         )
     else:
         result = render_pdf.render_fitted(struct, pdf_path, _MAX_PAGES)
