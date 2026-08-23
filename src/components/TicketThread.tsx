@@ -153,9 +153,10 @@ export function TicketThread({
                 <p
                   className="mt-1 font-mono text-[10px] tracking-[0.08em] uppercase opacity-70"
                 >
-                  {m.authorRole === "admin" ? "Grindly support" : "You"}
-                  {viewer === "admin" && m.authorRole === "user" ? "" : ""} ·{" "}
-                  {new Date(m.createdAt).toLocaleString()}
+                  {m.authorRole === "admin"
+                    ? viewer === "admin" ? "You" : "Grindly support"
+                    : viewer === "admin" ? "User" : "You"}{" "}
+                  · {new Date(m.createdAt).toLocaleString()}
                 </p>
               </div>
             </li>

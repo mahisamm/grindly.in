@@ -209,6 +209,26 @@ def _gemini(messages: list, timeout: int, temperature: float = 0.3) -> str | Non
         return None
 
 
+# Groq's free tier rejects a request when prompt tokens + max_tokens exceed
+# its per-minute allowance (~8k for these models) — with HTTP 413, before any
+# generation. Raising the global cap to 8192 therefore switched Groq OFF for
+# every call (seen live: 413 on "skills" and "report" the first time a user
+# uploaded after the deploy). So Groq gets a budget that FITS: its limit minus
+# an estimate of the prompt, floored so a useful answer is still possible; a
+# prompt that leaves no room skips Groq and lets the ensemble carry on.
+_GROQ_REQUEST_TOKENS = max(2048, int(os.environ.get("GRINDLY_GROQ_REQUEST_TOKENS", "8000")))
+_GROQ_MIN_COMPLETION = 1024
+
+
+def _groq_budget(messages: list) -> int | None:
+    est_prompt = sum(len(str(m.get("content", ""))) for m in messages) // 4 + 64
+    room = _GROQ_REQUEST_TOKENS - est_prompt
+    if room < _GROQ_MIN_COMPLETION:
+        print(f"[llm] groq skipped — prompt ~{est_prompt} tokens leaves no completion room")
+        return None
+    return min(_DEFAULT_MAX_TOKENS, room)
+
+
 def _groq_gptoss20(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
     """Groq's smaller open model.
 
@@ -222,6 +242,9 @@ def _groq_gptoss20(messages: list, timeout: int, temperature: float = 0.3) -> st
     reasoning into the response as a `<think>` block — every caller here parses
     the answer as JSON.
     """
+    budget = _groq_budget(messages)
+    if budget is None:
+        return None
     return _openai_compat(
         "https://api.groq.com/openai/v1",
         os.environ.get("GROQ_API_KEY", ""),
@@ -229,6 +252,7 @@ def _groq_gptoss20(messages: list, timeout: int, temperature: float = 0.3) -> st
         messages,
         timeout,
         temperature,
+        max_tokens=budget,
     )
 
 
@@ -271,6 +295,9 @@ def _mistral(messages: list, timeout: int, temperature: float = 0.3) -> str | No
 
 
 def _groq_gptoss(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
+    budget = _groq_budget(messages)
+    if budget is None:
+        return None
     return _openai_compat(
         "https://api.groq.com/openai/v1",
         os.environ.get("GROQ_API_KEY", ""),
@@ -278,6 +305,7 @@ def _groq_gptoss(messages: list, timeout: int, temperature: float = 0.3) -> str 
         messages,
         timeout,
         temperature,
+        max_tokens=budget,
     )
 
 

@@ -245,3 +245,20 @@ def test_the_completion_budget_fits_a_whole_resume():
     """
     import llm
     assert llm._DEFAULT_MAX_TOKENS >= 4096
+
+
+def test_groq_requests_fit_its_free_tier_limit():
+    """Groq rejects a request with HTTP 413 when prompt + max_tokens exceed its
+    per-minute allowance, BEFORE generating anything. Raising the global cap
+    to 8192 switched Groq off for every call (seen live). The budget must fit
+    under the limit for an ordinary prompt, shrink for a long one, and skip
+    Groq entirely when the prompt alone leaves no room.
+    """
+    import llm
+    small = [{"role": "user", "content": "x" * 4000}]
+    big = [{"role": "user", "content": "x" * 20000}]
+    huge = [{"role": "user", "content": "x" * 40000}]
+    assert 1024 <= llm._groq_budget(small) <= llm._DEFAULT_MAX_TOKENS
+    assert llm._groq_budget(small) + 4000 // 4 + 64 <= llm._GROQ_REQUEST_TOKENS
+    assert 1024 <= llm._groq_budget(big) < llm._groq_budget(small)
+    assert llm._groq_budget(huge) is None
