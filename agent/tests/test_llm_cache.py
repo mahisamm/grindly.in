@@ -259,6 +259,38 @@ def test_groq_requests_fit_its_free_tier_limit():
     big = [{"role": "user", "content": "x" * 20000}]
     huge = [{"role": "user", "content": "x" * 40000}]
     assert 1024 <= llm._groq_budget(small) <= llm._DEFAULT_MAX_TOKENS
-    assert llm._groq_budget(small) + 4000 // 4 + 64 <= llm._GROQ_REQUEST_TOKENS
+    assert llm._groq_budget(small) + 4000 // llm._GROQ_CHARS_PER_TOKEN + 64 <= llm._GROQ_REQUEST_TOKENS
     assert 1024 <= llm._groq_budget(big) < llm._groq_budget(small)
     assert llm._groq_budget(huge) is None
+    # The live 413: a prompt at the text slice (24k chars) is ~7k real tokens,
+    # not the ~6k a chars/4 estimate gave — with a 1.9k budget on top it
+    # crossed the limit. Estimated conservatively it leaves no room and Groq is
+    # skipped, which is the honest outcome; the ensemble carries on without it.
+    at_slice = [{"role": "user", "content": "x" * 24000}]
+    assert llm._groq_budget(at_slice) is None
+    # And the ratio really is the conservative side of what resume text and
+    # JSON tokenize at (~3.3-3.6 chars/token).
+    assert llm._GROQ_CHARS_PER_TOKEN <= 3
+
+
+def test_http_errors_carry_the_provider_body():
+    """`HTTP Error 413: Payload Too Large` says nothing; the body says
+    "Limit 8000, Requested 8412". The printed error line is the only place a
+    provider failure is observable, so the body belongs in it — once, bounded,
+    whitespace collapsed, and never raising if the body cannot be read."""
+    import io
+    import urllib.error
+    import llm
+    body = b'{"error": {"message": "Request too large for model.\n  Limit 8000, Requested 8412"}}'
+    err = urllib.error.HTTPError("https://x", 413, "Payload Too Large", {}, io.BytesIO(body))
+    out = llm._annotate_http_error(err)
+    assert out is err
+    assert "HTTP Error 413: Payload Too Large — " in str(out)
+    assert "Limit 8000, Requested 8412" in str(out)
+    assert "\n" not in str(out)
+    # Bounded: a huge body does not become a huge log line.
+    big = urllib.error.HTTPError("https://x", 429, "Too Many Requests", {}, io.BytesIO(b"y" * 5000))
+    assert len(str(llm._annotate_http_error(big))) < 300
+    # Unreadable body: message unchanged, no exception.
+    none = urllib.error.HTTPError("https://x", 500, "Server Error", {}, None)
+    assert str(llm._annotate_http_error(none)) == "HTTP Error 500: Server Error"

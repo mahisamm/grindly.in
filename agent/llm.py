@@ -100,6 +100,26 @@ def _retry_delay(error: Exception, attempt: int) -> float:
     return min(10.0, _RETRY_BASE_SECONDS * (2**attempt))
 
 
+def _annotate_http_error(error: urllib.error.HTTPError) -> urllib.error.HTTPError:
+    """Fold the response body into the error's message.
+
+    urllib's HTTPError prints "HTTP Error 413: Payload Too Large" and drops the
+    body — which is where the provider says WHY ("Request too large for model
+    ... Limit 8000, Requested 8412"). Every provider failure in this module is
+    observable only through that one printed line (lib/agent.ts lifts it into
+    the error table), so the body belongs in it. Read once, whitespace
+    collapsed, bounded; a body that cannot be read leaves the message as it was.
+    """
+    try:
+        body = error.read().decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001 — diagnostics must never raise
+        return error
+    body = re.sub(r"\s+", " ", body).strip()
+    if body:
+        error.msg = f"{error.msg} — {body[:240]}"
+    return error
+
+
 def _urlopen_json(req: urllib.request.Request, timeout: int) -> dict:
     """Open an LLM request with bounded retries for transient failures."""
     last_error: Exception | None = None
@@ -108,7 +128,7 @@ def _urlopen_json(req: urllib.request.Request, timeout: int) -> dict:
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 return json.loads(response.read().decode())
         except urllib.error.HTTPError as error:
-            last_error = error
+            last_error = _annotate_http_error(error)
             if error.code not in (408, 409, 425, 429) and error.code < 500:
                 raise
         except (urllib.error.URLError, TimeoutError) as error:
@@ -220,8 +240,18 @@ _GROQ_REQUEST_TOKENS = max(2048, int(os.environ.get("GRINDLY_GROQ_REQUEST_TOKENS
 _GROQ_MIN_COMPLETION = 1024
 
 
+# Characters per prompt token, for the estimate below. Resume text and the
+# JSON structs this pipeline sends tokenize at ~3.3-3.6 chars/token, not the
+# 4 that English prose gets — the first cut used 4, and a 24k-character prompt
+# estimated at ~6k tokens was really ~7k, so prompt + budget crossed the limit
+# and Groq answered 413 again (seen live, three times, after the "fix"). 3 is
+# the conservative side of the measured range: a prompt that is estimated to
+# fit, fits.
+_GROQ_CHARS_PER_TOKEN = 3
+
+
 def _groq_budget(messages: list) -> int | None:
-    est_prompt = sum(len(str(m.get("content", ""))) for m in messages) // 4 + 64
+    est_prompt = sum(len(str(m.get("content", ""))) for m in messages) // _GROQ_CHARS_PER_TOKEN + 64
     room = _GROQ_REQUEST_TOKENS - est_prompt
     if room < _GROQ_MIN_COMPLETION:
         print(f"[llm] groq skipped — prompt ~{est_prompt} tokens leaves no completion room")

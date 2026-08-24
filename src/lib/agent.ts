@@ -23,6 +23,25 @@ import { report } from "@/lib/errors";
 
 export type AgentOk<T> = { ok: true } & T;
 export type AgentErr = { ok: false; error: string };
+
+/**
+ * The provider failure on one stderr line, or null.
+ *
+ * `[llm] <provider> error: <what>` is the one place a dead provider is
+ * observable (see the comment at the call site). Not every such line is an
+ * error, though: a free tier answering 429 is the tier working as sold —
+ * the ensemble is built to route around it, and it did every time. Four
+ * rate-limit rows sat on /admin as "5 errors" for days, teaching the reader
+ * that the badge means nothing, which is exactly how the next real
+ * retirement (a 404, a 402) would get ignored. So 429 stays in the container
+ * log and out of the table; everything else is lifted.
+ */
+export function providerFailureFromLine(line: string): string | null {
+  const failure = line.match(/^\[llm\]\s+(.*?)\s+error:\s+(.*)$/);
+  if (!failure) return null;
+  if (/\bHTTP Error 429\b/.test(failure[2])) return null;
+  return `${failure[1]} — ${failure[2]}`.slice(0, 400);
+}
 export type AgentResult<T> = AgentOk<T> | AgentErr;
 
 /** Where uploads, rendered variants and scratch files live. */
@@ -190,15 +209,8 @@ export async function runAgent<T = Record<string, unknown>>(
       // These lines are the one place that failure is observable, so they are
       // lifted into the error table where the admin page shows them.
       for (const line of chunk.split(/\r?\n/)) {
-        const failure = line.match(/^\[llm\]\s+(.*?)\s+error:\s+(.*)$/);
-        if (failure) {
-          report({
-            source: "agent",
-            kind: "llm-provider",
-            message: `${failure[1]} — ${failure[2]}`.slice(0, 400),
-            context: cmd,
-          });
-        }
+        const message = providerFailureFromLine(line);
+        if (message) report({ source: "agent", kind: "llm-provider", message, context: cmd });
       }
 
       if (!options.onProgress) return;
