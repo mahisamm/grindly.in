@@ -207,7 +207,7 @@ export default async function Home() {
               link, so you can check it yourself. Not insider knowledge, not a prediction,
               and never scraped from a job board.
             </p>
-            <ul className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <ul className="mt-8 hidden gap-4 sm:grid sm:grid-cols-2 lg:grid-cols-3">
               {companies.map((c, i) => (
                 <Reveal
                   as="li"
@@ -226,6 +226,43 @@ export default async function Home() {
                 </Reveal>
               ))}
             </ul>
+            <ul className="mt-8 grid gap-4 sm:hidden">
+              {companies.slice(0, 6).map((c, i) => (
+                <Reveal
+                  as="li"
+                  key={c.slug}
+                  delay={i * 55}
+                  className="bg-surface border-border rounded-xl border p-5"
+                >
+                  <h3 className="font-display text-lg font-semibold">{c.name}</h3>
+                  <p className="text-muted mt-1.5 text-sm leading-snug">{c.summary}</p>
+                  <p className="text-muted mt-3 font-mono text-[10px] tracking-[0.1em] uppercase">
+                    {c.sources.length} cited source{c.sources.length === 1 ? "" : "s"}
+                  </p>
+                </Reveal>
+              ))}
+            </ul>
+            {companies.length > 6 && (
+              <details className="group mt-4 sm:hidden">
+                <summary className="border-border bg-surface flex min-h-11 cursor-pointer list-none items-center justify-center rounded-xl border px-4 py-3 font-semibold [&::-webkit-details-marker]:hidden">
+                  <span className="group-open:hidden">
+                    See {companies.length - 6} more company packs
+                  </span>
+                  <span className="hidden group-open:inline">Hide additional company packs</span>
+                </summary>
+                <ul className="mt-4 grid gap-4">
+                  {companies.slice(6).map((c) => (
+                    <li key={c.slug} className="bg-surface border-border rounded-xl border p-5">
+                      <h3 className="font-display text-lg font-semibold">{c.name}</h3>
+                      <p className="text-muted mt-1.5 text-sm leading-snug">{c.summary}</p>
+                      <p className="text-muted mt-3 font-mono text-[10px] tracking-[0.1em] uppercase">
+                        {c.sources.length} cited source{c.sources.length === 1 ? "" : "s"}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
             <p className="text-muted mt-6 max-w-3xl text-xs leading-relaxed">
               {COMPANY_DISCLAIMER}
             </p>
