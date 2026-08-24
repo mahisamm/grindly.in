@@ -754,7 +754,7 @@ html[data-intro] .intro-splash {
      what makes it read as a solid sheet lifting rather than a crossfade. */
   box-shadow: 0 18px 44px rgba(31, 26, 20, 0.22);
   will-change: transform;
-  transition: transform 0.9s var(--ease-io);
+  transition: transform 0.4s var(--ease-io);
 }
 /* A CURTAIN, so it lifts like one: the whole sheet slides up and off,
    revealing the page beneath in place. The earlier fade-in-place read as the
@@ -767,7 +767,7 @@ html[data-intro] .intro-splash {
 }
 .intro-word {
   will-change: transform, opacity;
-  transition: transform 0.9s var(--ease-io), opacity 0.55s var(--ease) 0.1s;
+  transition: transform 0.4s var(--ease-io), opacity 0.3s var(--ease) 0.04s;
 }
 .intro-splash--out .intro-word {
   /* Counter-translate: the sheet travels -100vh, the word only ~-72vh net,
@@ -789,7 +789,7 @@ html[data-intro] .intro-splash {
   will-change: opacity, transform, filter;
   /* easeOutExpo-family curve: fast arrival, long soft settle — the letters
      land rather than stop. The slight blur-in reads as focus pulling. */
-  animation: intro-rise 0.62s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: intro-rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .intro-dot { color: var(--vermilion); }
 @keyframes intro-rise {

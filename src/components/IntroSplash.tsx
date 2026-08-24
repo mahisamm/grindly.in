@@ -40,7 +40,7 @@ export function IntroSplash() {
       const drop = setTimeout(() => setPhase("hidden"), 0);
       return () => clearTimeout(drop);
     }
-    const lift = setTimeout(() => setPhase("out"), 1700);
+    const lift = setTimeout(() => setPhase("out"), 650);
     const skip = () => setPhase("out");
     window.addEventListener("pointerdown", skip);
     window.addEventListener("keydown", skip);
@@ -58,7 +58,7 @@ export function IntroSplash() {
     const gone = setTimeout(() => {
       document.documentElement.removeAttribute("data-intro");
       setPhase("hidden");
-    }, 950);
+    }, 450);
     return () => clearTimeout(gone);
   }, [phase]);
 
@@ -68,11 +68,11 @@ export function IntroSplash() {
     <div aria-hidden className={`intro-splash ${phase === "out" ? "intro-splash--out" : ""}`}>
       <span className="intro-word font-display" aria-hidden>
         {"GRINDLY".split("").map((ch, i) => (
-          <span key={i} className="intro-letter" style={{ animationDelay: `${180 + i * 65}ms` }}>
+          <span key={i} className="intro-letter" style={{ animationDelay: `${80 + i * 45}ms` }}>
             {ch}
           </span>
         ))}
-        <span className="intro-letter intro-dot" style={{ animationDelay: "700ms" }}>
+        <span className="intro-letter intro-dot" style={{ animationDelay: "390ms" }}>
           .
         </span>
       </span>
