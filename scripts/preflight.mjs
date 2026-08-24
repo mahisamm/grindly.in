@@ -100,6 +100,10 @@ if (pythonOk) {
   try {
     const raw = execFileSync(py, [path.join(root, "agent", "cli.py")], {
       input: JSON.stringify({ cmd: "health" }),
+      // Next loads .env before starting the app; this standalone probe must
+      // pass the same parsed values to Python or it falsely reports that no
+      // model provider is configured while the server sees one moments later.
+      env,
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 30_000,
     }).toString();
