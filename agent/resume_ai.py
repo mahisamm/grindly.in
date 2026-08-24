@@ -42,6 +42,10 @@ _ADVISE_SYS = (
     "Every suggestion must be something the candidate can act on using facts "
     "they already have. NEVER suggest adding a skill, employer, metric or "
     "achievement the resume does not already contain. "
+    "Before writing each line, verify that every named technology, service, "
+    "certification and number appears verbatim in the resume. Do not give "
+    "examples of tools the candidate might have used; if the resume does not "
+    "name one, discuss the missing specificity without naming a tool. "
     "No markdown, no prose outside the JSON object."
 )
 
@@ -56,7 +60,7 @@ def _advise_uncached(resume_text: str) -> dict:
     """
     text = (resume_text or "").strip()
     if not text:
-        return _fallback_advice("")
+        return {**_fallback_advice(""), "source": "heuristic"}
 
     prompt = (
         f"Resume:\n\"\"\"\n{text[:24000]}\n\"\"\"\n\n"
@@ -94,7 +98,7 @@ def _advise_uncached(resume_text: str) -> dict:
         if not (parsed.get("suggestions") or parsed.get("issues")):
             continue
         try:
-            advice = _coerce_advice(parsed)
+            advice = _ground_advice(_coerce_advice(parsed), text)
         except (ValueError, TypeError):
             continue
         weight = len(advice["strengths"]) + len(advice["issues"]) + len(advice["suggestions"])
@@ -388,6 +392,67 @@ def _coerce_advice(d: dict) -> dict:
         "issues": _lst(d.get("issues"), 5),
         "suggestions": _lst(d.get("suggestions"), 5),
     }
+
+
+def _ground_advice(advice: dict, source_text: str) -> dict:
+    """Remove model lines that introduce unsupported tools or quantities.
+
+    Prompt rules are guidance, not a boundary. A live launch evaluation asked
+    the reviewer to use only existing facts and still received suggestions to
+    name S3, SQS, Helm and Airflow when none appeared in the resume. That is
+    especially dangerous in a resume product: a user can follow fluent advice
+    straight into a false claim.
+
+    The rewrite pipeline already maintains the broad technology vocabulary and
+    morphology-aware source allow-list used by its fabrication gate. Reuse that
+    boundary here. Quantities get the same treatment because a made-up metric is
+    just as harmful as a made-up skill. Ordinary editorial language remains
+    free; only concrete claims are constrained.
+    """
+    try:
+        import resume_optimize
+
+        allowed = resume_optimize._allowed_tokens(source_text, [])
+        source_numbers = set(re.findall(r"\d+(?:[.,]\d+)*", source_text or ""))
+
+        def supported(line: str) -> bool:
+            fake = {
+                "name": "",
+                "contact_line": "",
+                "sections": [{
+                    "heading": "Review",
+                    "items": [{"head": "", "sub": "", "bullets": [line]}],
+                }],
+            }
+            if resume_optimize._fabricated_skills(fake, allowed):
+                return False
+            mentioned_numbers = set(re.findall(r"\d+(?:[.,]\d+)*", line))
+            if not mentioned_numbers <= source_numbers:
+                return False
+
+            # Technology vocabularies are necessarily incomplete. Proper names
+            # are the safe second net: after the sentence-opening word, a
+            # capitalised token such as Helm, Airflow, S3 or Snowflake must be
+            # present in the source. Generic document terms are harmless.
+            safe_terms = {"ats", "cv", "pdf", "url"}
+            source_low = (source_text or "").lower()
+            proper = re.findall(r"\b[A-Z][A-Za-z0-9.+#-]*\b", line)
+            for token in proper[1:]:
+                low = token.lower()
+                if low not in safe_terms and not re.search(
+                    r"(?<![a-z0-9])" + re.escape(low) + r"(?![a-z0-9])",
+                    source_low,
+                ):
+                    return False
+            return True
+
+        return {
+            key: [line for line in advice.get(key, []) if supported(line)]
+            for key in ("strengths", "issues", "suggestions")
+        }
+    except Exception as e:  # noqa: BLE001 — review grounding must fail closed
+        print(f"[advise] grounding failed: {e}")
+        return {"strengths": [], "issues": [], "suggestions": []}
 
 
 def _fallback_advice(text: str) -> dict:

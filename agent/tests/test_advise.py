@@ -80,7 +80,9 @@ def test_the_fullest_review_wins(providers):
     out = resume_ai.advise(RESUME)
     joined = " ".join(out["issues"] + out["suggestions"])
     assert "full:" in joined
-    assert len(out["suggestions"]) == 2
+    # The GitHub suggestion is intentionally removed because this fixture does
+    # not state that the candidate has a GitHub profile.
+    assert len(out["suggestions"]) == 1
 
 
 def test_one_bad_response_does_not_lose_a_good_one(providers):
@@ -101,8 +103,9 @@ def test_a_response_with_no_substance_is_not_used(providers):
 def test_no_provider_falls_back_with_the_right_shape(monkeypatch):
     monkeypatch.setattr(resume_ai.llm_mod, "chat_ensemble", lambda *a, **k: [])
     out = resume_ai.advise(RESUME)
-    assert set(out) == {"strengths", "issues", "suggestions"}
-    assert all(isinstance(out[k], list) for k in out)
+    assert set(out) == {"strengths", "issues", "suggestions", "source"}
+    assert out["source"] == "heuristic"
+    assert all(isinstance(out[k], list) for k in ("strengths", "issues", "suggestions"))
     assert out["suggestions"], "the fallback must still say something useful"
 
 
@@ -111,7 +114,8 @@ def test_a_provider_that_raises_is_not_an_error(monkeypatch):
         raise RuntimeError("all providers down")
     monkeypatch.setattr(resume_ai.llm_mod, "chat_ensemble", dead)
     out = resume_ai.advise(RESUME)
-    assert set(out) == {"strengths", "issues", "suggestions"}
+    assert set(out) == {"strengths", "issues", "suggestions", "source"}
+    assert out["source"] == "heuristic"
 
 
 def test_empty_input_does_not_reach_a_provider(monkeypatch):
@@ -119,7 +123,8 @@ def test_empty_input_does_not_reach_a_provider(monkeypatch):
         raise AssertionError("a provider was called for an empty resume")
     monkeypatch.setattr(resume_ai.llm_mod, "chat_ensemble", explode)
     out = resume_ai.advise("")
-    assert set(out) == {"strengths", "issues", "suggestions"}
+    assert set(out) == {"strengths", "issues", "suggestions", "source"}
+    assert out["source"] == "heuristic"
 
 
 def test_the_review_never_carries_a_number(providers):
@@ -128,7 +133,8 @@ def test_the_review_never_carries_a_number(providers):
     payload = {**_advice(2, "X"), "score": 82, "grade": "B", "rating": 7}
     providers([payload])
     out = resume_ai.advise(RESUME)
-    assert set(out) == {"strengths", "issues", "suggestions"}
+    assert set(out) == {"strengths", "issues", "suggestions", "source"}
+    assert out["source"] == "model"
 
 
 def test_the_fallback_does_not_assume_a_student(monkeypatch):
