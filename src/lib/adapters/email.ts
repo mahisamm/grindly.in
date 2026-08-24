@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import nodemailer from "nodemailer";
+import { report } from "@/lib/errors";
 
 const OUTBOX = path.join(process.cwd(), "data", "email-outbox.jsonl");
 
@@ -51,8 +52,19 @@ export async function sendEmail(msg: Email): Promise<{ ok: boolean; stub: boolea
       });
       return { ok: true, stub: false };
     } catch (e) {
-      console.error("[email] SMTP send failed, falling back to outbox:", (e as Error).message);
-      // fall through to outbox so the message is at least persisted
+      // SMTP is configured, so this was a real attempt at a real mailbox and it
+      // failed. Record it where the operator will see it. A console line alone
+      // put a production outage in a container log nobody tails, while the
+      // caller was handed `stub: true` — the same answer a dev box with no mail
+      // server gives — so nothing downstream could tell the two apart.
+      // report() never throws and is not awaited; the outbox write still
+      // happens below so the message is at least persisted.
+      report({
+        source: "web",
+        kind: "smtp-send-failed",
+        message: String((e as Error)?.message ?? e).slice(0, 400),
+        context: msg.subject,
+      });
     }
   }
 

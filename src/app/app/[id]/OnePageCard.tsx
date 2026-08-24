@@ -104,29 +104,52 @@ export function OnePageCard({
 export function PageBudgetChip({ resumeId, on }: { resumeId: string; on: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   if (!on) return null;
   async function turnOff() {
     setBusy(true);
+    setError(null);
     try {
-      await fetch(`/api/resumes/${resumeId}/pages`, {
+      const res = await fetch(`/api/resumes/${resumeId}/pages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ targetPages: 0 }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.error ?? "Could not turn that off. Try again.");
+        return;
+      }
       router.refresh();
+    } catch {
+      setError("We could not reach the server.");
     } finally {
       setBusy(false);
     }
   }
+  // The chip lives in a flex row beside a heading, so the error is a sibling
+  // in that row rather than a block inside the pill.
   return (
-    <span
-      className="inline-flex items-center gap-2 rounded-full border px-3 py-1 font-mono text-[10px] tracking-[0.1em] uppercase"
-      style={{ borderColor: "var(--cta)", color: "var(--brand)" }}
-    >
-      One-page budget on
-      <button type="button" onClick={turnOff} disabled={busy} className="cursor-pointer underline underline-offset-2">
-        {busy ? "…" : "turn off"}
-      </button>
-    </span>
+    <>
+      <span
+        className="inline-flex items-center gap-2 rounded-full border px-3 py-1 font-mono text-[10px] tracking-[0.1em] uppercase"
+        style={{ borderColor: "var(--cta)", color: "var(--brand)" }}
+      >
+        One-page budget on
+        <button
+          type="button"
+          onClick={() => void turnOff()}
+          disabled={busy}
+          className="cursor-pointer underline underline-offset-2"
+        >
+          {busy ? "…" : "turn off"}
+        </button>
+      </span>
+      {error && (
+        <span role="alert" className="text-sm" style={{ color: "#a3271b" }}>
+          {error}
+        </span>
+      )}
+    </>
   );
 }

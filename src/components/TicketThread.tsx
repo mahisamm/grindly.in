@@ -113,26 +113,39 @@ export function TicketThread({
   }
 
   async function askHuman() {
-    if (!ticket) return;
+    if (!ticket || busy) return;
     setBusy(true);
+    setError(null);
     try {
       const res = await fetch(`/api/tickets/${ticket.id}/human`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data?.ticket) setTicket(data.ticket as TicketView);
+      if (!res.ok) {
+        setError(data?.error ?? "Could not hand this to a person just now.");
+        return;
+      }
+      if (data?.ticket) setTicket(data.ticket as TicketView);
+    } catch {
+      setError("We could not reach the server.");
     } finally {
       setBusy(false);
     }
   }
 
   async function close() {
-    if (!ticket) return;
+    if (!ticket || busy) return;
     setBusy(true);
+    setError(null);
     try {
       const res = await fetch(`/api/tickets/${ticket.id}/close`, { method: "POST" });
-      if (res.ok) {
-        await refresh();
-        router.refresh();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.error ?? "Could not close this conversation.");
+        return;
       }
+      await refresh();
+      router.refresh();
+    } catch {
+      setError("We could not reach the server.");
     } finally {
       setBusy(false);
     }

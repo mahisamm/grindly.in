@@ -57,5 +57,7 @@ export async function POST(req: Request) {
     role: String(body.role ?? "").slice(0, 120),
   });
   if (!result.ok) return serverError(result.error);
-  return NextResponse.json(result);
+  // An outage is not "nothing to tailor to": the agent answers ok:false with
+  // a reason, and this is the standard error shape every caller shows.
+  return NextResponse.json(result, { status: result.ok ? 200 : 503 });
 }

@@ -142,7 +142,9 @@ export async function runAgent<T = Record<string, unknown>>(
         windowsHide: true,
       });
     } catch (e) {
-      resolve({ ok: false, error: `could not start Python: ${String(e)}` });
+      const message = `could not start Python: ${String(e)}`;
+      report({ source: "agent", kind: "spawn-failed", message, context: cmd });
+      resolve({ ok: false, error: message });
       return;
     }
 
@@ -183,6 +185,12 @@ export async function runAgent<T = Record<string, unknown>>(
       outBytes += Buffer.byteLength(chunk);
       if (outBytes > MAX_STDOUT_BYTES) {
         child.kill("SIGKILL");
+        report({
+          source: "agent",
+          kind: "output-too-large",
+          message: `${cmd} wrote more than ${Math.round(MAX_STDOUT_BYTES / 1024 / 1024)} MB to stdout and was killed`,
+          context: cmd,
+        });
         finish({ ok: false, error: `the ${cmd} step produced an implausible amount of output` });
         return;
       }
@@ -261,6 +269,13 @@ export async function runAgent<T = Record<string, unknown>>(
       try {
         const parsed = JSON.parse(text) as AgentResult<T>;
         if (typeof parsed !== "object" || parsed === null || !("ok" in parsed)) {
+          report({
+            source: "agent",
+            kind: "bad-shape",
+            message: `${cmd} stdout was JSON without an ok field: ${text.slice(0, 300)}`,
+            stack: err,
+            context: cmd,
+          });
           finish({ ok: false, error: `the ${cmd} step returned an unexpected shape` });
           return;
         }

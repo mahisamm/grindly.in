@@ -13,6 +13,56 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+const GONE_MESSAGE =
+  "This file is no longer on the server — it belonged to an earlier run. Rebuild to get a fresh copy.";
+
+/**
+ * The 410 for a PDF that has gone from disk while its row remains — which is
+ * what superseding a run does: the files of the old run are deleted, the
+ * variant records are kept for the history list.
+ *
+ * Two shapes, chosen by what asked. A fetch() caller gets JSON it can parse
+ * into its error line. A browser — a navigation from "Open PDF", or the compare
+ * panel's <iframe> — sends `Accept: text/html`, and to it a JSON body is a
+ * page of raw braces inside the frame, which reads as the application having
+ * broken rather than the file having moved on. Those get a small page that
+ * says what happened in words.
+ *
+ * Self-contained on purpose: the CSP on this route is `frame-ancestors` only,
+ * but the page should not need a stylesheet, a font or a script to say one
+ * sentence. The colours are fixed neutrals rather than the app's tokens,
+ * which the frame cannot see, and the frame has no way to learn a theme the
+ * user chose by toggle — so one palette that reads on either ground.
+ */
+function gone(req: Request) {
+  if (!(req.headers.get("accept") ?? "").includes("text/html")) {
+    return NextResponse.json({ error: GONE_MESSAGE }, { status: 410 });
+  }
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>File no longer on the server</title>
+</head>
+<body style="margin:0;min-height:100vh;box-sizing:border-box;display:flex;align-items:center;justify-content:center;padding:1.5rem;background:#e9e9e5;color:#262626;font:15px/1.6 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif">
+<main style="max-width:28rem;text-align:center">
+<p style="margin:0 0 .6rem;font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.12em;text-transform:uppercase;color:#6b6b66">Gone</p>
+<p style="margin:0">${GONE_MESSAGE}</p>
+</main>
+</body>
+</html>`;
+  return new NextResponse(html, {
+    status: 410,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
 /**
  * Download a rendered variant PDF.
  *
@@ -60,10 +110,7 @@ export async function GET(req: Request, { params }: Ctx) {
   try {
     bytes = await fsp.readFile(full);
   } catch {
-    return NextResponse.json(
-      { error: "That file is no longer on the server. Re-run the rewrite to rebuild it." },
-      { status: 410 },
-    );
+    return gone(req);
   }
 
   // The name printed ON the document, preferred over anything stored beside it:

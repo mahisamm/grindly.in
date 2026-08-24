@@ -271,6 +271,120 @@ def test_groq_requests_fit_its_free_tier_limit():
     # And the ratio really is the conservative side of what resume text and
     # JSON tokenize at (~3.3-3.6 chars/token).
     assert llm._GROQ_CHARS_PER_TOKEN <= 3
+    # One ordinary call must not reserve the whole 8000-token minute: Groq
+    # counts prompt + max_tokens against it, and "all the room" meant the
+    # second call of the same run answered 429. Seen live, self-inflicted.
+    assert llm._groq_budget(small) + 4000 // llm._GROQ_CHARS_PER_TOKEN + 64 <= llm._GROQ_REQUEST_TOKENS // 2
+    # ...while still leaving a whole answer's worth for a short prompt.
+    assert llm._groq_budget(small) >= llm._GROQ_ANSWER_FLOOR
+
+
+def test_provider_health_survives_the_process(tmp_path, monkeypatch):
+    """Node spawns a fresh interpreter per command, so a breaker held in memory
+    never opened for anyone. It lives in a file now: a 429 recorded by one
+    process is an open circuit in the next one, and a success closes it."""
+    import importlib
+    import llm
+    path = tmp_path / "llm-health.json"
+    monkeypatch.setenv("GRINDLY_LLM_HEALTH_FILE", str(path))
+    llm = importlib.reload(llm)
+    provider = llm.PROVIDERS[0]
+    assert not llm._circuit_open(provider)
+    # A 429 with Retry-After opens the circuit at once, for at least that long.
+    llm._record_provider_result(provider, ok=False, rate_limited_for=30.0)
+    assert llm._circuit_open(provider)
+    assert path.exists()
+    # A "new process": fresh module state, same file.
+    llm = importlib.reload(llm)
+    assert llm._circuit_open(provider), "the breaker did not survive the process"
+    # Expired holds close by themselves; a success closes one outright.
+    llm._record_provider_result(provider, ok=True)
+    assert not llm._circuit_open(provider)
+    llm = importlib.reload(llm)
+    assert not llm._circuit_open(provider)
+    # The file is advisory: a corrupt one is an empty breaker, never an error.
+    path.write_text("{not json", encoding="utf-8")
+    llm = importlib.reload(llm)
+    assert not llm._circuit_open(provider)
+    llm._record_provider_result(provider, ok=False)
+    assert path.read_text(encoding="utf-8").startswith("{")
+
+
+def test_retries_are_bounded_by_the_call_timeout(monkeypatch):
+    """`timeout` bounds the whole call, retries included. Three attempts at the
+    full timeout each answered after the Node side had already killed the
+    command — wasted work with a confusing message."""
+    import io
+    import urllib.error
+    import urllib.request
+    import llm
+    calls = []
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(llm.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(llm.time, "sleep", lambda s: clock.__setitem__("now", clock["now"] + s))
+
+    def hang(req, timeout):
+        calls.append(timeout)
+        clock["now"] += timeout  # the request used its whole allowance
+        raise urllib.error.HTTPError(req.full_url, 503, "Unavailable", {}, io.BytesIO(b""))
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", hang)
+    req = urllib.request.Request("https://api.example.test/v1/chat/completions", data=b"{}")
+    try:
+        llm._urlopen_json(req, timeout=20)
+    except urllib.error.HTTPError:
+        pass
+    else:
+        raise AssertionError("a failing request must raise")
+    # One attempt used the budget; no second attempt started past it.
+    assert len(calls) == 1, calls
+    assert calls[0] == 20
+
+    # A metered host is not retried on 429: that allowance is per DAY.
+    calls.clear()
+
+    def limited(req, timeout):
+        calls.append(timeout)
+        raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, io.BytesIO(b""))
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", limited)
+    req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions", data=b"{}")
+    try:
+        llm._urlopen_json(req, timeout=60)
+    except urllib.error.HTTPError as e:
+        assert e.code == 429
+    assert len(calls) == 1, "a metered 429 was retried"
+    # ...while an uncapped host still gets its retries within the budget.
+    calls.clear()
+    req = urllib.request.Request("https://api.groq.com/openai/v1/chat/completions", data=b"{}")
+    try:
+        llm._urlopen_json(req, timeout=60)
+    except urllib.error.HTTPError:
+        pass
+    assert len(calls) == llm._MAX_RETRIES
+    # And the breaker can read what the last request ended with.
+    assert llm._last_http.code == 429
+
+
+def test_a_whole_chain_failure_is_said_in_the_lifted_form(monkeypatch, capsys):
+    """Single 429s stay out of the admin table on purpose. A request that got
+    nothing from ANY provider is the outage itself and must reach it — so it is
+    printed in the one form lib/agent.ts lifts: `[llm] <who> error: <why>`."""
+    import llm
+    monkeypatch.setenv("GRINDLY_LLM_HEALTH_FILE", "")
+    providers = [llm.Provider("dead-a", lambda *a, **k: None, "K", "a"),
+                 llm.Provider("dead-b", lambda *a, **k: None, "K", "b")]
+    monkeypatch.setenv("K", "x")
+    monkeypatch.setattr(llm, "PROVIDERS", providers)
+    monkeypatch.setattr(llm, "_save_health", lambda: None)
+    assert llm.chat_ensemble("hi", n=2, timeout=5) == []
+    assert llm.chat("hi", timeout=5) is None
+    out = capsys.readouterr().out
+    import re as _re
+    lifted = _re.compile(r"^\[llm\]\s+(.*?)\s+error:\s+(.*)$", _re.M)
+    found = [m.group(0) for m in lifted.finditer(out)]
+    assert any("ensemble error: all 2 providers failed" in line for line in found), out
+    assert any("chain error: all 2 providers failed" in line for line in found), out
 
 
 def test_http_errors_carry_the_provider_body():

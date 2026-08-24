@@ -16,6 +16,20 @@ export const dynamic = "force-dynamic";
 
 const ALLOWED_EXT = new Set([".pdf", ".docx", ".txt"]);
 const MAX_BYTES = 5 * 1024 * 1024;
+/**
+ * Room for the multipart framing — boundary lines and part headers — around a
+ * file that is exactly at the limit. The Content-Length pre-check below must
+ * never refuse an upload that the byte-accurate check after parsing would
+ * have accepted.
+ */
+const CONTENT_LENGTH_SLACK = 64 * 1024;
+
+function tooLarge() {
+  return NextResponse.json(
+    { error: `That file is larger than ${MAX_BYTES / 1024 / 1024} MB.` },
+    { status: 413 },
+  );
+}
 
 /** Everything the user has uploaded, newest first. */
 export async function GET() {
@@ -48,6 +62,17 @@ export async function POST(req: Request) {
   if ("error" in auth) return auth.error;
   const { user } = auth;
 
+  // Refuse on the header BEFORE the body is read. `req.formData()` buffers the
+  // whole request into memory before `file.size` can be looked at, so the size
+  // check below only ever ran after a 500 MB upload had already been held in
+  // full. A declared length is not trusted for anything but this early exit —
+  // the real check on the parsed file still runs — and an absent or garbled
+  // header simply falls through to it.
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BYTES + CONTENT_LENGTH_SLACK) {
+    return tooLarge();
+  }
+
   const quota = await reserve(user.id, "uploads");
   if (!quota.allowed) {
     return NextResponse.json({ error: quota.message }, { status: 429 });
@@ -76,7 +101,7 @@ export async function POST(req: Request) {
   }
   if (file.size > MAX_BYTES) {
     await giveBack();
-    return NextResponse.json({ error: "That file is larger than 5 MB." }, { status: 413 });
+    return tooLarge();
   }
 
   const count = await prisma.resume.count({ where: { userId: user.id } });

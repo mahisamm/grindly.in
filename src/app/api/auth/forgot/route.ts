@@ -6,6 +6,7 @@ import { normalizeEmail } from "@/lib/password";
 import { sendEmail } from "@/lib/adapters/email";
 import { appUrl, smtpConfigured } from "@/lib/config";
 import { audit } from "@/lib/audit";
+import { report } from "@/lib/errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -146,11 +147,22 @@ export async function POST(req: Request) {
       devLink: link,
     });
   }
-  if (delivery.stub) {
-    // SMTP is configured but did not deliver. Say so rather than claiming the
-    // mail is on its way — the user would otherwise wait for something that is
-    // sitting in a file on the server.
-    console.error("[forgot] SMTP delivery failed; reset mail went to the outbox");
+  if (delivery.stub && smtpConfigured()) {
+    // SMTP is configured but did not deliver: the reset mail is sitting in a
+    // file on the server. The user still gets `sameAnswer` — an outage must not
+    // change the response between a registered and an unregistered address, or
+    // this route becomes a membership oracle whenever mail is down. So the
+    // honesty goes to the operator instead, on /admin, where it can be acted
+    // on. No address in the message: the error table is not an audit log.
+    // A dev box with no SMTP never reaches here — it returned the link above.
+    report({
+      source: "web",
+      kind: "reset-mail-not-sent",
+      message:
+        "SMTP is configured but the password reset mail fell back to the outbox; " +
+        "the user was told a link is on its way.",
+      context: "forgot",
+    });
   }
   return sameAnswer;
 }

@@ -39,6 +39,8 @@ vi.mock("@/lib/rateLimit", () => ({
 }));
 
 import { GET } from "@/app/api/auth/google/callback/route";
+import { prisma } from "@/lib/prisma";
+import { exchangeCode, fetchProfile } from "@/lib/googleOAuth";
 
 // A callback URL that passes the CSRF state check (query state === cookie state).
 function req(state = "abc") {
@@ -78,5 +80,27 @@ describe("google callback rate limiting", () => {
     const res = await GET(req("abc"));
     expect(res.headers.get("location")).toBe("http://localhost/login?error=google_state");
     expect(mockIsRateLimited).not.toHaveBeenCalled();
+  });
+});
+
+describe("google callback database guard", () => {
+  it("lands on /login?error=account_failed when the user lookup throws, not on a 500", async () => {
+    // Everything up to the database succeeds: Google answers with a verified
+    // profile, and then the one lookup that used to sit outside any try blows up.
+    mockIsRateLimited.mockResolvedValue(false);
+    mockLoginClient.mockReturnValue({ clientId: "id", clientSecret: "secret" });
+    vi.mocked(exchangeCode).mockResolvedValue("token");
+    vi.mocked(fetchProfile).mockResolvedValue({
+      sub: "google-sub",
+      email: "someone@example.com",
+      email_verified: true,
+    });
+    (prisma.user as { findFirst?: unknown }).findFirst = vi
+      .fn()
+      .mockRejectedValue(new Error("connection reset"));
+
+    const res = await GET(req());
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("http://localhost/login?error=account_failed");
   });
 });

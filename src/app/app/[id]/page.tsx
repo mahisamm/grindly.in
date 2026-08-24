@@ -5,9 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { toJsonColumn } from "@/lib/jsonColumn";
 import { currentUser } from "@/lib/auth";
 import { runAgent } from "@/lib/agent";
+import { COMPANY_DISCLAIMER, COMPANY_PACKS } from "@/lib/companyPacks";
 import { paymentsEnabled } from "@/lib/config";
 import { limitsFor } from "@/lib/plans";
-import type { CompanyPack } from "@/lib/reportTypes";
 import {
   readAdvice, readFidelity, readReport, readStrings, readTargetSpec,
 } from "@/lib/reportTypes";
@@ -59,7 +59,6 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
     }
   }
 
-  const packs = await runAgent<{ packs: CompanyPack[]; disclaimer: string }>("companies");
 
   return (
     <div className="mx-auto max-w-7xl px-5 py-8 sm:px-6 sm:py-10">
@@ -137,8 +136,8 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
             spec: readTargetSpec(t.specJson),
           })),
         }}
-        packs={packs.ok ? packs.packs : []}
-        disclaimer={packs.ok ? packs.disclaimer : ""}
+        packs={COMPANY_PACKS}
+        disclaimer={COMPANY_DISCLAIMER}
         // How many company targets this plan allows per resume, so the tab can
         // say so BEFORE the user picks one. Without it, a free user who has
         // already tailored for one company clicks "Tailor for Freshworks",

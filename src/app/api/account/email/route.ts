@@ -112,6 +112,31 @@ export async function POST(req: Request) {
 
   const { token, stub } = await issueVerification(user.id, target, isChange ? "change" : "signup");
 
+  if (stub && smtpConfigured()) {
+    // SMTP is configured and the confirmation did not go out — it is in a file
+    // on the server, and the address it was meant for will never see it. This
+    // is the signed-in owner changing their own address, so there is no
+    // enumeration to protect and no reason to be vague: say it failed.
+    //
+    // issueVerification wrote the token BEFORE sending, so void it. Left in
+    // place it would show as a pending move to an address that never got its
+    // link, and a second attempt would look like a re-send of something that
+    // was never sent. The old-address notice and the audit line are skipped for
+    // the same reason: nothing was requested that can be completed. The
+    // adapter has already recorded the SMTP fault for the operator.
+    await prisma.emailVerificationToken
+      .updateMany({ where: { userId: user.id, usedAt: null }, data: { usedAt: new Date() } })
+      .catch(() => null);
+    return NextResponse.json(
+      {
+        error:
+          "We could not send the confirmation just now — nothing was changed. " +
+          "Try again in a minute.",
+      },
+      { status: 503 },
+    );
+  }
+
   if (isChange) {
     // Tell the address being left. If this was not the owner, this mail is the
     // only warning they will get while the old address still works — which it

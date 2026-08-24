@@ -60,6 +60,17 @@ export async function POST(_req: Request, { params }: Ctx) {
     await refund(user.id, "adviceRuns");
     return serverError("No review could be produced — the model was unreachable.");
   }
+  // Rules are not a review. When every provider was unreachable the agent
+  // fills the same shape from heuristics and says so; storing that would
+  // charge for it, show it as a model's opinion, and hide the button for
+  // good. Refund, say try again, keep the button.
+  if (advice.source === "heuristic") {
+    await refund(user.id, "adviceRuns");
+    return NextResponse.json(
+      { error: "The reviewers were unreachable just now — try again in a minute. You have not been charged." },
+      { status: 503 },
+    );
+  }
 
   await prisma.resume
     .update({ where: { id: resume.id }, data: { adviceJson: JSON.stringify(advice) } })

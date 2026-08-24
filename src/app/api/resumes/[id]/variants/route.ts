@@ -419,7 +419,22 @@ async function executeRun({
       message: why || "agent returned no variants and no reasons",
       context: `run:${runId} resume:${resume.id}`,
     });
-    if (targeted) {
+    // "Nothing beat your resume" is only true if rewrites were BUILT and lost.
+    // When every reason is the providers failing, nothing was built — and the
+    // old branch congratulated the user on a resume nobody rewrote. Seen live
+    // in a window where three free tiers answered 429 at once.
+    const reasons = (result.reasons ?? []).filter(Boolean);
+    const providersDown =
+      reasons.length > 0 &&
+      reasons.every((r) => /provider failed|rate-limited|unreachable|could not reach/i.test(r));
+    if (providersDown) {
+      await finish({
+        status: "failed",
+        stage: "Stopped",
+        error:
+          "We could not reach the writing models just now — try again in a minute. You have not been charged.",
+      });
+    } else if (targeted) {
       await finish({
         status: "failed",
         stage: "Stopped",

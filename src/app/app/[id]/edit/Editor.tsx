@@ -113,6 +113,9 @@ export function Editor({
     null,
   );
   const [error, setError] = useState<string | null>(null);
+  // Which of the other formats is being fetched, so its button says so and
+  // the pair cannot be pressed twice while the first is still building.
+  const [exporting, setExporting] = useState<"docx" | "txt" | null>(null);
   // The section to bring into view after an add — set in the click handler,
   // consumed by the effect below, so adding "Projects" from the toolbar lands
   // the user on the new card instead of leaving it somewhere below the fold.
@@ -236,6 +239,45 @@ export function Editor({
       setError("We could not reach the server.");
     } finally {
       setBuilding(false);
+    }
+  }
+
+  /**
+   * The .docx and .txt, fetched and saved from script rather than being plain
+   * links — the same shape as the account export in AccountForms.
+   *
+   * A link would work until the render failed: the route answers a failure
+   * with a JSON body, and a link navigates this tab to it, raw, with the
+   * editor gone. Fetching lets the failure land in the editor's own error
+   * line and keeps the page under the user. The filename still comes from the
+   * server — company and name, in any script — read back off the header the
+   * route sets, so the two doors produce identically named files.
+   */
+  async function exportAs(format: "docx" | "txt") {
+    setExporting(format);
+    setError(null);
+    try {
+      const res = await fetch(`/api/resumes/${resumeId}/export?format=${format}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data?.error ?? `Could not build the .${format} file.`);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = downloadNameFrom(res.headers.get("Content-Disposition")) ?? `Resume.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Revoked on the next tick, not immediately: some browsers have not
+      // started reading the blob by the time click() returns.
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch {
+      setError("We could not reach the server.");
+    } finally {
+      setExporting(null);
     }
   }
 
@@ -567,17 +609,49 @@ export function Editor({
             what produces the mangling this whole product measures.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <a href={`/api/resumes/${resumeId}/export?format=docx`} className="btn text-sm">
-              Download .docx
-            </a>
-            <a href={`/api/resumes/${resumeId}/export?format=txt`} className="btn text-sm">
-              Download .txt
-            </a>
+            <button
+              type="button"
+              onClick={() => void exportAs("docx")}
+              disabled={exporting !== null}
+              className="btn text-sm"
+            >
+              {exporting === "docx" ? "Building .docx…" : "Download .docx"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void exportAs("txt")}
+              disabled={exporting !== null}
+              className="btn text-sm"
+            >
+              {exporting === "txt" ? "Building .txt…" : "Download .txt"}
+            </button>
           </div>
         </div>
       </aside>
     </div>
   );
+}
+
+/**
+ * The filename the export route chose, read back off its Content-Disposition
+ * header. `contentDisposition()` in lib/downloadName emits both RFC 6266 forms;
+ * the `filename*` one is preferred because it is the one that carries a name
+ * in Devanagari intact, and the quoted ASCII `filename` is the fallback. Null
+ * when neither is there, and the caller names the file itself.
+ */
+function downloadNameFrom(header: string | null): string | null {
+  if (!header) return null;
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (utf8) {
+    try {
+      const name = decodeURIComponent(utf8[1].trim());
+      if (name) return name;
+    } catch {
+      /* malformed percent-encoding: fall through to the ASCII form */
+    }
+  }
+  const plain = /filename="([^"]*)"/i.exec(header);
+  return plain?.[1] || null;
 }
 
 function Field({

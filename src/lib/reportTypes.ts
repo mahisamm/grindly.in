@@ -26,6 +26,13 @@ export type Advice = {
   strengths: string[];
   issues: string[];
   suggestions: string[];
+  /**
+   * "model" when a provider read the resume; "heuristic" when every provider
+   * was unreachable and the agent filled the shape from rules. The shapes are
+   * identical, which is exactly why the label exists: the advice route refunds
+   * and says "try again" on "heuristic" instead of storing rules as a review.
+   */
+  source?: "model" | "heuristic";
 };
 
 export type Report = {
@@ -169,6 +176,7 @@ export const AdviceSchema = z.object({
   strengths: z.array(z.string()).default([]),
   issues: z.array(z.string()).default([]),
   suggestions: z.array(z.string()).default([]),
+  source: z.enum(["model", "heuristic"]).optional(),
 });
 
 export const ReportSchema = z.object({

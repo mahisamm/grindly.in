@@ -80,10 +80,19 @@ export async function GET(req: Request) {
     return back("google_unverified");
   }
 
-  let user = await prisma.user.findFirst({
-    where: { OR: [{ googleId: profile.sub }, { email }] },
-    select: { id: true, googleId: true, deletedAt: true },
-  });
+  // Guarded like the upsert below it: this is a navigation, and a database
+  // blip here used to surface as a bare 500 — the one failure on this route
+  // that did not land the user on /login with a way back.
+  let user: { id: string; googleId: string | null; deletedAt: Date | null } | null;
+  try {
+    user = await prisma.user.findFirst({
+      where: { OR: [{ googleId: profile.sub }, { email }] },
+      select: { id: true, googleId: true, deletedAt: true },
+    });
+  } catch (e) {
+    console.error("[oauth] user lookup failed:", e);
+    return back("account_failed");
+  }
 
   if (user?.deletedAt) return back("account_deleted");
 

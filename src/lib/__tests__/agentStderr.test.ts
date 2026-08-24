@@ -1,5 +1,86 @@
-import { describe, expect, it } from "vitest";
-import { providerFailureFromLine } from "../agent";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+
+const { mockSpawn, mockReport } = vi.hoisted(() => ({
+  mockSpawn: vi.fn(),
+  mockReport: vi.fn(),
+}));
+vi.mock("node:child_process", () => ({ spawn: mockSpawn }));
+vi.mock("@/lib/errors", () => ({ report: mockReport }));
+
+import { providerFailureFromLine, runAgent } from "../agent";
+
+/** The parts of a ChildProcess that runAgent touches, with nothing behind them. */
+function fakeChild() {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: PassThrough;
+    stderr: PassThrough;
+    stdin: { end: ReturnType<typeof vi.fn> };
+    kill: ReturnType<typeof vi.fn>;
+  };
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdin = { end: vi.fn() };
+  child.kill = vi.fn();
+  return child;
+}
+
+/** A PassThrough delivers `data` on a later tick; this waits for it. */
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+/**
+ * Every `ok: false` that leaves runAgent must also reach the error table —
+ * three of them did not, so a missing interpreter, a runaway process and a
+ * reply with no `ok` field each failed the user without telling /admin.
+ */
+describe("runAgent reports every failure it returns", () => {
+  beforeEach(() => {
+    mockSpawn.mockReset();
+    mockReport.mockReset();
+  });
+
+  it("reports a spawn that throws synchronously", async () => {
+    mockSpawn.mockImplementation(() => {
+      throw new Error("EACCES");
+    });
+    const result = await runAgent("health");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/could not start Python/);
+    expect(mockReport).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "agent", kind: "spawn-failed", context: "health" }),
+    );
+  });
+
+  it("reports JSON that has no ok field", async () => {
+    const child = fakeChild();
+    mockSpawn.mockReturnValue(child);
+    const pending = runAgent("health");
+    child.stdout.write('{"score": 71}');
+    await tick();
+    child.emit("close", 0);
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/unexpected shape/);
+    expect(mockReport).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "agent", kind: "bad-shape", context: "health" }),
+    );
+  });
+
+  it("reports and kills a process that floods stdout", async () => {
+    const child = fakeChild();
+    mockSpawn.mockReturnValue(child);
+    const pending = runAgent("health");
+    child.stdout.write("x".repeat(12 * 1024 * 1024 + 1));
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/implausible amount of output/);
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(mockReport).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "agent", kind: "output-too-large", context: "health" }),
+    );
+  });
+});
 
 /**
  * The agent's stderr is the only place a dead LLM provider is observable, and

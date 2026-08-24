@@ -15,6 +15,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { env, paymentsEnabled } from "@/lib/config";
 import type { Product } from "@/lib/plans";
 
+/** Timeout on the one outbound call — a slow gateway must not hold a request open. */
+const PROVIDER_TIMEOUT_MS = 15_000;
+
 export type CreatedOrder = {
   provider: "razorpay" | "stub";
   providerOrderId: string;
@@ -35,19 +38,36 @@ export async function createOrder(product: Product, receipt: string): Promise<Cr
   }
 
   const auth = Buffer.from(`${env("RAZORPAY_KEY_ID")}:${env("RAZORPAY_KEY_SECRET")}`).toString("base64");
-  const res = await fetch("https://api.razorpay.com/v1/orders", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Basic ${auth}` },
-    body: JSON.stringify({
-      amount: product.amount,
-      currency: product.currency,
-      receipt,
-      // Razorpay retries on our behalf when payment capture is automatic; a
-      // manual capture would leave successful payments uncaptured if this
-      // process died between confirm and capture.
-      payment_capture: 1,
-    }),
-  });
+  // Bounded, like every outbound call in googleOAuth.ts. Without the signal a
+  // provider that accepts the connection and never answers holds this request
+  // — and the Buy button's "Opening…" state — for as long as the socket lives,
+  // which is minutes. The caller already turns any throw from here into "the
+  // payment provider did not respond", so a timeout only has to throw readably.
+  let res: Response;
+  try {
+    res = await fetch("https://api.razorpay.com/v1/orders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Basic ${auth}` },
+      body: JSON.stringify({
+        amount: product.amount,
+        currency: product.currency,
+        receipt,
+        // Razorpay retries on our behalf when payment capture is automatic; a
+        // manual capture would leave successful payments uncaptured if this
+        // process died between confirm and capture.
+        payment_capture: 1,
+      }),
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+    });
+  } catch (e) {
+    const timedOut =
+      e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+    throw new Error(
+      timedOut
+        ? `Razorpay did not answer within ${Math.round(PROVIDER_TIMEOUT_MS / 1000)}s`
+        : `Razorpay order request failed: ${String(e)}`,
+    );
+  }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");

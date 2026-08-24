@@ -244,18 +244,41 @@ function Tracker({
     }
   }
 
+  // Refreshed only on success. The select is controlled by the row's stored
+  // status, so a failed change snaps back either way — the difference is that
+  // it now says why, instead of looking like the click did not register.
   async function update(id: string, status: string) {
-    await fetch(`/api/applications/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    }).catch(() => null);
-    router.refresh();
+    setError(null);
+    try {
+      const res = await fetch(`/api/applications/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data?.error ?? "Could not change that status.");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("We could not reach the server.");
+    }
   }
 
   async function remove(id: string) {
-    await fetch(`/api/applications/${id}`, { method: "DELETE" }).catch(() => null);
-    router.refresh();
+    setError(null);
+    try {
+      const res = await fetch(`/api/applications/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data?.error ?? "Could not remove that.");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("We could not reach the server.");
+    }
   }
 
   // The count that makes the version column worth having.

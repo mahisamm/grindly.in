@@ -75,6 +75,7 @@ import re
 import tempfile
 
 import llm as llm_mod
+import llm_cache
 import readiness
 import render_pdf
 import resume_parse
@@ -1051,6 +1052,20 @@ def _bullet_count(struct: dict | None) -> int:
 
 
 def _extract_struct(text: str) -> dict | None:
+    """The master resume as structured JSON, reused when the text has not changed.
+
+    Extraction is deterministic (temperature 0.0) on text the user did not
+    edit, and it is three provider calls — the three a user paid twice when a
+    rate-limited run made them press Rewrite again. Cached on the text and the
+    instructions; the cache refuses falsy values, so a bad minute is never
+    stored (llm_cache.cached).
+    """
+    return llm_cache.cached(
+        "struct", [text, _EXTRACT_SYS], lambda: _extract_struct_uncached(text),
+    )
+
+
+def _extract_struct_uncached(text: str) -> dict | None:
     """The master resume as structured JSON — the input every rewrite works from.
 
     An empty result here is the single most dangerous outcome in this module, and
@@ -1080,7 +1095,7 @@ def _extract_struct(text: str) -> dict | None:
     # six provider calls and twice the latency for the same three answers.
     dicts = [
         parsed for parsed in (llm_mod._extract_json(raw)
-                              for raw in llm_mod.chat_ensemble(prompt, system=_EXTRACT_SYS, n=3, timeout=90,
+                              for raw in llm_mod.chat_ensemble(prompt, system=_EXTRACT_SYS, n=3, timeout=75,
                                                                temperature=0.0)
                               if raw)
         if isinstance(parsed, dict)
@@ -1175,7 +1190,7 @@ def _rewrite_struct(
     # be reported as the first. Counted here, read by _one_variant.
     _REWRITE_DIAG["answers"] = 0
     _REWRITE_DIAG["parsed"] = 0
-    for raw in llm_mod.chat_ensemble(prompt, system=_REWRITE_SYS, n=3, timeout=120):
+    for raw in llm_mod.chat_ensemble(prompt, system=_REWRITE_SYS, n=3, timeout=75):
         _REWRITE_DIAG["answers"] += 1
         parsed = llm_mod._extract_json(raw)
         if not isinstance(parsed, dict):

@@ -88,6 +88,65 @@ class Provider:
 
 _health_lock = threading.Lock()
 _provider_health: dict[str, dict[str, float]] = {}
+_health_loaded = False
+
+# Where the circuit-breaker state lives BETWEEN processes. Node spawns a fresh
+# interpreter per command, so an in-memory breaker was reset before it could
+# ever open: a hundred users in the same minute each rediscovered that Groq
+# was rate-limited, three retries apiece. The file is tiny, written
+# atomically, read once per process, and never allowed to raise — a missing
+# or corrupt file is an empty breaker, which is what the old code had anyway.
+# Wall-clock time, not monotonic: monotonic clocks are per-process.
+_HEALTH_FILE = os.environ.get("GRINDLY_LLM_HEALTH_FILE") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "llm-health.json"
+)
+# A 429 says "not now" outright; it opens the circuit for at least this long
+# even before the failure count reaches the threshold, and for Retry-After
+# when the provider names one (bounded — a daily cap can name hours).
+_RATE_LIMIT_OPEN_MIN = 15.0
+_RATE_LIMIT_OPEN_MAX = 600.0
+
+# The HTTP failure the current thread's last request ended with, so the
+# breaker can tell a 429 from a timeout. Thread-local because the ensemble
+# runs providers in parallel threads.
+_last_http = threading.local()
+
+
+def _health_file() -> str:
+    return os.environ.get("GRINDLY_LLM_HEALTH_FILE") or _HEALTH_FILE
+
+
+def _load_health() -> None:
+    """Read the breaker state once per process. Caller holds the lock."""
+    global _health_loaded
+    if _health_loaded:
+        return
+    _health_loaded = True
+    try:
+        with open(_health_file(), "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, dict):
+            for name, state in data.items():
+                if isinstance(state, dict):
+                    _provider_health[name] = {
+                        "failures": float(state.get("failures", 0.0)),
+                        "open_until": float(state.get("open_until", 0.0)),
+                    }
+    except Exception:  # noqa: BLE001 — a breaker file must never break a request
+        pass
+
+
+def _save_health() -> None:
+    """Write the breaker state atomically. Caller holds the lock. Never raises."""
+    try:
+        path = _health_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(_provider_health, handle)
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001
+        pass
 
 def _retry_delay(error: Exception, attempt: int) -> float:
     if isinstance(error, urllib.error.HTTPError):
@@ -120,23 +179,64 @@ def _annotate_http_error(error: urllib.error.HTTPError) -> urllib.error.HTTPErro
     return error
 
 
+# Hosts on a hard daily allowance rather than a per-minute limit. Their 429
+# means "spent for today"; retrying it three times spends three more of the
+# fifty requests the day had, on a refusal that will not change in ten seconds.
+_METERED_HOSTS = ("openrouter.ai",)
+
+# The least a single attempt is given once the budget is nearly spent. Below
+# this a request cannot finish, so it is not started.
+_MIN_ATTEMPT_SECONDS = 5.0
+
+
 def _urlopen_json(req: urllib.request.Request, timeout: int) -> dict:
-    """Open an LLM request with bounded retries for transient failures."""
+    """Open an LLM request with bounded retries for transient failures.
+
+    `timeout` bounds the WHOLE call, retries included — not one attempt. It
+    used to bound one attempt, so a provider that hung answered in 3×timeout
+    + backoff, which was longer than every per-command budget on the Node
+    side: the user saw "took longer than 120s and was stopped" while Python
+    was still on its third try. Each attempt gets what is left of the budget;
+    when that is under `_MIN_ATTEMPT_SECONDS`, the last error is raised.
+    """
+    deadline = time.monotonic() + max(float(timeout), _MIN_ATTEMPT_SECONDS)
+    metered = any(host in (req.full_url or "") for host in _METERED_HOSTS)
     last_error: Exception | None = None
     for attempt in range(_MAX_RETRIES):
+        remaining = deadline - time.monotonic()
+        if attempt and remaining < _MIN_ATTEMPT_SECONDS:
+            break
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with urllib.request.urlopen(req, timeout=max(_MIN_ATTEMPT_SECONDS, remaining)) as response:
                 return json.loads(response.read().decode())
         except urllib.error.HTTPError as error:
             last_error = _annotate_http_error(error)
+            _last_http.code = error.code
+            _last_http.retry_after = _retry_after_seconds(error)
             if error.code not in (408, 409, 425, 429) and error.code < 500:
+                raise
+            if error.code == 429 and metered:
                 raise
         except (urllib.error.URLError, TimeoutError) as error:
             last_error = error
         if attempt + 1 < _MAX_RETRIES:
-            time.sleep(_retry_delay(last_error, attempt))
+            delay = _retry_delay(last_error, attempt)
+            if time.monotonic() + delay + _MIN_ATTEMPT_SECONDS > deadline:
+                break
+            time.sleep(delay)
     assert last_error is not None
     raise last_error
+
+
+def _retry_after_seconds(error: urllib.error.HTTPError) -> float | None:
+    """The provider's Retry-After in seconds, if it named one."""
+    value = error.headers.get("Retry-After") if error.headers else None
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return None
 
 
 def _openai_compat(
@@ -238,6 +338,7 @@ def _gemini(messages: list, timeout: int, temperature: float = 0.3) -> str | Non
 # prompt that leaves no room skips Groq and lets the ensemble carry on.
 _GROQ_REQUEST_TOKENS = max(2048, int(os.environ.get("GRINDLY_GROQ_REQUEST_TOKENS", "8000")))
 _GROQ_MIN_COMPLETION = 1024
+_GROQ_ANSWER_FLOOR = 2500
 
 
 # Characters per prompt token, for the estimate below. Resume text and the
@@ -256,7 +357,13 @@ def _groq_budget(messages: list) -> int | None:
     if room < _GROQ_MIN_COMPLETION:
         print(f"[llm] groq skipped — prompt ~{est_prompt} tokens leaves no completion room")
         return None
-    return min(_DEFAULT_MAX_TOKENS, room)
+    # Groq reserves prompt + max_tokens against the per-minute allowance, so
+    # "all the room there is" made ONE call spend the whole minute and the
+    # next call in the same run answered 429 — self-inflicted. A rewrite
+    # answers in about as many tokens as its prompt (the same resume back);
+    # ask for that, with a floor a short prompt still gets a whole answer under.
+    ceiling = max(_GROQ_ANSWER_FLOOR, est_prompt)
+    return min(_DEFAULT_MAX_TOKENS, room, ceiling)
 
 
 def _groq_gptoss20(messages: list, timeout: int, temperature: float = 0.3) -> str | None:
@@ -532,35 +639,51 @@ def _configured_providers() -> list[Provider]:
 
 
 def _circuit_open(provider: Provider, now: float | None = None) -> bool:
-    now = time.monotonic() if now is None else now
+    now = time.time() if now is None else now
     with _health_lock:
+        _load_health()
         state = _provider_health.get(provider.name)
         return bool(state and state.get("open_until", 0.0) > now)
 
 
-def _record_provider_result(provider: Provider, ok: bool) -> None:
+def _record_provider_result(provider: Provider, ok: bool,
+                            rate_limited_for: float | None = None) -> None:
+    """Update the breaker. `rate_limited_for` is set when the failure was a
+    429: the provider has said "not now", so the circuit opens immediately for
+    that long instead of waiting for the failure count to climb."""
     with _health_lock:
+        _load_health()
         state = _provider_health.setdefault(
             provider.name, {"failures": 0.0, "open_until": 0.0}
         )
         if ok:
             state["failures"] = 0.0
             state["open_until"] = 0.0
-            return
-        state["failures"] += 1.0
-        if state["failures"] >= _CIRCUIT_FAILURE_THRESHOLD:
-            state["open_until"] = time.monotonic() + _CIRCUIT_COOLDOWN_SECONDS
+        else:
+            state["failures"] += 1.0
+            now = time.time()
+            if state["failures"] >= _CIRCUIT_FAILURE_THRESHOLD:
+                state["open_until"] = max(state["open_until"], now + _CIRCUIT_COOLDOWN_SECONDS)
+            if rate_limited_for is not None:
+                hold = min(_RATE_LIMIT_OPEN_MAX, max(_RATE_LIMIT_OPEN_MIN, rate_limited_for))
+                state["open_until"] = max(state["open_until"], now + hold)
+        _save_health()
 
 
 def _call_provider(provider: Provider, messages: list, timeout: int,
                    temperature: float = 0.3) -> str | None:
+    _last_http.code = None
+    _last_http.retry_after = None
     try:
         result = provider.fn(messages, timeout, temperature)
     except Exception as error:
         print(f"[llm] provider {provider.name} error: {error}")
         result = None
     ok = bool(result and result.strip())
-    _record_provider_result(provider, ok)
+    rate_limited_for = None
+    if not ok and getattr(_last_http, "code", None) == 429:
+        rate_limited_for = float(getattr(_last_http, "retry_after", None) or 0.0)
+    _record_provider_result(provider, ok, rate_limited_for)
     return result.strip() if ok and result else None
 
 
@@ -679,7 +802,12 @@ def chat(prompt: str, system: str = "", timeout: int = 60) -> str | None:
         if result:
             print(f"[llm] served by {provider.name}")
             return result
-    print("[llm] all configured providers failed" if providers else "[llm] no providers configured")
+    # "error:" on purpose — lib/agent.ts lifts `[llm] <who> error: <why>` into
+    # the error table. Individual 429s are kept out of it (they are the free
+    # tier working as sold); a request that got NOTHING from any provider is
+    # the outage itself, and must be visible.
+    print(f"[llm] chain error: all {len(providers)} providers failed" if providers
+          else "[llm] no providers configured")
     return None
 
 
@@ -713,6 +841,8 @@ def chat_ensemble(
                     print(f"[llm] ensemble OK {name}")
             except Exception as error:
                 print(f"[llm] ensemble FAIL {name}: {error}")
+    if not results_by_name:
+        print(f"[llm] ensemble error: all {len(providers)} providers failed")
     return [results_by_name[p.name] for p in providers if p.name in results_by_name]
 
 

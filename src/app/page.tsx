@@ -5,7 +5,7 @@ import { ParticleField } from "@/components/ParticleField";
 import { IntroSplash } from "@/components/IntroSplash";
 import { SessionNav } from "@/components/SessionNav";
 import { Reveal } from "@/components/Motion";
-import { runAgent, type CompanyPack } from "@/lib/agent";
+import { COMPANY_PACKS } from "@/lib/companyPacks";
 import { LIMITS, PRODUCTS, USD_PRICES, formatAmount } from "@/lib/plans";
 import { RegionPrice } from "@/components/Region";
 
@@ -23,8 +23,12 @@ export const revalidate = 300;
  * only differentiator that cannot be copied in an afternoon.
  */
 export default async function Home() {
-  const packs = await runAgent<{ packs: CompanyPack[]; disclaimer: string }>("companies");
-  const companies = packs.ok ? packs.packs : [];
+  // From the committed snapshot, not the Python agent: this page is
+  // prerendered at build time, where there is no interpreter, and the old
+  // call failed there quietly — every deploy shipped a landing page with the
+  // company section missing until the first revalidation. The snapshot is
+  // pinned equal to the agent's packs by a test.
+  const companies = COMPANY_PACKS;
 
   return (
     <>

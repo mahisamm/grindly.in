@@ -11,6 +11,17 @@ export const dynamic = "force-dynamic";
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
+ * Cap on a save body, checked against Content-Length before `req.json()`
+ * buffers it. `sanitizeStruct` truncates every field (see LIMITS in
+ * resumeStruct.ts), but it can only truncate what has already been read into
+ * memory — and a real resume's structure is a few kilobytes, tens at the very
+ * most. A megabyte is two orders of magnitude above the largest document
+ * anyone has edited here; the only request it refuses is one that is not a
+ * resume.
+ */
+const MAX_BODY_BYTES = 1024 * 1024;
+
+/**
  * The saved fields, if there are any.
  *
  * READ ONLY. Extraction — which reserves quota, spawns an interpreter and
@@ -82,6 +93,14 @@ async function savePut(req: Request, { id }: { id: string }) {
     select: { id: true },
   });
   if (!resume) return notFound();
+
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    return NextResponse.json(
+      { error: "That is too much to save at once." },
+      { status: 413 },
+    );
+  }
 
   let body: { struct?: unknown };
   try {

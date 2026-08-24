@@ -101,7 +101,14 @@ def _advise_uncached(resume_text: str) -> dict:
         if weight > best_weight:
             best, best_weight = advice, weight
 
-    return best or _fallback_advice(text)
+    # Say which it was. The shapes are identical, and a caller that cannot
+    # tell "a model read this" from "every provider was rate-limited" charged
+    # a quota unit for the rules, stored them as the review, and hid the
+    # button — one canned review, permanently. The route refunds and says
+    # "try again" on "heuristic"; the panel never shows rules as an opinion.
+    if best:
+        return {**best, "source": "model"}
+    return {**_fallback_advice(text), "source": "heuristic"}
 
 
 # ---------- ATS: what a machine actually reads off the page ----------

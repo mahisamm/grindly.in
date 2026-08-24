@@ -290,9 +290,18 @@ def _research_uncached(name: str, role_hint: str = "") -> dict:
     if best:
         return {"ok": True, **best, "disclaimer": companies.DISCLAIMER}
 
-    # Nothing survived: no model configured, every provider failed, or every
-    # answer was a guess. All three are the same answer to the user, and it is a
-    # true one — so nothing here has to explain an outage to them.
+    # No answer AT ALL is not "nothing specific to tailor to" — it is "we
+    # could not look". The old code gave the not-required note here, which
+    # sits next to a paid unlock decision and was untrue during an outage.
+    if not raws:
+        return {
+            "ok": False,
+            "error": f"We could not look {typed} up just now — every model provider was busy. "
+                     "Try again in a minute; nothing was charged.",
+        }
+
+    # Nothing survived: every answer was a guess. That is the same answer to
+    # the user, and a true one.
     if declined:
         return {"ok": True, **declined, "disclaimer": companies.DISCLAIMER}
     return {

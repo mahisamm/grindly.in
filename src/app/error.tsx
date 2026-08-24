@@ -13,6 +13,29 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     console.error(error);
+
+    // Tell the server — the same report global-error.tsx sends. A page crash
+    // renders entirely in the browser, so without this the only record of it
+    // was on the screen of the person it broke for, and /admin's error table
+    // never heard about it. Fire-and-forget: a failure to report a failure is
+    // not worth a second error screen.
+    if (typeof window !== "undefined") {
+      try {
+        void fetch("/api/errors", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            kind: error?.name || "unhandled",
+            message: error?.message || "page crashed",
+            stack: error?.stack || "",
+            path: window.location?.pathname || "",
+          }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch {
+        /* reporting must never be the thing that breaks the error page */
+      }
+    }
   }, [error]);
 
   return (

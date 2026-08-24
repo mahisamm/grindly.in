@@ -26,18 +26,24 @@ export function ShareLink({
   const [token, setToken] = useState<string | null>(initialToken);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const url = token && typeof window !== "undefined" ? `${window.location.origin}/r/${token}` : null;
 
   async function create() {
     setBusy(true);
+    setError(null);
     try {
       const res = await fetch(`/api/resumes/${resumeId}/share`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) setToken(data.token);
+      if (!res.ok) {
+        setError(data?.error ?? "Could not create a link.");
+        return;
+      }
+      setToken(data.token);
       router.refresh();
     } catch {
-      /* the button stays where it was; pressing it again is the retry */
+      setError("We could not reach the server.");
     } finally {
       setBusy(false);
     }
@@ -45,12 +51,20 @@ export function ShareLink({
 
   async function revoke() {
     setBusy(true);
+    setError(null);
     try {
-      await fetch(`/api/resumes/${resumeId}/share`, { method: "DELETE" });
+      const res = await fetch(`/api/resumes/${resumeId}/share`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // The link is still live if this failed — saying so matters more here
+        // than anywhere else on the page, because revoking is the safety step.
+        setError(data?.error ?? "Could not revoke the link. It is still live.");
+        return;
+      }
       setToken(null);
       router.refresh();
     } catch {
-      /* as above */
+      setError("We could not reach the server.");
     } finally {
       setBusy(false);
     }
@@ -103,6 +117,11 @@ export function ShareLink({
         <button onClick={create} disabled={busy} className="btn mt-4 w-full justify-center sm:w-auto">
           {busy ? "Creating…" : "Create a link"}
         </button>
+      )}
+      {error && (
+        <p role="alert" className="mt-3 text-sm" style={{ color: "#a3271b" }}>
+          {error}
+        </p>
       )}
     </div>
   );
