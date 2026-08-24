@@ -1766,6 +1766,7 @@ def _source_stems(source_text: str) -> set[str]:
 # whose truthful rewrite is refused as a fabrication learns not to trust the
 # gate, which is worse than the gate not existing.
 _EQUIVALENTS: dict[str, tuple[str, ...]] = {
+    "automation": ("automate", "automated", "automating"),
     # `_source_stems` splits "B.Tech" on the dot, so the source contributes "b"
     # and "tech" — never "btech". The aliases have to name the parts that
     # actually land in the stem set, or "Bachelor of Technology" is rejected as

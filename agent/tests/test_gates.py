@@ -282,6 +282,27 @@ def test_a_derived_form_of_a_source_word_is_not_an_invented_skill():
     assert RO._fabricated_skills(struct, allowed) == []
 
 
+def test_automating_defends_automation_without_loosening_technology_checks():
+    """Live Amazon-target regression: the source said `automating the
+    reconciliation`; a rewrite's truthful `automation` label was rejected as
+    an invented skill and discarded in full.
+    """
+    allowed = RO._allowed_tokens(
+        "Cut monthly close from 5 days to 2 days by automating reconciliation.",
+        [],
+    )
+    struct = {
+        "name": "", "contact_line": "",
+        "sections": [{"heading": "Technical Skills", "items": [
+            {"head": "Skills", "sub": "", "bullets": ["Process Automation", "Kubernetes"]},
+        ]}],
+    }
+
+    bad = RO._fabricated_skills(struct, allowed)
+    assert "automation" not in bad
+    assert "kubernetes" in bad
+
+
 def test_the_derivational_fold_does_not_defend_a_different_technology():
     """The loosening must stay narrow: "sprint" (the ceremony) must not defend
     "spring" (the framework), and an unrelated source never defends Kubernetes.
