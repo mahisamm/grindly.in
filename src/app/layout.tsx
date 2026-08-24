@@ -82,6 +82,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${bodySans.variable} ${codeMono.variable} ${displayFont.variable} h-full antialiased`}
     >
       <head>
