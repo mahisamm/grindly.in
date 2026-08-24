@@ -5,7 +5,7 @@ import { ParticleField } from "@/components/ParticleField";
 import { IntroSplash } from "@/components/IntroSplash";
 import { SessionNav } from "@/components/SessionNav";
 import { Reveal } from "@/components/Motion";
-import { COMPANY_PACKS } from "@/lib/companyPacks";
+import { COMPANY_DISCLAIMER, COMPANY_PACKS } from "@/lib/companyPacks";
 import { LIMITS, PRODUCTS, USD_PRICES, formatAmount } from "@/lib/plans";
 import { RegionPrice } from "@/components/Region";
 
@@ -227,7 +227,7 @@ export default async function Home() {
               ))}
             </ul>
             <p className="text-muted mt-6 max-w-3xl text-xs leading-relaxed">
-              {packs.ok ? packs.disclaimer : ""}
+              {COMPANY_DISCLAIMER}
             </p>
           </section>
         )}
