@@ -69,6 +69,7 @@ change what a rewrite surfaces and can never buy it a fabricated fact.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -564,6 +565,13 @@ def _one_variant(
     # values (module docstring); without this the header ships placeholders.
     _stamp_identity(struct, identity)
 
+    # A rewrite may improve wording and order; it may not decide that an entire
+    # source section is expendable. Live QA found the strongest targeted answer
+    # dropping Technical Skills and landing at 85 against a 90-point source.
+    # Restore omissions from the already-grounded source before any measurement.
+    restored_sections = _restore_missing_source_sections(struct, base_struct)
+    restored_skills = _ensure_master_skills(struct, master_skills)
+
     # Drift: a rewrite may reword every real entry, never replace them. Grounding
     # removes invented items one by one, so a wholesale hallucination arrives here
     # as a struct that kept almost nothing of the master's factual content.
@@ -603,6 +611,14 @@ def _one_variant(
         print(f"[optimize] {label}: removed {len(dropped)} ungrounded item(s): {dropped[:3]}")
 
     changes = _clean_changes(rewritten.get("changes"))
+    if restored_sections:
+        names = ", ".join(restored_sections)
+        changes = ([f"Kept source sections the rewrite omitted: {names}"] + changes)[:5]
+    if restored_skills:
+        changes = ([
+            f"Kept {len(restored_skills)} source skill{'s' if len(restored_skills) != 1 else ''} "
+            "the rewrite omitted"
+        ] + changes)[:5]
     # Put the gate's work into the change list, which is what gets stored and
     # shown on every later page load. A rewrite that tried to add something and
     # was stopped is the single most reassuring thing this product can tell
@@ -885,6 +901,26 @@ def _canonicalise_headings(struct: dict) -> list[str]:
     return renamed
 
 
+_SKILL_DISPLAY = {
+    "aws": "AWS", "gcp": "GCP", "sql": "SQL", "nlp": "NLP",
+    "seo": "SEO", "html": "HTML", "css": "CSS", "ui/ux": "UI/UX",
+    "rest api": "REST API", "javascript": "JavaScript",
+    "typescript": "TypeScript", "next.js": "Next.js", "node": "Node.js",
+    "postgresql": "PostgreSQL", "mysql": "MySQL", "mongodb": "MongoDB",
+    "graphql": "GraphQL", "pytorch": "PyTorch", "tensorflow": "TensorFlow",
+    "scikit-learn": "scikit-learn", "power bi": "Power BI",
+}
+
+
+def _display_skill(skill: str) -> str:
+    clean = str(skill or "").strip()
+    if not clean:
+        return ""
+    if any(char.isupper() for char in clean):
+        return clean
+    return _SKILL_DISPLAY.get(clean.lower(), clean.title())
+
+
 def _skills_section(master_skills: list[str]) -> dict | None:
     """A Technical Skills section built from the candidate's OWN skill list.
 
@@ -893,13 +929,85 @@ def _skills_section(master_skills: list[str]) -> dict | None:
     adds no claim they have not already made — it moves a claim out of prose,
     where a keyword search misses it, into the block a recruiter searches.
     """
-    skills = [s.strip() for s in (master_skills or []) if s and s.strip()]
+    skills = [_display_skill(s) for s in (master_skills or []) if s and s.strip()]
     if len(skills) < 3:
         return None
     return {
         "heading": "Technical Skills",
         "items": [{"head": "Skills", "sub": "", "bullets": skills[:24]}],
     }
+
+
+def _section_key(heading: str) -> str:
+    """Return the semantic identity of a resume section heading."""
+    text = str(heading or "").strip().lower()
+    for name, pattern in readiness.SECTION_PATTERNS.items():
+        if re.search(pattern, text, re.I):
+            return name
+    if re.search(r"\b(summary|profile|objective|about)\b", text):
+        return "summary"
+    if re.search(r"\b(certificat|credential|licen[cs])", text):
+        return "certifications"
+    if re.search(r"\b(award|honou?r|achievement)", text):
+        return "awards"
+    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+
+
+def _restore_missing_source_sections(struct: dict, base_struct: dict) -> list[str]:
+    """Restore any whole source section a rewrite omitted, verbatim.
+
+    The source block is already grounded and is safer than asking a second
+    model pass to recreate it. Returns headings for the visible audit trail.
+    """
+    sections = struct.setdefault("sections", [])
+    present = {_section_key(s.get("heading") or "") for s in sections}
+    restored: list[str] = []
+    for source in base_struct.get("sections") or []:
+        key = _section_key(source.get("heading") or "")
+        if not key or key in present or len(sections) >= _MAX_SECTIONS:
+            continue
+        sections.append(copy.deepcopy(source))
+        present.add(key)
+        restored.append(str(source.get("heading") or key))
+    return restored
+
+
+def _ensure_master_skills(struct: dict, master_skills: list[str]) -> list[str]:
+    """Keep every skill extracted from the source in the rendered skill block."""
+    skills = [s.strip() for s in (master_skills or []) if s and s.strip()]
+    if not skills:
+        return []
+    sections = struct.setdefault("sections", [])
+    skill_section = next((
+        section for section in sections
+        if _SKILLS_SECTION_RE.search(str(section.get("heading") or ""))
+    ), None)
+    if skill_section is None:
+        block = _skills_section(skills)
+        if not block or len(sections) >= _MAX_SECTIONS:
+            return []
+        sections.append(block)
+        return skills
+
+    haystack = " ".join(
+        str(value or "")
+        for item in skill_section.get("items") or []
+        for value in (item.get("head"), item.get("sub"), *(item.get("bullets") or []))
+    ).lower()
+    missing = [
+        skill for skill in skills
+        if not re.search(
+            rf"(?<![a-z0-9+#.]){re.escape(skill.lower())}(?![a-z0-9+#.])",
+            haystack,
+        )
+    ]
+    if missing:
+        skill_section.setdefault("items", []).append({
+            "head": "Additional",
+            "sub": "",
+            "bullets": [_display_skill(skill) for skill in missing],
+        })
+    return missing
 
 
 def _repair_for_floor(struct: dict, report: dict, master_skills: list[str]) -> list[str]:

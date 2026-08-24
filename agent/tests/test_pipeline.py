@@ -482,6 +482,46 @@ def test_regrouping_the_skills_block_is_not_content_loss(model):
 
 
 @requires_chromium
+def test_a_rewrite_cannot_delete_whole_source_sections(model):
+    """Regression: a live rewrite lost Summary and Technical Skills."""
+    incomplete = json.loads(json.dumps(EXTRACTED))
+    incomplete["sections"] = [
+        section for section in incomplete["sections"]
+        if section["heading"] not in {"Professional Summary", "Technical Skills"}
+    ]
+    model(rewrites=incomplete)
+
+    out = ro.generate_variants(
+        SENIOR_RESUME,
+        SENIOR_SKILLS,
+        target_keywords=["java", "kafka", "aws"],
+        target_name="Senior Backend Engineer",
+    )
+
+    assert out["variants"], out["reasons"]
+    for variant in out["variants"]:
+        headings = {section["heading"] for section in variant["struct"]["sections"]}
+        assert "Professional Summary" in headings
+        assert "Technical Skills" in headings
+        assert any("source sections" in change.lower() for change in variant["changes"])
+
+
+def test_every_source_skill_survives_a_partial_model_skills_block():
+    struct = {
+        "sections": [{
+            "heading": "Technical Skills",
+            "items": [{"head": "Core", "sub": "", "bullets": ["Java", "Kafka"]}],
+        }],
+    }
+
+    restored = ro._ensure_master_skills(struct, SENIOR_SKILLS)
+    rendered = json.dumps(struct).lower()
+
+    assert set(restored) == set(SENIOR_SKILLS) - {"java", "kafka"}
+    assert all(skill.lower() in rendered for skill in SENIOR_SKILLS)
+
+
+@requires_chromium
 def test_targeting_scores_coverage_without_adding_anything(model):
     model()
     wanted = ["java", "kafka", "kubernetes", "rust", "scala", "erlang"]
