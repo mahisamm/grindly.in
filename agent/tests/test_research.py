@@ -105,18 +105,17 @@ def test_declining_is_a_successful_answer_not_an_error(answer):
     assert "job posting" in out["note"] or "job description" in out["note"]
 
 
-def test_no_model_configured_declines_rather_than_erroring(monkeypatch):
+def test_no_model_configured_reports_a_retryable_outage(monkeypatch):
     def dead(*a, **k):
         raise RuntimeError("no provider configured")
     monkeypatch.setattr(company_research.llm_mod, "chat_ensemble", dead)
 
     out = company_research.research("Some Company Ltd")
-    assert out["ok"] is True
-    assert out["tailoring"] == "not_required"
-    # The user is not shown an outage. They get the same answer a small company
-    # would have produced anyway, which is the truthful one either way.
-    assert "outage" not in out["note"].lower()
-    assert "error" not in out["note"].lower()
+    assert out["ok"] is False
+    assert "try again" in out["error"].lower()
+    assert "nothing was charged" in out["error"].lower()
+    # An outage cannot be presented as evidence that tailoring is unnecessary.
+    assert "tailoring" not in out
 
 
 # ---------------------------------------------------------------------------
