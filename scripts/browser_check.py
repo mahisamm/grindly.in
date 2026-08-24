@@ -55,6 +55,10 @@ PROBE = """() => {
   const out = [];
   for (const el of document.querySelectorAll('body *')) {
     if (el.getBoundingClientRect().right <= vw + 1) continue;
+    // Purely decorative layers are intentionally allowed to extend beyond
+    // their clipped canvas. Keep this narrow: real content hidden by an
+    // overflow container must still fail this probe.
+    if (el.closest('[aria-hidden="true"]')) continue;
     if (scrolled(el)) continue;
     out.push(el.tagName + '.' + (el.className || '').toString().slice(0, 40));
   }

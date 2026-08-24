@@ -96,8 +96,34 @@ async function main() {
   let adminRow = null;
   let otherRow = null;
   let resumeId = null;
+  const settingsPath = path.join(process.cwd(), "data", "admin-settings.json");
+  let originalSettings = null;
+  let settingsExisted = false;
 
   try {
+    // Production launches with open signups, while this suite must exercise the
+    // manual approval door as well. Put the switch in the required state only
+    // for this run and restore the operator's exact file in finally. Without
+    // this isolation the launch setting made seven access checks fail while the
+    // application was behaving correctly.
+    try {
+      originalSettings = await fs.readFile(settingsPath, "utf8");
+      settingsExisted = true;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await fs.mkdir(path.dirname(settingsPath), { recursive: true });
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({
+        signupsPaused: false,
+        rebuildsPaused: false,
+        openSignups: false,
+        updatedAt: new Date().toISOString(),
+      }),
+      "utf8",
+    );
+
     // ---- the operator, created FIRST and deliberately so -----------------
     //
     // api/auth/signup promotes the very first account on a fresh database to
@@ -254,7 +280,7 @@ async function main() {
     check("primary swaps back", res.status === 200 && after.primaryResumeId === source.id);
     check("swapping back deletes nothing", (await prisma.resume.count({ where: { userId: userRow.id } })) === 2);
 
-    const listing = await (await user.call("/app")).text();
+    const listing = await (await user.call("/app/resumes")).text();
     check("the resume list marks the primary", listing.includes("Sending this one"));
     check("the resume list offers the swap", listing.includes("Send this one instead"));
 
@@ -384,6 +410,11 @@ async function main() {
       await fs
         .rm(path.join(process.cwd(), "data", "variants", resumeId), { recursive: true, force: true })
         .catch(() => {});
+    }
+    if (settingsExisted) {
+      await fs.writeFile(settingsPath, originalSettings, "utf8").catch(() => {});
+    } else {
+      await fs.rm(settingsPath, { force: true }).catch(() => {});
     }
     await prisma.$disconnect();
   }
