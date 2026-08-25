@@ -60,8 +60,8 @@ describe("reserve", () => {
     expect(verdict.allowed).toBe(true);
     if (verdict.allowed) {
       expect(verdict.used).toBe(1);
-      expect(verdict.limit).toBe(3); // free plan, lifetime
-      expect(verdict.remaining).toBe(2);
+      expect(verdict.limit).toBe(2); // free plan, lifetime
+      expect(verdict.remaining).toBe(1);
     }
     expect(mockUsage.update).not.toHaveBeenCalled();
   });
@@ -200,7 +200,7 @@ describe("usageToday", () => {
     mockUsage.aggregate.mockResolvedValue({ _sum: { variantRuns: 1, adviceRuns: 0 } });
     const usage = await usageToday("u1");
     // Free plan: the model-priced meters report their LIFETIME window.
-    expect(usage.variantRuns).toEqual({ used: 1, limit: 3, lifetime: true });
+    expect(usage.variantRuns).toEqual({ used: 1, limit: 2, lifetime: true });
     expect(usage.adviceRuns).toEqual({ used: 0, limit: 3, lifetime: true });
     expect(usage.uploads).toEqual({ used: 2, limit: 5, lifetime: false });
     expect(mockUsage.upsert).not.toHaveBeenCalled();

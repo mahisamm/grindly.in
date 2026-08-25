@@ -79,17 +79,37 @@ export function killRun(runId: string): boolean {
  */
 export async function reapStaleRuns(resumeId: string): Promise<void> {
   const cutoff = new Date(Date.now() - STALE_AFTER_MS);
-  await prisma.variantRun
-    .updateMany({
-      where: { resumeId, status: "running", startedAt: { lt: cutoff } },
-      data: {
-        status: "failed",
-        stage: "Stopped",
-        error:
-          "This rebuild was interrupted — the server restarted while it was working. " +
-          "Nothing was charged against your daily limit. Start it again.",
-        finishedAt: new Date(),
-      },
+  await prisma
+    .$transaction(async (tx) => {
+      const stale = await tx.variantRun.findMany({
+        where: { resumeId, status: "running", startedAt: { lt: cutoff } },
+        select: { id: true },
+      });
+
+      for (const run of stale) {
+        // Re-check `running` inside the transaction. A slow run can finish
+        // between the initial read and this write; in that case its company
+        // entitlement was genuinely used and must never be released.
+        const stopped = await tx.variantRun.updateMany({
+          where: { id: run.id, status: "running" },
+          data: {
+            status: "failed",
+            stage: "Stopped",
+            error:
+              "This rebuild was interrupted — the server restarted while it was working. " +
+              "Nothing was charged against your limit. Start it again.",
+            finishedAt: new Date(),
+          },
+        });
+        if (stopped.count === 1) {
+          // Only the account whose free-company claim points at this exact
+          // failed run is released. Paid/unlocked runs match no user.
+          await tx.user.updateMany({
+            where: { freeCompanyRunId: run.id },
+            data: { freeCompanyRunId: null },
+          });
+        }
+      }
     })
     .catch((e) => console.error("[runs] reap failed:", (e as Error).message));
 }

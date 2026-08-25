@@ -14,13 +14,8 @@ export const revalidate = 300;
 /**
  * The landing page.
  *
- * It leads with the claim nobody else in this category can make and everybody
- * else in this category contradicts: there is no such thing as an ATS score.
- * That is a strange thing to open with — it is a product page opening by
- * disowning its own market's headline metric — and it is the point. Every
- * competitor sells a number no applicant tracking system computes. Saying so,
- * and then showing what we measure instead, is both the honest position and the
- * only differentiator that cannot be copied in an afternoon.
+ * The first frame says what the product does before it explains the category.
+ * The deeper ATS argument remains below the fold for visitors who want proof.
  */
 export default async function Home() {
   // From the committed snapshot, not the Python agent: this page is
@@ -64,39 +59,32 @@ export default async function Home() {
         {/* hero */}
         <section className="mx-auto max-w-6xl px-5 pt-12 pb-12 sm:px-6 sm:pt-24 sm:pb-14">
           <p className="text-brand mb-5 font-mono text-xs tracking-[0.16em] uppercase">
-            Resume readiness, measured
+            One resume · measured · rebuilt
           </p>
           <h1 className="font-display max-w-4xl text-4xl leading-[1.05] font-bold text-balance sm:text-6xl">
-            There is no such thing as an ATS score.
+            Turn the resume you have into the one you should send.
           </h1>
           <div className="mt-7 grid gap-10 md:grid-cols-[1.3fr_1fr]">
             <div>
-              <p className="text-lg leading-relaxed">
-                Workday, Greenhouse and Taleo do not grade your resume and reject it. They
-                parse it into database fields and let a recruiter search. So every tool
-                selling you an &ldquo;82/100 ATS score&rdquo; is selling a number no system
-                anywhere computes.
-              </p>
-              <p className="mt-4 text-lg leading-relaxed">
-                Grindly measures something you can check: <b>what a machine actually
-                recovers from your file</b>. We rebuild your resume as a clean
-                single-column PDF, read it back with the same extractor a parser uses, and
-                count what survived.
+              <p className="max-w-2xl text-xl leading-relaxed">
+                Upload your resume—or build one here. Grindly shows what hiring software
+                can read, creates <b>one stronger ATS-friendly PDF</b> from your real
+                experience, and helps you tailor it to the company you want.
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <Link href="/signup" className="btn btn-primary">
-                  Check my resume — free
+                  Improve my resume — free
                 </Link>
                 <Link href="/pricing" className="btn">
                   See pricing
                 </Link>
               </div>
               <p className="text-muted mt-4 text-sm">
-                No card. Your score, the full report and three clean rebuilds are free.
+                No card · 2 general rebuilds · 1 company-specific rebuild · editing and scoring free.
               </p>
               <p className="text-muted mt-2 text-sm">
-                First job or eleventh year — the same file goes through the same parser
-                either way, and a two-page senior resume is scored as one.
+                Our published readiness score measures your file; it is not a made-up
+                universal score from an ATS. Same file, same result, every time.
               </p>
             </div>
 
@@ -176,8 +164,8 @@ export default async function Home() {
                 p: "Three gates run before a rewrite is rendered: no technology absent from your resume, no employer, date or metric whose words are not in your source, and every entry must descend from a real one. A rewrite may reword and reorder. Read what it produces before you send it — the document goes out under your name.",
               },
               {
-                h: "Three versions, measured",
-                p: "You get up to three rebuilds under different strategies, each scored against your original. Any version that does not beat your resume is thrown away rather than shown to you behind a tempting button. We aim for 80 and above — everything mechanical is ours to get right — and a rebuild that still lands short tells you the one thing missing instead of hiding it.",
+                h: "One best version, measured",
+                p: "We test different approaches privately and hand you one strongest rebuild, scored against your original. You do not have to compare three near-identical documents or guess which one to send. If content only you can supply is missing, we say exactly that instead of inventing it.",
               },
               {
                 h: "Tailored to a real company",
@@ -207,8 +195,8 @@ export default async function Home() {
               link, so you can check it yourself. Not insider knowledge, not a prediction,
               and never scraped from a job board.
             </p>
-            <ul className="mt-8 hidden gap-4 sm:grid sm:grid-cols-2 lg:grid-cols-3">
-              {companies.map((c, i) => (
+            <ul className="mt-8 grid gap-4 sm:grid-cols-3">
+              {companies.slice(0, 3).map((c, i) => (
                 <Reveal
                   as="li"
                   key={c.slug}
@@ -226,42 +214,10 @@ export default async function Home() {
                 </Reveal>
               ))}
             </ul>
-            <ul className="mt-8 grid gap-4 sm:hidden">
-              {companies.slice(0, 6).map((c, i) => (
-                <Reveal
-                  as="li"
-                  key={c.slug}
-                  delay={i * 55}
-                  className="bg-surface border-border rounded-xl border p-5"
-                >
-                  <h3 className="font-display text-lg font-semibold">{c.name}</h3>
-                  <p className="text-muted mt-1.5 text-sm leading-snug">{c.summary}</p>
-                  <p className="text-muted mt-3 font-mono text-[10px] tracking-[0.1em] uppercase">
-                    {c.sources.length} cited source{c.sources.length === 1 ? "" : "s"}
-                  </p>
-                </Reveal>
-              ))}
-            </ul>
-            {companies.length > 6 && (
-              <details className="group mt-4 sm:hidden">
-                <summary className="border-border bg-surface flex min-h-11 cursor-pointer list-none items-center justify-center rounded-xl border px-4 py-3 font-semibold [&::-webkit-details-marker]:hidden">
-                  <span className="group-open:hidden">
-                    See {companies.length - 6} more company packs
-                  </span>
-                  <span className="hidden group-open:inline">Hide additional company packs</span>
-                </summary>
-                <ul className="mt-4 grid gap-4">
-                  {companies.slice(6).map((c) => (
-                    <li key={c.slug} className="bg-surface border-border rounded-xl border p-5">
-                      <h3 className="font-display text-lg font-semibold">{c.name}</h3>
-                      <p className="text-muted mt-1.5 text-sm leading-snug">{c.summary}</p>
-                      <p className="text-muted mt-3 font-mono text-[10px] tracking-[0.1em] uppercase">
-                        {c.sources.length} cited source{c.sources.length === 1 ? "" : "s"}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </details>
+            {companies.length > 3 && (
+              <p className="text-muted mt-5 text-sm">
+                Plus {companies.length - 3} more company packs—and any job description you paste.
+              </p>
             )}
             <p className="text-muted mt-6 max-w-3xl text-xs leading-relaxed">
               {COMPANY_DISCLAIMER}
@@ -285,8 +241,8 @@ export default async function Home() {
                   <RegionPrice inrPaise={0} usdCents={0} />
                 </p>
                 <p className="text-muted mt-2 text-sm">
-                  The full report and score, {LIMITS.free.resumes} resumes, three clean
-                  rebuilds. No watermark.
+                  Full scoring, unlimited editing, {LIMITS.free.variantRunsPerDay} general
+                  rebuilds and your first company-specific rebuild. No watermark.
                 </p>
               </Reveal>
               {/* Free, then per-company, then the pass — the same ascent the

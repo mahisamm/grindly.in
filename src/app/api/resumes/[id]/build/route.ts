@@ -8,7 +8,6 @@ import { requireApprovedUser, notFound, badRequest, serverError } from "@/lib/au
 import { runAgent, VARIANT_DIR, type Report } from "@/lib/agent";
 import { toJsonColumn } from "@/lib/jsonColumn";
 import { readStruct, structToText } from "@/lib/resumeStruct";
-import { reserve, refund } from "@/lib/quota";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -58,13 +57,6 @@ export async function POST(_req: Request, { params }: Ctx) {
     return badRequest("There is nothing saved to build. Open the editor and save first.");
   }
 
-  // Metered against the rewrite allowance: this is a Chromium render, which is
-  // the expensive half of what a rewrite batch does.
-  const quota = await reserve(user.id, "variantRuns");
-  if (!quota.allowed) {
-    return NextResponse.json({ error: quota.message, code: "quota" }, { status: 429 });
-  }
-
   const runDir = crypto.randomUUID();
   const outDir = path.join(VARIANT_DIR, resume.id, runDir);
   const outPath = path.join(outDir, "variant-1.pdf");
@@ -88,7 +80,6 @@ export async function POST(_req: Request, { params }: Ctx) {
   });
 
   if (!rendered.ok) {
-    await refund(user.id, "variantRuns");
     await fsp.rm(outDir, { recursive: true, force: true }).catch(() => {});
     return serverError(rendered.error, `build:${resume.id}`);
   }
@@ -97,7 +88,6 @@ export async function POST(_req: Request, { params }: Ctx) {
   try {
     bytes = (await fsp.stat(outPath)).size;
   } catch {
-    await refund(user.id, "variantRuns");
     return serverError("The document was built but could not be read back.", `build:${resume.id}`);
   }
 
@@ -163,7 +153,6 @@ export async function POST(_req: Request, { params }: Ctx) {
       }
     }
   } catch (e) {
-    await refund(user.id, "variantRuns");
     return serverError("We built it but could not save it.", `build:${resume.id}: ${String(e)}`);
   }
 

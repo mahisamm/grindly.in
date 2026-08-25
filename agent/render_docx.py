@@ -38,7 +38,7 @@ _SKILLS_RE = re.compile(r"\b(skills?|technolog|tools?|languages?|competenc)", re
 # Points. Deliberately conservative — a resume printed by a recruiter's assistant
 # on a shared office printer is the target, not a screen.
 _BODY_PT = 10.5
-_NAME_PT = 18
+_NAME_PT = 24
 _HEADING_PT = 11.5
 
 _FONT = "Calibri"
@@ -109,6 +109,7 @@ def build_docx(struct: dict) -> bytes:
         para.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = para.add_run(name)
         run.bold = True
+        run.font.name = "Times New Roman"
         run.font.size = Pt(_NAME_PT)
         para.paragraph_format.space_after = Pt(2)
 

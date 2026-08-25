@@ -48,7 +48,7 @@ type AgentVariant = {
 };
 
 /**
- * Build up to three measured rewrites of this resume.
+ * Build one measured, strongest rewrite of this resume.
  *
  * Optionally aimed at a target: `{targetId}` for an existing one, or
  * `{company}` / `{jd}` to create one first. Untargeted is the default and is
@@ -119,10 +119,9 @@ export async function POST(req: Request, { params }: Ctx) {
   // Who is running, and against what, decides which wall applies:
   //
   //   pass / admin / legacy pack — the daily meter, as always.
-  //   free, untargeted           — the LIFETIME meter (3, ever). The taste.
-  //   free, targeted             — no meter at all. The TARGET is the wall:
-  //     locked → 402 with the unlock offer; unlocked → capped at
-  //     TARGET_REGEN_LIMIT runs for that target, counted below.
+  //   free, untargeted           — the LIFETIME meter (2, ever).
+  //   free, targeted, locked     — one atomic account-wide free taste, then 402.
+  //   free, targeted, unlocked   — capped at TARGET_REGEN_LIMIT for that target.
   //
   // The target is therefore resolved BEFORE any quota is spent — under this
   // model creating the row (and its free gap report) costs nothing, so the
@@ -133,29 +132,22 @@ export async function POST(req: Request, { params }: Ctx) {
   if ("error" in target) return target.error;
 
   let metered = false;
+  let needsFreeCompanyClaim = false;
   if (plan === "free" && target.id) {
     const targetRow = await prisma.target.findUnique({
       where: { id: target.id },
       select: { unlockedAt: true },
     });
-    if (!targetRow?.unlockedAt) {
-      return NextResponse.json(
-        {
-          error: `Tailoring for ${target.name || "this company"} is a paid unlock — ₹99, once, for this company forever. A Season Pass covers every company.`,
-          code: "target_locked",
-          targetId: target.id,
-          targetName: target.name,
-        },
-        { status: 402 },
-      );
-    }
+    needsFreeCompanyClaim = !targetRow?.unlockedAt;
     // Count only runs that produced (or are producing) something — a failed
     // or cancelled batch was refunded everywhere else in this file, and a
     // regeneration cap that counts our own failures is charging for outages.
-    const spent = await prisma.variantRun.count({
-      where: { targetId: target.id, status: { in: ["running", "done", "empty"] } },
-    });
-    if (spent >= TARGET_REGEN_LIMIT) {
+    const spent = targetRow?.unlockedAt
+      ? await prisma.variantRun.count({
+          where: { targetId: target.id, status: { in: ["running", "done", "empty"] } },
+        })
+      : 0;
+    if (targetRow?.unlockedAt && spent >= TARGET_REGEN_LIMIT) {
       return NextResponse.json(
         {
           error: `This company's unlock includes ${TARGET_REGEN_LIMIT} tailored runs and you have used them. A Season Pass removes the cap for every company.`,
@@ -234,6 +226,33 @@ export async function POST(req: Request, { params }: Ctx) {
     );
   }
 
+  // Claim the one company-specific taste only after this run wins the
+  // per-resume race. updateMany makes the null check atomic, so two resumes
+  // rebuilt at once cannot both receive it.
+  let freeCompanyClaim = false;
+  if (needsFreeCompanyClaim) {
+    const claimed = await prisma.user.updateMany({
+      where: { id: user.id, freeCompanyRunId: null },
+      data: { freeCompanyRunId: run.id },
+    });
+    if (claimed.count === 0) {
+      await prisma.variantRun.update({
+        where: { id: run.id },
+        data: { status: "cancelled", stage: "Company unlock required", finishedAt: new Date() },
+      });
+      return NextResponse.json(
+        {
+          error: `Your free company-specific rebuild has been used. Unlock ${target.name || "this company"} once for ₹99, or use a Season Pass for every company.`,
+          code: "target_locked",
+          targetId: target.id,
+          targetName: target.name,
+        },
+        { status: 402 },
+      );
+    }
+    freeCompanyClaim = true;
+  }
+
   // The work runs AFTER this response.
   //
   // `after` keeps it inside the route's maxDuration budget while letting the
@@ -250,6 +269,7 @@ export async function POST(req: Request, { params }: Ctx) {
       resume,
       target,
       metered,
+      freeCompanyClaim,
     });
   });
 
@@ -282,6 +302,7 @@ async function executeRun({
   resume,
   target,
   metered,
+  freeCompanyClaim,
 }: {
   runId: string;
   runDir: string;
@@ -291,6 +312,8 @@ async function executeRun({
       the per-target count (which failed runs never enter, see the status
       filter where it is counted). */
   metered: boolean;
+  /** This run owns the account's one free company rebuild. Failures release it. */
+  freeCompanyClaim: boolean;
   resume: {
     id: string;
     text: string;
@@ -319,6 +342,12 @@ async function executeRun({
     variantsMade?: number;
   }) => {
     releaseRun(runId);
+    if (freeCompanyClaim && data.status !== "done") {
+      await prisma.user.updateMany({
+        where: { id: userId, freeCompanyRunId: runId },
+        data: { freeCompanyRunId: null },
+      }).catch(() => null);
+    }
     await prisma.variantRun
       .update({
         where: { id: runId },

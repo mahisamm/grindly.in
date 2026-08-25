@@ -245,6 +245,11 @@ model User {
   /// id degrades to the old behaviour instead of to an error.
   primaryResumeId String? @map("primary_resume_id")
 
+  /// The one free company-specific rebuild is claimed atomically by run id.
+  /// Keeping the owner id (instead of a boolean) lets a failed run release only
+  /// its own claim without reopening the entitlement after a later success.
+  freeCompanyRunId String? @map("free_company_run_id")
+
   timezone  String?
   createdAt DateTime  @default(now()) @map("created_at")
   deletedAt DateTime? @map("deleted_at")

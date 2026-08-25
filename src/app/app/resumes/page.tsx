@@ -5,6 +5,7 @@ import { formatLimit, isUnlimited, limitsFor } from "@/lib/plans";
 import { pickPrimary } from "@/lib/primary";
 import { Uploader } from "../Uploader";
 import { MakePrimary } from "../MakePrimary";
+import { StartResume } from "./StartResume";
 
 export const dynamic = "force-dynamic";
 
@@ -53,11 +54,11 @@ export default async function AllResumesPage() {
       <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl font-bold sm:text-3xl">
-            {resumes.length === 0 ? "Upload your resume" : "All resumes"}
+            {resumes.length === 0 ? "Start with what you have" : "All resumes"}
           </h1>
           <p className="text-muted mt-1.5 text-sm">
             {resumes.length === 0
-              ? "Upload the PDF you have been sending to employers. In about a second you will see exactly what a parser reads off it — which is usually not what you think."
+              ? "Upload an existing file, or build your first resume here. Both paths lead to the same editor, readiness score and ATS-safe PDF."
               : isUnlimited(limit)
                 ? `${resumes.length} stored · no limit on this account.`
                 : `${resumes.length} of ${formatLimit(limit)} used on your plan.`}
@@ -71,8 +72,9 @@ export default async function AllResumesPage() {
           telling someone there is nothing here, immediately below the control
           that exists because there is nothing here. The sentence that was worth
           keeping moved up under the heading. */}
-      <div className="mt-6 sm:mt-8">
-        <Uploader canUpload={resumes.length < limit} limit={limit} />
+      <div className="mt-6 grid items-stretch gap-5 sm:mt-8 lg:grid-cols-2">
+        <div className="h-full"><Uploader canUpload={resumes.length < limit} limit={limit} /></div>
+        <StartResume disabled={resumes.length >= limit} />
       </div>
 
       {resumes.length > 0 && (

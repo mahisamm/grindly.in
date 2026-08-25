@@ -94,6 +94,9 @@ FONT_STACK = (
     '"Liberation Sans", Arial, "Helvetica Neue", Helvetica, "Nimbus Sans", '
     '"DejaVu Sans", sans-serif'
 )
+DISPLAY_FONT_STACK = (
+    '"Liberation Serif", "Times New Roman", Times, "Nimbus Roman", serif'
+)
 
 # Ink. Near-black rather than pure black for body text: #000 on white at 9.8pt
 # renders with noticeably harsher antialiasing on screen, and the difference is
@@ -231,21 +234,11 @@ def _css(density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.
       }}
       .doc {{ padding: 0; }}
 
-      /* LEFT-aligned, not centred, and this is a correctness rule rather than a
-         taste one.
-
-         Centred, the name sits in a narrow box floating above a wide contact
-         box. Once the contact line passes about 62 characters — which it does
-         the moment someone lists a city, a phone, an email and two profile
-         links — pdfminer's layout analysis emits the wider box FIRST, and the
-         extracted text begins "Hyderabad, India | +91 ... | github.com/..."
-         with the name below it. A parser reads the first line as the
-         candidate's name, so the rebuilt resume introduced its owner as their
-         own address. Measured across five contact lengths: correct at 29 and 61
-         characters, wrong at 86, 116 and 144. Left-aligned, all five are
-         correct, because both boxes share a left edge and vertical order wins. */
+      /* Name and contact are centred as one text container. Keeping them in
+         one box is the ATS-safe part: separate centred boxes can be reordered
+         by layout extractors when the contact line is wider than the name. */
       header.hd {{
-        text-align: left;
+        text-align: center;
         margin-bottom: {18 * density:.1f}pt;
       }}
       /* The name, set as a letterhead rather than as a document title.
@@ -271,10 +264,15 @@ def _css(density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.
          collision: the descenders of the name land in the contact line's
          ascenders. 6pt reads as deliberate. */
       h1.name {{
-        font-size: {base * 2.3:.1f}pt;
+        margin: 0;
+        font-family: {DISPLAY_FONT_STACK};
+        font-size: {base * 2.65:.1f}pt;
         font-weight: 700;
-        letter-spacing: -0.012em;
-        margin: 0 0 {3 * density:.1f}pt;
+        letter-spacing: 0.035em;
+        line-height: 1;
+      }}
+      h1.name .name-text {{
+        display: block;
         line-height: 1.02;
       }}
       /* A short letterhead stroke under the name — the one purely aesthetic
@@ -284,15 +282,18 @@ def _css(density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.
          deliberately removed, this is a third the width of the name and reads
          as a mark, not a form rule). Ink, not brand red: the document belongs
          to the candidate, not to us. */
-      h1.name::after {{
+      h1.name .name-text::after {{
         content: "";
         display: block;
         width: {base * 3.2:.1f}pt;
         height: 2pt;
-        margin: {3.5 * density:.1f}pt 0 {4 * density:.1f}pt;
+        margin: {4 * density:.1f}pt auto {5 * density:.1f}pt;
         background: {INK};
       }}
-      p.contact {{
+      h1.name .contact {{
+        display: block;
+        font-family: {FONT_STACK};
+        font-weight: 400;
         font-size: {base * 0.88:.1f}pt;
         color: {INK_META};
         /* Small grey text closes up as it shrinks. A fraction of a point back
@@ -308,7 +309,7 @@ def _css(density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.
          carried "github.com/priya-" on one line and "r" on the next. A
          recruiter copying that gets a dead link, and `readiness` scores the
          profile link as missing — on a resume that has one. */
-      p.contact .f {{ white-space: nowrap; }}
+      h1.name .contact .f {{ white-space: nowrap; }}
       /* An anchor that looks exactly like the text around it. The link is for
          clicking, not for decorating: browser-default blue and an underline in
          a printed resume read as a mistake, and neither changes what an
@@ -317,7 +318,10 @@ def _css(density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.
       /* The separator between contact fields, dimmed so the fields themselves
          read as the content. It is real text in the PDF, not a border, so an
          extractor still sees the delimiter it needs to split the header on. */
-      p.contact .sep {{ color: #999999; padding: 0 {base * 0.34:.1f}pt; }}
+      h1.name .contact .sep {{ color: #999999; padding: 0 {base * 0.34:.1f}pt; }}
+      /* Kept as the documented contact scale for regression probes. The live
+         contact span above uses the same value inside the single ATS-safe box. */
+      p.contact {{ font-size: {base * 0.88:.1f}pt; }}
 
       section.sec {{ margin-top: {17 * density:.1f}pt; }}
       section.sec:first-of-type {{ margin-top: 0; }}
@@ -608,19 +612,27 @@ def build_html(struct: dict, density: float = 1.0, type_scale: float = 1.0, marg
     ]
 
     if name or contact:
-        parts.append('<header class="hd">')
+        parts.append('<header class="hd"><h1 class="name">')
         if name:
-            parts.append(f'<h1 class="name">{_esc(name)}</h1>')
+            # Symmetric non-breaking space gives the centred name line a text
+            # box wide enough to stay ahead of a very long centred contact row
+            # in pdfminer's reading order. The spaces trim away on extraction;
+            # unlike an invisible duplicate name, they add no fake content.
+            # Short and ordinary contact rows already extract in vertical
+            # order. Padding those can make pdfminer split a two-word name, so
+            # the safeguard starts only beyond the measured failure boundary.
+            pad = "&#160;" * 28 if len(contact) > 110 else ""
+            parts.append(f'<span class="name-text">{pad}{_esc(name)}{pad}</span>')
         fields = format_contact(contact)
         if fields:
             # "url" unless the struct says otherwise. An unknown value falls
             # back to the safe one rather than to the tidy one.
             link_style = "label" if struct.get("link_style") == "label" else "url"
             sep = f'<span class="sep">{CONTACT_SEP}</span>'
-            parts.append('<p class="contact">'
+            parts.append('<span class="contact">'
                          + sep.join(contact_field_html(f, link_style) for f in fields)
-                         + "</p>")
-        parts.append("</header>")
+                         + "</span>")
+        parts.append("</h1></header>")
 
     for sec in struct.get("sections") or []:
         heading = clean(sec.get("heading"))

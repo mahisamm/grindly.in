@@ -127,14 +127,14 @@ export function Checkout({
 
   if (done) {
     return (
-      <button onClick={() => router.push("/app")} className="btn btn-primary mt-6 w-full justify-center">
+      <button onClick={() => router.push("/app")} className="btn btn-primary w-full justify-center">
         Pass active — go to your resumes
       </button>
     );
   }
 
   return (
-    <div className="mt-6">
+    <div>
       <button onClick={buy} disabled={busy} className="btn btn-primary w-full justify-center">
         {busy
           ? "Opening…"

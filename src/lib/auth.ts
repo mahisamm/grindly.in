@@ -28,6 +28,8 @@ export type SessionUser = {
   accessStatus: string;
   /** The resume they are actually sending out. May be stale — see lib/primary. */
   primaryResumeId: string | null;
+  /** Run id that consumed the account's one free company-specific rebuild. */
+  freeCompanyRunId: string | null;
 };
 
 export type AuthOk = { user: SessionUser };
@@ -43,6 +45,7 @@ const SELECT = {
   createdAt: true,
   accessStatus: true,
   primaryResumeId: true,
+  freeCompanyRunId: true,
   deletedAt: true,
 } as const;
 

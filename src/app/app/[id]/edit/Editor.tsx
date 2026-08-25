@@ -533,7 +533,8 @@ export function Editor({
           <h2 className="font-display text-lg font-semibold">Build and measure</h2>
           <p className="text-muted mt-1.5 text-sm leading-snug">
             Renders these fields to a real PDF, reads it back with the extractor a parser
-            uses, and scores it on the same ruler as your original.
+            uses, and scores exactly what you wrote. This step never rewrites or enhances
+            your wording.
           </p>
 
           <button
@@ -561,7 +562,7 @@ export function Editor({
                   <p className="text-muted mt-0.5 text-xs">
                     {built.score >= SHIPPABLE_FLOOR
                       ? `At or above ${SHIPPABLE_FLOOR} — this is a document worth sending.`
-                      : `Under ${SHIPPABLE_FLOOR}. What is missing is content, not layout.`}
+                      : `Under ${SHIPPABLE_FLOOR}. This score reflects your edits exactly; use an AI rebuild if you want help improving the content.`}
                   </p>
                 </div>
               </div>
@@ -586,15 +587,15 @@ export function Editor({
               )}
 
               <Link href={`/app/${resumeId}?tab=rewrite`} className="btn mt-5 w-full justify-center text-sm">
-                See it beside the rebuilds
+                {built.score < SHIPPABLE_FLOOR ? "Improve it with an AI rebuild" : "See the finished resume"}
               </Link>
             </div>
           )}
         </div>
 
         <p className="text-muted mt-4 text-xs leading-relaxed">
-          Saved as you type. Building it is the only step that costs anything against your
-          daily limit — you can edit for as long as you like first.
+          Saved as you type. Editing, PDF building and scoring are free and unlimited.
+          AI rebuilds use the separate rebuild allowance.
         </p>
 
         {/* The other two formats, offered where the document is.

@@ -83,13 +83,16 @@ export type Limits = {
 };
 
 export const LIMITS: Record<PlanId, Limits> = {
-  // The free taste: the full report forever, three rebuilds EVER. The old
+  // The free taste: the full report forever, two general rebuilds EVER plus
+  // one company-specific taste tracked separately on the user row. One strong
+  // answer per run makes a third general batch unnecessary and keeps the free
+  // tier useful without teaching people to postpone paying indefinitely.
   // shape (2/day) reset at midnight, so anyone patient drank free
   // indefinitely — the operator's explicit objection. Lifetime totals leave
   // nothing to wait for.
   free: {
     resumes: 2,
-    variantRunsPerDay: 3,
+    variantRunsPerDay: 2,
     adviceRunsPerDay: 3,
     uploadsPerDay: 5,
     targetsPerResume: 20,
@@ -167,9 +170,9 @@ export type Product =
     };
 
 /**
- * Tailored runs allowed against one unlocked target. Each run is up to three
- * rendered variants, so this is fifteen documents per ₹99 — generous for a
- * person, a wall for a script. A pass ignores it.
+ * Tailored runs allowed against one unlocked target. Each run returns one
+ * strongest document. Five deliberate attempts are generous for a person and
+ * still put a wall in front of a script. A pass ignores it.
  */
 export const TARGET_REGEN_LIMIT = 5;
 

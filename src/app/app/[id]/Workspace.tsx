@@ -167,6 +167,7 @@ export function ResumeWorkspace({
   disclaimer,
   targetLimit,
   paymentsLive,
+  freeCompanyRebuildAvailable,
 }: {
   resume: ResumeView;
   packs: CompanyPack[];
@@ -175,6 +176,8 @@ export function ResumeWorkspace({
   targetLimit: number;
   /** False on a stub deployment — the unlock card then says it grants free. */
   paymentsLive: boolean;
+  /** One account-wide company-specific rebuild is included on free. */
+  freeCompanyRebuildAvailable: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -358,6 +361,7 @@ export function ResumeWorkspace({
               packs={packs}
               disclaimer={disclaimer}
               targetLimit={targetLimit}
+              freeCompanyRebuildAvailable={freeCompanyRebuildAvailable}
               rebuilding={rebuilding}
               busy={busy}
               onTarget={(body) => post(`/api/resumes/${resume.id}/variants`, body, "rewrite")}
@@ -980,11 +984,10 @@ function RewriteTab({
           mechanism (render, extract back, score) still matters, but it belongs
           after "what does the button do". */}
       <p className="text-muted mt-3 max-w-3xl leading-relaxed">
-        One press writes up to three new versions of your resume — same facts,
-        same jobs, cleaner wording, and a layout that hiring software reads
-        without mistakes. Every version is scored on the same 0–100 ruler as your
-        original; anything <i>worse</i> is thrown away, and a version that lands
-        short tells you the one thing missing. It will never invent a skill, an
+        One press gives you one strongest version — same facts, same jobs,
+        cleaner wording, and a layout that hiring software reads without mistakes.
+        We compare approaches for you, score the result on the same 0–100 ruler as
+        your original, and discard weaker drafts. It will never invent a skill, an
         employer or a number that is not already in your resume.
       </p>
 
@@ -1020,13 +1023,13 @@ function RewriteTab({
 
           {aiRewrites.length > 0 && (
             <section className="mt-9">
-              <h3 className="font-display text-lg font-semibold">AI rewrites</h3>
+              <h3 className="font-display text-lg font-semibold">Your AI rebuild</h3>
               <p className="text-muted mt-1 max-w-3xl text-sm leading-snug">
-                Machine-written versions of your resume — same facts, different
-                wording. Send whichever scores highest; delete the ones you do not want.
+                The strongest measured version from this run. Review it once, then
+                download or make it the resume you are sending.
               </p>
               <ul className="mt-3 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                {aiRewrites.map((v) => (
+                {aiRewrites.slice(0, 1).map((v) => (
                   <VariantCard
                     key={v.id}
                     variant={v}
@@ -1311,6 +1314,7 @@ function TargetTab({
   packs,
   disclaimer,
   targetLimit,
+  freeCompanyRebuildAvailable,
   busy,
   rebuilding,
   onTarget,
@@ -1319,6 +1323,7 @@ function TargetTab({
   packs: CompanyPack[];
   disclaimer: string;
   targetLimit: number;
+  freeCompanyRebuildAvailable: boolean;
   busy: string | null;
   rebuilding: boolean;
   onTarget: (body: Record<string, string>) => void;
@@ -1412,7 +1417,7 @@ function TargetTab({
     ? packs.filter(
         (p) => p.name.toLowerCase().includes(q) || p.summary.toLowerCase().includes(q),
       )
-    : packs;
+    : packs.slice(0, 3);
 
   return (
     <div className="flex flex-col gap-10">
@@ -1425,6 +1430,11 @@ function TargetTab({
           Each pack is what the employer has published about how it hires, with the link so
           you can check. Targeting changes what your resume <i>surfaces</i> — it can never
           add a skill, a date or a number you did not already have.
+        </p>
+        <p className="mt-3 max-w-2xl text-sm font-medium" style={{ color: "var(--cta)" }}>
+          {freeCompanyRebuildAvailable
+            ? "Your first company-specific rebuild is included free."
+            : "You used your free company-specific rebuild. The next company needs a one-time unlock."}
         </p>
 
         <AnyCompany
@@ -1466,7 +1476,7 @@ function TargetTab({
         <div className="mt-7 flex items-center justify-between gap-4">
           <h3 className="font-display text-base font-semibold">Popular company packs</h3>
           <span className="text-muted font-mono text-[10px] tracking-[0.12em] uppercase">
-            {shownPacks.length} curated
+            {q ? shownPacks.length : `${shownPacks.length} shown · ${packs.length} available`}
           </span>
         </div>
         <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

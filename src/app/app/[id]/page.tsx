@@ -145,6 +145,7 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
         // upgrade prompt as the response to a button that looked available.
         targetLimit={limitsFor(user).targetsPerResume}
         paymentsLive={paymentsEnabled()}
+        freeCompanyRebuildAvailable={!user.freeCompanyRunId}
       />
       </Suspense>
     </div>

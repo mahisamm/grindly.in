@@ -46,13 +46,16 @@ export default async function PricingPage() {
             <ul className="mt-5 flex-1 space-y-2 text-sm">
               <Feature>The complete readiness report and score, unlimited</Feature>
               <Feature>{LIMITS.free.resumes} resumes</Feature>
-              <Feature>{LIMITS.free.variantRunsPerDay} clean rebuilds of your resume — yours to keep</Feature>
+              <Feature>{LIMITS.free.variantRunsPerDay} general AI rebuilds — yours to keep</Feature>
+              <Feature>Your first company-specific rebuild</Feature>
+              <Feature>Unlimited manual editing, PDF builds and scoring</Feature>
               <Feature>Gap reports for any company, free to read</Feature>
               <Feature>No watermark on your PDF</Feature>
             </ul>
-            <Link href="/signup" className="btn mt-6 w-full justify-center">
-              Start free
-            </Link>
+            <div className="mt-6 min-h-24">
+              <Link href="/signup" className="btn w-full justify-center">Start free</Link>
+              <p className="text-muted mt-2 text-xs leading-snug">No card required.</p>
+            </div>
           </div>
 
           <div className="bg-surface border-border flex flex-col rounded-xl border p-6">
@@ -69,16 +72,12 @@ export default async function PricingPage() {
               <Feature>A cover letter in your own facts</Feature>
               <Feature>No expiry — the unlock is permanent</Feature>
             </ul>
-            <Link
-              href={user ? "/app" : "/signup"}
-              className="btn mt-6 w-full justify-center"
-            >
-              Pick your company in the app
-            </Link>
-            <p className="text-muted mt-2 text-xs leading-snug">
-              You buy it right where you tailor — pick a company on your resume and the
-              unlock is one tap.
-            </p>
+            <div className="mt-6 min-h-24">
+              <Link href={user ? "/app" : "/signup"} className="btn w-full justify-center">
+                Pick your company in the app
+              </Link>
+              <p className="text-muted mt-2 text-xs leading-snug">First company rebuild is free; unlock the next where you tailor.</p>
+            </div>
           </div>
 
           <div
@@ -109,9 +108,9 @@ export default async function PricingPage() {
               <Feature>Paste any job description</Feature>
               <Feature>Cover letters for every target</Feature>
             </ul>
-            <IndiaOnly
+            <div className="relative top-px mt-6 min-h-24"><IndiaOnly
               fallback={
-                <div className="mt-6">
+                <div>
                   <button disabled className="btn w-full cursor-not-allowed justify-center opacity-60">
                     Coming soon in your region
                   </button>
@@ -123,7 +122,7 @@ export default async function PricingPage() {
               }
             >
               <Checkout sku="pass90" signedIn={Boolean(user)} paymentsLive={paymentsLive} />
-            </IndiaOnly>
+            </IndiaOnly></div>
           </div>
         </div>
 

@@ -322,7 +322,7 @@ def generate_variants(
     link_style: str = "url",
     max_pages: int | None = None,
 ) -> dict:
-    """Produce up to 3 compiled, measured resume variants + why any were dropped.
+    """Produce one strongest compiled, measured resume + why candidates were dropped.
 
     Returns {"variants": [...], "baseline": int, "reasons": [str], "aborted": str|None}.
     `variants` is best-score-first, each:
@@ -451,13 +451,13 @@ def generate_variants(
     reasons: list[str] = list(extraction_note)
     total = len(strategies)
     for index, (label, instruction) in enumerate(strategies, start=1):
-        _progress(f"Writing the {label.lower()} rebuild ({index} of {total})")
+        _progress(f"Finding the strongest structure ({index} of {total})")
         variant, reason = _one_variant(
             label, instruction, base_struct, allowed, master_skills, baseline_score,
             identity, stems, debug_dir, target_keywords,
             keep_worse=targeted, target_name=target_name, max_pages=max_pages,
         )
-        _progress(f"Rendered and re-measured {index} of {total}")
+        _progress(f"Checking the finished resume ({index} of {total})")
         reasons.append(reason)
         if variant:
             out.append(variant)
@@ -480,7 +480,10 @@ def generate_variants(
     out.sort(key=lambda v: (v["beats_baseline"], v["score"]), reverse=True)
     winners = [v for v in out if not v.get("materially_worse")]
     if winners:
-        shipped = winners[:3]
+        # Candidates are evaluated privately so quality does not depend on one
+        # prompt, but the product makes the decision: one best document reaches
+        # the user, never a three-card comparison task.
+        shipped = winners[:1]
     elif out:
         # Targeted, and nothing won or tied: ship ONE best company-shaped
         # rebuild rather than three losing documents wearing identical chrome.
