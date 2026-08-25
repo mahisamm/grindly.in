@@ -1,6 +1,5 @@
 import { NextResponse, after } from "next/server";
 import crypto from "node:crypto";
-import fsp from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { requireApprovedUser, notFound, serverError, badRequest } from "@/lib/auth";
@@ -478,24 +477,25 @@ async function executeRun({
 
   setStage("Saving");
 
-  // Replace, don't accumulate. A second run against the same target supersedes
-  // the first: the user pressed the button again because they wanted a new
-  // answer, and showing six cards from two runs side by side invites them to
-  // download the older one. Files go with the rows.
-  // The old rows go in the SAME transaction as the new ones, and the old
-  // FILES go only after it commits. This used to delete rows and files first
-  // and create afterwards — so a failed save (the catch below) left the user
-  // with neither the new rebuilds nor the ones they had. Replace means
-  // replace, not "remove, then hopefully add".
+  // A second run supersedes the first in the workspace, but does not erase it
+  // from the account. The current workspace stays decisive while All resumes
+  // keeps every scored PDF available for the person who needs the exact copy
+  // they downloaded or sent.
+  //
+  // Archive and create in the SAME transaction. Updating first and creating
+  // second used to leave users with no current rebuild when saving failed.
   const superseded = await prisma.variant.findMany({
-    where: { resumeId: resume.id, targetId: target.id },
+    where: { resumeId: resume.id, targetId: target.id, archivedAt: null },
     select: { id: true, file: true },
   });
 
   let created;
   try {
     const rows = await prisma.$transaction([
-      prisma.variant.deleteMany({ where: { id: { in: superseded.map((v) => v.id) } } }),
+      prisma.variant.updateMany({
+        where: { id: { in: superseded.map((v) => v.id) } },
+        data: { archivedAt: new Date() },
+      }),
       ...result.variants.map((v) =>
         prisma.variant.create({
           data: {
@@ -524,17 +524,8 @@ async function executeRun({
         }),
       ),
     ]);
-    // rows[0] is the deleteMany count; the rest are the created variants.
+    // rows[0] is the archive count; the rest are the created variants.
     created = rows.slice(1) as Awaited<ReturnType<typeof prisma.variant.create>>[];
-    // Committed: now the superseded documents can go.
-    for (const old of superseded) {
-      const dir = path.dirname(old.file);
-      if (dir && dir !== ".") {
-        await fsp
-          .rm(path.join(VARIANT_DIR, resume.id, dir), { recursive: true, force: true })
-          .catch(() => {});
-      }
-    }
   } catch (e) {
     // The documents are on disk but nothing points at them. Charging for a
     // batch the user cannot reach would be charging for our own bug.

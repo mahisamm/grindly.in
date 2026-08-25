@@ -23,7 +23,7 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
   const resume = await prisma.resume.findFirst({
     where: { id, userId: user.id },
     include: {
-      variants: { orderBy: [{ createdAt: "desc" }] },
+      variants: { where: { archivedAt: null }, orderBy: [{ createdAt: "desc" }] },
       targets: { orderBy: { createdAt: "desc" } },
       // Oldest first: this is a line on a chart, and a chart reads left to
       // right through time.

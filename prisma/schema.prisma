@@ -607,9 +607,14 @@ model Variant {
   file  String
   bytes Int    @default(0)
 
+  /// A newer rebuild for the same purpose replaced this one in the workspace.
+  /// The PDF and its measured score remain in the account library.
+  archivedAt DateTime? @map("archived_at")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([resumeId, createdAt])
+  @@index([resumeId, archivedAt, createdAt])
   @@index([targetId])
   @@map("variants")
 }

@@ -26,7 +26,10 @@ export async function GET(_req: Request, { params }: Ctx) {
     // leaking, and it leaks the whole row when it does.
     where: { id, userId: auth.user.id },
     include: {
-      variants: { orderBy: [{ beatsBaseline: "desc" }, { score: "desc" }] },
+      variants: {
+        where: { archivedAt: null },
+        orderBy: [{ beatsBaseline: "desc" }, { score: "desc" }],
+      },
       targets: { orderBy: { createdAt: "desc" } },
     },
   });

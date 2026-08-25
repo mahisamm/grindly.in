@@ -94,21 +94,23 @@ export async function POST(_req: Request, { params }: Ctx) {
   const baseline = resume.score ?? 0;
   const score = rendered.report?.score ?? 0;
 
-  // Replace the previous "Yours", the way a rebuild supersedes its own batch:
-  // there is one current version of the document you are editing, and showing
-  // two invites downloading the older one.
-  // Same transaction as the create, and the old FILES only after it commits —
-  // deleting first and creating second meant a failed save left the user
-  // with no "Yours" at all (see variants/route.ts for the same fix).
+  // Keep one current "Yours" in the workspace, but archive each older build
+  // into All resumes. A user may need the exact PDF they sent before editing
+  // again, so a newer build must not erase it.
+  // Archive and create in the same transaction: a failed save cannot leave
+  // the editor without a current document.
   const previous = await prisma.variant.findMany({
-    where: { resumeId: resume.id, label: OWN_EDIT_LABEL },
+    where: { resumeId: resume.id, label: OWN_EDIT_LABEL, archivedAt: null },
     select: { id: true, file: true },
   });
 
   let variant;
   try {
     [, variant] = await prisma.$transaction([
-      prisma.variant.deleteMany({ where: { id: { in: previous.map((v) => v.id) } } }),
+      prisma.variant.updateMany({
+        where: { id: { in: previous.map((v) => v.id) } },
+        data: { archivedAt: new Date() },
+      }),
       prisma.variant.create({
       data: {
         resumeId: resume.id,
@@ -144,14 +146,6 @@ export async function POST(_req: Request, { params }: Ctx) {
       },
     }),
     ]);
-    for (const old of previous) {
-      const dir = path.dirname(old.file);
-      if (dir && dir !== ".") {
-        await fsp
-          .rm(path.join(VARIANT_DIR, resume.id, dir), { recursive: true, force: true })
-          .catch(() => {});
-      }
-    }
   } catch (e) {
     return serverError("We built it but could not save it.", `build:${resume.id}: ${String(e)}`);
   }
