@@ -87,7 +87,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=build --chown=nextjs:nodejs /app ./
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Git checkouts on Windows can still present CRLF files to Docker despite the
+# repository policy. Normalize defensively so the Linux shebang is executable.
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Pre-create the data dirs so a brand-new named volume initialises with the
 # right ownership. Not sufficient once the volume already has content — see
