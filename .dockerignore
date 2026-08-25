@@ -1,7 +1,10 @@
 node_modules
 .next
 .git
+.gstack
+.codex
 data
+output
 *.log
 devserver.log
 prisma/dev.db
@@ -11,6 +14,9 @@ prisma/dev.db-journal
 .env.example
 **/__pycache__
 .venv
+.pytest_cache
+.pytest_tmp
+.test-tmp
 # Never ship the signing keystore — it contains the private key
 android-keystore.jks
 *.jks
