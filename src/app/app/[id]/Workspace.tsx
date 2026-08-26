@@ -796,15 +796,22 @@ function ReportTab({
               </p>
             </div>
           ) : (
-            // The call failed or never landed (a provider outage, a spent
-            // quota, a legacy reveal). A quiet retry line, not a call to
-            // action — testers read a second big button as a second product.
-            <p className="text-muted text-sm leading-snug">
-              The model&rsquo;s notes on the writing did not arrive.{" "}
-              <button onClick={onAdvice} className="text-brand cursor-pointer underline">
-                Try again
+            // Optional model feedback can fail while the deterministic ATS
+            // report is completely healthy. Present that as a small service
+            // status, not as a loose error sentence above the next card.
+            <div className="bg-surface border-border rounded-xl border p-5">
+              <h3 className="font-display text-lg font-semibold">Writing review</h3>
+              <p className="text-muted mt-1.5 text-sm leading-snug">
+                Optional writing feedback is temporarily unavailable. Your ATS score
+                and resume are unaffected.
+              </p>
+              <button
+                onClick={onAdvice}
+                className="text-brand mt-3 inline-flex min-h-8 cursor-pointer items-center text-sm font-semibold underline underline-offset-4"
+              >
+                Retry review
               </button>
-            </p>
+            </div>
           )}
         </div>
 

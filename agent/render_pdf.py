@@ -274,6 +274,7 @@ def _css(density: float = 1.0, type_scale: float = 1.0, margin_scale: float = 1.
       h1.name .name-text {{
         display: block;
         line-height: 1.02;
+        white-space: nowrap;
       }}
       /* A short letterhead stroke under the name — the one purely aesthetic
          mark on the page, and it is safe precisely because it is GENERATED
@@ -621,7 +622,13 @@ def build_html(struct: dict, density: float = 1.0, type_scale: float = 1.0, marg
             # Short and ordinary contact rows already extract in vertical
             # order. Padding those can make pdfminer split a two-word name, so
             # the safeguard starts only beyond the measured failure boundary.
-            pad = "&#160;" * 28 if len(contact) > 110 else ""
+            # Eight spaces on either side are enough to keep the name's text
+            # box ahead of a wide contact row in pdfminer without making a
+            # normal two-word name wider than the printable A4 area. The old
+            # 28-space guard did exactly that: Chromium wrapped a longer name
+            # into two separately centred fragments, putting the first name at
+            # the right edge and the surname at the left edge of the next line.
+            pad = "&#160;" * 8 if len(contact) > 110 else ""
             parts.append(f'<span class="name-text">{pad}{_esc(name)}{pad}</span>')
         fields = format_contact(contact)
         if fields:

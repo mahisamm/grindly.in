@@ -220,6 +220,33 @@ def test_the_name_always_extracts_before_the_contact_line(contact, tmp_path):
     assert text.strip().splitlines()[0].strip() == "Priya Sharma"
 
 
+def test_a_long_name_stays_on_one_centered_header_line(tmp_path):
+    """The long-contact ordering guard must not split the candidate's name.
+
+    Twenty-eight non-breaking spaces on each side kept a short name ahead of
+    the contact row in pdfminer, but made this real two-word name wider than A4
+    and wrapped its words to opposite edges of two lines.
+    """
+    struct = {
+        "name": "NIKHILESH GARIPALLY",
+        "contact_line": (
+            "+91 7569152179 | nikhil.garip@gmail.com | "
+            "linkedin.com/in/nikhilesh-garipally-987656261 | "
+            "github.com/nikhilesh-garip"
+        ),
+        "sections": [{"heading": "Experience", "items": [{
+            "head": "Technical Lead Intern",
+            "sub": "Aug 2023 - May 2027",
+            "bullets": ["Led an 8-member technical team"],
+        }]}],
+    }
+    out = str(tmp_path / "long-name.pdf")
+    assert render_pdf.render(struct, out).ok
+    lines = [line.strip() for line in render_pdf.extract_back(out).splitlines() if line.strip()]
+    assert lines[0] == "NIKHILESH GARIPALLY"
+    assert lines[1].startswith("+91 7569152179")
+
+
 def test_hyphens_survive_the_round_trip(tmp_path):
     """`_PUA_RE` was once corrupted into `[-]` and silently deleted every hyphen.
 
