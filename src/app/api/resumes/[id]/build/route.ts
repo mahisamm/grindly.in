@@ -3,11 +3,10 @@ import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/prisma";
-import { report } from "@/lib/errors";
 import { requireApprovedUser, notFound, badRequest, serverError } from "@/lib/auth";
 import { runAgent, VARIANT_DIR, type Report } from "@/lib/agent";
 import { toJsonColumn } from "@/lib/jsonColumn";
-import { readStruct, structToText } from "@/lib/resumeStruct";
+import { readStruct } from "@/lib/resumeStruct";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -133,12 +132,11 @@ export async function POST(_req: Request, { params }: Ctx) {
         // back off the PDF we printed from it. Both stored so this build can be
         // promoted on the same terms a rewrite can.
         //
-        // The two texts are not the same text. Further down, the resume row is
-        // updated with `structToText(struct)` — the fields serialised — so its
-        // Readiness tab describes what the user now has. What is stored here is
-        // the EXTRACTION: what came back out of the printed PDF, which is what
-        // `score` was actually computed from, and therefore what a promoted
-        // copy has to carry if its number is to mean the same thing.
+        // The two texts are not the same text. The uploaded resume record stays
+        // unchanged; this Variant stores the EXTRACTION that came back out of
+        // the printed PDF. That is what `score` was computed from, and it is
+        // therefore what a promoted copy has to carry if its number is to mean
+        // the same thing.
         structJson: toJsonColumn(struct),
         text: typeof rendered.text === "string" ? rendered.text : "",
         file: `${runDir}/variant-1.pdf`,
@@ -162,39 +160,15 @@ export async function POST(_req: Request, { params }: Ctx) {
     })
     .catch((e) => console.error("[build] score history write failed:", e));
 
-  // The edited text becomes the resume's text, so the untargeted report on the
-  // Readiness tab describes what the user now has rather than what they
-  // uploaded. Without this, someone fixes every finding, rebuilds, and the
-  // report still lists the problems they just solved.
-  const text = structToText(struct);
-  let resumeUpdateFailed = false;
-  await prisma.resume
-    .update({
-      where: { id: resume.id },
-      data: {
-        text: text.slice(0, 60000),
-        chars: text.trim().length,
-        score,
-        grade: rendered.report?.grade ?? null,
-        reportJson: toJsonColumn(rendered.report),
-        // The advice was written about the previous draft and is now describing
-        // a document that no longer exists.
-        adviceJson: toJsonColumn(null),
-      },
-    })
-    .catch((e) => {
-      // The variant is saved and the PDF exists, so this is not a refund — but
-      // the Scorecard would go on describing the previous draft. Said to the
-      // admin (error table) and to the user (the response), not just to a log.
-      console.error("[build] resume update failed:", e);
-      report({
-        source: "web",
-        kind: "build-resume-update-failed",
-        message: String(e),
-        context: `resume:${resume.id}`,
-      });
-      resumeUpdateFailed = true;
-    });
+  // A manual build is a VERSION, not a mutation of the uploaded source.
+  //
+  // Replacing `resume.text` here made the library label an incomplete edited
+  // PDF as the user's "primary uploaded resume". That was irreversible at the
+  // application level: the original source text was gone even though the file
+  // itself still existed. The saved Variant is already the authoritative copy
+  // of this build, with its own PDF, extracted text and measured score. A user
+  // who wants it to become a separate working resume can choose the explicit
+  // "Use as my resume" action instead.
 
   await audit(user.id, "resume_built", resume.id, `score ${score}`);
 
@@ -210,9 +184,8 @@ export async function POST(_req: Request, { params }: Ctx) {
     // this content is the user's own words, so over budget means "trim in
     // the editor", never a silent rewrite.
     overBudget: Boolean(rendered.over_budget),
-    // Honest about the one thing that can fail after the document is safe:
-    // the editor surfaces this as "built, but the Scorecard may still show
-    // your previous draft — rebuild once more" rather than a clean success.
-    resumeUpdated: !resumeUpdateFailed,
+    // Kept for older clients: the current workspace document changed, while
+    // the uploaded primary source deliberately did not.
+    resumeUpdated: true,
   });
 }

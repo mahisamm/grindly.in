@@ -136,6 +136,9 @@ export function assertProdSafe(): void {
     problems.push("APP_ENCRYPTION_KEY is a placeholder value");
   }
   if (!env("DATABASE_URL")) problems.push("DATABASE_URL is not set");
+  if (!smtpConfigured()) {
+    problems.push("EMAIL_SMTP_HOST, EMAIL_SMTP_USER, and EMAIL_SMTP_PASS must be set");
+  }
   if (env("DATABASE_URL").includes("change_me")) {
     problems.push("DATABASE_URL still contains the example password");
   }

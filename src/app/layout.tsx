@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Fraunces, Space_Grotesk, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { TrafficBeacon } from "@/components/TrafficBeacon";
+import { ThemeBootstrap } from "@/components/ThemeBootstrap";
 
 const bodySans = Space_Grotesk({
   variable: "--ff-sans",
@@ -103,8 +104,12 @@ export default function RootLayout({
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "try{var t=localStorage.getItem('grindly-theme');" +
-              "if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}" +
+              // The intro decision is made pre-paint because the landing curtain
+              // must be visible before the first frame. Theme selection is not:
+              // changing `data-theme` before hydration makes React reconcile a
+              // different root DOM on every page, so ThemeBootstrap applies it
+              // only after React owns the document.
+              //
               // The intro decision, made pre-paint for the same reason as the
               // theme: the splash used to appear only after React hydrated,
               // so a first-time visitor saw the landing paint, THEN a curtain
@@ -142,6 +147,7 @@ export default function RootLayout({
             does and does not record. Last in the body so it never delays
             anything the visitor is waiting for. */}
         <TrafficBeacon />
+        <ThemeBootstrap />
       </body>
     </html>
   );
