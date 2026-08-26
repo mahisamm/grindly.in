@@ -15,7 +15,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 
 function valueAfter(flag) {
   const index = process.argv.indexOf(flag);
