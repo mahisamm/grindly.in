@@ -359,6 +359,17 @@ async function executeRun({
         },
       })
       .catch((e) => console.error("[variants] could not close run:", (e as Error).message));
+
+    // A first tailored attempt that produced no resume is not a target the user
+    // can use. Leaving that row behind was why a failed request changed "20 of
+    // 20 targets left" to "19": no document existed, but the empty target
+    // still occupied a plan slot. Only remove rows created by this request and
+    // only while they still have neither a purchase nor a saved variant.
+    if (target.created && data.status !== "done" && target.id) {
+      await prisma.target.deleteMany({
+        where: { id: target.id, unlockedAt: null, variants: { none: {} } },
+      }).catch((e) => console.error("[variants] could not release failed target:", (e as Error).message));
+    }
   };
 
   let result;
@@ -574,6 +585,9 @@ type ResolvedTarget = {
   name: string;
   keywords: string[];
   emphasis: string[];
+  /** This request created the target row. A failed first attempt must not
+      consume a target slot merely by leaving an unusable row behind. */
+  created: boolean;
 };
 
 async function resolveTarget(
@@ -584,7 +598,7 @@ async function resolveTarget(
     jd?: string; notes?: string;
   },
 ): Promise<ResolvedTarget | { error: NextResponse }> {
-  const none: ResolvedTarget = { id: null, name: "", keywords: [], emphasis: [] };
+  const none: ResolvedTarget = { id: null, name: "", keywords: [], emphasis: [], created: false };
 
   if (body.targetId) {
     const t = await prisma.target.findFirst({
@@ -662,6 +676,7 @@ async function resolveTarget(
       name: pack.pack.name,
       keywords: pack.pack.keywords ?? [],
       emphasis: pack.pack.emphasis ?? [],
+      created: true,
     };
   }
 
@@ -697,6 +712,7 @@ async function resolveTarget(
       name,
       keywords: parsed.spec.skills ?? [],
       emphasis: [],
+      created: true,
     };
   }
 
@@ -757,6 +773,7 @@ async function resolveTarget(
       name: found.name,
       keywords: found.keywords ?? [],
       emphasis: found.emphasis ?? [],
+      created: true,
     };
   }
 
@@ -771,7 +788,7 @@ async function resolveTarget(
       jdText: jd, specJson: toJsonColumn(parsed.spec),
     },
   });
-  return { id: created.id, name, keywords: parsed.spec.skills ?? [], emphasis: [] };
+  return { id: created.id, name, keywords: parsed.spec.skills ?? [], emphasis: [], created: true };
 }
 
 async function targetToResolved(t: {
@@ -788,7 +805,7 @@ async function targetToResolved(t: {
     const pack = await runAgent<{ pack: { emphasis: string[] } }>("companies", { slug: t.slug });
     if (pack.ok) emphasis = pack.pack.emphasis ?? [];
   }
-  return { id: t.id, name: t.name, keywords: spec?.skills ?? [], emphasis };
+  return { id: t.id, name: t.name, keywords: spec?.skills ?? [], emphasis, created: false };
 }
 
 function abortMessage(code: string): string {

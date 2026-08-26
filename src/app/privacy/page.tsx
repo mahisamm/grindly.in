@@ -72,7 +72,8 @@ export default function PrivacyPage() {
           </p>
           <p>
             Rewriting and the written review DO send resume text to a language
-            model provider — currently Groq, Google Gemini, Cerebras or Mistral,
+            model provider — currently Groq, Google Gemini, Cerebras, Mistral,
+            OpenRouter or xAI,
             whichever the deployment has configured. Before any text leaves the
             server we strip email addresses, phone numbers and long identity
             numbers from it. Those providers receive your skills and experience;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LIMITS, readStruct, sanitizeStruct, structToText } from "@/lib/resumeStruct";
+import { extractionCoverage, LIMITS, readStruct, sanitizeStruct, structToText } from "@/lib/resumeStruct";
 
 /**
  * The editor's boundary.
@@ -30,6 +30,23 @@ const VALID = {
 };
 
 describe("sanitizeStruct", () => {
+  it("detects an editor extraction that omitted most of the source", () => {
+    const source = [
+      "Asha Rao asha@example.com",
+      "EDUCATION Bachelor of Technology in Computer Science, Anurag University, CGPA 8.7",
+      "EXPERIENCE Software Engineering Intern at Acme Systems, Jun 2025 to Aug 2025",
+      "Built APIs with Python FastAPI PostgreSQL and Docker for 400 student users.",
+      "PROJECTS Placement Portal using React TypeScript Node.js and MongoDB.",
+    ].join("\n");
+    const partial = sanitizeStruct({
+      name: "Asha Rao",
+      contact_line: "asha@example.com",
+      sections: [{ heading: "Projects", items: [{ head: "Placement Portal", sub: "", bullets: ["Built a portal."] }] }],
+    });
+    expect(partial).not.toBeNull();
+    expect(extractionCoverage(source, partial!).ratio).toBeLessThan(0.6);
+  });
+
   it("keeps a real resume intact", () => {
     expect(sanitizeStruct(VALID)).toEqual(VALID);
   });

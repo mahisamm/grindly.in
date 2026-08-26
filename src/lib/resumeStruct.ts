@@ -145,3 +145,33 @@ export function structToText(struct: ResumeStruct): string {
   }
   return lines.join("\n");
 }
+
+/**
+ * A guard for model-assisted extraction.
+ *
+ * The editor must never turn an uploaded resume into a shorter, convincing
+ * looking document simply because a model omitted a section.  This is not an
+ * anti-fabrication check (the user may edit freely afterwards); it is a
+ * loss-detection check made at the one point we still have both the uploaded
+ * text and the proposed editable structure.
+ */
+export function extractionCoverage(source: string, struct: ResumeStruct): {
+  sourceTerms: number;
+  recoveredTerms: number;
+  ratio: number;
+} {
+  const terms = (value: string) =>
+    new Set(
+      (value.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}+#.-]{3,}/gu) ?? []).filter(
+        (term) => !/^(with|that|this|from|their|have|were|will|into|using|through|about)$/i.test(term),
+      ),
+    );
+  const sourceTerms = terms(source);
+  const recovered = terms(structToText(struct));
+  const recoveredTerms = [...sourceTerms].filter((term) => recovered.has(term)).length;
+  return {
+    sourceTerms: sourceTerms.size,
+    recoveredTerms,
+    ratio: sourceTerms.size ? recoveredTerms / sourceTerms.size : 1,
+  };
+}

@@ -6,9 +6,9 @@ import { useRouter } from "next/navigation";
 /**
  * The step before the editor exists.
  *
- * Reading a resume into fields costs several model calls, so it is a button
- * rather than something that happens because a page was opened. The result is
- * cached on the resume, so this screen is seen once.
+ * Reading a resume into fields is a deliberate step rather than something that
+ * happens because a page was opened. The result is cached on the resume, so
+ * this screen is seen once.
  */
 export function ExtractPrompt({
   resumeId,
@@ -65,7 +65,8 @@ export function ExtractPrompt({
         as the original, so you can see whether what you changed actually helped.
       </p>
       <p className="text-muted mt-3 text-sm leading-relaxed">
-        Reading the structure takes a few seconds and counts against your daily reviews.
+        Reading the structure takes a few seconds. It is free, and we will stop
+        rather than save anything if the fields miss a meaningful part of your resume.
         It happens once; after that the editor opens straight away.
       </p>
 

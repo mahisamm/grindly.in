@@ -40,9 +40,15 @@ export function smtpConfigured(): boolean {
  * every environment that happens to have them.
  */
 export function paymentsEnabled(): boolean {
+  const keyId = env("RAZORPAY_KEY_ID");
   return (
     env("PAYMENTS_ENABLED").toLowerCase() === "true" &&
-    Boolean(env("RAZORPAY_KEY_ID") && env("RAZORPAY_KEY_SECRET"))
+    Boolean(keyId && env("RAZORPAY_KEY_SECRET")) &&
+    // A test key on a public production deployment opens a modal that looks
+    // like payment while no customer can actually pay.  Refuse it here, at the
+    // capability boundary, rather than relying on each checkout component to
+    // recognise a key prefix.
+    (!isProd || keyId.startsWith("rzp_live_"))
   );
 }
 

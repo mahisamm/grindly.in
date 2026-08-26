@@ -4,8 +4,7 @@ import { requireApprovedUser, notFound, badRequest, serverError } from "@/lib/au
 import { runAgent } from "@/lib/agent";
 import { toJsonColumn } from "@/lib/jsonColumn";
 import { readContact, readStrings } from "@/lib/reportTypes";
-import { readStruct, sanitizeStruct } from "@/lib/resumeStruct";
-import { reserve, refund } from "@/lib/quota";
+import { extractionCoverage, readStruct, sanitizeStruct } from "@/lib/resumeStruct";
 import { audit } from "@/lib/audit";
 
 export const runtime = "nodejs";
@@ -65,15 +64,6 @@ export async function POST(req: Request, { params }: Ctx) {
     );
   }
 
-  // Metered against the advice allowance rather than being free. It is the same
-  // shape of cost — several model calls on demand — and an unmetered endpoint
-  // that spawns them is how one script exhausts the free tier everyone on the
-  // instance shares.
-  const quota = await reserve(auth.user.id, "adviceRuns");
-  if (!quota.allowed) {
-    return NextResponse.json({ error: quota.message, code: "quota" }, { status: 429 });
-  }
-
   const contact = readContact(resume.contactJson);
   const extracted = await runAgent<{ struct: unknown }>("struct", {
     text: resume.text,
@@ -86,16 +76,31 @@ export async function POST(req: Request, { params }: Ctx) {
   });
 
   if (!extracted.ok) {
-    await refund(auth.user.id, "adviceRuns");
     return serverError(extracted.error, `struct:${resume.id}`);
   }
 
   const struct = sanitizeStruct(extracted.struct);
   if (!struct) {
-    await refund(auth.user.id, "adviceRuns");
     return serverError(
       "We could not read a clear structure out of this resume.",
       `struct:${resume.id}`,
+    );
+  }
+
+  const coverage = extractionCoverage(resume.text, struct);
+  // A normal extraction reorganises punctuation and labels, but keeps most
+  // meaningful terms.  A missing Experience/Education section is dramatically
+  // below this floor.  Fail closed: the uploaded file remains the source of
+  // truth and the user can retry instead of unknowingly building a partial CV.
+  if (coverage.sourceTerms >= 20 && coverage.ratio < 0.6) {
+    return NextResponse.json(
+      {
+        error:
+          "We stopped here because the fields missed too much of your uploaded resume. " +
+          "Nothing was saved or built; please retry in a minute or upload the original file again.",
+        code: "extraction_incomplete",
+      },
+      { status: 422 },
     );
   }
 
