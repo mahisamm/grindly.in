@@ -10,6 +10,8 @@ export const dynamic = "force-dynamic";
 
 const VISITOR_COOKIE = "gv";
 const MAX_PATH = 200;
+const MAX_ATTRIBUTION = 80;
+const ATTRIBUTION = /^[a-z0-9][a-z0-9._ -]{0,79}$/i;
 // Obvious automation. Not a bot-detection system — just enough that a crawler
 // walking the landing page does not read as a hundred visitors.
 const BOT = /bot|crawl|spider|slurp|curl|wget|python-requests|headless|lighthouse|pingdom|uptime|monitor/i;
@@ -28,9 +30,32 @@ export async function POST(req: Request) {
     if (BOT.test(ua)) return new NextResponse(null, { status: 204 });
 
     let path = "";
+    let attribution: {
+      utmSource: string | null;
+      utmMedium: string | null;
+      utmCampaign: string | null;
+      referrerHost: string | null;
+    } | undefined;
     try {
-      const body = (await req.json()) as { path?: unknown };
+      const body = (await req.json()) as {
+        path?: unknown;
+        utmSource?: unknown;
+        utmMedium?: unknown;
+        utmCampaign?: unknown;
+        referrerHost?: unknown;
+      };
       path = typeof body.path === "string" ? body.path : "";
+      const value = (input: unknown) => {
+        if (typeof input !== "string") return null;
+        const candidate = input.trim().slice(0, MAX_ATTRIBUTION);
+        return ATTRIBUTION.test(candidate) ? candidate : null;
+      };
+      attribution = {
+        utmSource: value(body.utmSource),
+        utmMedium: value(body.utmMedium),
+        utmCampaign: value(body.utmCampaign),
+        referrerHost: value(body.referrerHost),
+      };
     } catch {
       path = "";
     }
@@ -48,7 +73,7 @@ export async function POST(req: Request) {
     // The visitor never sees a failure here, but the operator must: a traffic
     // panel that quietly reads zero is worse than one that says why.
     await prisma.pageView
-      .create({ data: { path, visitorId, userId } })
+      .create({ data: { path, visitorId, userId, ...(typeof attribution === "undefined" ? {} : attribution) } })
       .catch((e) => report({ source: "web", kind: "track-write-failed", message: String(e).slice(0, 400), context: path }));
 
     const res = new NextResponse(null, { status: 204 });

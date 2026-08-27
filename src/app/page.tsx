@@ -286,6 +286,7 @@ export default async function Home() {
           <Logo size={24} />
           <nav aria-label="Footer" className="text-muted flex flex-wrap items-center gap-5">
             <Link href="/pricing" className="hover:text-ink">Pricing</Link>
+            <Link href="/resources" className="hover:text-ink">Resume guides</Link>
             <Link href="/privacy" className="hover:text-ink">Privacy</Link>
             <Link href="/terms" className="hover:text-ink">Terms</Link>
             <Link href="/refunds" className="hover:text-ink">Refunds</Link>

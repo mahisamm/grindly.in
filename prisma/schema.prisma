@@ -820,10 +820,20 @@ model PageView {
   path      String
   visitorId String  @map("visitor_id")
   userId    String? @map("user_id")
+  /// First-touch campaign labels only (never the full query string). Kept
+  /// bounded and optional so an untagged visit remains anonymous traffic, not
+  /// an invented "direct" campaign.
+  utmSource   String? @map("utm_source")
+  utmMedium   String? @map("utm_medium")
+  utmCampaign String? @map("utm_campaign")
+  /// Origin hostname only, not a full referring URL (which can contain a
+  /// search query or another person's data).
+  referrerHost String? @map("referrer_host")
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([createdAt])
   @@index([visitorId, createdAt])
+  @@index([utmSource, createdAt])
   @@map("page_views")
 }
 

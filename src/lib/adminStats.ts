@@ -422,6 +422,8 @@ export type TrafficStats = {
   month: TrafficWindow;
   /** Most-viewed paths in the last 30 days. */
   topPaths: { path: string; views: number }[];
+  /** Tagged campaign source or referring hostname, grouped for the operator. */
+  topSources: { source: string; views: number }[];
   /** Page views per day for the last 30 days, oldest first, empty days as 0. */
   byDay: { date: string; count: number }[];
   /** When the first view was recorded, so an empty panel can say so. */
@@ -454,7 +456,7 @@ export async function trafficStats(now = new Date()): Promise<TrafficStats> {
     };
   };
 
-  const [activeNow, today, wk, mo, top, days, first] = await Promise.all([
+  const [activeNow, today, wk, mo, top, sources, days, first] = await Promise.all([
     distinctUsers(prisma.$queryRaw<{ n: bigint }[]>`
       SELECT COUNT(DISTINCT visitor_id) AS n FROM page_views WHERE created_at >= ${fiveMin}`),
     win(dayStart),
@@ -464,6 +466,12 @@ export async function trafficStats(now = new Date()): Promise<TrafficStats> {
       SELECT path, COUNT(*) AS views FROM page_views
       WHERE created_at >= ${month}
       GROUP BY path ORDER BY views DESC LIMIT 8`.catch(() => []),
+    prisma.$queryRaw<{ source: string; views: bigint }[]>`
+      SELECT COALESCE(utm_source, referrer_host) AS source, COUNT(*) AS views
+      FROM page_views
+      WHERE created_at >= ${month}
+        AND COALESCE(utm_source, referrer_host) IS NOT NULL
+      GROUP BY 1 ORDER BY views DESC LIMIT 8`.catch(() => []),
     prisma.$queryRaw<{ day: Date; n: bigint }[]>`
       SELECT date_trunc('day', created_at) AS day, COUNT(*) AS n
       FROM page_views WHERE created_at >= ${month}
@@ -486,6 +494,7 @@ export async function trafficStats(now = new Date()): Promise<TrafficStats> {
     week: wk,
     month: mo,
     topPaths: top.map((r) => ({ path: r.path, views: Number(r.views) })),
+    topSources: sources.map((r) => ({ source: r.source, views: Number(r.views) })),
     byDay: [...counts.entries()].map(([date, count]) => ({ date, count })),
     firstSeen: first?.createdAt ?? null,
   };

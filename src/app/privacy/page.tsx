@@ -58,6 +58,12 @@ export default function PrivacyPage() {
               errors. IP addresses appear in rate-limit keys and are not kept as a
               browsing history.
             </li>
+            <li>
+              <b>Anonymous page activity.</b> A random first-party browser id, the
+              page path and time of a visit, plus an optional campaign label or
+              referring website hostname. We do not store IP addresses, a full
+              referrer URL, search terms or advertising click identifiers.
+            </li>
           </ul>
           <p>
             We do not use advertising trackers, and there is no third-party

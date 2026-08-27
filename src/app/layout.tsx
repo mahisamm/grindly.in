@@ -41,6 +41,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://grindly.in"),
   title: "Grindly — see your resume the way a machine reads it",
   description:
     "Grindly measures what survives when a parser reads your resume, rebuilds it as a clean single-column PDF, and tailors it to the company you are applying to — without inventing a single fact.",
@@ -63,12 +64,16 @@ export const metadata: Metadata = {
     description:
       "Measure what a parser actually recovers from your resume, rebuild it clean, and tailor it per company. Every number measured, nothing invented.",
     siteName: "Grindly",
+    url: "/",
     type: "website",
   },
   twitter: {
     card: "summary",
     title: "Grindly — see your resume the way a machine reads it",
     description: "Measure what a parser recovers from your resume, rebuild it clean, tailor it per company.",
+  },
+  alternates: {
+    canonical: "/",
   },
   formatDetection: {
     telephone: false,

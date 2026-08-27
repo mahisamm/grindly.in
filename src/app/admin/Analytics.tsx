@@ -74,7 +74,7 @@ export function TrafficPanel({ t, index = 0 }: { t: TrafficStats; index?: number
       index={index}
       title="Traffic"
       note={`Who is visiting, and where. ${started ? `Tracking since ${started}.` : "Tracking starts with this deploy."}`}
-      detail="Page views from the in-page beacon: one row per navigation, an anonymous first-party cookie for 'visitors', the user id when signed in. No IP, no fingerprint; obvious bots skipped; the admin pages themselves excluded. Days are UTC."
+      detail="Page views from the in-page beacon: one row per navigation, an anonymous first-party cookie for 'visitors', the user id when signed in. No IP, no fingerprint; obvious bots skipped; the admin pages themselves excluded. Campaign labels are first-touch UTM values or a referring hostname only—never a full referrer URL or query string. Days are UTC."
     >
       <StatGrid>
         <KpiCard index={0} label="On the site now" value={n(t.activeNow)} sub="distinct visitors · last 5 min" accent />
@@ -82,11 +82,21 @@ export function TrafficPanel({ t, index = 0 }: { t: TrafficStats; index?: number
         <KpiCard index={2} label="Last 7 days" value={n(t.week.views)} sub={`${t.week.visitors} visitors · ${t.week.signedIn} signed in`} />
         <KpiCard index={3} label="Last 30 days" value={n(t.month.views)} sub={`${t.month.visitors} visitors · ${t.month.signedIn} signed in`} />
       </StatGrid>
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1.6fr_1fr]">
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1.6fr_1fr_1fr]">
         <div className="bg-surface border-border adm-card rounded-xl border p-4">
           <p className="text-muted font-mono text-[10px] tracking-[0.12em] uppercase">Page views per day · 30 days</p>
           <div className="mt-2">
             <SignupArea points={t.byDay} height={160} id="traffic" label="Page views" format={n} />
+          </div>
+        </div>
+        <div className="bg-surface border-border adm-card rounded-xl border p-4">
+          <p className="text-muted font-mono text-[10px] tracking-[0.12em] uppercase">Acquisition source · 30 days</p>
+          <div className="mt-3">
+            {t.topSources.length ? (
+              <BandBars rows={t.topSources.map((source) => ({ label: source.source, count: source.views }))} />
+            ) : (
+              <p className="text-muted text-sm">No tagged or referred visits yet.</p>
+            )}
           </div>
         </div>
         <div className="bg-surface border-border adm-card rounded-xl border p-4">
