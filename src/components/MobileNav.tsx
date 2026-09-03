@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { isReportPath } from "@/components/AppNav";
 
 /**
  * The floating bottom bar the signed-in app uses on a phone.
@@ -34,12 +35,10 @@ const STROKE = { fill: "none", strokeWidth: 1.6, strokeLinecap: "round", strokeL
 const ITEMS: Item[] = [
   {
     href: "/app",
-    label: "Home",
+    label: "Report",
     // The dashboard — the primary resume's workspace — and any other single
     // resume's workspace, which is where people spend their time.
-    match: (p) =>
-      p === "/app" ||
-      (p.startsWith("/app/") && p !== "/app/settings" && p !== "/app/resumes"),
+    match: isReportPath,
     icon: ({ active }) => (
       <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor" {...STROKE}>
         <path d="M4 11.5 12 5l8 6.5" />
@@ -51,7 +50,7 @@ const ITEMS: Item[] = [
   {
     href: "/app/resumes",
     label: "Resumes",
-    match: (p) => p === "/app/resumes",
+    match: (p) => p.startsWith("/app/resumes"),
     icon: ({ active }) => (
       <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor" {...STROKE}>
         <path d="M7 3h7l4 4v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
@@ -61,12 +60,27 @@ const ITEMS: Item[] = [
     ),
   },
   {
-    href: "/pricing",
-    label: "Plan",
-    match: (p) => p === "/pricing",
-    icon: () => (
+    href: "/app/applications",
+    // Shorter than "Applications" so five labels fit a 320px bar without
+    // clipping; the full word is on the desktop nav and the page itself.
+    label: "Applied",
+    match: (p) => p.startsWith("/app/applications"),
+    icon: ({ active }) => (
       <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor" {...STROKE}>
-        <path d="M12 3.5 14.3 9l5.7.4-4.4 3.7 1.4 5.6L12 15.6 7 18.7l1.4-5.6L4 9.4 9.7 9 12 3.5Z" />
+        <path d="M5 5.5h14M5 12h14M5 18.5h9" />
+        {active && <path d="m16.5 18 2 2 3.5-3.5" />}
+      </svg>
+    ),
+  },
+  {
+    href: "/app/tailor",
+    label: "Tailor",
+    match: (p) => p.startsWith("/app/tailor"),
+    icon: ({ active }) => (
+      <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor" {...STROKE}>
+        <circle cx="12" cy="12" r="8" />
+        <circle cx="12" cy="12" r="3.5" />
+        {active && <circle cx="12" cy="12" r="0.6" fill="currentColor" />}
       </svg>
     ),
   },

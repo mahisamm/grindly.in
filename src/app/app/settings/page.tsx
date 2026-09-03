@@ -33,16 +33,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-8 sm:px-6 sm:py-10">
-      <Link
-        href="/app"
-        // min-h-6 + inline-flex: a standalone navigation link needs a target a
-        // thumb can hit. WCAG 2.2 exempts links inside a sentence; this is not
-        // one, it is the only way back on a phone.
-        className="text-muted hover:text-ink inline-flex min-h-6 items-center text-sm"
-      >
-        ← Dashboard
-      </Link>
-      <h1 className="font-display mt-4 text-3xl font-bold">Account</h1>
+      <h1 className="font-display text-3xl font-bold">Account</h1>
 
       <section className="bg-surface border-border mt-8 rounded-xl border p-6">
         <h2 className="font-display text-lg font-semibold">You</h2>

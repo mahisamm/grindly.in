@@ -1,6 +1,5 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
-import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { toJsonColumn } from "@/lib/jsonColumn";
 import { currentUser } from "@/lib/auth";
@@ -62,19 +61,11 @@ export default async function ResumePage({ params }: { params: Promise<{ id: str
 
   return (
     <div className="mx-auto max-w-7xl px-5 py-8 sm:px-6 sm:py-10">
-      <Link
-        href="/app/resumes"
-        // min-h-6 + inline-flex: a standalone navigation link needs a target a
-        // thumb can hit. WCAG 2.2 exempts links inside a sentence; this is not
-        // one, it is the only way back on a phone.
-        className="text-muted hover:text-ink inline-flex min-h-6 items-center text-sm"
-      >
-        ← All resumes
-      </Link>
+      {/* No back link: the top nav's RESUMES / REPORT and the phone bar are the
+          way around the app now. */}
       {/* The workspace reads `?tab=` with useSearchParams, which suspends. The
-          boundary is here rather than around the whole page so the heading and
-          the back link are painted immediately — they do not depend on the
-          query string. */}
+          boundary is here rather than around the whole page so the heading is
+          painted immediately — it does not depend on the query string. */}
       <Suspense fallback={<WorkspaceSkeleton />}>
       <ResumeWorkspace
         resume={{

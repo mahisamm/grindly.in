@@ -12,7 +12,7 @@ import { FidelityLine, Findings, ReportPanel, ScoreDial } from "@/components/Sco
 import { RunBanner, useRunStatus } from "./RunProgress";
 import { Compare } from "./Compare";
 import { CoverLetter } from "./CoverLetter";
-import { ProgressPanel, type ApplicationRow, type ScorePoint } from "./Progress";
+import { ScoreHistory, type ApplicationRow, type ScorePoint } from "./Progress";
 import { ShareLink } from "./ShareLink";
 import { LinkStyleChoice } from "./edit/LinkStyle";
 import { UnlockTarget } from "./UnlockTarget";
@@ -50,7 +50,7 @@ type TargetView = {
   } | null;
 };
 
-type ResumeView = {
+export type ResumeView = {
   id: string;
   label: string;
   chars: number;
@@ -82,9 +82,9 @@ type ResumeView = {
  *  rewrite. Must match OWN_EDIT_LABEL in api/resumes/[id]/build/route.ts. */
 const OWN_EDIT_LABEL = "Yours";
 
-type Tab = "report" | "rewrite" | "target" | "progress" | "raw";
+type Tab = "report" | "rewrite";
 
-const TABS: Tab[] = ["report", "rewrite", "target", "progress", "raw"];
+const TABS: Tab[] = ["report", "rewrite"];
 
 /**
  * Small, official-style marks make the curated list scannable before a user
@@ -163,21 +163,18 @@ function isTab(value: string | null): value is Tab {
 
 export function ResumeWorkspace({
   resume,
-  packs,
-  disclaimer,
-  targetLimit,
   paymentsLive,
-  freeCompanyRebuildAvailable,
 }: {
   resume: ResumeView;
-  packs: CompanyPack[];
-  disclaimer: string;
-  /** Company targets this plan allows per resume. */
-  targetLimit: number;
+  // Company tailoring moved to its own page (/app/tailor); these props are
+  // still accepted from the route so its call site needs no change, but only
+  // `paymentsLive` — for the in-place unlock offer below — is read here.
+  packs?: CompanyPack[];
+  disclaimer?: string;
+  targetLimit?: number;
   /** False on a stub deployment — the unlock card then says it grants free. */
   paymentsLive: boolean;
-  /** One account-wide company-specific rebuild is included on free. */
-  freeCompanyRebuildAvailable: boolean;
+  freeCompanyRebuildAvailable?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -266,9 +263,6 @@ export function ResumeWorkspace({
   const tabs: [Tab, string][] = [
     ["report", "Scorecard"],
     ["rewrite", `Rewrite${resume.variants.length ? ` (${resume.variants.length})` : ""}`],
-    ["target", `Target a company${resume.targets.length ? ` (${resume.targets.length})` : ""}`],
-    ["progress", `Progress${resume.applications.length ? ` (${resume.applications.length})` : ""}`],
-    ["raw", "What the machine reads"],
   ];
 
   return (
@@ -292,233 +286,101 @@ export function ResumeWorkspace({
         </div>
       </div>
 
-      {/* The workspace menu. On a laptop it is a fixed left sidebar — the
-          place a returning user's eye already checks — and on a phone it is a
-          disclosure showing where you are, opening with a height animation
-          rather than teleporting. The horizontal strip this replaces sat
-          centred in the content column and read as part of the page rather
-          than as its navigation. */}
-      <div className="mt-6 flex flex-col gap-2 lg:flex-row lg:gap-10">
-        <WorkspaceNav tabs={tabs} active={tab} onPick={setTab} editHref={`/app/${resume.id}/edit`} />
-
-        <div className="min-w-0 flex-1">
-          <RunBanner run={run} onCancel={cancelRun} />
-
-          {lockedTarget && (
-            <UnlockTarget
-              targetId={lockedTarget.id}
-              targetName={lockedTarget.name}
-              paymentsLive={paymentsLive}
-              onUnlocked={() => {
-                const id = lockedTarget.id;
-                setLockedTarget(null);
-                setNote("Unlocked. Starting the tailored rebuild…");
-                void post(`/api/resumes/${resume.id}/variants`, { targetId: id }, "rewrite");
-              }}
-              onDismiss={() => setLockedTarget(null)}
-            />
-          )}
-
-          {(error || note) && (
-            <p
-              role="alert"
-              className="mt-5 rounded-lg border p-3 text-sm"
-              style={{
-                borderColor: error ? "#a3271b" : "var(--border)",
-                color: error ? "#a3271b" : "var(--ink-color)",
-                background: error ? "transparent" : "var(--surface-2)",
-              }}
-            >
-              {error ?? note}
-            </p>
-          )}
-
-          {/* All panels exist; the inactive ones are `hidden`.
-              Rendering only the selected panel left the other `aria-controls`
-              on the tab list pointing at element ids that were not in the
-              document. `hidden` keeps them out of the accessibility tree and
-              out of the tab order while keeping the id reachable. */}
-          <div className="py-6" role="tabpanel" id="panel-report" aria-labelledby="tab-report" hidden={tab !== "report"}>
-            <ReportTab
-              resume={resume}
-              busy={busy}
-              onAdvice={() => post(`/api/resumes/${resume.id}/advice`, undefined, "advice")}
-            />
-          </div>
-          <div className="py-6" role="tabpanel" id="panel-rewrite" aria-labelledby="tab-rewrite" hidden={tab !== "rewrite"}>
-            <RewriteTab
-              resume={resume}
-              busy={busy}
-              rebuilding={rebuilding}
-              onRun={(targetId) =>
-                post(`/api/resumes/${resume.id}/variants`, targetId ? { targetId } : {}, "rewrite")
+      {/* The workspace's sections, as one horizontal strip under the title.
+          It used to be a fixed left sidebar, which sat inside the content
+          column and read as part of the page rather than as its navigation;
+          the global top nav now carries where-in-the-app you are, and this
+          carries where-in-this-resume. Company tailoring and the send tracker
+          left for their own top-level pages. */}
+      <div className="border-border mt-6 border-b">
+        <div
+          role="tablist"
+          aria-label="Resume sections"
+          className="scrollbar-none -mx-5 flex items-center gap-1 overflow-x-auto px-5 sm:mx-0 sm:px-0"
+        >
+          {tabs.map(([key, label]) => (
+            <button
+              key={key}
+              role="tab"
+              id={`tab-${key}`}
+              aria-selected={tab === key}
+              aria-controls={`panel-${key}`}
+              onClick={() => setTab(key)}
+              className="-mb-px cursor-pointer border-b-2 px-3 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors"
+              style={
+                tab === key
+                  ? { borderColor: "var(--cta)", color: "var(--ink-color)" }
+                  : { borderColor: "transparent", color: "var(--muted)" }
               }
-            />
-          </div>
-          <div className="py-6" role="tabpanel" id="panel-target" aria-labelledby="tab-target" hidden={tab !== "target"}>
-            <TargetTab
-              resume={resume}
-              packs={packs}
-              disclaimer={disclaimer}
-              targetLimit={targetLimit}
-              freeCompanyRebuildAvailable={freeCompanyRebuildAvailable}
-              rebuilding={rebuilding}
-              busy={busy}
-              onTarget={(body) => post(`/api/resumes/${resume.id}/variants`, body, "rewrite")}
-            />
-          </div>
-          <div className="py-6" role="tabpanel" id="panel-progress" aria-labelledby="tab-progress" hidden={tab !== "progress"}>
-            <ProgressPanel
-              resumeId={resume.id}
-              history={resume.history}
-              applications={resume.applications}
-              variantLabels={[...new Set(resume.variants.map((v) => v.label))]}
-            />
-          </div>
-          <div className="py-6" role="tabpanel" id="panel-raw" aria-labelledby="tab-raw" hidden={tab !== "raw"}>
-            <RawTab resume={resume} />
-          </div>
+            >
+              {label}
+            </button>
+          ))}
+          {/* The editor is a page, not a panel — it rides the strip as a link
+              so "where do I add my projects" has an answer where people look. */}
+          <Link
+            href={`/app/${resume.id}/edit`}
+            className="ml-auto py-2.5 pl-4 text-sm font-semibold whitespace-nowrap"
+            style={{ color: "var(--brand)" }}
+          >
+            Edit resume →
+          </Link>
+        </div>
+      </div>
+
+      <div className="mt-2 min-w-0">
+        <RunBanner run={run} onCancel={cancelRun} />
+
+        {lockedTarget && (
+          <UnlockTarget
+            targetId={lockedTarget.id}
+            targetName={lockedTarget.name}
+            paymentsLive={paymentsLive}
+            onUnlocked={() => {
+              const id = lockedTarget.id;
+              setLockedTarget(null);
+              setNote("Unlocked. Starting the tailored rebuild…");
+              void post(`/api/resumes/${resume.id}/variants`, { targetId: id }, "rewrite");
+            }}
+            onDismiss={() => setLockedTarget(null)}
+          />
+        )}
+
+        {(error || note) && (
+          <p
+            role="alert"
+            className="mt-5 rounded-lg border p-3 text-sm"
+            style={{
+              borderColor: error ? "#a3271b" : "var(--border)",
+              color: error ? "#a3271b" : "var(--ink-color)",
+              background: error ? "transparent" : "var(--surface-2)",
+            }}
+          >
+            {error ?? note}
+          </p>
+        )}
+
+        {/* Both panels stay mounted; the inactive one is `hidden` so its id
+            stays reachable for the tab's aria-controls. */}
+        <div className="py-6" role="tabpanel" id="panel-report" aria-labelledby="tab-report" hidden={tab !== "report"}>
+          <ReportTab
+            resume={resume}
+            busy={busy}
+            onAdvice={() => post(`/api/resumes/${resume.id}/advice`, undefined, "advice")}
+          />
+        </div>
+        <div className="py-6" role="tabpanel" id="panel-rewrite" aria-labelledby="tab-rewrite" hidden={tab !== "rewrite"}>
+          <RewriteTab
+            resume={resume}
+            busy={busy}
+            rebuilding={rebuilding}
+            onRun={(targetId) =>
+              post(`/api/resumes/${resume.id}/variants`, targetId ? { targetId } : {}, "rewrite")
+            }
+          />
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * The workspace's navigation, in the two shapes it needs.
- *
- * From `lg` up: a vertical sidebar, sticky so it stays put while a long panel
- * scrolls — the ARIA tabs pattern with Up/Down arrows, since the list is now
- * vertical. Below `lg`: a disclosure button that names the section you are in
- * and opens with a grid-rows height animation (see `.disclose` in globals) —
- * a dropdown that teleports open reads as a glitch, one that unfolds reads as
- * a menu. The sidebar stays in the DOM on phones (CSS-hidden), so the
- * `tab-${key}` ids the panels' aria-labelledby point at always exist.
- */
-function WorkspaceNav({
-  tabs,
-  active,
-  onPick,
-  editHref,
-}: {
-  tabs: [Tab, string][];
-  active: Tab;
-  onPick: (tab: Tab) => void;
-  /** The editor is a page, not a panel — it rides in the menu as a link so
-      "where do I add my projects" has an answer in the one place people look. */
-  editHref: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const activeLabel = tabs.find(([k]) => k === active)?.[1] ?? "";
-
-  return (
-    <nav aria-label="Resume workspace sections" className="lg:w-48 lg:shrink-0">
-      {/* Phone: the disclosure. */}
-      <div className="lg:hidden">
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
-          className="bg-surface border-border flex w-full cursor-pointer items-center justify-between rounded-xl border px-4 py-3 text-sm font-semibold"
-        >
-          {activeLabel}
-          <svg
-            aria-hidden
-            viewBox="0 0 24 24"
-            className="h-4 w-4 transition-transform duration-200"
-            style={{ transform: open ? "rotate(180deg)" : undefined, color: "var(--muted)" }}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        </button>
-        <div className={`disclose ${open ? "open" : ""}`}>
-          <ul className="min-h-0">
-            <li aria-hidden className="h-2" />
-            {tabs.map(([key, label]) => (
-              <li key={key}>
-                <button
-                  onClick={() => {
-                    onPick(key);
-                    setOpen(false);
-                  }}
-                  aria-current={active === key ? "true" : undefined}
-                  className="w-full cursor-pointer rounded-lg px-4 py-2.5 text-left text-sm"
-                  style={
-                    active === key
-                      ? { background: "var(--cta)", color: "var(--on-cta)" }
-                      : { color: "var(--muted)" }
-                  }
-                >
-                  {label}
-                </button>
-              </li>
-            ))}
-            <li className="border-border mt-1 border-t pt-1">
-              <Link
-                href={editHref}
-                className="text-brand block w-full rounded-lg px-4 py-2.5 text-left text-sm font-semibold"
-              >
-                Edit resume →
-              </Link>
-            </li>
-          </ul>
-        </div>
-      </div>
-
-      {/* Laptop: the sidebar. Hidden on phones by CSS, never unmounted — the
-          panels' aria-labelledby ids live here. */}
-      <div
-        className="hidden lg:sticky lg:top-6 lg:block"
-        role="tablist"
-        aria-orientation="vertical"
-      >
-        <ul className="space-y-0.5">
-          {tabs.map(([key, label]) => (
-            <li key={key}>
-              <button
-                role="tab"
-                id={`tab-${key}`}
-                aria-selected={active === key}
-                aria-controls={`panel-${key}`}
-                // Only the selected tab is in the tab order; arrows move the
-                // rest — the ARIA tabs pattern, vertical edition.
-                tabIndex={active === key ? 0 : -1}
-                onKeyDown={(e) => {
-                  const i = tabs.findIndex(([k]) => k === active);
-                  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                    e.preventDefault();
-                    const next =
-                      (i + (e.key === "ArrowDown" ? 1 : tabs.length - 1)) % tabs.length;
-                    onPick(tabs[next][0]);
-                    document.getElementById(`tab-${tabs[next][0]}`)?.focus();
-                  }
-                }}
-                onClick={() => onPick(key)}
-                className="w-full cursor-pointer rounded-lg px-3 py-2 text-left text-sm whitespace-nowrap transition-colors"
-                style={
-                  active === key
-                    ? { background: "var(--cta)", color: "var(--on-cta)" }
-                    : { color: "var(--muted)" }
-                }
-              >
-                {label}
-              </button>
-            </li>
-          ))}
-        </ul>
-        <Link
-          href={editHref}
-          className="text-brand border-border mt-3 block rounded-lg border px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors hover:border-ink"
-        >
-          Edit resume →
-        </Link>
-      </div>
-    </nav>
   );
 }
 
@@ -723,7 +585,8 @@ function ReportTab({
     (resume.careerStage === "student" || resume.careerStage === "fresher" || resume.careerStage === "early");
 
   return (
-    <div className="grid gap-10 lg:grid-cols-[1.4fr_1fr]">
+    <div className="flex flex-col gap-12">
+      <div className="grid gap-10 lg:grid-cols-[1.4fr_1fr]">
       <div {...rise(0)}>
         {suggestOnePage && (
           <OnePageCard
@@ -841,6 +704,24 @@ function ReportTab({
           </div>
         )}
       </aside>
+      </div>
+
+      {resume.history.length > 0 && (
+        <div {...rise(1150)}>
+          <ScoreHistory history={resume.history} />
+        </div>
+      )}
+
+      {/* Not a section of its own: the raw extraction is diagnostic detail
+          behind the score, folded shut until asked for. */}
+      <details className="border-border rounded-xl border p-4">
+        <summary className="cursor-pointer text-sm font-semibold">
+          See the text an ATS extracts from your file
+        </summary>
+        <div className="mt-5">
+          <RawTab resume={resume} heading={false} />
+        </div>
+      </details>
     </div>
   );
 }
@@ -1316,7 +1197,7 @@ function Promote({ variantId }: { variantId: string }) {
   );
 }
 
-function TargetTab({
+export function TargetTab({
   resume,
   packs,
   disclaimer,
@@ -2132,11 +2013,13 @@ function SupplyEvidence({
  * way a parser sees it. People upload a beautifully designed two-column PDF and
  * find their job titles interleaved with their skills.
  */
-function RawTab({ resume }: { resume: ResumeView }) {
+function RawTab({ resume, heading = true }: { resume: ResumeView; heading?: boolean }) {
   return (
     <div>
-      <h2 className="font-display text-2xl font-semibold">What the machine reads</h2>
-      <p className="text-muted mt-2 max-w-2xl leading-relaxed">
+      {heading && (
+        <h2 className="font-display text-2xl font-semibold">What the machine reads</h2>
+      )}
+      <p className={`text-muted max-w-2xl leading-relaxed ${heading ? "mt-2" : ""}`}>
         This is the text an applicant tracking system extracts from your file — not what
         you see, what it sees. If your sections run into each other here, they run into
         each other for the recruiter searching too.

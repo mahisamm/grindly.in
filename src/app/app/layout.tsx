@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AccountMenu } from "@/components/AccountMenu";
 import { AmbientBackground } from "@/components/AmbientBackground";
+import { AppNav } from "@/components/AppNav";
 import { Logo } from "@/components/Brand";
 import { MobileNav } from "@/components/MobileNav";
 import { ReportProblem } from "@/components/ReportProblem";
@@ -74,11 +75,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {/* phone + tablet: plan only — the bottom bar carries the rest */}
           <div className="flex min-w-0 items-center lg:hidden">{planChip}</div>
 
-          {/* desktop: the plan at a glance, and everything personal behind
-              the avatar — the pattern every product people already use wears,
-              so nobody has to learn ours */}
+          {/* desktop: the destinations in one row, the plan at a glance, and
+              everything personal behind the avatar — the pattern every product
+              people already use wears, so nobody has to learn ours. The admin's
+              "Admin" chip is dropped here: AppNav already carries the ADMIN link,
+              and two of the same word reads as a bug. */}
           <div className="hidden items-center gap-5 text-sm lg:flex">
-            {planChip}
+            <AppNav isAdmin={user.role === "admin"} />
+            {plan !== "admin" && planChip}
             <AccountMenu
               email={user.email}
               name={user.name}

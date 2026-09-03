@@ -1,24 +1,17 @@
-"use client";
-
-import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { scoreColor } from "@/lib/reportTypes";
 
 /**
- * Two things the product measured and never showed anyone.
+ * The score over time.
  *
- * THE SCORE OVER TIME. `Resume.score` is overwritten on every read, so the
- * question a user most wants answered — did the thing I changed help? — had no
- * data behind it at all. It does now: every upload, every kept rebuild and
- * every edit writes a ScoreEvent, and this is the one screen where the product
- * stops describing a document and starts describing a person getting better at
- * something.
+ * `Resume.score` is overwritten on every read, so the question a user most
+ * wants answered — did the thing I changed help? — had no data behind it at
+ * all. It does now: every upload, every kept rebuild and every edit writes a
+ * ScoreEvent, and this is the one view where the product stops describing a
+ * document and starts describing a person getting better at something.
  *
- * WHERE IT WENT. Grindly does not submit anything and does not read anyone's
- * inbox, so every row here is typed. What justifies it existing in a database
- * rather than a spreadsheet is the version column: which rebuild went to which
- * company. That is the join that turns "I applied to 40 places" into "the
- * tailored one got three replies out of nine".
+ * Rendered inside the Scorecard. The application tracker that used to sit
+ * beside it moved to its own account-wide page (/app/applications); the two
+ * types below are still shared with that page and the workspace.
  */
 
 export type ScorePoint = {
@@ -40,7 +33,7 @@ export type ApplicationRow = {
   appliedAt: string;
 };
 
-const STATUS_LABELS: Record<string, string> = {
+export const STATUS_LABELS: Record<string, string> = {
   sent: "Sent",
   screening: "Screening",
   interview: "Interview",
@@ -56,29 +49,7 @@ const SOURCE_LABELS: Record<string, string> = {
   edit: "Your edit",
 };
 
-export function ProgressPanel({
-  resumeId,
-  history,
-  applications,
-  variantLabels,
-}: {
-  resumeId: string;
-  history: ScorePoint[];
-  applications: ApplicationRow[];
-  /** The documents that exist to have been sent. */
-  variantLabels: string[];
-}) {
-  return (
-    <div className="flex flex-col gap-10">
-      <ScoreHistory history={history} />
-      <Tracker resumeId={resumeId} applications={applications} variantLabels={variantLabels} />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-function ScoreHistory({ history }: { history: ScorePoint[] }) {
+export function ScoreHistory({ history }: { history: ScorePoint[] }) {
   if (history.length === 0) {
     return (
       <section>
@@ -196,219 +167,6 @@ function ScoreHistory({ history }: { history: ScorePoint[] }) {
           ))}
         </ul>
       </div>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
-function Tracker({
-  resumeId,
-  applications,
-  variantLabels,
-}: {
-  resumeId: string;
-  applications: ApplicationRow[];
-  variantLabels: string[];
-}) {
-  const router = useRouter();
-  const [company, setCompany] = useState("");
-  const [role, setRole] = useState("");
-  const [variantLabel, setVariantLabel] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function add(e: React.FormEvent) {
-    e.preventDefault();
-    if (!company.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/applications", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resumeId, company, role, variantLabel }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data?.error ?? "Could not save that.");
-        return;
-      }
-      setCompany("");
-      setRole("");
-      router.refresh();
-    } catch {
-      setError("We could not reach the server.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // Refreshed only on success. The select is controlled by the row's stored
-  // status, so a failed change snaps back either way — the difference is that
-  // it now says why, instead of looking like the click did not register.
-  async function update(id: string, status: string) {
-    setError(null);
-    try {
-      const res = await fetch(`/api/applications/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data?.error ?? "Could not change that status.");
-        return;
-      }
-      router.refresh();
-    } catch {
-      setError("We could not reach the server.");
-    }
-  }
-
-  async function remove(id: string) {
-    setError(null);
-    try {
-      const res = await fetch(`/api/applications/${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data?.error ?? "Could not remove that.");
-        return;
-      }
-      router.refresh();
-    } catch {
-      setError("We could not reach the server.");
-    }
-  }
-
-  // The count that makes the version column worth having.
-  const replies = applications.filter((a) =>
-    ["screening", "interview", "offer"].includes(a.status),
-  ).length;
-
-  return (
-    <section className="border-border border-t pt-10">
-      <h2 className="font-display text-2xl font-semibold">Where you sent it</h2>
-      <p className="text-muted mt-2 max-w-2xl leading-relaxed">
-        Typed by you, because Grindly does not submit anything on your behalf — bulk
-        applying through job boards breaks their terms and gets accounts banned. What
-        this is for is the one thing a spreadsheet cannot tell you: which version of
-        your resume went to whom.
-      </p>
-
-      <form onSubmit={add} className="mt-5 flex flex-wrap items-end gap-3">
-        <label className="min-w-[12rem] flex-1">
-          <span className="mb-1.5 block text-sm font-medium">Company</span>
-          <input
-            value={company}
-            onChange={(e) => setCompany(e.target.value)}
-            maxLength={120}
-            className="field w-full"
-            placeholder="Freshworks"
-          />
-        </label>
-        <label className="min-w-[12rem] flex-1">
-          <span className="mb-1.5 block text-sm font-medium">Role</span>
-          <input
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            maxLength={120}
-            className="field w-full"
-            placeholder="Backend Engineer"
-          />
-        </label>
-        {variantLabels.length > 0 && (
-          <label className="min-w-[10rem]">
-            <span className="mb-1.5 block text-sm font-medium">Which version</span>
-            <select
-              value={variantLabel}
-              onChange={(e) => setVariantLabel(e.target.value)}
-              className="field w-full"
-            >
-              <option value="">Original</option>
-              {variantLabels.map((label) => (
-                <option key={label} value={label}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <button type="submit" disabled={busy || !company.trim()} className="btn btn-primary">
-          {busy ? "Saving…" : "Log it"}
-        </button>
-      </form>
-
-      {error && (
-        <p role="alert" className="mt-3 text-sm" style={{ color: "#a3271b" }}>
-          {error}
-        </p>
-      )}
-
-      {applications.length > 0 && (
-        <>
-          <p className="text-muted mt-6 text-sm">
-            {applications.length} logged · {replies} moved past &ldquo;sent&rdquo;
-          </p>
-          <div className="mt-3 overflow-x-auto">
-            <table className="w-full min-w-[36rem] text-sm">
-              <thead>
-                <tr className="border-border border-b text-left">
-                  {["Company", "Role", "Version", "Sent", "Status", ""].map((h) => (
-                    <th
-                      key={h}
-                      className="text-muted py-2 pr-4 font-mono text-[10px] font-medium tracking-[0.1em] uppercase"
-                    >
-                      {h || " "}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {applications.map((a) => (
-                  <tr key={a.id} className="border-border border-b">
-                    <td className="py-2 pr-4">{a.company}</td>
-                    <td className="text-muted py-2 pr-4">{a.role || "—"}</td>
-                    <td className="text-muted py-2 pr-4">{a.variantLabel || "Original"}</td>
-                    <td className="text-muted py-2 pr-4 whitespace-nowrap">
-                      {new Date(a.appliedAt).toLocaleDateString("en-IN", {
-                        day: "numeric",
-                        month: "short",
-                      })}
-                    </td>
-                    <td className="py-2 pr-4">
-                      <label className="sr-only" htmlFor={`status-${a.id}`}>
-                        Status for {a.company}
-                      </label>
-                      <select
-                        id={`status-${a.id}`}
-                        value={a.status}
-                        onChange={(e) => void update(a.id, e.target.value)}
-                        className="field py-1 text-xs"
-                      >
-                        {Object.entries(STATUS_LABELS).map(([value, label]) => (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="py-2">
-                      <button
-                        onClick={() => void remove(a.id)}
-                        aria-label={`Remove the application to ${a.company}`}
-                        className="text-muted hover:text-ink cursor-pointer text-xs"
-                      >
-                        ✕
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
     </section>
   );
 }
