@@ -83,7 +83,7 @@ export default async function AllResumesPage() {
       </div>
 
       <div className="mt-6 grid items-stretch gap-5 sm:mt-8 lg:grid-cols-2">
-        <div className="h-full"><Uploader canUpload={resumes.length < limit} limit={limit} /></div>
+        <Uploader canUpload={resumes.length < limit} limit={limit} />
         <StartResume disabled={resumes.length >= limit} />
       </div>
 

@@ -60,7 +60,7 @@ export function Uploader({ canUpload, limit }: { canUpload: boolean; limit: numb
 
   if (!canUpload) {
     return (
-      <div className="border-border bg-surface-2 rounded-xl border p-5 text-sm">
+      <div className="border-border bg-surface-2 flex h-full flex-col justify-center rounded-xl border p-6 text-sm sm:p-8">
         You are holding {limit} resume{limit === 1 ? "" : "s"}, which is your plan&rsquo;s
         limit. Open one and delete it, or{" "}
         <a href="/pricing" className="text-brand underline">
@@ -71,9 +71,13 @@ export function Uploader({ canUpload, limit }: { canUpload: boolean; limit: numb
     );
   }
 
+  // Same shell as StartResume — eyebrow, heading, a flex-1 description, and a
+  // full-width button — so the two cards sit at equal height with their
+  // buttons on the same line. The dashed border is the one intentional
+  // difference: it marks this card as a drop target.
   return (
-    <div>
-      <div
+    <div className="flex h-full flex-col">
+      <section
         onDragOver={(e) => {
           e.preventDefault();
           setDragging(true);
@@ -85,25 +89,26 @@ export function Uploader({ canUpload, limit }: { canUpload: boolean; limit: numb
           const file = e.dataTransfer.files?.[0];
           if (file) void upload(file);
         }}
-        className="rounded-xl border border-dashed p-8 text-center transition-colors"
+        className="bg-surface flex flex-1 flex-col rounded-xl border border-dashed p-6 transition-colors sm:p-8"
         style={{
           borderColor: dragging ? "var(--brand)" : "var(--border)",
-          background: dragging ? "var(--surface-2)" : "transparent",
+          background: dragging ? "var(--surface-2)" : undefined,
         }}
       >
-        <p className="font-display text-lg font-semibold">
-          {busy ? "Reading your resume…" : "Drop your resume here"}
-        </p>
-        <p className="text-muted mx-auto mt-1.5 max-w-sm text-sm leading-snug">
+        <p className="text-brand font-mono text-[11px] tracking-[0.14em] uppercase">Have a resume?</p>
+        <h2 className="font-display mt-3 text-2xl font-semibold">
+          {busy ? "Reading your resume…" : "Upload what you have"}
+        </h2>
+        <p className="text-muted mt-3 flex-1 text-sm leading-relaxed">
           {busy
             ? "Extracting the text, then scoring what a parser can recover."
-            : "PDF, DOCX or TXT, up to 5 MB. We read it the way an applicant tracking system would."}
+            : "Drop a PDF, DOCX or TXT here, or choose a file — up to 5 MB. We read it the way an applicant tracking system would."}
         </p>
         <button
           type="button"
           disabled={busy}
           onClick={() => inputRef.current?.click()}
-          className="btn btn-primary mt-5"
+          className="btn btn-primary mt-6 w-full justify-center"
         >
           {busy ? "Working…" : "Choose a file"}
         </button>
@@ -124,7 +129,7 @@ export function Uploader({ canUpload, limit }: { canUpload: boolean; limit: numb
             if (file) void upload(file);
           }}
         />
-      </div>
+      </section>
 
       {error && (
         <p
